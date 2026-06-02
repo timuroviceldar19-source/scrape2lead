@@ -98,7 +98,7 @@ export class JobManager {
         logger.info("job started", { jobId, ...jobInput });
       }
 
-      const cards = await adapter.searchCompanies(this.config);
+      const cards = await this.discoverCards(jobId, adapter);
       await this.storage.updateParseJobTotalFound(jobId, cards.length);
       logger.info("cards discovered", { jobId, count: cards.length });
 
@@ -126,6 +126,39 @@ export class JobManager {
       return { leads, ...exported, jobId, status };
     } finally {
       clearInterval(watchdogHandle);
+    }
+  }
+
+  /**
+   * Run the discovery phase. On an anti-bot / CAPTCHA block (e.g. the
+   * adapter's `detectCaptcha` throwing on the 2GIS wall) a captcha/blocked
+   * event + evidence snapshot are persisted *before* rethrowing, so the run
+   * fails loudly with a recorded CAPTCHA event instead of silently surfacing
+   * as `status: completed, leads: 0`. The rethrow aborts the job (CLI exits
+   * non-zero); telemetry's `captcha_count` then reflects the block.
+   */
+  private async discoverCards(jobId: string, adapter: ISourceAdapter): Promise<RawCompanyCard[]> {
+    try {
+      return await adapter.searchCompanies(this.config);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (classifyError(message) === "blocked") {
+        const isCaptcha = message.toLowerCase().includes("captcha");
+        const snapshotId = await this.storage.saveRawSnapshot({
+          source: adapter.source,
+          kind: "json",
+          purpose: isCaptcha ? "captcha" : "error",
+          payload: { phase: "discovery", jobId, message }
+        });
+        await this.storage.saveCaptchaEvent({
+          source: adapter.source,
+          action: isCaptcha ? "captcha_detected" : "blocked_detected",
+          snapshotId,
+          proxyId: this.resolveProxyId() ?? null
+        });
+        logger.warn("discovery blocked by anti-bot; captcha event recorded", { jobId, message });
+      }
+      throw error;
     }
   }
 

@@ -513,6 +513,52 @@ describe("JobManager CAPTCHA event wiring", () => {
   });
 });
 
+describe("JobManager discovery-phase block recording", () => {
+  let ws: ReturnType<typeof makeWorkspace>;
+  beforeEach(() => { ws = makeWorkspace(); });
+  afterEach(() => { ws.cleanup(); });
+
+  function runDiscoveryThrow(message: string) {
+    const adapter = new FakeAdapter({ cards: [] });
+    (adapter as unknown as Record<string, unknown>)["searchCompanies"] = async () => {
+      throw new Error(message);
+    };
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+    const manager = new JobManager(ws.config, registry, ws.storage, undefined, {
+      backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+      emptyPollMs: 5
+    });
+    return manager.run();
+  }
+
+  it("an anti-bot CAPTCHA during discovery rethrows AND records a captcha_events row (no false 'completed')", async () => {
+    await expect(runDiscoveryThrow("CAPTCHA detected; screenshot saved to /tmp/x.png")).rejects.toThrow(
+      /CAPTCHA detected/
+    );
+
+    const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
+    const events = db.prepare("SELECT * FROM captcha_events").all() as Array<Record<string, unknown>>;
+    expect(events).toHaveLength(1);
+    expect(events[0].source).toBe("2gis");
+    expect(events[0].action).toBe("captcha_detected");
+    // Discovery has no company task yet — the event is job-level (null FK).
+    expect(events[0].company_task_id).toBeNull();
+
+    const snap = ws.storage.getRawSnapshot(events[0].snapshot_id as number);
+    expect(snap?.purpose).toBe("captcha");
+    const payload = JSON.parse(snap?.payload ?? "{}") as Record<string, unknown>;
+    expect(payload.phase).toBe("discovery");
+  });
+
+  it("a non-block discovery error rethrows without recording a captcha event", async () => {
+    await expect(runDiscoveryThrow("network failure")).rejects.toThrow(/network failure/);
+    const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
+    const events = db.prepare("SELECT * FROM captcha_events").all() as Array<Record<string, unknown>>;
+    expect(events).toHaveLength(0);
+  });
+});
+
 describe("JobManager proxy ID recording", () => {
   let ws: ReturnType<typeof makeWorkspace>;
   beforeEach(() => { ws = makeWorkspace(); });
