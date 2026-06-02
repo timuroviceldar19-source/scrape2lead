@@ -15,6 +15,14 @@ export interface JobManagerOptions {
   leaseMs?: number;
   backoff?: BackoffOptions;
   emptyPollMs?: number;
+  /**
+   * Interval in ms for the periodic lease-recovery watchdog.
+   * When set, `storage.recoverExpiredLeases()` is called at this cadence
+   * throughout `run()` so tasks whose lease expires mid-job are returned to
+   * the queue without restarting the process.
+   * Default: undefined (disabled — only startup recovery runs).
+   */
+  leaseWatchdogMs?: number;
 }
 
 export class JobManager {
@@ -22,6 +30,7 @@ export class JobManager {
   private readonly leaseMs: number;
   private readonly backoff: BackoffOptions;
   private readonly emptyPollMs: number;
+  private readonly leaseWatchdogMs: number | undefined;
 
   constructor(
     private readonly config: RuntimeConfig,
@@ -34,61 +43,83 @@ export class JobManager {
     this.leaseMs = options?.leaseMs ?? DEFAULT_LEASE_MS;
     this.backoff = options?.backoff ?? {};
     this.emptyPollMs = options?.emptyPollMs ?? EMPTY_POLL_MS;
+    this.leaseWatchdogMs = options?.leaseWatchdogMs;
   }
 
   async run(): Promise<{ leads: Lead[]; csvPath: string; xlsxPath: string; jobId: string; status: string }> {
+    // Startup lease recovery — always runs once before workers begin.
     const recovered = this.storage.recoverExpiredLeases();
     if (recovered > 0) {
       logger.info("recovered expired leases", { recovered });
     }
 
-    const adapter = this.registry.resolve(this.config.source);
-    const jobInput = {
-      source: this.config.source,
-      city: this.config.geo,
-      category: this.config.category
-    };
-    const resumable = this.storage.findResumableParseJob(jobInput);
-    const jobId = resumable?.id ?? this.storage.createParseJob(jobInput);
-    if (resumable) {
-      this.storage.setParseJobStatus(jobId, "running");
-      logger.info("job resumed", {
-        jobId,
-        source: jobInput.source,
-        geo: jobInput.city,
-        category: jobInput.category,
-        openTasks: this.storage.countOpenTasks(jobId)
-      });
-    } else {
-      logger.info("job started", { jobId, ...jobInput });
+    // Periodic watchdog — only active when leaseWatchdogMs is configured.
+    let watchdogHandle: ReturnType<typeof setInterval> | undefined;
+    if (this.leaseWatchdogMs !== undefined) {
+      let watchdogBusy = false;
+      watchdogHandle = setInterval(() => {
+        if (watchdogBusy) return;
+        watchdogBusy = true;
+        try {
+          const n = this.storage.recoverExpiredLeases();
+          if (n > 0) logger.info("watchdog recovered expired leases", { recovered: n });
+        } finally {
+          watchdogBusy = false;
+        }
+      }, this.leaseWatchdogMs);
     }
 
-    const cards = await adapter.searchCompanies(this.config);
-    this.storage.updateParseJobTotalFound(jobId, cards.length);
-    logger.info("cards discovered", { jobId, count: cards.length });
+    try {
+      const adapter = this.registry.resolve(this.config.source);
+      const jobInput = {
+        source: this.config.source,
+        city: this.config.geo,
+        category: this.config.category
+      };
+      const resumable = this.storage.findResumableParseJob(jobInput);
+      const jobId = resumable?.id ?? this.storage.createParseJob(jobInput);
+      if (resumable) {
+        this.storage.setParseJobStatus(jobId, "running");
+        logger.info("job resumed", {
+          jobId,
+          source: jobInput.source,
+          geo: jobInput.city,
+          category: jobInput.category,
+          openTasks: this.storage.countOpenTasks(jobId)
+        });
+      } else {
+        logger.info("job started", { jobId, ...jobInput });
+      }
 
-    const cardMap = new Map<string, RawCompanyCard>();
-    for (const card of cards) {
-      cardMap.set(card.externalId, card);
-      this.storage.enqueueCompanyTask({
-        parseJobId: jobId,
-        source: adapter.source,
-        externalId: card.externalId
-      });
+      const cards = await adapter.searchCompanies(this.config);
+      this.storage.updateParseJobTotalFound(jobId, cards.length);
+      logger.info("cards discovered", { jobId, count: cards.length });
+
+      const cardMap = new Map<string, RawCompanyCard>();
+      for (const card of cards) {
+        cardMap.set(card.externalId, card);
+        this.storage.enqueueCompanyTask({
+          parseJobId: jobId,
+          source: adapter.source,
+          externalId: card.externalId
+        });
+      }
+
+      const concurrency = Math.max(1, this.config.concurrency);
+      const workers = Array.from({ length: concurrency }, (_, i) =>
+        this.runWorker(`worker-${i}-${randomUUID().slice(0, 6)}`, jobId, cardMap, adapter)
+      );
+      await Promise.all(workers);
+
+      const status = this.storage.finalizeParseJob(jobId);
+
+      const leads = this.storage.listLeads();
+      const exported = await exportLeads(leads, this.config.exportDir);
+      logger.info("job completed", { jobId, status, leads: leads.length, ...exported });
+      return { leads, ...exported, jobId, status };
+    } finally {
+      clearInterval(watchdogHandle);
     }
-
-    const concurrency = Math.max(1, this.config.concurrency);
-    const workers = Array.from({ length: concurrency }, (_, i) =>
-      this.runWorker(`worker-${i}-${randomUUID().slice(0, 6)}`, jobId, cardMap, adapter)
-    );
-    await Promise.all(workers);
-
-    const status = this.storage.finalizeParseJob(jobId);
-
-    const leads = this.storage.listLeads();
-    const exported = await exportLeads(leads, this.config.exportDir);
-    logger.info("job completed", { jobId, status, leads: leads.length, ...exported });
-    return { leads, ...exported, jobId, status };
   }
 
   private async runWorker(

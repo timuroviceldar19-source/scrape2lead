@@ -20,6 +20,8 @@ interface FakeAdapterOptions {
   cards: RawCompanyCard[];
   failOn?: Map<string, () => Error>;
   incomplete?: Set<string>;
+  /** If set, getCardDetail sleeps this many ms before returning/throwing. */
+  delayMs?: number;
 }
 
 class FakeAdapter implements ISourceAdapter {
@@ -45,6 +47,7 @@ class FakeAdapter implements ISourceAdapter {
   }
 
   async getCardDetail(card: RawCompanyCard): Promise<RawCardDetail> {
+    if (this.opts.delayMs) await sleep(this.opts.delayMs);
     const make = this.opts.failOn?.get(card.externalId);
     if (make) throw make();
     return { ...card, payload: { source: "fixture", externalId: card.externalId } };
@@ -83,6 +86,10 @@ class FakeAdapter implements ISourceAdapter {
 
 function makeCard(externalId: string, name = `Company ${externalId}`): RawCompanyCard {
   return { source: "2gis", externalId, name, payload: { id: externalId } };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function makeWorkspace(): {
@@ -606,5 +613,214 @@ describe("JobManager proxy ID recording", () => {
       .all(task.id) as Array<Record<string, unknown>>;
     expect(events.length).toBeGreaterThan(0);
     expect(events.every((e) => e.proxy_id === "ch-cap")).toBe(true);
+  });
+});
+
+describe("JobManager lease watchdog", () => {
+  it("watchdog recovers an expired processing task injected after startup", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-wd-"));
+    const storage = new Storage(path.join(root, "test.db"));
+    const config: RuntimeConfig = {
+      source: "2gis",
+      geo: "moscow",
+      category: "autoservice",
+      limit: 100,
+      databasePath: path.join(root, "test.db"),
+      exportDir: path.join(root, "exports"),
+      delayRangeMs: [0, 1],
+      rotateEveryN: 50,
+      maxRetries: 2,
+      concurrency: 1,
+      headless: true,
+      rawSnapshotDir: path.join(root, "raw")
+    };
+    try {
+      // One card that takes 200 ms — gives the watchdog time to fire mid-run.
+      const cards = [makeCard("ext-main")];
+      const registry = new AdapterRegistry();
+      registry.register(new FakeAdapter({ cards, delayMs: 200 }));
+
+      const manager = new JobManager(config, registry, storage, undefined, {
+        leaseWatchdogMs: 40,
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      // Start run without awaiting so we can inject a task mid-flight.
+      const runPromise = manager.run();
+
+      // Let startup recovery pass (it's sync), then inject a stuck task.
+      await sleep(15);
+      const sideJobId = storage.createParseJob({ source: "2gis", city: "spb", category: "watchdog-test" });
+      const stuckId = storage.enqueueCompanyTask({ parseJobId: sideJobId, source: "2gis", externalId: "ext-stuck" });
+      const db = (storage as unknown as { db: import("better-sqlite3").Database }).db;
+      db.prepare("UPDATE company_tasks SET status='processing', lease_until=? WHERE id=?")
+        .run(new Date(Date.now() - 1000).toISOString(), stuckId);
+
+      // Verify the task is stuck at this point (startup recovery already ran and missed it).
+      const before = db.prepare("SELECT status FROM company_tasks WHERE id=?").get(stuckId) as Record<string, unknown>;
+      expect(before.status).toBe("processing");
+
+      // Wait for at least two watchdog ticks (2 × 40 ms = 80 ms + buffer).
+      await sleep(120);
+
+      // Watchdog should have reset it to retry_scheduled.
+      const after = db.prepare("SELECT status FROM company_tasks WHERE id=?").get(stuckId) as Record<string, unknown>;
+      expect(after.status).toBe("retry_scheduled");
+
+      await runPromise;
+    } finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("timer is cleaned up after run() completes — no further watchdog calls", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-wd-"));
+    const storage = new Storage(path.join(root, "test.db"));
+    const config: RuntimeConfig = {
+      source: "2gis",
+      geo: "moscow",
+      category: "autoservice",
+      limit: 100,
+      databasePath: path.join(root, "test.db"),
+      exportDir: path.join(root, "exports"),
+      delayRangeMs: [0, 1],
+      rotateEveryN: 50,
+      maxRetries: 2,
+      concurrency: 1,
+      headless: true,
+      rawSnapshotDir: path.join(root, "raw")
+    };
+    try {
+      let recoverCallCount = 0;
+      const origRecover = storage.recoverExpiredLeases.bind(storage);
+      storage.recoverExpiredLeases = (...args: Parameters<typeof storage.recoverExpiredLeases>) => {
+        recoverCallCount++;
+        return origRecover(...args);
+      };
+
+      const registry = new AdapterRegistry();
+      registry.register(new FakeAdapter({ cards: [makeCard("ext-1")] }));
+      const manager = new JobManager(config, registry, storage, undefined, {
+        leaseWatchdogMs: 20,
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      await manager.run();
+      const countAtCompletion = recoverCallCount;
+
+      // Wait two watchdog intervals — no new calls should happen.
+      await sleep(60);
+      expect(recoverCallCount).toBe(countAtCompletion);
+    } finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("timer is cleaned up when run() throws (adapter error)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-wd-"));
+    const storage = new Storage(path.join(root, "test.db"));
+    const config: RuntimeConfig = {
+      source: "2gis",
+      geo: "moscow",
+      category: "autoservice",
+      limit: 100,
+      databasePath: path.join(root, "test.db"),
+      exportDir: path.join(root, "exports"),
+      delayRangeMs: [0, 1],
+      rotateEveryN: 50,
+      maxRetries: 2,
+      concurrency: 1,
+      headless: true,
+      rawSnapshotDir: path.join(root, "raw")
+    };
+    try {
+      let recoverCallCount = 0;
+      const origRecover = storage.recoverExpiredLeases.bind(storage);
+      storage.recoverExpiredLeases = (...args: Parameters<typeof storage.recoverExpiredLeases>) => {
+        recoverCallCount++;
+        return origRecover(...args);
+      };
+
+      const throwingAdapter = new FakeAdapter({ cards: [] });
+      // Override searchCompanies to throw after a short async gap (giving watchdog a chance to arm).
+      (throwingAdapter as unknown as Record<string, unknown>)["searchCompanies"] = async () => {
+        await sleep(30);
+        throw new Error("network failure");
+      };
+      const registry = new AdapterRegistry();
+      registry.register(throwingAdapter);
+
+      const manager = new JobManager(config, registry, storage, undefined, {
+        leaseWatchdogMs: 20,
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      await expect(manager.run()).rejects.toThrow("network failure");
+      const countAtThrow = recoverCallCount;
+
+      // Wait two watchdog intervals — timer must be dead.
+      await sleep(60);
+      expect(recoverCallCount).toBe(countAtThrow);
+    } finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("guard prevents concurrent recovery calls (maxConcurrent ≤ 1)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-wd-"));
+    const storage = new Storage(path.join(root, "test.db"));
+    const config: RuntimeConfig = {
+      source: "2gis",
+      geo: "moscow",
+      category: "autoservice",
+      limit: 100,
+      databasePath: path.join(root, "test.db"),
+      exportDir: path.join(root, "exports"),
+      delayRangeMs: [0, 1],
+      rotateEveryN: 50,
+      maxRetries: 2,
+      concurrency: 1,
+      headless: true,
+      rawSnapshotDir: path.join(root, "raw")
+    };
+    try {
+      let currentDepth = 0;
+      let maxDepth = 0;
+      let totalCalls = 0;
+      const origRecover = storage.recoverExpiredLeases.bind(storage);
+      storage.recoverExpiredLeases = (...args: Parameters<typeof storage.recoverExpiredLeases>) => {
+        totalCalls++;
+        currentDepth++;
+        maxDepth = Math.max(maxDepth, currentDepth);
+        const result = origRecover(...args);
+        currentDepth--;
+        return result;
+      };
+
+      const registry = new AdapterRegistry();
+      // Slow adapter keeps the run alive long enough for multiple watchdog ticks.
+      registry.register(new FakeAdapter({ cards: [makeCard("ext-1"), makeCard("ext-2")], delayMs: 60 }));
+      const manager = new JobManager(config, registry, storage, undefined, {
+        leaseWatchdogMs: 15,
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      await manager.run();
+
+      // Guard must ensure calls never overlapped (depth ≤ 1).
+      expect(maxDepth).toBe(1);
+      // Watchdog must have fired at least once beyond startup recovery.
+      expect(totalCalls).toBeGreaterThanOrEqual(2);
+    } finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
