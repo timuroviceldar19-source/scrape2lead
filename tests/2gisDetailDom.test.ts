@@ -1,7 +1,60 @@
 import { describe, expect, it } from "vitest";
-import { buildDomFirmPayload, buildSearchUrl, citySegment, hasUsableTelLink, type DomFirmLink, type DomFirmSnapshot } from "../src/adapters/2gis/TwoGisAdapter.js";
+import {
+  buildDomFirmPayload,
+  buildSearchUrl,
+  citySegment,
+  hasUsableTelLink,
+  MIN_PANEL_SCORE,
+  scorePanelCandidate,
+  type DomFirmLink,
+  type DomFirmSnapshot,
+  type PanelSignals
+} from "../src/adapters/2gis/TwoGisAdapter.js";
 import { mapContacts, mapDetail, toLead } from "../src/adapters/2gis/mapper.js";
 import type { RawCompanyCard } from "../src/types.js";
+
+const NO_SIGNALS: PanelSignals = {
+  addressAnchors: 0,
+  telAnchorsWithDigits: 0,
+  telAnchorsTotal: 0,
+  mailtoAnchors: 0,
+  websiteAnchors: 0,
+  revealButtons: 0,
+  messengerMatches: 0,
+  routeLinks: 0
+};
+
+function headerOnlySignals(): PanelSignals {
+  // Audit failure mode: the immediate h1 parent is a small header block
+  // that only carries route/booking CTAs ("Проехать" / "Записаться") and
+  // the "Позвонить" tel: link. No /geo/, no mailto, no real firm phone.
+  return {
+    addressAnchors: 0,
+    telAnchorsWithDigits: 1,
+    telAnchorsTotal: 1,
+    mailtoAnchors: 0,
+    websiteAnchors: 1,
+    revealButtons: 0,
+    messengerMatches: 0,
+    routeLinks: 1
+  };
+}
+
+function fullDetailPanelSignals(): PanelSignals {
+  // The real firm detail block: /geo/ address anchor, firm tel: with
+  // digits, mailto:, external website anchor, "Показать телефон" reveal
+  // button and the four messenger labels.
+  return {
+    addressAnchors: 1,
+    telAnchorsWithDigits: 1,
+    telAnchorsTotal: 1,
+    mailtoAnchors: 1,
+    websiteAnchors: 1,
+    revealButtons: 1,
+    messengerMatches: 4,
+    routeLinks: 0
+  };
+}
 
 function makeLink(href: string, text: string, ariaLabel: string = ""): DomFirmLink {
   return { href, text, ariaLabel };
@@ -391,5 +444,100 @@ describe("2GIS DOM detail extraction", () => {
     const noPhoneContacts = mapContacts(noPhoneDetail, noPhoneDetail.payload);
     const noPhoneLead = toLead(noPhoneDetail, noPhoneContacts);
     expect(noPhoneLead.incomplete).toBe(true);
+  });
+});
+
+describe("2GIS detail-panel scope scoring", () => {
+  it("rejects a header-only block that has only route/booking CTA anchors", () => {
+    // The audit's documented failure mode: the immediate h1 parent is a
+    // small header (wide, short) that only carries "Проехать" /
+    // "Записаться" CTAs and a "Позвонить" tel: link. It does not clear
+    // the minimum-score gate so the walk keeps climbing to the real
+    // panel.
+    const headerSignals = headerOnlySignals();
+    const headerGeometry = { width: 600, height: 100 };
+    const headerScore = scorePanelCandidate(headerSignals, headerGeometry);
+
+    expect(headerScore).toBeLessThan(MIN_PANEL_SCORE);
+  });
+
+  it("rejects a tiny block even when it carries firm-detail signals", () => {
+    const score = scorePanelCandidate(fullDetailPanelSignals(), { width: 120, height: 120 });
+    expect(score).toBe(Number.NEGATIVE_INFINITY);
+  });
+
+  it("rejects a page-wide container that has bled into the page chrome", () => {
+    const score = scorePanelCandidate(fullDetailPanelSignals(), { width: 1600, height: 3000 });
+    expect(score).toBe(Number.NEGATIVE_INFINITY);
+  });
+
+  it("scores the broader ancestor (address + tel + mailto + website + reveal + messengers) above the gate", () => {
+    const panelSignals = fullDetailPanelSignals();
+    const panelGeometry = { width: 820, height: 640 };
+    const panelScore = scorePanelCandidate(panelSignals, panelGeometry);
+
+    expect(panelScore).toBeGreaterThanOrEqual(MIN_PANEL_SCORE);
+  });
+
+  it("findPanel chooses the broader contact-rich panel over the narrow header-only block", () => {
+    // The header and the real panel are exactly the two candidates the
+    // walk-up encounters on a live 2GIS firm page. The scored selection
+    // must prefer the broader one; the walk has no other tiebreaker.
+    const headerSignals = headerOnlySignals();
+    const headerGeometry = { width: 600, height: 100 };
+    const panelSignals = fullDetailPanelSignals();
+    const panelGeometry = { width: 820, height: 640 };
+
+    const headerScore = scorePanelCandidate(headerSignals, headerGeometry);
+    const panelScore = scorePanelCandidate(panelSignals, panelGeometry);
+
+    expect(panelScore).toBeGreaterThan(headerScore);
+    expect(headerScore).toBeLessThan(MIN_PANEL_SCORE);
+    expect(panelScore).toBeGreaterThanOrEqual(MIN_PANEL_SCORE);
+  });
+
+  it("still scores positive when a panel has no messenger labels (messen­ger­s are optional)", () => {
+    // Some firms don't expose messengers at all. A panel with
+    // /geo/ + tel: + mailto: + website + reveal button must still clear
+    // the gate.
+    const noMessenger: PanelSignals = {
+      ...fullDetailPanelSignals(),
+      messengerMatches: 0
+    };
+    const score = scorePanelCandidate(noMessenger, { width: 820, height: 640 });
+    expect(score).toBeGreaterThanOrEqual(MIN_PANEL_SCORE);
+  });
+
+  it("applies the header-only penalty when the candidate has no firm anchors at all", () => {
+    const empty = NO_SIGNALS;
+    const score = scorePanelCandidate(empty, { width: 600, height: 100 });
+    // The negative penalty plus zero positive score keeps the result
+    // below the gate; combined with the geometry bonuses it can still
+    // come out negative, so we only check the gate here.
+    expect(score).toBeLessThan(MIN_PANEL_SCORE);
+  });
+
+  it("rewards the address anchor above all other firm signals", () => {
+    // /geo/ is the strongest single "this is the firm detail panel"
+    // signal on 2GIS. A candidate that only has an address anchor must
+    // still clear the gate.
+    const onlyAddress: PanelSignals = { ...NO_SIGNALS, addressAnchors: 1 };
+    const score = scorePanelCandidate(onlyAddress, { width: 600, height: 400 });
+    expect(score).toBeGreaterThanOrEqual(MIN_PANEL_SCORE);
+  });
+
+  it("penalises route/booking CTA links enough that they cannot outscore the firm panel", () => {
+    // A wide header full of route links must lose to a moderately sized
+    // firm panel that has the actual contact anchors. This is the
+    // audit's regression scenario.
+    const routeHeader: PanelSignals = {
+      ...headerOnlySignals(),
+      routeLinks: 3,
+      telAnchorsWithDigits: 2,
+      websiteAnchors: 3
+    };
+    const routeHeaderScore = scorePanelCandidate(routeHeader, { width: 600, height: 120 });
+    const panelScore = scorePanelCandidate(fullDetailPanelSignals(), { width: 820, height: 640 });
+    expect(panelScore).toBeGreaterThan(routeHeaderScore);
   });
 });

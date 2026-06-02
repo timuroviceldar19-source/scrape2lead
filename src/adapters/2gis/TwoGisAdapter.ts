@@ -440,20 +440,204 @@ async function clickContactRevealControls(page: Page): Promise<ContactRevealEvid
 }
 
 /**
+ * Signal counts extracted from a candidate panel subtree. Pure data, so the
+ * scoring function is unit-testable without a DOM.
+ *
+ * Why this is its own type instead of an inlined object: the
+ * `findPanel` decision is a *scored selection* over ancestors, and the
+ * audit's documented failure mode is exactly the case where the
+ * "smallest h1 ancestor that has any contact-like anchor" picks the
+ * narrow header block (only "Проехать" / "Записаться" / "Позвонить" CTAs)
+ * instead of the broader detail panel that actually carries the
+ * address, mailto, real tel, website, and messenger labels. The signals
+ * below mirror the audit's positive/negative checklist so the scoring
+ * can be re-derived from the audit without re-reading the DOM code.
+ */
+export interface PanelSignals {
+  addressAnchors: number;
+  telAnchorsWithDigits: number;
+  telAnchorsTotal: number;
+  mailtoAnchors: number;
+  websiteAnchors: number;
+  revealButtons: number;
+  messengerMatches: number;
+  routeLinks: number;
+}
+
+export interface PanelGeometry {
+  width: number;
+  height: number;
+}
+
+/**
+ * Hard upper bounds for the panel bounding box. Any candidate larger than
+ * this is treated as having already bled into the page chrome
+ * (header / list / sidebar / footer) and is rejected. The values match
+ * the audit's "not a tiny header-only block" requirement on the low end
+ * and stay well below a desktop document body on the high end so a
+ * full-page container never wins over a real panel.
+ */
+const PANEL_MIN_WIDTH = 200;
+const PANEL_MIN_HEIGHT = 200;
+const PANEL_MAX_WIDTH = 1400;
+const PANEL_MAX_HEIGHT = 2500;
+
+/**
+ * A panel must clear this score to be considered scoped. Below this
+ * threshold, no ancestor looks like a real firm detail block (e.g. only
+ * nav / route links) and the snapshot falls back to `document` so the
+ * caller can fail loud.
+ */
+export const MIN_PANEL_SCORE = 5;
+
+/**
+ * Score a candidate ancestor purely on the signals it contains and its
+ * bounding box. No DOM access here — the counts come from
+ * {@link collectPanelSignals}. Exported so the unit tests can pin the
+ * scoring curve without spinning up a browser.
+ *
+ * Positive weights (audit signals):
+ *  - `/geo/` address anchor is the strongest single "this is the firm
+ *    detail panel" indicator on 2GIS, since the address link is the
+ *    only place 2GIS wraps the firm address in a `/geo/` anchor.
+ *  - `tel:` with digits and `mailto:` are firm contact anchors. A bare
+ *    `tel:` (no digits) is a masked phone and is *not* counted.
+ *  - Website anchors that don't point at 2gis are firm domains.
+ *  - "Показать телефон" / "Показать контакт" buttons only live inside
+ *    the firm detail block.
+ *  - Messenger labels (WhatsApp / Telegram / Viber / Max) only live in
+ *    the contact section.
+ *
+ * Negative weights (avoid signals):
+ *  - Route/booking CTA links point at `2gis.ru` route or booking
+ *    endpoints and belong to the header block, not the contact block.
+ *  - An ancestor with no address anchor, no mailto, and no digit tel
+ *    looks like a header-only block; it gets a flat penalty so a small
+ *    "Позвонить" CTA above the contact section never wins.
+ */
+export function scorePanelCandidate(signals: PanelSignals, geometry: PanelGeometry): number {
+  const { width, height } = geometry;
+  if (width < PANEL_MIN_WIDTH || height < PANEL_MIN_HEIGHT) return Number.NEGATIVE_INFINITY;
+  if (width > PANEL_MAX_WIDTH || height > PANEL_MAX_HEIGHT) return Number.NEGATIVE_INFINITY;
+
+  let score = 0;
+
+  score += signals.addressAnchors * 10;
+  score += signals.telAnchorsWithDigits * 5;
+  score += signals.mailtoAnchors * 5;
+  score += signals.websiteAnchors * 3;
+  score += signals.revealButtons * 4;
+  score += Math.min(signals.messengerMatches, 4) * 2;
+
+  score -= signals.routeLinks * 3;
+
+  if (
+    signals.addressAnchors === 0 &&
+    signals.mailtoAnchors === 0 &&
+    signals.telAnchorsWithDigits === 0
+  ) {
+    score -= 8;
+  }
+
+  if (width >= 400 && height >= 300) score += 2;
+  if (width >= 600 && height >= 400) score += 3;
+  if (width >= 800 && height >= 500) score += 4;
+
+  return score;
+}
+
+/**
+ * Count firm-detail signals inside a candidate subtree. Pure DOM access
+ * — no extraction of values, only counts. Exported for direct unit
+ * testing with a synthetic DOM (the integration test exercises the full
+ * walk via `collectDomFirmSnapshot`).
+ */
+export function collectPanelSignals(candidate: Element): PanelSignals {
+  const addressAnchors = candidate.querySelectorAll("a[href*='/geo/']").length;
+
+  const telNodes = [...candidate.querySelectorAll("a[href^='tel:']")];
+  const telAnchorsTotal = telNodes.length;
+  const telAnchorsWithDigits = telNodes.filter((node) => {
+    const raw = node.getAttribute("href") ?? "";
+    if (!raw.toLowerCase().startsWith("tel:")) return false;
+    return /\d/.test(decodeURIComponent(raw).slice(4));
+  }).length;
+
+  const mailtoAnchors = candidate.querySelectorAll("a[href^='mailto:']").length;
+
+  const websiteAnchors = [...candidate.querySelectorAll("a[href^='http']")].filter((node) => {
+    try {
+      const host = new URL(node.getAttribute("href") ?? "").hostname.toLowerCase();
+      return !is2GisLikeHost(host);
+    } catch {
+      return false;
+    }
+  }).length;
+
+  const revealRe = /Показать\s+(?:телефон|телефоны|контакт|контакты)/i;
+  const revealButtons = [...candidate.querySelectorAll("button, [role='button']")]
+    .filter((node) => revealRe.test((node.textContent ?? "").replace(/\s+/g, " ").trim()))
+    .length;
+
+  const messengerRe = /(?:whats?app|телеграм|telegram|viber|\bmax\b)/i;
+  let messengerMatches = 0;
+  for (const node of candidate.querySelectorAll("a, [aria-label]")) {
+    const haystack = `${node.textContent ?? ""}\n${node.getAttribute("aria-label") ?? ""}`.toLowerCase();
+    if (messengerRe.test(haystack)) messengerMatches += 1;
+  }
+
+  const routeRe = /(?:routing|route|booking|onelinek|onelink|proehat|proezd|marshrut)/i;
+  const ctaTextRe = /Проехать|Записаться|Схема\s+проезда|Как\s+добраться|Открыть\s+в\s+приложении/i;
+  const routeLinks = [...candidate.querySelectorAll("a[href]")].filter((node) => {
+    const href = node.getAttribute("href") ?? "";
+    if (routeRe.test(href)) return true;
+    const text = (node.textContent ?? "").trim();
+    return ctaTextRe.test(text);
+  }).length;
+
+  return {
+    addressAnchors,
+    telAnchorsWithDigits,
+    telAnchorsTotal,
+    mailtoAnchors,
+    websiteAnchors,
+    revealButtons,
+    messengerMatches,
+    routeLinks
+  };
+}
+
+function is2GisLikeHost(host: string): boolean {
+  return /(^|\.)2gis\./i.test(host) || /(^|\.)dgis\./i.test(host);
+}
+
+/**
  * Collect a structured snapshot of the firm detail panel.
  *
  * Scoping strategy (no obfuscated CSS classes — only semantic / stable hooks):
  *  1. Find every visible `<h1>`; the firm name is the longest visible h1.
- *  2. Look for an `<article>` element. If one exists with a non-trivial
- *     bounding box, use it as the panel scope.
- *  3. Otherwise walk up from the firm h1 looking for the closest containing
- *     block that (a) has a reasonable size and (b) actually contains
- *     contact-like anchors (`tel:`, `mailto:`, `/geo/`, `http(s)`). That
- *     container is the firm detail panel — the search-results list, map
- *     controls, promo blocks and footer live outside of it.
- *  4. When no panel container can be found, the snapshot is collected from
- *     `document` and `scope: "document"` is set so the caller can detect
- *     that scoping never resolved.
+ *  2. Look for an `<article>` element. If one is in bounds and clears the
+ *     minimum-score gate, use it as the panel scope.
+ *  3. Otherwise walk up from each visible firm h1, score every ancestor
+ *     with the inlined copy of `scorePanelCandidate`, and pick the
+ *     highest-scoring container. The score rewards /geo/ address anchors,
+ *     mailto:, digit-bearing tel: anchors, external website anchors,
+ *     "Показать телефон" reveal buttons and messenger labels; it penalises
+ *     route/booking CTA links and header-only blocks that carry none of
+ *     the firm-detail signals. The walk stops once an ancestor has bled
+ *     into the page chrome.
+ *  4. When no panel container clears the gate, the snapshot is collected
+ *     from `document` and `scope: "document"` is set so the caller can
+ *     detect that scoping never resolved.
+ *
+ * The DOM-touching helpers (signal collection, scoring walk, CTA
+ * filter) are inlined inside the `page.evaluate` callback on purpose:
+ * Playwright serialises the function and runs it in the browser page
+ * context, so any reference to a top-level helper in the Node module
+ * (even a pure one) becomes a `ReferenceError` at runtime. The pure
+ * `scorePanelCandidate` is exported for unit tests; the live version
+ * here mirrors the weights one-to-one so the test pins the exact curve
+ * that runs against real 2GIS pages.
  */
 async function collectDomFirmSnapshot(page: Page): Promise<DomFirmSnapshot> {
   return page.evaluate(() => {
@@ -469,35 +653,153 @@ async function collectDomFirmSnapshot(page: Page): Promise<DomFirmSnapshot> {
       .filter(Boolean)
       .slice(0, 5);
 
-    const findPanel = (): { panel: Element | null; isScoped: boolean } => {
+    const PANEL_MIN_WIDTH = 200;
+    const PANEL_MIN_HEIGHT = 200;
+    const PANEL_MAX_WIDTH = 1400;
+    const PANEL_MAX_HEIGHT = 2500;
+    const MIN_PANEL_SCORE = 5;
+
+    const is2GisLikeHost = (host: string): boolean =>
+      /(^|\.)2gis\./i.test(host) || /(^|\.)dgis\./i.test(host);
+
+    const collectSignals = (candidate: Element): PanelSignals => {
+      const addressAnchors = candidate.querySelectorAll("a[href*='/geo/']").length;
+
+      const telNodes = [...candidate.querySelectorAll("a[href^='tel:']")];
+      const telAnchorsTotal = telNodes.length;
+      const telAnchorsWithDigits = telNodes.filter((node) => {
+        const raw = node.getAttribute("href") ?? "";
+        if (!raw.toLowerCase().startsWith("tel:")) return false;
+        return /\d/.test(decodeURIComponent(raw).slice(4));
+      }).length;
+
+      const mailtoAnchors = candidate.querySelectorAll("a[href^='mailto:']").length;
+
+      const websiteAnchors = [...candidate.querySelectorAll("a[href^='http']")].filter((node) => {
+        try {
+          const host = new URL(node.getAttribute("href") ?? "").hostname.toLowerCase();
+          return !is2GisLikeHost(host);
+        } catch {
+          return false;
+        }
+      }).length;
+
+      const revealRe = /Показать\s+(?:телефон|телефоны|контакт|контакты)/i;
+      const revealButtons = [...candidate.querySelectorAll("button, [role='button']")]
+        .filter((node) => revealRe.test((node.textContent ?? "").replace(/\s+/g, " ").trim()))
+        .length;
+
+      const messengerRe = /(?:whats?app|телеграм|telegram|viber|\bmax\b)/i;
+      let messengerMatches = 0;
+      for (const node of candidate.querySelectorAll("a, [aria-label]")) {
+        const haystack = `${node.textContent ?? ""}\n${node.getAttribute("aria-label") ?? ""}`.toLowerCase();
+        if (messengerRe.test(haystack)) messengerMatches += 1;
+      }
+
+      const routeRe = /(?:routing|route|booking|onelinek|onelink|proehat|proezd|marshrut)/i;
+      const ctaTextRe = /Проехать|Записаться|Схема\s+проезда|Как\s+добраться|Открыть\s+в\s+приложении/i;
+      const routeLinks = [...candidate.querySelectorAll("a[href]")].filter((node) => {
+        const href = node.getAttribute("href") ?? "";
+        if (routeRe.test(href)) return true;
+        const text = (node.textContent ?? "").trim();
+        return ctaTextRe.test(text);
+      }).length;
+
+      return {
+        addressAnchors,
+        telAnchorsWithDigits,
+        telAnchorsTotal,
+        mailtoAnchors,
+        websiteAnchors,
+        revealButtons,
+        messengerMatches,
+        routeLinks
+      };
+    };
+
+    const scoreCandidate = (signals: PanelSignals, geometry: PanelGeometry): number => {
+      const { width, height } = geometry;
+      if (width < PANEL_MIN_WIDTH || height < PANEL_MIN_HEIGHT) return Number.NEGATIVE_INFINITY;
+      if (width > PANEL_MAX_WIDTH || height > PANEL_MAX_HEIGHT) return Number.NEGATIVE_INFINITY;
+
+      let score = 0;
+      score += signals.addressAnchors * 10;
+      score += signals.telAnchorsWithDigits * 5;
+      score += signals.mailtoAnchors * 5;
+      score += signals.websiteAnchors * 3;
+      score += signals.revealButtons * 4;
+      score += Math.min(signals.messengerMatches, 4) * 2;
+      score -= signals.routeLinks * 3;
+
+      if (
+        signals.addressAnchors === 0 &&
+        signals.mailtoAnchors === 0 &&
+        signals.telAnchorsWithDigits === 0
+      ) {
+        score -= 8;
+      }
+
+      if (width >= 400 && height >= 300) score += 2;
+      if (width >= 600 && height >= 400) score += 3;
+      if (width >= 800 && height >= 500) score += 4;
+
+      return score;
+    };
+
+    const selectScoredPanel = (visible: Element[]): { panel: Element | null; isScoped: boolean } => {
       const article = document.querySelector("article");
       if (article) {
         const rect = article.getBoundingClientRect();
-        if (rect.width >= 200 && rect.height >= 200) {
-          return { panel: article, isScoped: true };
+        if (
+          rect.width >= PANEL_MIN_WIDTH &&
+          rect.height >= PANEL_MIN_HEIGHT &&
+          rect.width <= PANEL_MAX_WIDTH &&
+          rect.height <= PANEL_MAX_HEIGHT
+        ) {
+          const signals = collectSignals(article);
+          const score = scoreCandidate(signals, { width: rect.width, height: rect.height });
+          if (score >= MIN_PANEL_SCORE) {
+            return { panel: article, isScoped: true };
+          }
         }
       }
-      for (const h1El of visibleH1s) {
+
+      let best: { panel: Element; score: number } | null = null;
+      for (const h1El of visible) {
         let candidate: Element | null = h1El.parentElement;
         for (let depth = 0; depth < 10 && candidate; depth += 1) {
           const rect = candidate.getBoundingClientRect();
-          if (rect.width >= 200 && rect.height >= 200) {
-            const hasContactAnchor =
-              candidate.querySelector("a[href^='tel:']") ||
-              candidate.querySelector("a[href^='mailto:']") ||
-              candidate.querySelector("a[href*='/geo/']") ||
-              candidate.querySelector("a[href^='http']");
-            if (hasContactAnchor) {
-              return { panel: candidate, isScoped: true };
-            }
+          if (rect.width < PANEL_MIN_WIDTH || rect.height < PANEL_MIN_HEIGHT) {
+            candidate = candidate.parentElement;
+            continue;
+          }
+          if (rect.width > PANEL_MAX_WIDTH || rect.height > PANEL_MAX_HEIGHT) {
+            break;
+          }
+          const signals = collectSignals(candidate);
+          const score = scoreCandidate(signals, { width: rect.width, height: rect.height });
+          if (best === null || score > best.score) {
+            best = { panel: candidate, score };
           }
           candidate = candidate.parentElement;
         }
       }
+
+      if (best !== null && best.score >= MIN_PANEL_SCORE) {
+        return { panel: best.panel, isScoped: true };
+      }
       return { panel: null, isScoped: false };
     };
 
-    const { panel, isScoped } = findPanel();
+    const isRouteOrBookingTelAnchor = (anchor: HTMLAnchorElement): boolean => {
+      const raw = (anchor.getAttribute("href") ?? "").toLowerCase();
+      if (raw.startsWith("tel:") && /^tel:\+?(?:78|8)00\d{5,}/i.test(raw)) return true;
+      const text = (anchor.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (/Позвонить\s+в\s+службу|Заказать\s+звонок|Связаться\s+с\s+поддержкой/i.test(text)) return true;
+      return false;
+    };
+
+    const { panel, isScoped } = selectScoredPanel(visibleH1s);
     const scope: ParentNode = panel ?? document;
     // No generic type parameter here on purpose: esbuild's keepNames
     // transform wraps a generic arrow in `__name(...)`, but the helper
@@ -511,7 +813,9 @@ async function collectDomFirmSnapshot(page: Page): Promise<DomFirmSnapshot> {
       ariaLabel: el.getAttribute("aria-label")?.trim() ?? ""
     });
 
-    const telLinks = $("a[href^='tel:']").map((el) => linkRecord(el as HTMLAnchorElement));
+    const telAnchors = $("a[href^='tel:']");
+    const firmTelAnchors = telAnchors.filter((el) => !isRouteOrBookingTelAnchor(el as HTMLAnchorElement));
+    const telLinks = firmTelAnchors.map((el) => linkRecord(el as HTMLAnchorElement));
     const mailtoLinks = $("a[href^='mailto:']").map((el) => linkRecord(el as HTMLAnchorElement));
     const addressLinks = $("a[href*='/geo/']").map((el) => linkRecord(el as HTMLAnchorElement));
     const httpLinks = $("a[href^='http']").map((el) => linkRecord(el as HTMLAnchorElement));
@@ -542,7 +846,8 @@ async function collectDomFirmSnapshot(page: Page): Promise<DomFirmSnapshot> {
       allAnchors,
       selectorCounts: {
         h1: visibleH1s.length,
-        "a[href^='tel:']": telLinks.length,
+        "a[href^='tel:']": telAnchors.length,
+        "a[href^='tel:']:firm": telLinks.length,
         "a[href^='mailto:']": mailtoLinks.length,
         "a[href*='/geo/']": addressLinks.length,
         "a[href^='http']": httpLinks.length
