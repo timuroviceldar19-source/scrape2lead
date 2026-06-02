@@ -1,0 +1,15 @@
+{
+  "source": "2gis",
+  "geo": "Новосибирск",
+  "category": "Автосервисы",
+  "limit": 10,
+  "databasePath": "data/smoke2gis.db",
+  "exportDir": "exports",
+  "delayRangeMs": [1500, 3000],
+  "rotateEveryN": 50,
+  "maxRetries": 2,
+  "concurrency": 1,
+  "headless": false,
+  "rawSnapshotDir": "raw_snapshots",
+  "storageBackend": "sqlite"
+}

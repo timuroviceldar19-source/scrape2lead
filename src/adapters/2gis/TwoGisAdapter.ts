@@ -11,6 +11,7 @@ import { classifySoftBlock, SoftBlockError, type SoftBlockClassification, type S
 export class TwoGisAdapter implements ISourceAdapter {
   readonly source = "2gis";
   private lastPayloads: unknown[] = [];
+  private detailDebugLogged = 0;
 
   constructor(
     private readonly config: RuntimeConfig,
@@ -87,8 +88,36 @@ export class TwoGisAdapter implements ISourceAdapter {
   }
 
   async getCardDetail(card: RawCompanyCard): Promise<RawCardDetail> {
-    const payload = findDetailPayload(this.lastPayloads, card.externalId) ?? asRecord(card.payload);
-    return mapDetail(card, payload);
+    const capturedPayload = findDetailPayload(this.lastPayloads, card.externalId) ?? asRecord(card.payload);
+    if (this.config.fixturePath) {
+      return mapDetail(card, capturedPayload);
+    }
+
+    const domPayload = await this.fetchDomDetail(card).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isBlockLikeError(message)) throw error;
+      logger.warn("2GIS detail DOM extraction failed; falling back to captured payload", {
+        externalId: card.externalId,
+        message
+      });
+      return null;
+    });
+
+    if (!domPayload) return mapDetail(card, capturedPayload);
+    return mapDetail(
+      {
+        ...card,
+        name: getRecordString(domPayload, "name") ?? card.name,
+        category: getRecordString(domPayload, "category") ?? card.category,
+        city: getRecordString(domPayload, "city_name") ?? card.city,
+        address: getRecordString(domPayload, "address_name") ?? card.address,
+        url: getRecordString(domPayload, "url") ?? card.url
+      },
+      {
+        ...capturedPayload,
+        ...domPayload
+      }
+    );
   }
 
   async getContacts(detail: RawCardDetail): Promise<RawContacts> {
@@ -129,12 +158,12 @@ export class TwoGisAdapter implements ISourceAdapter {
   private async domFallback(page: Page, query: SearchQuery): Promise<RawCompanyCard[]> {
     logger.warn("api capture returned no cards; using DOM fallback");
     const cards = await page.evaluate(({ category, geo }) => {
-      const anchors = [...document.querySelectorAll("a[href*='/firm/'], a[href*='/branches/']")];
+      const anchors = [...document.querySelectorAll("a[href*='/firm/']")];
       return anchors.map((anchor) => {
         const element = anchor as HTMLAnchorElement;
         const text = element.textContent?.replace(/\s+/g, " ").trim() ?? "";
         const href = element.href;
-        const id = href.match(/(?:firm|branches)\/(\d+)/)?.[1] ?? href;
+        const id = href.match(/firm\/(\d+)/)?.[1] ?? href;
         return {
           source: "2gis",
           externalId: id,
@@ -148,6 +177,46 @@ export class TwoGisAdapter implements ISourceAdapter {
       });
     }, { category: query.category, geo: query.geo });
     return dedupeCards(cards).slice(0, query.limit);
+  }
+
+  private async fetchDomDetail(card: RawCompanyCard): Promise<Record<string, unknown> | null> {
+    const detailUrl = canonicalFirmUrl(card.url) ?? buildFirmUrl(this.config.geo, card.externalId);
+    const page = await this.browserSession.newPage();
+    try {
+      logger.info("opening 2GIS detail", { externalId: card.externalId, url: stripQuery(detailUrl) });
+      await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await this.detectCaptcha(page);
+      await page.waitForTimeout(randomDelay(this.config.delayRangeMs));
+      let snapshot = await collectDomFirmSnapshot(page);
+      let reveal = revealEvidenceFromButtons(snapshot.buttons, false);
+
+      // Phone-reveal gate: only click "Показать телефон" when the panel
+      // does not already expose a usable `tel:` href. The audit calls this
+      // out explicitly — clicking through reveal when a real tel: link
+      // already exists is wasted traffic and (worse) trips the counter
+      // 2GIS uses to throttle masked-phone reveals.
+      if (!hasUsableTelLink(snapshot)) {
+        reveal = await clickContactRevealControls(page);
+        await page.waitForTimeout(700);
+        await this.detectCaptcha(page);
+        snapshot = await collectDomFirmSnapshot(page);
+      }
+
+      const dom = buildDomFirmPayload(snapshot, card, this.config.category, this.config.geo, reveal);
+      this.logDetailDebug(card.externalId, dom.debug);
+      return dom.payload;
+    } finally {
+      await page.close().catch(() => undefined);
+    }
+  }
+
+  private logDetailDebug(externalId: string, debug: Record<string, unknown>): void {
+    if (this.detailDebugLogged >= 2) return;
+    this.detailDebugLogged += 1;
+    logger.info("[2gis-detail-debug] safe detail extraction evidence", {
+      externalId,
+      ...debug
+    });
   }
 
   private async detectCaptcha(page: Page): Promise<void> {
@@ -257,8 +326,531 @@ export function classifyWall(title: string, bodyText: string): "captcha" | "brow
   return null;
 }
 
-function buildSearchUrl(geo: string, category: string): string {
-  return `https://2gis.ru/${encodeURIComponent(geo)}/search/${encodeURIComponent(category)}`;
+/**
+ * One anchor collected from the firm detail panel. The DOM-detail extractor
+ * scopes every collection to the same panel (an `<article>` element, the
+ * closest containing block of the firm h1, etc.) so list / sidebar / promo /
+ * map / footer anchors are never mixed into the detail payload.
+ */
+export interface DomFirmLink {
+  href: string;
+  text: string;
+  ariaLabel: string;
+}
+
+/**
+ * Snapshot of the opened 2GIS firm detail panel. `scope` records whether the
+ * extractor found a panel container (`"panel"`) or fell back to `document`
+ * (`"document"`). The mapper uses this evidence to fail loud when scoping
+ * never resolved — the slice must never silently scrape list / footer
+ * anchors as firm contact data.
+ */
+export interface DomFirmSnapshot {
+  title: string;
+  url: string;
+  scope: "panel" | "document";
+  h1: string[];
+  buttons: string[];
+  telLinks: DomFirmLink[];
+  mailtoLinks: DomFirmLink[];
+  addressLinks: DomFirmLink[];
+  httpLinks: DomFirmLink[];
+  allAnchors: DomFirmLink[];
+  selectorCounts: Record<string, number>;
+}
+
+export interface ContactRevealEvidence {
+  present: boolean;
+  clicked: number;
+  labels: string[];
+}
+
+/**
+ * Safe, redirect-free description of a messenger entry. The URL is omitted
+ * on purpose: 2GIS renders messenger links as `link.2gis.ru` redirects that
+ * carry per-session tracking tokens, so we never persist or log them. The
+ * provider label is the only thing safe to keep.
+ */
+export interface DomFirmMessenger {
+  provider: string;
+  label: string;
+}
+
+const MESSENGER_PROVIDERS: Array<{ provider: string; re: RegExp; hrefRe?: RegExp }> = [
+  { provider: "WhatsApp", re: /whats?app/i, hrefRe: /(?:^|\.)wa\.me\/|whatsapp\.com\//i },
+  { provider: "Telegram", re: /телеграм|telegram/i, hrefRe: /(?:^|\.)t\.me\/|telegram\.me\//i },
+  { provider: "Viber", re: /viber/i, hrefRe: /viber(?:\.click)?:|(?:^|\.)viber\.com\//i },
+  { provider: "Max", re: /(?:^|\s)(max)(?:\s|$)/i, hrefRe: /(?:^|\.)max\.ru\//i }
+];
+
+export function buildSearchUrl(geo: string, category: string): string {
+  return `https://2gis.ru/${citySegment(geo)}/search/${encodeURIComponent(category)}`;
+}
+
+function buildFirmUrl(geo: string, externalId: string): string {
+  return `https://2gis.ru/${citySegment(geo)}/firm/${encodeURIComponent(externalId)}`;
+}
+
+export function citySegment(geo: string): string {
+  const normalized = geo.trim().toLowerCase();
+  const known = CITY_SLUGS.get(normalized);
+  return known ?? encodeURIComponent(geo);
+}
+
+const CITY_SLUGS = new Map<string, string>([
+  ["moscow", "moscow"],
+  ["\u043c\u043e\u0441\u043a\u0432\u0430", "moscow"],
+  ["novosibirsk", "novosibirsk"],
+  ["\u043d\u043e\u0432\u043e\u0441\u0438\u0431\u0438\u0440\u0441\u043a", "novosibirsk"],
+  ["saint petersburg", "spb"],
+  ["st petersburg", "spb"],
+  ["spb", "spb"],
+  ["\u0441\u0430\u043d\u043a\u0442-\u043f\u0435\u0442\u0435\u0440\u0431\u0443\u0440\u0433", "spb"]
+]);
+
+async function clickContactRevealControls(page: Page): Promise<ContactRevealEvidence> {
+  return page.evaluate(async () => {
+    const revealRe = new RegExp(
+      [
+        "\\u041f\\u043e\\u043a\\u0430\\u0437\\u0430\\u0442\\u044c\\s+\\u0442\\u0435\\u043b\\u0435\\u0444\\u043e\\u043d",
+        "\\u041f\\u043e\\u043a\\u0430\\u0437\\u0430\\u0442\\u044c\\s+\\u0442\\u0435\\u043b\\u0435\\u0444\\u043e\\u043d\\u044b",
+        "\\u041f\\u043e\\u043a\\u0430\\u0437\\u0430\\u0442\\u044c\\s+\\u043a\\u043e\\u043d\\u0442\\u0430\\u043a\\u0442",
+        "\\u041f\\u043e\\u043a\\u0430\\u0437\\u0430\\u0442\\u044c\\s+\\u043a\\u043e\\u043d\\u0442\\u0430\\u043a\\u0442\\u044b"
+      ].join("|"),
+      "i"
+    );
+    const controls = [...document.querySelectorAll("button, [role='button'], a")]
+      .filter((el) => revealRe.test((el.textContent ?? "").replace(/\s+/g, " ").trim()));
+    const labels = controls.slice(0, 10)
+      .map((el) => (el.textContent ?? "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    let clicked = 0;
+    for (const el of controls.slice(0, 3)) {
+      try {
+        (el as HTMLElement).click();
+        clicked += 1;
+      } catch {
+        // Ignore stale or non-clickable controls; existing anchors may already
+        // contain the contact data.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return { present: controls.length > 0, clicked, labels };
+  });
+}
+
+/**
+ * Collect a structured snapshot of the firm detail panel.
+ *
+ * Scoping strategy (no obfuscated CSS classes — only semantic / stable hooks):
+ *  1. Find every visible `<h1>`; the firm name is the longest visible h1.
+ *  2. Look for an `<article>` element. If one exists with a non-trivial
+ *     bounding box, use it as the panel scope.
+ *  3. Otherwise walk up from the firm h1 looking for the closest containing
+ *     block that (a) has a reasonable size and (b) actually contains
+ *     contact-like anchors (`tel:`, `mailto:`, `/geo/`, `http(s)`). That
+ *     container is the firm detail panel — the search-results list, map
+ *     controls, promo blocks and footer live outside of it.
+ *  4. When no panel container can be found, the snapshot is collected from
+ *     `document` and `scope: "document"` is set so the caller can detect
+ *     that scoping never resolved.
+ */
+async function collectDomFirmSnapshot(page: Page): Promise<DomFirmSnapshot> {
+  return page.evaluate(() => {
+    const title = document.title;
+    const href = location.href;
+
+    const visibleH1s = [...document.querySelectorAll("h1")].filter((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    const h1 = visibleH1s
+      .map((el) => (el.textContent ?? "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .slice(0, 5);
+
+    const findPanel = (): { panel: Element | null; isScoped: boolean } => {
+      const article = document.querySelector("article");
+      if (article) {
+        const rect = article.getBoundingClientRect();
+        if (rect.width >= 200 && rect.height >= 200) {
+          return { panel: article, isScoped: true };
+        }
+      }
+      for (const h1El of visibleH1s) {
+        let candidate: Element | null = h1El.parentElement;
+        for (let depth = 0; depth < 10 && candidate; depth += 1) {
+          const rect = candidate.getBoundingClientRect();
+          if (rect.width >= 200 && rect.height >= 200) {
+            const hasContactAnchor =
+              candidate.querySelector("a[href^='tel:']") ||
+              candidate.querySelector("a[href^='mailto:']") ||
+              candidate.querySelector("a[href*='/geo/']") ||
+              candidate.querySelector("a[href^='http']");
+            if (hasContactAnchor) {
+              return { panel: candidate, isScoped: true };
+            }
+          }
+          candidate = candidate.parentElement;
+        }
+      }
+      return { panel: null, isScoped: false };
+    };
+
+    const { panel, isScoped } = findPanel();
+    const scope: ParentNode = panel ?? document;
+    // No generic type parameter here on purpose: esbuild's keepNames
+    // transform wraps a generic arrow in `__name(...)`, but the helper
+    // only exists in the Node runtime, not in the page context where
+    // `page.evaluate` runs.
+    const $ = (selector: string): Element[] => [...scope.querySelectorAll(selector)];
+
+    const linkRecord = (el: HTMLAnchorElement): DomFirmLink => ({
+      href: el.href,
+      text: (el.textContent ?? "").replace(/\s+/g, " ").trim(),
+      ariaLabel: el.getAttribute("aria-label")?.trim() ?? ""
+    });
+
+    const telLinks = $("a[href^='tel:']").map((el) => linkRecord(el as HTMLAnchorElement));
+    const mailtoLinks = $("a[href^='mailto:']").map((el) => linkRecord(el as HTMLAnchorElement));
+    const addressLinks = $("a[href*='/geo/']").map((el) => linkRecord(el as HTMLAnchorElement));
+    const httpLinks = $("a[href^='http']").map((el) => linkRecord(el as HTMLAnchorElement));
+    const allAnchors = $("a[href]").map((el) => linkRecord(el as HTMLAnchorElement));
+
+    // Buttons are not panel-scoped on purpose: the reveal click happens
+    // *before* the panel is confirmed, and a "Показать телефон" button that
+    // lives next to the h1 (sibling of the contact section) is a stronger
+    // reveal signal than one buried deep in the panel tree. The button list
+    // is only used to detect / count reveal controls, never as a contact
+    // source, so scoping it to the panel would only hide real reveal
+    // controls.
+    const buttons = [...document.querySelectorAll("button, [role='button']")]
+      .map((element) => (element.textContent ?? "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .slice(0, 30);
+
+    return {
+      title,
+      url: href,
+      scope: isScoped ? "panel" : "document",
+      h1,
+      buttons,
+      telLinks,
+      mailtoLinks,
+      addressLinks,
+      httpLinks,
+      allAnchors,
+      selectorCounts: {
+        h1: visibleH1s.length,
+        "a[href^='tel:']": telLinks.length,
+        "a[href^='mailto:']": mailtoLinks.length,
+        "a[href*='/geo/']": addressLinks.length,
+        "a[href^='http']": httpLinks.length
+      }
+    } satisfies DomFirmSnapshot;
+  });
+}
+
+export function buildDomFirmPayload(
+  snapshot: DomFirmSnapshot,
+  card: RawCompanyCard,
+  fallbackCategory: string,
+  fallbackCity: string,
+  reveal: ContactRevealEvidence = { present: false, clicked: 0, labels: [] }
+): { payload: Record<string, unknown>; debug: Record<string, unknown> } {
+  const titleParts = parse2GisTitle(snapshot.title, fallbackCity);
+  const name = firstNonEmpty(snapshot.h1[0], titleParts.name, card.name);
+  const category = firstNonEmpty(titleParts.category, card.category, fallbackCategory);
+  const city = firstNonEmpty(titleParts.city, card.city, fallbackCity);
+  const address = firstNonEmpty(extractAddressLink(snapshot), titleParts.address, card.address, "");
+  const phones = uniqueStrings(snapshot.telLinks.map(extractPhoneHref));
+  const email = uniqueStrings(snapshot.mailtoLinks.map(extractEmailHref))[0] ?? null;
+  const website = uniqueStrings(snapshot.httpLinks.map(extractWebsiteLink))[0] ?? null;
+  const messengers = extractMessengerEntries(snapshot.allAnchors);
+
+  const contacts: Array<Record<string, string>> = [
+    ...phones.map((value) => ({ type: "phone", value })),
+    ...(email ? [{ type: "email", value: email }] : []),
+    ...(website ? [{ type: "website", value: website, url: website }] : [])
+  ];
+
+  const payload = {
+    id: card.externalId,
+    type: "branch",
+    name,
+    category,
+    city_name: city,
+    address_name: address,
+    rubrics: category ? [{ name: category }] : [],
+    contacts,
+    messengers: messengers.map((messenger) => ({ provider: messenger.provider, label: messenger.label })),
+    url: stripQuery(snapshot.url),
+    dom_debug: {
+      scope: snapshot.scope,
+      selectors: snapshot.selectorCounts,
+      contactReveal: {
+        present: reveal.present,
+        clicked: reveal.clicked,
+        labelCount: reveal.labels.length
+      },
+      fieldPresence: {
+        name: Boolean(name),
+        address: Boolean(address),
+        phones: phones.length,
+        email: Boolean(email),
+        website: Boolean(website),
+        messengers: messengers.length
+      }
+    }
+  };
+
+  const debug = {
+    url: stripQuery(snapshot.url),
+    scope: snapshot.scope,
+    selectorsUsed: [
+      "h1",
+      "button",
+      "[role='button']",
+      "a[href^='tel:']",
+      "a[href^='mailto:']",
+      "a[href*='/geo/']",
+      "a[href^='http']",
+      "document.title"
+    ],
+    selectorCounts: snapshot.selectorCounts,
+    textShape: {
+      titleChars: snapshot.title.length,
+      h1Count: snapshot.h1.length,
+      buttonCount: snapshot.buttons.length,
+      telCount: snapshot.telLinks.length,
+      mailtoCount: snapshot.mailtoLinks.length,
+      addressCount: snapshot.addressLinks.length,
+      httpCount: snapshot.httpLinks.length
+    },
+    contactReveal: {
+      present: reveal.present,
+      clicked: reveal.clicked,
+      labels: reveal.labels.map(redactContactLabel)
+    },
+    fieldsFound: {
+      name: Boolean(name),
+      address: Boolean(address),
+      phones: phones.length,
+      email: Boolean(email),
+      website: Boolean(website),
+      messengers: messengers.map((messenger) => messenger.provider)
+    }
+  };
+
+  return { payload, debug };
+}
+
+function parse2GisTitle(title: string, fallbackCity: string): {
+  name: string | null;
+  category: string | null;
+  address: string | null;
+  city: string | null;
+} {
+  const clean = title.replace(/\s+\u2014\s+2\u0413\u0418\u0421.*$/u, "").trim();
+  const parts = clean.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    return { name: null, category: null, address: null, city: fallbackCity || null };
+  }
+  const city = parts.length > 1 && !/\d/.test(parts[parts.length - 1]) ? parts[parts.length - 1] : fallbackCity;
+  const cityIndex = city === parts[parts.length - 1] ? parts.length - 1 : parts.length;
+  let digitIndex = -1;
+  for (let index = cityIndex - 1; index > 0; index -= 1) {
+    if (/\d/.test(parts[index])) {
+      digitIndex = index;
+      break;
+    }
+  }
+  const address = digitIndex > 0
+    ? parts.slice(Math.max(1, digitIndex - 1), cityIndex).join(", ")
+    : null;
+  return {
+    name: parts[0] ?? null,
+    category: parts[1] ?? null,
+    address,
+    city
+  };
+}
+
+/**
+ * Pull a phone string out of a `tel:` href. Returns the empty string when
+ * the href carries no digits (e.g. `tel:` for a masked phone). The presence
+ * of at least one non-empty value is the signal the phone-reveal gate looks
+ * for.
+ */
+function extractPhoneHref(link: DomFirmLink): string {
+  if (!link.href.toLowerCase().startsWith("tel:")) return "";
+  const decoded = decodeURIComponent(link.href.slice(4)).trim();
+  return /\d/.test(decoded) ? decoded : "";
+}
+
+/**
+ * True when the snapshot already carries at least one usable phone — i.e. a
+ * `tel:` href with a real digit sequence. The phone-reveal gate refuses to
+ * click "Показать телефон" when this is true, both to avoid pointless work
+ * and to keep the adapter from clicking buttons the page is hiding behind
+ * a counter. Exported so the unit tests can pin the gate's behaviour.
+ */
+export function hasUsableTelLink(snapshot: DomFirmSnapshot): boolean {
+  return snapshot.telLinks.some((link) => extractPhoneHref(link).length > 0);
+}
+
+function revealEvidenceFromButtons(buttons: string[], clicked: boolean): ContactRevealEvidence {
+  const revealRe = new RegExp(
+    [
+      "\\u041f\\u043e\\u043a\\u0430\\u0437\\u0430\\u0442\\u044c\\s+\\u0442\\u0435\\u043b\\u0435\\u0444\\u043e\\u043d",
+      "\\u041f\\u043e\\u043a\\u0430\\u0437\\u0430\\u0442\\u044c\\s+\\u0442\\u0435\\u043b\\u0435\\u0444\\u043e\\u043d\\u044b",
+      "\\u041f\\u043e\\u043a\\u0430\\u0437\\u0430\\u0442\\u044c\\s+\\u043a\\u043e\\u043d\\u0442\\u0430\\u043a\\u0442",
+      "\\u041f\\u043e\\u043a\\u0430\\u0437\\u0430\\u0442\\u044c\\s+\\u043a\\u043e\\u043d\\u0442\\u0430\\u043a\\u0442\\u044b"
+    ].join("|"),
+    "i"
+  );
+  const labels = buttons.filter((button) => revealRe.test(button)).slice(0, 10);
+  return { present: labels.length > 0, clicked: clicked ? labels.length : 0, labels };
+}
+
+function extractEmailHref(link: DomFirmLink): string {
+  if (!link.href.toLowerCase().startsWith("mailto:")) return "";
+  const decoded = decodeURIComponent(link.href.slice(7).split("?")[0]).trim();
+  return decoded.includes("@") ? decoded : "";
+}
+
+function extractWebsiteLink(link: DomFirmLink): string {
+  // Prefer the visible domain text. 2GIS serves the firm's real domain as
+  // the link's *text* and wraps the click target in a `link.2gis.ru`
+  // tracking redirect; trusting the href would persist the redirect
+  // (and the per-session token in its query string).
+  const textUrl = websiteFromText(link.text);
+  if (textUrl) return textUrl;
+  const textAriaUrl = link.ariaLabel ? websiteFromText(link.ariaLabel) : null;
+  if (textAriaUrl) return textAriaUrl;
+  let url: URL;
+  try {
+    url = new URL(link.href);
+  } catch {
+    return "";
+  }
+  if (isBlockedWebsiteHost(url.hostname)) return "";
+  if (!/\./.test(url.hostname)) return "";
+  return `${url.protocol}//${url.hostname}${url.pathname === "/" ? "" : url.pathname}`;
+}
+
+/**
+ * Address is taken from the firm detail panel's geo anchor — 2GIS wraps the
+ * visible address in `<a href="/geo/…">` and the link text is the human-
+ * readable address. Falling back to the title-parsed / card-supplied
+ * address only happens when the panel has no geo anchor at all (older pages
+ * or pages where the address renders as plain text inside a `<span>`).
+ */
+function extractAddressLink(snapshot: DomFirmSnapshot): string {
+  for (const link of snapshot.addressLinks) {
+    const text = link.text;
+    if (text) return text;
+  }
+  return "";
+}
+
+function extractMessengerEntries(anchors: DomFirmLink[]): DomFirmMessenger[] {
+  const out: DomFirmMessenger[] = [];
+  const seen = new Set<string>();
+  for (const anchor of anchors) {
+    const provider = matchMessengerProvider(anchor);
+    if (!provider) continue;
+    if (seen.has(provider)) continue;
+    seen.add(provider);
+    out.push({ provider, label: provider });
+  }
+  return out;
+}
+
+function matchMessengerProvider(link: DomFirmLink): string | null {
+  const haystack = `${link.text} ${link.ariaLabel} ${link.href}`.toLowerCase();
+  for (const entry of MESSENGER_PROVIDERS) {
+    if (entry.re.test(haystack)) return entry.provider;
+    if (entry.hrefRe && entry.hrefRe.test(haystack)) return entry.provider;
+  }
+  return null;
+}
+
+function websiteFromText(text: string): string | null {
+  if (!text || /\s/.test(text) || text.includes("@")) return null;
+  if (!/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?:\/.*)?$/i.test(text)) return null;
+  const value = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+  try {
+    if (isBlockedWebsiteHost(new URL(value).hostname)) return null;
+  } catch {
+    return null;
+  }
+  return value;
+}
+
+function canonicalFirmUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/\/firm\/(\d+)/);
+    if (!match) return null;
+    return `${parsed.origin}${parsed.pathname.slice(0, match.index ?? parsed.pathname.length)}/firm/${match[1]}`;
+  } catch {
+    return null;
+  }
+}
+
+function stripQuery(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split("?")[0];
+  }
+}
+
+function is2GisHost(hostname: string): boolean {
+  return /(^|\.)2gis\./i.test(hostname) || /(^|\.)dgis\./i.test(hostname);
+}
+
+function isBlockedWebsiteHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    is2GisHost(host) ||
+    host === "otello.ru" ||
+    host.endsWith(".otello.ru") ||
+    host === "2gis.onelink.me" ||
+    host === "onelink.me"
+  );
+}
+
+function firstNonEmpty(...values: Array<string | null | undefined>): string {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0)?.trim() ?? "";
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function redactContactLabel(label: string): string {
+  return label.replace(/(?:\+?\d[\d\s().-]{5,}\d)/g, "<phone>");
+}
+
+function getRecordString(item: Record<string, unknown>, key: string): string | null {
+  const value = item[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isBlockLikeError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("captcha") ||
+    lower.includes("blocked") ||
+    lower.includes("soft_blocked") ||
+    lower.includes("throttled") ||
+    lower.includes("403") ||
+    lower.includes("429")
+  );
 }
 
 function randomDelay([min, max]: [number, number]): number {
