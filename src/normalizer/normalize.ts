@@ -51,11 +51,19 @@ export function finalizeLead(lead: Lead): Lead {
     email,
     website,
     social_links: uniqueUrls(lead.social_links),
-    messenger_links: uniqueUrls(lead.messenger_links),
+    // Messenger entries are safe provider labels (e.g. "WhatsApp",
+    // "Telegram"), not URLs. They must NOT go through `uniqueUrls` —
+    // that normaliser would prepend `https://` to anything that
+    // doesn't look like a URL and turn "WhatsApp" into "https://whatsapp".
+    messenger_links: uniqueLabels(lead.messenger_links),
     incomplete: lead.incomplete || phones.length === 0
   };
 }
 
 function uniqueUrls(values: string[]): string[] {
   return [...new Set(values.map(normalizeUrl).filter((value): value is string => Boolean(value)))];
+}
+
+function uniqueLabels(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }

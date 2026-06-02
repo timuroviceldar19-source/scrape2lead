@@ -23,6 +23,28 @@ export class BrowserSessionManager {
         viewport: { width: 1366, height: 768 }
       });
       await this.context.addInitScript(fingerprintPatch);
+      // esbuild's `keepNames` transform (used by `tsx`) wraps any named
+      // function expression inside `page.evaluate` in a `__name(target,
+      // value)` helper call so the function's `.name` property is set
+      // correctly in Node. The helper isn't shipped to the browser, so
+      // any inline arrow like `const $ = (s) => …` throws
+      // "ReferenceError: __name is not defined" in the page context.
+      // Defining it here as a no-op makes the inline code work.
+      await this.context.addInitScript(
+        () => {
+          (globalThis as unknown as { __name?: (target: unknown, value: string) => unknown }).__name = (
+            target: unknown,
+            value: string
+          ) => {
+            try {
+              Object.defineProperty(target as object, "name", { value, configurable: true });
+            } catch {
+              // ignore
+            }
+            return target;
+          };
+        }
+      );
     }
     return this.context.newPage();
   }

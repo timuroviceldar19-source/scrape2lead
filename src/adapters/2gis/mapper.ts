@@ -118,11 +118,15 @@ export function mapRawCard(item: Record<string, unknown>, fallbackCategory: stri
 export function mapDetail(card: RawCompanyCard, item: Record<string, unknown>): RawCardDetail {
   return {
     ...card,
+    name: card.name || getString(item, NAME_KEYS) || card.externalId,
+    category: card.category || extractCategory(item) || undefined,
+    city: card.city || getString(item, ["city_name", "city"]) || undefined,
+    address: card.address || extractAddress(item),
     email: extractEmail(item),
     website: extractWebsite(item),
     phones: extractPhones(item),
     socialLinks: extractLinks(item, ["social", "socials", "social_links"]),
-    messengerLinks: extractLinks(item, ["messengers", "messenger_links"]),
+    messengerLinks: uniqueStrings([...extractMessengers(item), ...extractLinks(item, ["messenger_links"])]),
     payload: item
   };
 }
@@ -135,7 +139,11 @@ export function mapContacts(detail: RawCardDetail, payload: unknown): RawContact
     email: detail.email ?? extractEmail(item),
     website: detail.website ?? extractWebsite(item),
     socialLinks: [...(detail.socialLinks ?? []), ...extractLinks(item, ["social", "socials", "social_links"])],
-    messengerLinks: [...(detail.messengerLinks ?? []), ...extractLinks(item, ["messengers", "messenger_links"])],
+    messengerLinks: uniqueStrings([
+      ...(detail.messengerLinks ?? []),
+      ...extractMessengers(item),
+      ...extractLinks(item, ["messenger_links"])
+    ]),
     payload
   };
 }
@@ -208,14 +216,14 @@ function extractAddress(item: Record<string, unknown>): string {
 }
 
 function extractWebsite(item: Record<string, unknown>): string | null {
-  const typed = typedContacts(item, "website");
+  const typed = typedContacts(item, "website").filter(isExternalWebsiteCandidate);
   if (typed[0]) return typed[0];
-  const direct = getString(item, ["website", "site", "url"]);
-  if (direct) return direct;
-  const nested = collectValuesByKey(item, /website|site|url/i).find((value) => value.includes("."));
+  const direct = getString(item, ["website", "site"]);
+  if (direct && isExternalWebsiteCandidate(direct)) return direct;
+  const nested = collectValuesByKey(item, /website|site|url/i).find(isExternalWebsiteCandidate);
   if (nested) return nested;
   const links = extractLinks(item, ["links", "contact_links"]);
-  return links.find((link) => /^https?:\/\//i.test(link) || /\./.test(link)) ?? null;
+  return links.find(isExternalWebsiteCandidate) ?? null;
 }
 
 function extractEmail(item: Record<string, unknown>): string | null {
@@ -257,6 +265,39 @@ function extractLinks(item: Record<string, unknown>, keys: string[]): string[] {
   return keys.flatMap((key) => collectValuesByKey(item, new RegExp(`^${key}$`, "i"))).filter((value) => value.includes(".") || value.includes("://"));
 }
 
+/**
+ * Pull safe messenger labels out of the payload. The DOM-detail extractor
+ * writes `messengers: [{ provider, label }]` — provider names like
+ * "WhatsApp", "Telegram", "Max", "Viber". We intentionally do NOT walk
+ * `link.2gis.ru` redirect URLs: those carry per-session tracking tokens
+ * and must never be persisted. The output is just the safe labels.
+ */
+function extractMessengers(item: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+      return;
+    }
+    if (!isRecord(value)) return;
+    const provider = value.provider;
+    const label = value.label;
+    if (typeof provider === "string" && provider.trim()) {
+      out.push(provider.trim());
+    } else if (typeof label === "string" && label.trim()) {
+      out.push(label.trim());
+    }
+  };
+  for (const key of ["messengers", "messenger"]) {
+    if (key in item) walk(item[key]);
+  }
+  return out;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
 function collectValuesByKey(value: unknown, keyPattern: RegExp): string[] {
   if (Array.isArray(value)) return value.flatMap((item) => collectValuesByKey(item, keyPattern));
   if (!isRecord(value)) return [];
@@ -273,6 +314,21 @@ function collectStrings(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(collectStrings);
   if (isRecord(value)) return Object.values(value).flatMap(collectStrings);
   return [];
+}
+
+function isExternalWebsiteCandidate(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.includes("@") || !/\./.test(trimmed)) return false;
+  try {
+    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    const host = new URL(withScheme).hostname.toLowerCase();
+    if (/(^|\.)2gis\./i.test(host) || /(^|\.)dgis\./i.test(host)) return false;
+    if (host === "otello.ru" || host.endsWith(".otello.ru")) return false;
+    if (host === "2gis.onelink.me" || host === "onelink.me") return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function getString(item: Record<string, unknown>, keys: string[]): string | null {
