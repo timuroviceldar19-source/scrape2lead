@@ -6,6 +6,7 @@ import { AdapterRegistry } from "../src/adapters/registry.js";
 import { JobManager } from "../src/core/jobManager.js";
 import { RATE_LIMIT_WINDOW_MS } from "../src/core/rateLimiter.js";
 import { Storage } from "../src/storage/storage.js";
+import { SoftBlockError } from "../src/adapters/2gis/softBlock.js";
 import type { ProxyRotator, ProxyRuntimeState } from "../src/proxy/proxyRotator.js";
 import type {
   ISourceAdapter,
@@ -510,6 +511,86 @@ describe("JobManager CAPTCHA event wiring", () => {
 
     const snap = ws.storage.getRawSnapshot(events[0].snapshot_id as number);
     expect(snap?.purpose).toBe("captcha");
+  });
+});
+
+describe("JobManager discovery-phase block recording", () => {
+  let ws: ReturnType<typeof makeWorkspace>;
+  beforeEach(() => { ws = makeWorkspace(); });
+  afterEach(() => { ws.cleanup(); });
+
+  function runDiscoveryThrow(error: Error | string) {
+    const adapter = new FakeAdapter({ cards: [] });
+    (adapter as unknown as Record<string, unknown>)["searchCompanies"] = async () => {
+      throw typeof error === "string" ? new Error(error) : error;
+    };
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+    const manager = new JobManager(ws.config, registry, ws.storage, undefined, {
+      backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+      emptyPollMs: 5
+    });
+    return manager.run();
+  }
+
+  it("an anti-bot CAPTCHA during discovery rethrows AND records a captcha_events row (no false 'completed')", async () => {
+    await expect(runDiscoveryThrow("CAPTCHA detected; screenshot saved to /tmp/x.png")).rejects.toThrow(
+      /CAPTCHA detected/
+    );
+
+    const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
+    const events = db.prepare("SELECT * FROM captcha_events").all() as Array<Record<string, unknown>>;
+    expect(events).toHaveLength(1);
+    expect(events[0].source).toBe("2gis");
+    expect(events[0].action).toBe("captcha_detected");
+    // Discovery has no company task yet — the event is job-level (null FK).
+    expect(events[0].company_task_id).toBeNull();
+
+    const snap = ws.storage.getRawSnapshot(events[0].snapshot_id as number);
+    expect(snap?.purpose).toBe("captcha");
+    const payload = JSON.parse(snap?.payload ?? "{}") as Record<string, unknown>;
+    expect(payload.phase).toBe("discovery");
+  });
+
+  it("a non-block discovery error rethrows without recording a captcha event", async () => {
+    await expect(runDiscoveryThrow("network failure")).rejects.toThrow(/network failure/);
+    const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
+    const events = db.prepare("SELECT * FROM captcha_events").all() as Array<Record<string, unknown>>;
+    expect(events).toHaveLength(0);
+  });
+
+  it("a discovery soft block records distinct throttled evidence and does not complete", async () => {
+    const error = new SoftBlockError(
+      "throttled: 2GIS rendered an empty-results page with throttling/soft-block signals; screenshot saved to /tmp/throttle.png",
+      {
+        reason: "throttled",
+        evidence: [{
+          signal: "search_attributes",
+          reason: "throttled",
+          firmCount: 0,
+          url: "catalog.api.2gis/markers/clustered",
+          searchAttributes: { is_throttled: true, is_partial: true }
+        }]
+      },
+      "/tmp/throttle.png"
+    );
+
+    await expect(runDiscoveryThrow(error)).rejects.toThrow(/throttled/);
+
+    const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
+    const jobs = db.prepare("SELECT * FROM parse_jobs").all() as Array<Record<string, unknown>>;
+    expect(jobs[0].status).not.toBe("completed");
+
+    const events = db.prepare("SELECT * FROM captcha_events").all() as Array<Record<string, unknown>>;
+    expect(events).toHaveLength(1);
+    expect(events[0].action).toBe("throttled_detected");
+    expect(events[0].screenshot_path).toBe("/tmp/throttle.png");
+
+    const snap = ws.storage.getRawSnapshot(events[0].snapshot_id as number);
+    expect(snap?.purpose).toBe("soft_blocked");
+    const payload = JSON.parse(snap?.payload ?? "{}") as Record<string, unknown>;
+    expect(payload.reason).toBe("soft_blocked");
+    expect(JSON.stringify(payload)).toContain("search_attributes");
   });
 });
 

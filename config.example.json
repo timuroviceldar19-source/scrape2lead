@@ -11,6 +11,5 @@
   "concurrency": 1,
   "headless": false,
   "rawSnapshotDir": "raw_snapshots",
-  "storageBackend": "sqlite",
-  "postgresConnectionString": null
+  "storageBackend": "sqlite"
 }
