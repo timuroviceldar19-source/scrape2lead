@@ -20,40 +20,53 @@ import type {
 } from "../types.js";
 import { runMigrations } from "./migrations.js";
 import { computeJobTelemetry, type JobTelemetry } from "../core/telemetry.js";
+import type {
+  ClaimTaskInput,
+  CreateParseJobInput,
+  EnqueueCompanyTaskInput,
+  IStorage
+} from "./interface.js";
 export type { JobTelemetry };
+export type {
+  ClaimTaskInput,
+  CreateParseJobInput,
+  EnqueueCompanyTaskInput,
+  IStorage
+} from "./interface.js";
 
-export interface CreateParseJobInput {
-  source: SourceId;
-  city: string;
-  category: string;
-}
-
-export interface EnqueueCompanyTaskInput {
-  parseJobId: string;
-  source: SourceId;
-  externalId: string;
-}
-
-export interface ClaimTaskInput {
-  parseJobId: string;
-  workerId: string;
-  leaseMs: number;
-}
-
-export class Storage {
+/**
+ * SQLite-backed default implementation of {@link IStorage}.
+ *
+ * `better-sqlite3` is a synchronous driver, so the methods are declared
+ * `async` purely to satisfy the contract — every body still runs to
+ * completion before its (immediately-resolved) Promise is returned. The
+ * Postgres implementation in `src/storage/postgres/` shares the same
+ * async surface but actually awaits the network.
+ */
+export class Storage implements IStorage {
   private readonly db: Database.Database;
+  private readonly rawSnapshotDir: string | null;
 
-  constructor(databasePath: string) {
+  constructor(databasePath: string, rawSnapshotDir?: string) {
     if (databasePath !== ":memory:") {
       fs.mkdirSync(path.dirname(databasePath), { recursive: true });
     }
     this.db = new Database(databasePath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
+    this.rawSnapshotDir = rawSnapshotDir ? path.resolve(rawSnapshotDir) : null;
     runMigrations(this.db);
   }
 
-  upsertLead(lead: Lead): void {
+  /**
+   * Absolute path of the directory where raw snapshot payloads are persisted
+   * to disk, or `null` when no directory is configured (inline-only mode).
+   */
+  getRawSnapshotDir(): string | null {
+    return this.rawSnapshotDir;
+  }
+
+  async upsertLead(lead: Lead): Promise<void> {
     const insertLead = this.db.prepare(`
       INSERT INTO leads (
         source, external_id, company_name, category, city, address, phones,
@@ -106,7 +119,7 @@ export class Storage {
     `).run(source, externalId ?? null, kind, JSON.stringify(payload), new Date().toISOString());
   }
 
-  saveAttempt(attempt: ParseAttempt): void {
+  async saveAttempt(attempt: ParseAttempt): Promise<void> {
     this.db.prepare(`
       INSERT INTO parse_attempts (
         company_task_id, job_id, source, external_id, attempt_no,
@@ -128,7 +141,7 @@ export class Storage {
     );
   }
 
-  listLeads(): Lead[] {
+  async listLeads(): Promise<Lead[]> {
     const rows = this.db.prepare("SELECT * FROM leads ORDER BY company_name ASC").all() as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       source: String(row.source),
@@ -156,7 +169,7 @@ export class Storage {
     this.saveProxyRotation({ proxy, reason });
   }
 
-  saveProxyRotation(input: ProxyRotationInput): void {
+  async saveProxyRotation(input: ProxyRotationInput): Promise<void> {
     const now = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO proxy_history
@@ -173,7 +186,7 @@ export class Storage {
     );
   }
 
-  saveCaptchaEvent(input: CaptchaEventInput): number {
+  async saveCaptchaEvent(input: CaptchaEventInput): Promise<number> {
     const now = new Date().toISOString();
     const result = this.db.prepare(`
       INSERT INTO captcha_events
@@ -197,7 +210,7 @@ export class Storage {
   // Raw snapshots (§3.7 / §3.11)
   // ============================================================
 
-  saveRawSnapshot(input: SaveRawSnapshotInput): number {
+  async saveRawSnapshot(input: SaveRawSnapshotInput): Promise<number> {
     const now = new Date().toISOString();
     const payload =
       input.payload === undefined
@@ -205,6 +218,14 @@ export class Storage {
         : typeof input.payload === "string"
           ? input.payload
           : JSON.stringify(input.payload);
+
+    // When a raw snapshot directory is configured, the on-disk file is
+    // authoritative for content too — we still keep the inline payload for
+    // backwards compatibility with callers / tests that inspect it directly.
+    // A caller-supplied `payloadPath` is always honored (it is just a label
+    // pointing at a pre-existing artefact, e.g. a fixture file).
+    const diskPath = input.payloadPath ?? null;
+
     const result = this.db.prepare(`
       INSERT INTO raw_snapshots
         (company_task_id, source, external_id, kind, purpose,
@@ -217,11 +238,86 @@ export class Storage {
       input.kind,
       input.purpose,
       payload,
-      input.payloadPath ?? null,
+      diskPath,
       now,
       now
     );
-    return Number(result.lastInsertRowid);
+    const snapshotId = Number(result.lastInsertRowid);
+
+    // Best-effort disk write for inline payloads. Failures must not break the
+    // save — inline payload is already persisted in the row above.
+    if (
+      this.rawSnapshotDir !== null &&
+      payload !== null &&
+      diskPath === null
+    ) {
+      const written = this.writeSnapshotToDisk(snapshotId, input, payload, now);
+      if (written !== null) {
+        this.db.prepare(
+          "UPDATE raw_snapshots SET payload_path = ? WHERE snapshot_id = ?"
+        ).run(written, snapshotId);
+      }
+    }
+
+    return snapshotId;
+  }
+
+  /**
+   * Persist a snapshot payload to disk under the configured raw snapshot
+   * directory. Creates the directory if it does not exist. Returns the
+   * absolute file path on success, or `null` on any I/O failure (errors are
+   * swallowed so the caller's DB write is never blocked by a filesystem issue).
+   */
+  private writeSnapshotToDisk(
+    snapshotId: number,
+    input: SaveRawSnapshotInput,
+    payload: string,
+    createdAt: string
+  ): string | null {
+    if (this.rawSnapshotDir === null) return null;
+    try {
+      fs.mkdirSync(this.rawSnapshotDir, { recursive: true });
+    } catch {
+      return null;
+    }
+    const ext = this.fileExtensionForKind(input.kind);
+    const externalPart = input.externalId ?? "anon";
+    const stamp = createdAt.replace(/[:.]/g, "-");
+    const fileName = `snapshot-${snapshotId}-${sanitizeSegment(input.purpose)}-${sanitizeSegment(externalPart)}-${stamp}.${ext}`;
+    const filePath = path.join(this.rawSnapshotDir, fileName);
+    try {
+      fs.writeFileSync(filePath, payload, "utf8");
+      return filePath;
+    } catch {
+      return null;
+    }
+  }
+
+  private fileExtensionForKind(kind: string): string {
+    const k = kind.toLowerCase();
+    if (k === "html") return "html";
+    if (k === "json") return "json";
+    return "txt";
+  }
+
+  /**
+   * Read the payload body of a snapshot. Prefers the inline `payload` column;
+   * falls back to the on-disk file referenced by `payload_path` when the
+   * inline value is missing. Returns `null` if the row does not exist or the
+   * payload is unavailable (e.g. disk file was deleted out-of-band).
+   */
+  readRawSnapshotContent(snapshotId: number): string | null {
+    const row = this.getRawSnapshot(snapshotId);
+    if (!row) return null;
+    if (row.payload !== null) return row.payload;
+    if (row.payload_path) {
+      try {
+        return fs.readFileSync(row.payload_path, "utf8");
+      } catch {
+        return null;
+      }
+    }
+    return null;
   }
 
   listRawSnapshots(filter: ListRawSnapshotsFilter = {}): RawSnapshotRow[] {
@@ -251,57 +347,100 @@ export class Storage {
       "SELECT * FROM raw_snapshots" +
       (where.length ? ` WHERE ${where.join(" AND ")}` : "") +
       " ORDER BY created_at DESC, snapshot_id DESC";
-    return this.db.prepare(sql).all(...params) as RawSnapshotRow[];
+    return (this.db.prepare(sql).all(...params) as RawSnapshotRow[]).map((row) =>
+      this.hydrateRawSnapshotPayload(row)
+    );
   }
 
   getRawSnapshot(snapshotId: number): RawSnapshotRow | null {
     const row = this.db
       .prepare("SELECT * FROM raw_snapshots WHERE snapshot_id = ?")
       .get(snapshotId) as RawSnapshotRow | undefined;
-    return row ?? null;
+    return row ? this.hydrateRawSnapshotPayload(row) : null;
+  }
+
+  private hydrateRawSnapshotPayload(row: RawSnapshotRow): RawSnapshotRow {
+    if (row.payload !== null || !row.payload_path) return row;
+    try {
+      return { ...row, payload: fs.readFileSync(row.payload_path, "utf8") };
+    } catch {
+      return row;
+    }
   }
 
   /**
    * Ring-buffer cleanup for `purpose='recent'` snapshots. Keeps the newest
-   * `maxEntries` rows and deletes the rest. Returns the number deleted.
+   * `maxEntries` rows and deletes the rest. On-disk payload files referenced
+   * by the deleted rows are unlinked (best-effort). Returns the number deleted.
    */
   cleanupRecentSnapshots(options: CleanupRecentOptions): number {
     if (options.maxEntries < 0) throw new Error("maxEntries must be >= 0");
-    const result = this.db.prepare(`
-      DELETE FROM raw_snapshots
-      WHERE purpose = 'recent'
-        AND snapshot_id NOT IN (
-          SELECT snapshot_id FROM raw_snapshots
-          WHERE purpose = 'recent'
-          ORDER BY created_at DESC, snapshot_id DESC
-          LIMIT ?
-        )
-    `).run(options.maxEntries);
+    const rows = this.db
+      .prepare(
+        `SELECT snapshot_id, payload_path FROM raw_snapshots
+         WHERE purpose = 'recent'
+           AND snapshot_id NOT IN (
+             SELECT snapshot_id FROM raw_snapshots
+             WHERE purpose = 'recent'
+             ORDER BY created_at DESC, snapshot_id DESC
+             LIMIT ?
+           )`
+      )
+      .all(options.maxEntries) as Array<{ snapshot_id: number; payload_path: string | null }>;
+    if (rows.length === 0) return 0;
+    const placeholders = rows.map(() => "?").join(",");
+    const result = this.db
+      .prepare(
+        `DELETE FROM raw_snapshots WHERE snapshot_id IN (${placeholders})`
+      )
+      .run(...rows.map((r) => r.snapshot_id));
+    this.unlinkPayloadFiles(rows);
     return result.changes;
   }
 
   /**
    * TTL cleanup. Deletes snapshots with `created_at < (now - olderThanMs)`,
    * optionally filtered by purpose. `now` can be injected for deterministic tests.
+   * On-disk payload files for the deleted rows are unlinked (best-effort).
    */
   cleanupSnapshotsOlderThan(options: CleanupOlderOptions): number {
     const now = options.now ?? new Date();
     const cutoff = new Date(now.getTime() - options.olderThanMs).toISOString();
-    if (options.purpose !== undefined) {
-      return this.db
-        .prepare("DELETE FROM raw_snapshots WHERE purpose = ? AND created_at < ?")
-        .run(options.purpose, cutoff).changes;
+    const withPurpose = options.purpose !== undefined;
+    const selectSql = withPurpose
+      ? "SELECT snapshot_id, payload_path FROM raw_snapshots WHERE purpose = ? AND created_at < ?"
+      : "SELECT snapshot_id, payload_path FROM raw_snapshots WHERE created_at < ?";
+    const deleteSql = withPurpose
+      ? "DELETE FROM raw_snapshots WHERE purpose = ? AND created_at < ?"
+      : "DELETE FROM raw_snapshots WHERE created_at < ?";
+    const params = withPurpose ? [options.purpose, cutoff] : [cutoff];
+    const rows = this.db.prepare(selectSql).all(...params) as Array<{
+      snapshot_id: number;
+      payload_path: string | null;
+    }>;
+    const result = this.db.prepare(deleteSql).run(...params);
+    this.unlinkPayloadFiles(rows);
+    return result.changes;
+  }
+
+  private unlinkPayloadFiles(
+    rows: Array<{ snapshot_id: number; payload_path: string | null }>
+  ): void {
+    for (const row of rows) {
+      if (!row.payload_path) continue;
+      try {
+        fs.unlinkSync(row.payload_path);
+      } catch {
+        // Best-effort: missing or unreadable files must not break cleanup.
+      }
     }
-    return this.db
-      .prepare("DELETE FROM raw_snapshots WHERE created_at < ?")
-      .run(cutoff).changes;
   }
 
   // ============================================================
   // Queue / State layer
   // ============================================================
 
-  createParseJob(input: CreateParseJobInput): string {
+  async createParseJob(input: CreateParseJobInput): Promise<string> {
     const id = `${input.source}-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     this.db.prepare(`
@@ -311,13 +450,13 @@ export class Storage {
     return id;
   }
 
-  updateParseJobTotalFound(parseJobId: string, totalFound: number): void {
+  async updateParseJobTotalFound(parseJobId: string, totalFound: number): Promise<void> {
     this.db.prepare(`
       UPDATE parse_jobs SET total_found = ?, updated_at = ? WHERE id = ?
     `).run(totalFound, new Date().toISOString(), parseJobId);
   }
 
-  setParseJobStatus(parseJobId: string, status: ParseJobStatus): void {
+  async setParseJobStatus(parseJobId: string, status: ParseJobStatus): Promise<void> {
     const now = new Date().toISOString();
     const finishedAt = status === "completed" || status === "failed" ? now : null;
     this.db.prepare(`
@@ -326,14 +465,14 @@ export class Storage {
     `).run(status, now, finishedAt, parseJobId);
   }
 
-  getParseJob(parseJobId: string): ParseJobRow | null {
+  async getParseJob(parseJobId: string): Promise<ParseJobRow | null> {
     const row = this.db.prepare("SELECT * FROM parse_jobs WHERE id = ?").get(parseJobId) as
       | ParseJobRow
       | undefined;
     return row ?? null;
   }
 
-  findResumableParseJob(input: CreateParseJobInput): ParseJobRow | null {
+  async findResumableParseJob(input: CreateParseJobInput): Promise<ParseJobRow | null> {
     const row = this.db.prepare(`
       SELECT * FROM parse_jobs
       WHERE source = ? AND city = ? AND category = ?
@@ -344,7 +483,7 @@ export class Storage {
     return row ?? null;
   }
 
-  finalizeParseJob(parseJobId: string): ParseJobStatus {
+  async finalizeParseJob(parseJobId: string): Promise<ParseJobStatus> {
     const counts = this.db.prepare(`
       SELECT
         SUM(CASE WHEN status IN ('success','partial') THEN 1 ELSE 0 END) AS done,
@@ -364,11 +503,11 @@ export class Storage {
     else if (failed > 0) status = "failed";
     else status = "completed";
 
-    this.setParseJobStatus(parseJobId, status);
+    await this.setParseJobStatus(parseJobId, status);
     return status;
   }
 
-  enqueueCompanyTask(input: EnqueueCompanyTaskInput): number {
+  async enqueueCompanyTask(input: EnqueueCompanyTaskInput): Promise<number> {
     const now = new Date().toISOString();
     const result = this.db.prepare(`
       INSERT OR IGNORE INTO company_tasks
@@ -392,13 +531,13 @@ export class Storage {
     return row ?? null;
   }
 
-  listCompanyTasks(parseJobId: string): CompanyTaskRow[] {
+  async listCompanyTasks(parseJobId: string): Promise<CompanyTaskRow[]> {
     return this.db
       .prepare("SELECT * FROM company_tasks WHERE parse_job_id = ? ORDER BY id ASC")
       .all(parseJobId) as CompanyTaskRow[];
   }
 
-  countOpenTasks(parseJobId: string): number {
+  async countOpenTasks(parseJobId: string): Promise<number> {
     const row = this.db.prepare(`
       SELECT COUNT(*) as n FROM company_tasks
       WHERE parse_job_id = ?
@@ -407,7 +546,7 @@ export class Storage {
     return row.n;
   }
 
-  claimNextTask(input: ClaimTaskInput): CompanyTaskRow | null {
+  async claimNextTask(input: ClaimTaskInput): Promise<CompanyTaskRow | null> {
     const txn = this.db.transaction((): CompanyTaskRow | null => {
       const now = new Date().toISOString();
       const leaseUntil = new Date(Date.now() + input.leaseMs).toISOString();
@@ -442,19 +581,19 @@ export class Storage {
     return txn.immediate();
   }
 
-  markTaskSuccess(taskId: number): boolean {
+  async markTaskSuccess(taskId: number): Promise<boolean> {
     return this.transitionFromProcessing(taskId, "success", null);
   }
 
-  markTaskPartial(taskId: number): boolean {
+  async markTaskPartial(taskId: number): Promise<boolean> {
     return this.transitionFromProcessing(taskId, "partial", null);
   }
 
-  markTaskFailed(taskId: number, error: string): boolean {
+  async markTaskFailed(taskId: number, error: string): Promise<boolean> {
     return this.transitionFromProcessing(taskId, "failed", error);
   }
 
-  markTaskBlocked(taskId: number, error: string): boolean {
+  async markTaskBlocked(taskId: number, error: string): Promise<boolean> {
     const now = new Date().toISOString();
     const result = this.db.prepare(`
       UPDATE company_tasks
@@ -464,7 +603,7 @@ export class Storage {
     return result.changes > 0;
   }
 
-  scheduleTaskRetry(taskId: number, error: string, nextRunAt: string): boolean {
+  async scheduleTaskRetry(taskId: number, error: string, nextRunAt: string): Promise<boolean> {
     const now = new Date().toISOString();
     const result = this.db.prepare(`
       UPDATE company_tasks
@@ -479,7 +618,7 @@ export class Storage {
     return result.changes > 0;
   }
 
-  recoverExpiredLeases(referenceTime: Date = new Date()): number {
+  async recoverExpiredLeases(referenceTime: Date = new Date()): Promise<number> {
     const now = referenceTime.toISOString();
     const result = this.db.prepare(`
       UPDATE company_tasks
@@ -496,11 +635,11 @@ export class Storage {
     return result.changes;
   }
 
-  private transitionFromProcessing(
+  private async transitionFromProcessing(
     taskId: number,
     status: CompanyTaskStatus,
     error: string | null
-  ): boolean {
+  ): Promise<boolean> {
     const now = new Date().toISOString();
     const result = this.db.prepare(`
       UPDATE company_tasks
@@ -514,11 +653,35 @@ export class Storage {
     return result.changes > 0;
   }
 
-  getJobTelemetry(parseJobId: string): JobTelemetry {
+  async getJobTelemetry(parseJobId: string): Promise<JobTelemetry> {
     return computeJobTelemetry(this.db, parseJobId);
+  }
+
+  /**
+   * Count of `parse_attempts` rows linked to tasks of `parseJobId`. Used by the
+   * JobManager to enforce `rateLimit.maxCardsPerSession` against the durable
+   * source of truth (every attempt — success, partial, failed, blocked —
+   * inserts a row in `parse_attempts`).
+   */
+  async countParseAttempts(parseJobId: string): Promise<number> {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS n FROM parse_attempts
+      WHERE company_task_id IN (SELECT id FROM company_tasks WHERE parse_job_id = ?)
+    `).get(parseJobId) as { n: number };
+    return row.n;
   }
 
   close(): void {
     this.db.close();
   }
+}
+
+/**
+ * Replace filesystem-unsafe characters in a path segment with `_`. Keeps the
+ * length bounded so we never approach platform path limits even with long
+ * external identifiers.
+ */
+function sanitizeSegment(input: string): string {
+  const cleaned = input.replace(/[^A-Za-z0-9._-]/g, "_");
+  return cleaned.length > 80 ? cleaned.slice(0, 80) : cleaned;
 }

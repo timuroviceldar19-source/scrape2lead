@@ -70,6 +70,24 @@ export interface ISourceAdapter {
   normalize(detail: RawCardDetail, contacts: RawContacts): Lead;
 }
 
+/**
+ * Optional rate-limit policy. Every field is opt-in: when the whole block is
+ * absent (or individual fields are unset) the JobManager behaves exactly as
+ * before — only the existing `delayRangeMs` jitter is enforced.
+ */
+export interface RateLimitPolicy {
+  /** Hard cap on completed card attempts per JobManager.run() invocation. */
+  maxCardsPerSession?: number;
+  /** Sliding 60s cap on card-start events. */
+  maxCardsPerMinute?: number;
+  /** Wall-clock cap (ms) measured from JobManager.run() start. */
+  maxSessionDurationMs?: number;
+  /** When the current proxy's `cardsOnIp` reaches this, rotate before the next card. */
+  maxCardsPerProxy?: number;
+  /** Sliding 60s cap on requests, bucketed by current proxy id (`proxyChannel ?? proxy ?? "direct"`). */
+  maxRequestsPerMinutePerProxy?: number;
+}
+
 export interface RuntimeConfig extends SearchQuery {
   databasePath: string;
   exportDir: string;
@@ -86,6 +104,24 @@ export interface RuntimeConfig extends SearchQuery {
   };
   rawSnapshotDir: string;
   fixturePath?: string;
+  /**
+   * Rate-limit policy. Each individual field is optional and, when unset,
+   * preserves the pre-policy behaviour (no additional gating, only the
+   * `delayRangeMs` jitter from {@link RateLimiter.wait}).
+   */
+  rateLimit?: RateLimitPolicy;
+  /**
+   * Storage backend selector. Defaults to `"sqlite"` (preserves the
+   * pre-Postgres behaviour). `"postgres"` switches the CLI to
+   * `PostgresStorage`, which requires `postgresConnectionString`.
+   */
+  storageBackend?: "sqlite" | "postgres";
+  /**
+   * Postgres connection string. Ignored unless `storageBackend` is
+   * `"postgres"`. Kept separate from `databasePath` so the SQLite path is
+   * never silently mis-used.
+   */
+  postgresConnectionString?: string;
 }
 
 export interface ParseAttempt {

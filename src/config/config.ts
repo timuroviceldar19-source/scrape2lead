@@ -24,7 +24,29 @@ const ConfigSchema = z.object({
     })
     .optional(),
   rawSnapshotDir: z.string().default("raw_snapshots"),
-  fixturePath: z.string().optional()
+  fixturePath: z.string().optional(),
+  rateLimit: z
+    .object({
+      maxCardsPerSession: z.coerce.number().int().positive().optional(),
+      maxCardsPerMinute: z.coerce.number().int().positive().optional(),
+      maxSessionDurationMs: z.coerce.number().int().positive().optional(),
+      maxCardsPerProxy: z.coerce.number().int().positive().optional(),
+      maxRequestsPerMinutePerProxy: z.coerce.number().int().positive().optional()
+    })
+    .optional(),
+  /**
+   * Storage backend selector. `"sqlite"` (default) keeps the existing
+   * `better-sqlite3` behaviour; `"postgres"` switches the CLI to
+   * {@link PostgresStorage} (configured via `POSTGRES_CONNECTION_STRING`
+   * or `postgresConnectionString` in this file). See `docs/storage.md`.
+   */
+  storageBackend: z.enum(["sqlite", "postgres"]).default("sqlite"),
+  /**
+   * Postgres connection string. Ignored unless `storageBackend` is
+   * `"postgres"`. Kept separate from `databasePath` so the SQLite field
+   * is never silently mis-used.
+   */
+  postgresConnectionString: z.string().min(1).optional()
 });
 
 export function loadConfig(configPath: string, overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
@@ -40,13 +62,24 @@ export function loadConfig(configPath: string, overrides: Partial<RuntimeConfig>
       }
     : undefined;
 
+  const storageBackend = (process.env.STORAGE_BACKEND ??
+    fileConfig["storageBackend"] ??
+    "sqlite") as string;
+
   const parsed = ConfigSchema.parse({
     ...fileConfig,
     proxyApiUrl: process.env.PROXY_API_URL || fileConfig.proxyApiUrl,
     proxy: envProxy ?? fileConfig.proxy,
+    storageBackend,
+    postgresConnectionString:
+      process.env.POSTGRES_CONNECTION_STRING || fileConfig["postgresConnectionString"],
     ...overrides
   });
 
+  // Strip the Postgres-only fields before forwarding to the SQLite
+  // implementation. They are stored on the returned config so the CLI's
+  // backend selector can read them, but the SQLite `Storage` class
+  // must not be handed an unknown field.
   return {
     ...parsed,
     databasePath: path.resolve(parsed.databasePath),

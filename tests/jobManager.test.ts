@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdapterRegistry } from "../src/adapters/registry.js";
 import { JobManager } from "../src/core/jobManager.js";
+import { RATE_LIMIT_WINDOW_MS } from "../src/core/rateLimiter.js";
 import { Storage } from "../src/storage/storage.js";
 import type { ProxyRotator, ProxyRuntimeState } from "../src/proxy/proxyRotator.js";
 import type {
@@ -12,14 +13,27 @@ import type {
   RawCardDetail,
   RawCompanyCard,
   RawContacts,
+  RateLimitPolicy,
   RuntimeConfig,
   SourceCapabilities
 } from "../src/types.js";
+
+// Stub the exporter module so JobManager.run() can resolve under
+// `vi.useFakeTimers()`. ExcelJS uses stream APIs scheduled via setImmediate
+// internally; faked timers swallow those events and `xlsx.writeFile` never
+// settles. No test in this file asserts on csvPath/xlsxPath, so a fast
+// no-op stub is sufficient. Real export behaviour is covered by
+// tests/snapshotsDisk.test.ts and downstream consumers.
+vi.mock("../src/export/exporter.js", () => ({
+  exportLeads: async () => ({ csvPath: "<stub>", xlsxPath: "<stub>" })
+}));
 
 interface FakeAdapterOptions {
   cards: RawCompanyCard[];
   failOn?: Map<string, () => Error>;
   incomplete?: Set<string>;
+  /** If set, getCardDetail sleeps this many ms before returning/throwing. */
+  delayMs?: number;
 }
 
 class FakeAdapter implements ISourceAdapter {
@@ -45,6 +59,7 @@ class FakeAdapter implements ISourceAdapter {
   }
 
   async getCardDetail(card: RawCompanyCard): Promise<RawCardDetail> {
+    if (this.opts.delayMs) await sleep(this.opts.delayMs);
     const make = this.opts.failOn?.get(card.externalId);
     if (make) throw make();
     return { ...card, payload: { source: "fixture", externalId: card.externalId } };
@@ -83,6 +98,10 @@ class FakeAdapter implements ISourceAdapter {
 
 function makeCard(externalId: string, name = `Company ${externalId}`): RawCompanyCard {
   return { source: "2gis", externalId, name, payload: { id: externalId } };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function makeWorkspace(): {
@@ -135,17 +154,17 @@ describe("JobManager queue/state integration", () => {
 
     // Simulate a crashed prior run: a parse_job in 'running' with one task stuck in 'processing'
     // whose lease has expired.
-    const priorJobId = ws.storage.createParseJob({
+    const priorJobId = await ws.storage.createParseJob({
       source: "2gis",
       city: "moscow",
       category: "autoservice"
     });
-    const stuckTaskId = ws.storage.enqueueCompanyTask({
+    const stuckTaskId = await ws.storage.enqueueCompanyTask({
       parseJobId: priorJobId,
       source: "2gis",
       externalId: "ext-1"
     });
-    ws.storage.claimNextTask({ parseJobId: priorJobId, workerId: "dead", leaseMs: 10 });
+    await ws.storage.claimNextTask({ parseJobId: priorJobId, workerId: "dead", leaseMs: 10 });
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
     db.prepare("UPDATE company_tasks SET lease_until = ? WHERE id = ?").run(
       new Date(Date.now() - 60_000).toISOString(),
@@ -162,7 +181,7 @@ describe("JobManager queue/state integration", () => {
     expect(result.jobId).toBe(priorJobId);
     expect(result.status).toBe("completed");
 
-    const tasks = ws.storage.listCompanyTasks(priorJobId);
+    const tasks = await ws.storage.listCompanyTasks(priorJobId);
     expect(tasks).toHaveLength(2);
     const reclaimed = tasks.find((t) => t.id === stuckTaskId);
     expect(reclaimed?.status).toBe("success");
@@ -187,7 +206,7 @@ describe("JobManager queue/state integration", () => {
     });
     const result = await manager.run();
 
-    const tasks = ws.storage.listCompanyTasks(result.jobId);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
     expect(tasks).toHaveLength(1);
     const task = tasks[0];
     expect(task.status).toBe("failed");
@@ -211,12 +230,12 @@ describe("JobManager queue/state integration", () => {
     const result = await manager.run();
 
     expect(result.status).toBe("completed");
-    const tasks = ws.storage.listCompanyTasks(result.jobId);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
     const byId = new Map(tasks.map((t) => [t.external_id, t]));
     expect(byId.get("ext-ok")?.status).toBe("success");
     expect(byId.get("ext-bad")?.status).toBe("failed");
 
-    const job = ws.storage.getParseJob(result.jobId);
+    const job = await ws.storage.getParseJob(result.jobId);
     expect(job?.status).toBe("completed");
     expect(job?.finished_at).not.toBeNull();
   });
@@ -236,7 +255,7 @@ describe("JobManager queue/state integration", () => {
     });
     const result = await manager.run();
     expect(result.status).toBe("failed");
-    expect(ws.storage.getParseJob(result.jobId)?.status).toBe("failed");
+    expect((await ws.storage.getParseJob(result.jobId))?.status).toBe("failed");
   });
 });
 
@@ -263,7 +282,7 @@ describe("JobManager non-retryable outcomes", () => {
     });
     const result = await manager.run();
 
-    const tasks = ws.storage.listCompanyTasks(result.jobId);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
     expect(tasks).toHaveLength(1);
     const task = tasks[0];
     expect(task.status).toBe("failed");
@@ -292,7 +311,7 @@ describe("JobManager non-retryable outcomes", () => {
     });
     const result = await manager.run();
 
-    const tasks = ws.storage.listCompanyTasks(result.jobId);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
     expect(tasks).toHaveLength(1);
     const task = tasks[0];
     expect(task.status).toBe("partial");
@@ -320,7 +339,7 @@ describe("JobManager non-retryable outcomes", () => {
     });
     const result = await manager.run();
 
-    const tasks = ws.storage.listCompanyTasks(result.jobId);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
     expect(tasks[0].status).toBe("failed");
     // maxRetries = 2 → 3 total attempts
     expect(tasks[0].attempts).toBe(ws.config.maxRetries + 1);
@@ -340,7 +359,7 @@ describe("JobManager non-retryable outcomes", () => {
     });
     const result = await manager.run();
 
-    const tasks = ws.storage.listCompanyTasks(result.jobId);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
     expect(tasks[0].status).toBe("failed");
     expect(tasks[0].attempts).toBe(ws.config.maxRetries + 1);
 
@@ -366,7 +385,7 @@ describe("JobManager non-retryable outcomes", () => {
     });
     const result = await manager.run();
 
-    const tasks = ws.storage.listCompanyTasks(result.jobId);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
     expect(tasks[0].status).toBe("failed");
     expect(tasks[0].attempts).toBe(1);
   });
@@ -385,7 +404,7 @@ describe("JobManager non-retryable outcomes", () => {
     });
     const result = await manager.run();
 
-    const tasks = ws.storage.listCompanyTasks(result.jobId);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
     expect(tasks[0].status).toBe("failed");
     expect(tasks[0].attempts).toBe(ws.config.maxRetries + 1);
 
@@ -418,7 +437,7 @@ describe("JobManager CAPTCHA event wiring", () => {
   it("blocked/429 writes a captcha_events row linked to the company task", async () => {
     const result = await runBlocked("HTTP 429 Too Many Requests");
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
-    const task = ws.storage.listCompanyTasks(result.jobId)[0];
+    const task = (await ws.storage.listCompanyTasks(result.jobId))[0];
 
     const events = db
       .prepare("SELECT * FROM captcha_events WHERE company_task_id = ?")
@@ -433,7 +452,7 @@ describe("JobManager CAPTCHA event wiring", () => {
   it("captcha_events.company_task_id becomes null when the task is deleted (FK ON DELETE SET NULL)", async () => {
     const result = await runBlocked("HTTP 429 Too Many Requests");
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
-    const task = ws.storage.listCompanyTasks(result.jobId)[0];
+    const task = (await ws.storage.listCompanyTasks(result.jobId))[0];
 
     const before = db
       .prepare("SELECT * FROM captcha_events WHERE company_task_id = ?")
@@ -452,7 +471,7 @@ describe("JobManager CAPTCHA event wiring", () => {
 
   it("telemetry captcha_count equals the number of blocked attempts for the job", async () => {
     const result = await runBlocked("HTTP 429 Too Many Requests");
-    const t = ws.storage.getJobTelemetry(result.jobId);
+    const t = await ws.storage.getJobTelemetry(result.jobId);
     // maxRetries=2 → 3 total attempts → 3 captcha events.
     expect(t.captcha_count).toBe(ws.config.maxRetries + 1);
   });
@@ -460,7 +479,7 @@ describe("JobManager CAPTCHA event wiring", () => {
   it("each blocked event has a snapshot_id pointing to an error-purpose snapshot (429)", async () => {
     const result = await runBlocked("HTTP 429 Too Many Requests");
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
-    const task = ws.storage.listCompanyTasks(result.jobId)[0];
+    const task = (await ws.storage.listCompanyTasks(result.jobId))[0];
 
     const events = db
       .prepare("SELECT * FROM captcha_events WHERE company_task_id = ?")
@@ -481,7 +500,7 @@ describe("JobManager CAPTCHA event wiring", () => {
   it("captcha keyword in error uses captcha purpose and captcha_detected action", async () => {
     const result = await runBlocked("captcha page detected, please solve");
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
-    const task = ws.storage.listCompanyTasks(result.jobId)[0];
+    const task = (await ws.storage.listCompanyTasks(result.jobId))[0];
 
     const events = db
       .prepare("SELECT * FROM captcha_events WHERE company_task_id = ?")
@@ -520,7 +539,7 @@ describe("JobManager proxy ID recording", () => {
     const result = await manager.run();
 
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
-    const task = ws.storage.listCompanyTasks(result.jobId)[0];
+    const task = (await ws.storage.listCompanyTasks(result.jobId))[0];
     const attempt = db
       .prepare("SELECT * FROM parse_attempts WHERE company_task_id = ?")
       .get(task.id) as Record<string, unknown>;
@@ -539,7 +558,7 @@ describe("JobManager proxy ID recording", () => {
     const result = await manager.run();
 
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
-    const task = ws.storage.listCompanyTasks(result.jobId)[0];
+    const task = (await ws.storage.listCompanyTasks(result.jobId))[0];
     const attempt = db
       .prepare("SELECT * FROM parse_attempts WHERE company_task_id = ?")
       .get(task.id) as Record<string, unknown>;
@@ -557,7 +576,7 @@ describe("JobManager proxy ID recording", () => {
     const result = await manager.run();
 
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
-    const task = ws.storage.listCompanyTasks(result.jobId)[0];
+    const task = (await ws.storage.listCompanyTasks(result.jobId))[0];
     const attempt = db
       .prepare("SELECT * FROM parse_attempts WHERE company_task_id = ?")
       .get(task.id) as Record<string, unknown>;
@@ -578,7 +597,7 @@ describe("JobManager proxy ID recording", () => {
     const result = await manager.run();
 
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
-    const task = ws.storage.listCompanyTasks(result.jobId)[0];
+    const task = (await ws.storage.listCompanyTasks(result.jobId))[0];
     const attempts = db
       .prepare("SELECT * FROM parse_attempts WHERE company_task_id = ?")
       .all(task.id) as Array<Record<string, unknown>>;
@@ -600,11 +619,849 @@ describe("JobManager proxy ID recording", () => {
     const result = await manager.run();
 
     const db = (ws.storage as unknown as { db: import("better-sqlite3").Database }).db;
-    const task = ws.storage.listCompanyTasks(result.jobId)[0];
+    const task = (await ws.storage.listCompanyTasks(result.jobId))[0];
     const events = db
       .prepare("SELECT * FROM captcha_events WHERE company_task_id = ?")
       .all(task.id) as Array<Record<string, unknown>>;
     expect(events.length).toBeGreaterThan(0);
     expect(events.every((e) => e.proxy_id === "ch-cap")).toBe(true);
+  });
+});
+
+describe("JobManager lease watchdog", () => {
+  it("watchdog recovers an expired processing task injected after startup", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-wd-"));
+    const storage = new Storage(path.join(root, "test.db"));
+    const config: RuntimeConfig = {
+      source: "2gis",
+      geo: "moscow",
+      category: "autoservice",
+      limit: 100,
+      databasePath: path.join(root, "test.db"),
+      exportDir: path.join(root, "exports"),
+      delayRangeMs: [0, 1],
+      rotateEveryN: 50,
+      maxRetries: 2,
+      concurrency: 1,
+      headless: true,
+      rawSnapshotDir: path.join(root, "raw")
+    };
+    try {
+      // One card that takes 200 ms — gives the watchdog time to fire mid-run.
+      const cards = [makeCard("ext-main")];
+      const registry = new AdapterRegistry();
+      registry.register(new FakeAdapter({ cards, delayMs: 200 }));
+
+      const manager = new JobManager(config, registry, storage, undefined, {
+        leaseWatchdogMs: 40,
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      // Start run without awaiting so we can inject a task mid-flight.
+      const runPromise = manager.run();
+
+      // Let startup recovery pass (it's sync), then inject a stuck task.
+      await sleep(15);
+      const sideJobId = await storage.createParseJob({ source: "2gis", city: "spb", category: "watchdog-test" });
+      const stuckId = await storage.enqueueCompanyTask({ parseJobId: sideJobId, source: "2gis", externalId: "ext-stuck" });
+      const db = (storage as unknown as { db: import("better-sqlite3").Database }).db;
+      db.prepare("UPDATE company_tasks SET status='processing', lease_until=? WHERE id=?")
+        .run(new Date(Date.now() - 1000).toISOString(), stuckId);
+
+      // Verify the task is stuck at this point (startup recovery already ran and missed it).
+      const before = db.prepare("SELECT status FROM company_tasks WHERE id=?").get(stuckId) as Record<string, unknown>;
+      expect(before.status).toBe("processing");
+
+      // Wait for at least two watchdog ticks (2 × 40 ms = 80 ms + buffer).
+      await sleep(120);
+
+      // Watchdog should have reset it to retry_scheduled.
+      const after = db.prepare("SELECT status FROM company_tasks WHERE id=?").get(stuckId) as Record<string, unknown>;
+      expect(after.status).toBe("retry_scheduled");
+
+      await runPromise;
+    } finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("timer is cleaned up after run() completes — no further watchdog calls", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-wd-"));
+    const storage = new Storage(path.join(root, "test.db"));
+    const config: RuntimeConfig = {
+      source: "2gis",
+      geo: "moscow",
+      category: "autoservice",
+      limit: 100,
+      databasePath: path.join(root, "test.db"),
+      exportDir: path.join(root, "exports"),
+      delayRangeMs: [0, 1],
+      rotateEveryN: 50,
+      maxRetries: 2,
+      concurrency: 1,
+      headless: true,
+      rawSnapshotDir: path.join(root, "raw")
+    };
+    try {
+      let recoverCallCount = 0;
+      const origRecover = storage.recoverExpiredLeases.bind(storage);
+      storage.recoverExpiredLeases = (...args: Parameters<typeof storage.recoverExpiredLeases>) => {
+        recoverCallCount++;
+        return origRecover(...args);
+      };
+
+      const registry = new AdapterRegistry();
+      registry.register(new FakeAdapter({ cards: [makeCard("ext-1")] }));
+      const manager = new JobManager(config, registry, storage, undefined, {
+        leaseWatchdogMs: 20,
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      await manager.run();
+      const countAtCompletion = recoverCallCount;
+
+      // Wait two watchdog intervals — no new calls should happen.
+      await sleep(60);
+      expect(recoverCallCount).toBe(countAtCompletion);
+    } finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("timer is cleaned up when run() throws (adapter error)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-wd-"));
+    const storage = new Storage(path.join(root, "test.db"));
+    const config: RuntimeConfig = {
+      source: "2gis",
+      geo: "moscow",
+      category: "autoservice",
+      limit: 100,
+      databasePath: path.join(root, "test.db"),
+      exportDir: path.join(root, "exports"),
+      delayRangeMs: [0, 1],
+      rotateEveryN: 50,
+      maxRetries: 2,
+      concurrency: 1,
+      headless: true,
+      rawSnapshotDir: path.join(root, "raw")
+    };
+    try {
+      let recoverCallCount = 0;
+      const origRecover = storage.recoverExpiredLeases.bind(storage);
+      storage.recoverExpiredLeases = (...args: Parameters<typeof storage.recoverExpiredLeases>) => {
+        recoverCallCount++;
+        return origRecover(...args);
+      };
+
+      const throwingAdapter = new FakeAdapter({ cards: [] });
+      // Override searchCompanies to throw after a short async gap (giving watchdog a chance to arm).
+      (throwingAdapter as unknown as Record<string, unknown>)["searchCompanies"] = async () => {
+        await sleep(30);
+        throw new Error("network failure");
+      };
+      const registry = new AdapterRegistry();
+      registry.register(throwingAdapter);
+
+      const manager = new JobManager(config, registry, storage, undefined, {
+        leaseWatchdogMs: 20,
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      await expect(manager.run()).rejects.toThrow("network failure");
+      const countAtThrow = recoverCallCount;
+
+      // Wait two watchdog intervals — timer must be dead.
+      await sleep(60);
+      expect(recoverCallCount).toBe(countAtThrow);
+    } finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("guard prevents concurrent recovery calls (maxConcurrent ≤ 1)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-wd-"));
+    const storage = new Storage(path.join(root, "test.db"));
+    const config: RuntimeConfig = {
+      source: "2gis",
+      geo: "moscow",
+      category: "autoservice",
+      limit: 100,
+      databasePath: path.join(root, "test.db"),
+      exportDir: path.join(root, "exports"),
+      delayRangeMs: [0, 1],
+      rotateEveryN: 50,
+      maxRetries: 2,
+      concurrency: 1,
+      headless: true,
+      rawSnapshotDir: path.join(root, "raw")
+    };
+    try {
+      let currentDepth = 0;
+      let maxDepth = 0;
+      let totalCalls = 0;
+      const origRecover = storage.recoverExpiredLeases.bind(storage);
+      storage.recoverExpiredLeases = (...args: Parameters<typeof storage.recoverExpiredLeases>) => {
+        totalCalls++;
+        currentDepth++;
+        maxDepth = Math.max(maxDepth, currentDepth);
+        const result = origRecover(...args);
+        currentDepth--;
+        return result;
+      };
+
+      const registry = new AdapterRegistry();
+      // Slow adapter keeps the run alive long enough for multiple watchdog ticks.
+      registry.register(new FakeAdapter({ cards: [makeCard("ext-1"), makeCard("ext-2")], delayMs: 60 }));
+      const manager = new JobManager(config, registry, storage, undefined, {
+        leaseWatchdogMs: 15,
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      await manager.run();
+
+      // Guard must ensure calls never overlapped (depth ≤ 1).
+      expect(maxDepth).toBe(1);
+      // Watchdog must have fired at least once beyond startup recovery.
+      expect(totalCalls).toBeGreaterThanOrEqual(2);
+    } finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Rate-limit policy integration tests.
+ *
+ * The policy layer is opt-in: when no `rateLimit` block is present the
+ * JobManager must behave exactly as before. Tests below cover the
+ * persisted/per-session caps (real time, deterministic counts) and the
+ * transient per-minute/per-proxy-request caps (vitest fake timers so the
+ * 60s sliding window completes instantly).
+ */
+describe("JobManager rate-limit policy", () => {
+  let ws: ReturnType<typeof makeWorkspace>;
+
+  beforeEach(() => {
+    ws = makeWorkspace();
+  });
+  afterEach(() => {
+    ws.cleanup();
+  });
+
+  function withPolicy(policy: RateLimitPolicy | undefined): RuntimeConfig {
+    return { ...ws.config, rateLimit: policy };
+  }
+
+  it("unset policy preserves existing behaviour — every card is processed", async () => {
+    const cards = [makeCard("c1"), makeCard("c2"), makeCard("c3")];
+    const adapter = new FakeAdapter({ cards });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+
+    const manager = new JobManager(withPolicy(undefined), registry, ws.storage, undefined, {
+      backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+      emptyPollMs: 5
+    });
+    const result = await manager.run();
+
+    expect(result.leads.map((l) => l.external_id).sort()).toEqual(["c1", "c2", "c3"]);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
+    expect(tasks.every((t) => t.status === "success")).toBe(true);
+  });
+
+  it("max_cards_per_session: stops extra tasks from processing once the cap is reached", async () => {
+    const cards = [makeCard("c1"), makeCard("c2"), makeCard("c3"), makeCard("c4"), makeCard("c5")];
+    const adapter = new FakeAdapter({ cards });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+
+    const manager = new JobManager(withPolicy({ maxCardsPerSession: 2 }), registry, ws.storage, undefined, {
+      backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+      emptyPollMs: 5
+    });
+    const result = await manager.run();
+
+    // Exactly two cards became leads; the remaining tasks stay pending.
+    expect(result.leads).toHaveLength(2);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
+    const byStatus = tasks.reduce<Record<string, number>>((acc, t) => {
+      acc[t.status] = (acc[t.status] ?? 0) + 1;
+      return acc;
+    }, {});
+    expect(byStatus["success"]).toBe(2);
+    expect(byStatus["pending"]).toBe(3);
+
+    // parse_attempts reflects the same number as the cap (durable source of truth).
+    expect(await ws.storage.countParseAttempts(result.jobId)).toBe(2);
+  });
+
+  it("max_cards_per_minute: 3rd card is delayed until the sliding window clears", async () => {
+    vi.useFakeTimers();
+    try {
+      const cards = [makeCard("c1"), makeCard("c2"), makeCard("c3")];
+      const adapter = new FakeAdapter({ cards });
+      const registry = new AdapterRegistry();
+      registry.register(adapter);
+
+      const manager = new JobManager(
+        withPolicy({ maxCardsPerMinute: 2 }),
+        registry,
+        ws.storage,
+        undefined,
+        {
+          backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+          emptyPollMs: 5
+        }
+      );
+
+      const promise = manager.run();
+
+      // Give cards 1 and 2 time to complete under fake timers. Both card
+      // starts must succeed (window has room) and their processing is
+      // bounded by delayRangeMs + setTimeout(0) housekeeping.
+      await vi.advanceTimersByTimeAsync(200);
+
+      // The 3rd start is now blocked on the 60s window — it has not been
+      // claimed/processed yet. Verify by snapshotting the leads count.
+      const midLeads = (await ws.storage.listLeads()).filter((l) =>
+        l.external_id === "c1" || l.external_id === "c2" || l.external_id === "c3"
+      );
+      expect(midLeads).toHaveLength(2);
+
+      // Advance past the 60s window — the oldest entries slide out and the
+      // 3rd card can start.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const result = await promise;
+      const externalIds = result.leads.map((l) => l.external_id).sort();
+      expect(externalIds).toEqual(["c1", "c2", "c3"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 15_000);
+
+  it("max_session_duration: stops new starts but allows in-flight completion", async () => {
+    // Real time test: each card takes 100ms; session duration is 80ms; only
+    // one card can be in-flight at a time. The 1st card finishes cleanly,
+    // the 2nd claim is blocked because the duration was already exceeded
+    // when the worker came back around.
+    const cards = [makeCard("c1"), makeCard("c2"), makeCard("c3")];
+    const adapter = new FakeAdapter({ cards, delayMs: 100 });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+
+    const manager = new JobManager(withPolicy({ maxSessionDurationMs: 80 }), registry, ws.storage, undefined, {
+      backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+      emptyPollMs: 5
+    });
+    const result = await manager.run();
+
+    // The 1st card is the in-flight one — it completed cleanly. No further
+    // cards were claimed once the duration cap was crossed.
+    expect(result.leads).toHaveLength(1);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
+    const pending = tasks.filter((t) => t.status === "pending");
+    expect(pending).toHaveLength(2);
+  });
+
+  it("max_cards_per_proxy: triggers rotate before next card when cardsOnIp hits the cap", async () => {
+    const cards = [makeCard("c1"), makeCard("c2"), makeCard("c3"), makeCard("c4"), makeCard("c5")];
+    const adapter = new FakeAdapter({ cards });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+
+    // Fake rotator whose cardsOnIp increments on every tick() and resets to
+    // 0 on every rotate(). The real ProxyRotator does the same.
+    let cardsOnIp = 0;
+    const rotateMock = vi.fn(async (_reason: string) => {
+      cardsOnIp = 0;
+    });
+    const rotator = {
+      getCurrentState: (): ProxyRuntimeState => ({
+        proxy: "http://rotator.test:8080",
+        proxyChannel: "ch-test",
+        ip: "1.2.3.4",
+        cardsOnIp
+      }),
+      tick: vi.fn(async () => {
+        cardsOnIp += 1;
+      }),
+      rotate: rotateMock
+    } as unknown as ProxyRotator;
+
+    const manager = new JobManager(
+      withPolicy({ maxCardsPerProxy: 2 }),
+      registry,
+      ws.storage,
+      rotator,
+      { backoff: { baseMs: 1, capMs: 2, jitter: 0 }, emptyPollMs: 5 }
+    );
+    const result = await manager.run();
+
+    // All 5 cards still get processed — rotation just keeps the cap rolling.
+    expect(result.leads).toHaveLength(5);
+    // Rotation must have been invoked before the 3rd, 4th, and 5th cards.
+    expect(rotateMock).toHaveBeenCalled();
+    const rotateReasons = rotateMock.mock.calls.map((c) => c[0]);
+    expect(rotateReasons.every((r) => r === "cards_per_proxy_cap")).toBe(true);
+  });
+
+  it("max_requests_per_minute_per_proxy: gates detail/contact requests per proxy ID", async () => {
+    vi.useFakeTimers();
+    try {
+      const cards = [makeCard("c1"), makeCard("c2"), makeCard("c3")];
+      const adapter = new FakeAdapter({ cards });
+      const registry = new AdapterRegistry();
+      registry.register(adapter);
+
+      // Each card performs 2 requests (getCardDetail + getContacts) → 6 total.
+      // cap=4 lets the first 4 fire immediately, the 5th and 6th wait.
+      const rotator = {
+        getCurrentState: (): ProxyRuntimeState => ({
+          proxy: "http://rotator.test:8080",
+          proxyChannel: "ch-budget",
+          ip: "1.2.3.4",
+          cardsOnIp: 0
+        }),
+        tick: vi.fn(async () => {}),
+        rotate: vi.fn(async (_reason: string) => {})
+      } as unknown as ProxyRotator;
+
+      const manager = new JobManager(
+        withPolicy({ maxRequestsPerMinutePerProxy: 4 }),
+        registry,
+        ws.storage,
+        rotator,
+        { backoff: { baseMs: 1, capMs: 2, jitter: 0 }, emptyPollMs: 5 }
+      );
+
+      const promise = manager.run();
+
+      // Let the first 4 requests fire — cards 1 and 2 should both complete
+      // (2 requests each, neither blocked).
+      await vi.advanceTimersByTimeAsync(200);
+      const midLeads = (await ws.storage.listLeads()).filter((l) =>
+        l.external_id === "c1" || l.external_id === "c2" || l.external_id === "c3"
+      );
+      expect(midLeads).toHaveLength(2);
+
+      // Advance past the 60s window so the 5th and 6th requests can fire.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const result = await promise;
+      expect(result.leads).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("max_requests_per_minute_per_proxy: no-rotator path uses a stable direct bucket", async () => {
+    vi.useFakeTimers();
+    try {
+      const cards = [makeCard("c1"), makeCard("c2"), makeCard("c3")];
+      const adapter = new FakeAdapter({ cards });
+      const registry = new AdapterRegistry();
+      registry.register(adapter);
+
+      // No rotator. The request budget is scoped to the literal "direct" bucket.
+      const manager = new JobManager(
+        withPolicy({ maxRequestsPerMinutePerProxy: 4 }),
+        registry,
+        ws.storage,
+        undefined,
+        { backoff: { baseMs: 1, capMs: 2, jitter: 0 }, emptyPollMs: 5 }
+      );
+
+      const promise = manager.run();
+
+      // First 4 requests (cards 1 and 2) should complete in this window.
+      await vi.advanceTimersByTimeAsync(200);
+      const midLeads = (await ws.storage.listLeads()).filter((l) =>
+        l.external_id === "c1" || l.external_id === "c2" || l.external_id === "c3"
+      );
+      expect(midLeads).toHaveLength(2);
+
+      // Advance past the 60s window — the 5th and 6th direct-bucket
+      // requests can now fire and card 3 completes.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const result = await promise;
+      expect(result.leads).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("max_cards_per_session: atomic reservation prevents overshoot under concurrency > 1", async () => {
+    // 3 workers run in parallel; each card takes long enough that all
+    // three race past the durable-count check before any of them writes
+    // a parse_attempt row. Without the atomic reservation the cap of 2
+    // would be silently overshot to 3.
+    const cards = [
+      makeCard("c1"),
+      makeCard("c2"),
+      makeCard("c3"),
+      makeCard("c4"),
+      makeCard("c5")
+    ];
+    const adapter = new FakeAdapter({ cards, delayMs: 40 });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+
+    const config: RuntimeConfig = { ...ws.config, concurrency: 3, rateLimit: { maxCardsPerSession: 2 } };
+
+    const manager = new JobManager(config, registry, ws.storage, undefined, {
+      backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+      emptyPollMs: 5
+    });
+    const result = await manager.run();
+
+    expect(result.leads).toHaveLength(2);
+    expect(await ws.storage.countParseAttempts(result.jobId)).toBe(2);
+  });
+
+  it("max_requests_per_minute_per_proxy: failed getCardDetail still consumes a request slot", async () => {
+    vi.useFakeTimers();
+    try {
+      const cards = [makeCard("c1"), makeCard("c2"), makeCard("c3")];
+
+      // Every card fails on getCardDetail. With maxRetries=0 each card
+      // contributes exactly one request to the per-proxy budget.
+      // cap=2: under the old (buggy) behaviour, the failed requests were
+      // *not* recorded, so the 3rd request would fire immediately and
+      // the run would finish with no waits. The fix records the request
+      // in `finally`, so the 3rd one blocks until the window slides.
+      const failOn = new Map<string, () => Error>();
+      for (const c of cards) failOn.set(c.externalId, () => new Error("HTTP 500 boom"));
+
+      const adapter = new FakeAdapter({ cards, failOn });
+      const registry = new AdapterRegistry();
+      registry.register(adapter);
+
+      // Fresh config: maxRetries=0 so each card makes exactly one request
+      // before going terminal-failed. Keeps the test deterministic.
+      const config: RuntimeConfig = { ...ws.config, maxRetries: 0, rateLimit: { maxRequestsPerMinutePerProxy: 2 } };
+      const manager = new JobManager(config, registry, ws.storage, undefined, {
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      const promise = manager.run();
+
+      // Let the first 2 requests fire and fail. With the fix in place,
+      // these count, so the 3rd request is gated.
+      await vi.advanceTimersByTimeAsync(200);
+
+      // 2 tasks completed and failed; 1 task is claimed and waiting on
+      // the per-minute window — its status is 'processing' because the
+      // worker has already called `claimNextTask` for it.
+      const jobsBefore = await ws.storage.findResumableParseJob({
+        source: "2gis",
+        city: "moscow",
+        category: "autoservice"
+      });
+      expect(jobsBefore).toBeDefined();
+      const partialTasks = await ws.storage.listCompanyTasks(jobsBefore!.id);
+      const partialFailed = partialTasks.filter((t) => t.status === "failed").length;
+      const partialProcessing = partialTasks.filter((t) => t.status === "processing").length;
+      expect(partialFailed).toBe(2);
+      expect(partialProcessing).toBe(1);
+
+      // Advance past the 60s window so the 3rd request can fire.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const result = await promise;
+      const finalTasks = await ws.storage.listCompanyTasks(result.jobId);
+      expect(finalTasks.filter((t) => t.status === "failed")).toHaveLength(3);
+      expect(result.leads).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("max_cards_per_proxy: worker exits cleanly when rotation cannot lower cardsOnIp", async () => {
+    const cards = [makeCard("c1"), makeCard("c2"), makeCard("c3")];
+    const adapter = new FakeAdapter({ cards });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+
+    // Stuck rotator — never reduces cardsOnIp (simulates a real rotator
+    // whose proxy API keeps returning the same over-burdened proxy or
+    // fails outright). Without the MAX_PROXY_ROTATION_ATTEMPTS guard the
+    // worker would loop forever.
+    const rotateMock = vi.fn(async (_reason: string) => {
+      // No-op: cardsOnIp stays at 5.
+    });
+    const rotator = {
+      getCurrentState: (): ProxyRuntimeState => ({
+        proxy: "http://rotator.test:8080",
+        proxyChannel: "ch-stuck",
+        ip: "1.2.3.4",
+        cardsOnIp: 5
+      }),
+      tick: vi.fn(async () => {}),
+      rotate: rotateMock
+    } as unknown as ProxyRotator;
+
+    const manager = new JobManager(
+      withPolicy({ maxCardsPerProxy: 3 }),
+      registry,
+      ws.storage,
+      rotator,
+      { backoff: { baseMs: 1, capMs: 2, jitter: 0 }, emptyPollMs: 5 }
+    );
+
+    // Run completes (does not hang) — workers exit after the rotation
+    // overflow error is caught in `runWorker`.
+    const result = await manager.run();
+
+    expect(result.leads).toHaveLength(0);
+    const tasks = await ws.storage.listCompanyTasks(result.jobId);
+    // No lead was ever produced. One task is left in 'processing' (the
+    // one the worker claimed before the rotation overflow) — its lease
+    // will be recovered on the next run by `recoverExpiredLeases`. The
+    // other two were never claimed and stay 'pending'.
+    const pending = tasks.filter((t) => t.status === "pending").length;
+    const processing = tasks.filter((t) => t.status === "processing").length;
+    expect(pending + processing).toBe(3);
+    expect(processing).toBeGreaterThanOrEqual(1);
+    // The limiter tried exactly MAX_PROXY_ROTATION_ATTEMPTS rotations
+    // before giving up.
+    expect(rotateMock).toHaveBeenCalledTimes(5);
+    expect(rotateMock.mock.calls.every((c) => c[0] === "cards_per_proxy_cap")).toBe(true);
+  });
+
+  it("max_session_duration: recheck after waitForCardStart prevents late starts", async () => {
+    // Set up a scenario where the per-minute wait would naturally run
+    // *past* the session-duration cap. The worker must not start the
+    // card once the duration has been exceeded, even if the per-minute
+    // gate has just opened.
+    vi.useFakeTimers();
+    try {
+      const cards = [makeCard("c1"), makeCard("c2")];
+      const adapter = new FakeAdapter({ cards });
+      const registry = new AdapterRegistry();
+      registry.register(adapter);
+
+      const manager = new JobManager(
+        withPolicy({ maxSessionDurationMs: 100, maxCardsPerMinute: 1 }),
+        registry,
+        ws.storage,
+        undefined,
+        { backoff: { baseMs: 1, capMs: 2, jitter: 0 }, emptyPollMs: 5 }
+      );
+
+      const promise = manager.run();
+
+      // Card 1 starts at t=0, completes very quickly. The 2nd card is
+      // claimed shortly after, then waitForCardStart blocks for ~60s
+      // (the per-minute window) because card 1's start is still in it.
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Advance past the 60s window. The per-minute gate opens, but the
+      // session duration (100ms) has long since passed — the recheck
+      // must catch this and the worker must exit without starting c2.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const result = await promise;
+      expect(result.leads).toHaveLength(1);
+      const c2 = (await ws.storage.listCompanyTasks(result.jobId)).find(
+        (t) => t.external_id === "c2"
+      );
+      // c2 was claimed before the recheck, so its status is 'processing'
+      // (a lease-recovery concern, not a rate-limit concern). The key
+      // invariant is that no lead was produced for c2.
+      expect(c2).toBeDefined();
+      expect(result.leads.find((l) => l.external_id === "c2")).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("max_cards_per_minute: concurrency > 1 — cap is not exceeded in the first 60s window", async () => {
+    // Concurrency > 1 stress test for the per-minute card-start budget.
+    // With the old separate wait+record design, the `await` inside
+    // waitForCardStart created a microtask boundary that let all N
+    // workers pass the empty-window check before any of them recorded,
+    // overshooting the cap. With the atomic check+reserve in
+    // acquireCardStart, only `cap` cards start in the first 60s window.
+    vi.useFakeTimers();
+    try {
+      // 6 cards, concurrency 3, cap 2 per minute. Each card takes ~10ms
+      // + jitter to process — fast enough that 3 workers are all
+      // contending for the cap at t=0.
+      const cards = Array.from({ length: 6 }, (_, i) => makeCard(`c${i + 1}`));
+      const adapter = new FakeAdapter({ cards, delayMs: 10 });
+      const registry = new AdapterRegistry();
+      registry.register(adapter);
+
+      const config: RuntimeConfig = {
+        ...ws.config,
+        concurrency: 3,
+        rateLimit: { maxCardsPerMinute: 2 }
+      };
+      const manager = new JobManager(config, registry, ws.storage, undefined, {
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      const promise = manager.run();
+
+      // Let the first batch process. With the atomic check+reserve only 2
+      // cards can start; the 3rd worker parks on the per-minute window.
+      await vi.advanceTimersByTimeAsync(500);
+
+      // At t=500ms (within the first 60s window), exactly 2 leads should
+      // exist. The 3rd card is in 'processing' state (claimed) but is
+      // blocked on the per-minute window.
+      const midLeads = await ws.storage.listLeads();
+      expect(midLeads).toHaveLength(2);
+
+      // Advance past the 60s window repeatedly so the remaining 4 cards
+      // can each start as room opens up.
+      await vi.advanceTimersByTimeAsync(RATE_LIMIT_WINDOW_MS * 3);
+
+      const result = await promise;
+      expect(result.leads).toHaveLength(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("max_requests_per_minute_per_proxy: concurrency > 1 — request cap is not exceeded for a proxy bucket", async () => {
+    // Concurrency > 1 stress test for the per-proxy request budget. Each
+    // card makes 2 requests (getCardDetail + getContacts). With the old
+    // separate wait+record design, the `await` inside waitForRequest
+    // created a microtask boundary that let multiple workers pass the
+    // empty-bucket check before any of them recorded, overshooting the
+    // cap. With the atomic check+reserve in acquireRequest, only `cap`
+    // requests fire in the first 60s window.
+    vi.useFakeTimers();
+    try {
+      const cards = Array.from({ length: 6 }, (_, i) => makeCard(`c${i + 1}`));
+      const adapter = new FakeAdapter({ cards, delayMs: 10 });
+      const registry = new AdapterRegistry();
+      registry.register(adapter);
+
+      const rotator = {
+        getCurrentState: (): ProxyRuntimeState => ({
+          proxy: "http://rotator.test:8080",
+          proxyChannel: "ch-budget",
+          ip: "1.2.3.4",
+          cardsOnIp: 0
+        }),
+        tick: vi.fn(async () => {}),
+        rotate: vi.fn(async (_reason: string) => {})
+      } as unknown as ProxyRotator;
+
+      // cap=4 lets exactly 4 requests fire in the first 60s window: the
+      // 3 workers' detail requests (1, 2, 3) plus Worker 1's contacts
+      // request (4). The other 2 workers' contacts are blocked because
+      // the bucket is now at 4/4. Worker 1 completes its card → 1 lead;
+      // workers 2 and 3 are blocked on contacts and produce no leads.
+      const config: RuntimeConfig = {
+        ...ws.config,
+        concurrency: 3,
+        rateLimit: { maxRequestsPerMinutePerProxy: 4 }
+      };
+      const manager = new JobManager(config, registry, ws.storage, rotator, {
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      const promise = manager.run();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      // At t=500ms, exactly 1 lead should exist (Worker 1 finished its
+      // card). With the old separate wait+record design, all 3 workers
+      // would have completed their cards (6 requests, overshoot by 2) →
+      // 3 leads. The atomic check+reserve keeps the bucket at 4/4.
+      const midLeads = await ws.storage.listLeads();
+      expect(midLeads).toHaveLength(1);
+
+      // Advance past the 60s window repeatedly so the remaining 4 cards
+      // (8 requests) can complete as the bucket slides.
+      await vi.advanceTimersByTimeAsync(RATE_LIMIT_WINDOW_MS * 3);
+
+      const result = await promise;
+      expect(result.leads).toHaveLength(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+    it("max_requests_per_minute_per_proxy: concurrency > 1 — failed request still consumes a reserved slot", async () => {
+      // Concurrency > 1 stress test for the "failed request still consumes
+      // a slot" invariant. With the old separate wait+record design, the
+      // record happened in `finally` after the adapter call, but the gap
+      // between the wait and the record let multiple workers pass the
+      // empty-bucket check before any of them recorded. The atomic
+      // acquireRequest closes that gap: the slot is reserved *before* the
+      // adapter call, so a throw still consumes the slot.
+      vi.useFakeTimers();
+      try {
+      const cards = Array.from({ length: 3 }, (_, i) => makeCard(`c${i + 1}`));
+
+      // Every card fails on getCardDetail. With maxRetries=0 each card
+      // contributes exactly one request (detail) before going
+      // terminal-failed. The contacts call is never reached.
+      const failOn = new Map<string, () => Error>();
+      for (const c of cards) failOn.set(c.externalId, () => new Error("HTTP 500 boom"));
+
+      const adapter = new FakeAdapter({ cards, failOn });
+      const registry = new AdapterRegistry();
+      registry.register(adapter);
+
+      // cap=2 with concurrency=3: 2 requests fire immediately and fail
+      // (slot consumed), the 3rd parks on the bucket. The other 2
+      // workers have no more tasks to claim after the first 2 fail.
+      const config: RuntimeConfig = {
+        ...ws.config,
+        concurrency: 3,
+        maxRetries: 0,
+        rateLimit: { maxRequestsPerMinutePerProxy: 2 }
+      };
+      const manager = new JobManager(config, registry, ws.storage, undefined, {
+        backoff: { baseMs: 1, capMs: 2, jitter: 0 },
+        emptyPollMs: 5
+      });
+
+      const promise = manager.run();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      const jobsBefore = await ws.storage.findResumableParseJob({
+        source: "2gis",
+        city: "moscow",
+        category: "autoservice"
+      });
+      expect(jobsBefore).toBeDefined();
+      const partialTasks = await ws.storage.listCompanyTasks(jobsBefore!.id);
+      // 2 cards failed (the 2 whose requests fired), 1 card is claimed
+      // and waiting on the per-minute window.
+      expect(partialTasks.filter((t) => t.status === "failed")).toHaveLength(2);
+      expect(partialTasks.filter((t) => t.status === "processing")).toHaveLength(1);
+
+      // Advance past the 60s window so the 3rd request can fire.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const result = await promise;
+      const finalTasks = await ws.storage.listCompanyTasks(result.jobId);
+      // The 3rd card finishes failing. With maxRetries=0 and only 3
+      // cards, all 3 cards eventually attempt and fail.
+      expect(finalTasks.filter((t) => t.status === "failed")).toHaveLength(3);
+      expect(result.leads).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

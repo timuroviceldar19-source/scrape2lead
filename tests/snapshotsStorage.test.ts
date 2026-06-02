@@ -140,10 +140,10 @@ describe("raw_snapshots storage API", () => {
   let parseJobId: string;
   let taskId: number;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ({ storage, dbPath, db } = makeStorage());
-    parseJobId = storage.createParseJob({ source: "2gis", city: "moscow", category: "auto" });
-    taskId = storage.enqueueCompanyTask({
+    parseJobId = await storage.createParseJob({ source: "2gis", city: "moscow", category: "auto" });
+    taskId = await storage.enqueueCompanyTask({
       parseJobId,
       source: "2gis",
       externalId: "ext-1"
@@ -154,8 +154,8 @@ describe("raw_snapshots storage API", () => {
     fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
   });
 
-  it("saveRawSnapshot persists payload + metadata; listRawSnapshots filters", () => {
-    const id = storage.saveRawSnapshot({
+  it("saveRawSnapshot persists payload + metadata; listRawSnapshots filters", async () => {
+    const id = await storage.saveRawSnapshot({
       companyTaskId: taskId,
       source: "2gis",
       externalId: "ext-1",
@@ -171,7 +171,7 @@ describe("raw_snapshots storage API", () => {
     expect(snap?.payload_path).toBeNull();
     expect(snap?.created_at).toEqual(snap?.updated_at);
 
-    storage.saveRawSnapshot({
+    await storage.saveRawSnapshot({
       source: "2gis",
       externalId: "ext-2",
       kind: "html",
@@ -193,11 +193,11 @@ describe("raw_snapshots storage API", () => {
     expect(storage.listRawSnapshots({ companyTaskId: null })).toHaveLength(1);
   });
 
-  it("cleanupRecentSnapshots keeps newest N 'recent' rows, leaves others alone", () => {
+  it("cleanupRecentSnapshots keeps newest N 'recent' rows, leaves others alone", async () => {
     // Insert 5 'recent' snapshots with strictly increasing created_at to avoid ties.
     const ids: number[] = [];
     for (let i = 0; i < 5; i++) {
-      const id = storage.saveRawSnapshot({
+      const id = await storage.saveRawSnapshot({
         companyTaskId: taskId,
         source: "2gis",
         externalId: `ext-${i}`,
@@ -210,7 +210,7 @@ describe("raw_snapshots storage API", () => {
         .run(new Date(2026, 5, 1, 12, 0, i).toISOString(), id);
     }
     // And one error snapshot which must NOT be touched.
-    const errorId = storage.saveRawSnapshot({
+    const errorId = await storage.saveRawSnapshot({
       source: "2gis",
       kind: "html",
       purpose: "error",
@@ -239,20 +239,20 @@ describe("raw_snapshots storage API", () => {
     expect(storage.getRawSnapshot(errorId)).not.toBeNull();
   });
 
-  it("cleanupSnapshotsOlderThan deletes by TTL with optional purpose filter", () => {
-    const oldRecent = storage.saveRawSnapshot({
+  it("cleanupSnapshotsOlderThan deletes by TTL with optional purpose filter", async () => {
+    const oldRecent = await storage.saveRawSnapshot({
       source: "2gis",
       kind: "json",
       purpose: "recent",
       payload: { o: 1 }
     });
-    const freshRecent = storage.saveRawSnapshot({
+    const freshRecent = await storage.saveRawSnapshot({
       source: "2gis",
       kind: "json",
       purpose: "recent",
       payload: { o: 2 }
     });
-    const oldError = storage.saveRawSnapshot({
+    const oldError = await storage.saveRawSnapshot({
       source: "2gis",
       kind: "html",
       purpose: "error",
@@ -287,8 +287,8 @@ describe("raw_snapshots storage API", () => {
     expect(storage.getRawSnapshot(oldError)).toBeNull();
   });
 
-  it("FK ON DELETE SET NULL nulls company_task_id when its task is deleted", () => {
-    const snapId = storage.saveRawSnapshot({
+  it("FK ON DELETE SET NULL nulls company_task_id when its task is deleted", async () => {
+    const snapId = await storage.saveRawSnapshot({
       companyTaskId: taskId,
       source: "2gis",
       externalId: "ext-1",
@@ -310,10 +310,10 @@ describe("attempts, captcha, proxy compatibility", () => {
   let parseJobId: string;
   let taskId: number;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ({ storage, dbPath, db } = makeStorage());
-    parseJobId = storage.createParseJob({ source: "2gis", city: "moscow", category: "auto" });
-    taskId = storage.enqueueCompanyTask({
+    parseJobId = await storage.createParseJob({ source: "2gis", city: "moscow", category: "auto" });
+    taskId = await storage.enqueueCompanyTask({
       parseJobId,
       source: "2gis",
       externalId: "ext-1"
@@ -324,8 +324,8 @@ describe("attempts, captcha, proxy compatibility", () => {
     fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
   });
 
-  it("saveAttempt writes without job_id and maps status onto result", () => {
-    storage.saveAttempt({
+  it("saveAttempt writes without job_id and maps status onto result", async () => {
+    await storage.saveAttempt({
       source: "2gis",
       externalId: "ext-1",
       status: "blocked",
@@ -348,8 +348,8 @@ describe("attempts, captcha, proxy compatibility", () => {
     expect(row.duration_ms).toBe(123);
   });
 
-  it("saveAttempt still accepts legacy callers passing jobId", () => {
-    storage.saveAttempt({
+  it("saveAttempt still accepts legacy callers passing jobId", async () => {
+    await storage.saveAttempt({
       jobId: parseJobId,
       source: "2gis",
       externalId: "ext-1",
@@ -375,15 +375,15 @@ describe("attempts, captcha, proxy compatibility", () => {
     expect(storage.listRawSnapshots()).toHaveLength(0);
   });
 
-  it("saveCaptchaEvent persists task / proxy / snapshot references", () => {
-    const snapshotId = storage.saveRawSnapshot({
+  it("saveCaptchaEvent persists task / proxy / snapshot references", async () => {
+    const snapshotId = await storage.saveRawSnapshot({
       companyTaskId: taskId,
       source: "2gis",
       kind: "html",
       purpose: "captcha",
       payload: "<captcha/>"
     });
-    const id = storage.saveCaptchaEvent({
+    const id = await storage.saveCaptchaEvent({
       source: "2gis",
       action: "rotated",
       url: "https://2gis.ru/foo",
@@ -402,15 +402,15 @@ describe("attempts, captcha, proxy compatibility", () => {
     expect(row.screenshot_path).toBe("/tmp/cap-1.png");
   });
 
-  it("captcha_events: ON DELETE SET NULL nulls company_task_id and snapshot_id when referenced rows are deleted", () => {
-    const snapshotId = storage.saveRawSnapshot({
+  it("captcha_events: ON DELETE SET NULL nulls company_task_id and snapshot_id when referenced rows are deleted", async () => {
+    const snapshotId = await storage.saveRawSnapshot({
       companyTaskId: taskId,
       source: "2gis",
       kind: "html",
       purpose: "captcha",
       payload: "<captcha/>"
     });
-    const captchaId = storage.saveCaptchaEvent({
+    const captchaId = await storage.saveCaptchaEvent({
       source: "2gis",
       action: "detected",
       companyTaskId: taskId,
@@ -437,8 +437,8 @@ describe("attempts, captcha, proxy compatibility", () => {
     expect(afterTask.action).toBe("detected");
   });
 
-  it("saveProxyRotation persists enriched columns; saveProxyEvent legacy still works", () => {
-    storage.saveProxyRotation({
+  it("saveProxyRotation persists enriched columns; saveProxyEvent legacy still works", async () => {
+    await storage.saveProxyRotation({
       proxy: "http://proxy:8000",
       proxyChannel: "ch-1",
       ip: "203.0.113.1",
