@@ -34,7 +34,9 @@ export class TwoGisAdapter implements ISourceAdapter {
     if (this.config.fixturePath) {
       const payload = JSON.parse(fs.readFileSync(this.config.fixturePath, "utf8")) as unknown;
       this.lastPayloads = [payload];
-      return extractCardsFromPayload(payload, query.category, query.geo).slice(0, query.limit);
+      const cards = extractCardsFromPayload(payload, query.category, query.geo).slice(0, query.limit);
+      this.assertFirmCards(cards, `fixture ${this.config.fixturePath}`);
+      return cards;
     }
 
     const page = await this.browserSession.newPage();
@@ -57,7 +59,25 @@ export class TwoGisAdapter implements ISourceAdapter {
 
     const fallback = await this.domFallback(page, query);
     await page.close();
+    // Validation guard: if neither API capture nor the DOM fallback produced a
+    // single real firm card, fail loudly with an extraction-quality error
+    // rather than enqueuing UI/map/promo junk as company_tasks.
+    this.assertFirmCards(fallback, `${this.lastPayloads.length} captured payload(s)`);
     return fallback;
+  }
+
+  /**
+   * Throw an extraction-quality error when discovery yielded no real firm
+   * cards. JobManager.discoverCards classifies `extraction_failed` and records
+   * evidence before the run aborts, so the job never finalises as `completed`
+   * with junk leads.
+   */
+  private assertFirmCards(cards: RawCompanyCard[], context: string): void {
+    if (cards.length > 0) return;
+    throw new Error(
+      `extraction_failed: 2GIS discovery found no real firm result cards (${context}); ` +
+        `refusing to enqueue UI/map/promo entries as leads`
+    );
   }
 
   async getCardDetail(card: RawCompanyCard): Promise<RawCardDetail> {

@@ -142,7 +142,8 @@ export class JobManager {
       return await adapter.searchCompanies(this.config);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (classifyError(message) === "blocked") {
+      const errorType = classifyError(message);
+      if (errorType === "blocked") {
         const isCaptcha = message.toLowerCase().includes("captcha");
         const snapshotId = await this.storage.saveRawSnapshot({
           source: adapter.source,
@@ -157,6 +158,17 @@ export class JobManager {
           proxyId: this.resolveProxyId() ?? null
         });
         logger.warn("discovery blocked by anti-bot; captcha event recorded", { jobId, message });
+      } else if (errorType === "extraction_failed") {
+        // Discovery produced only UI/map/promo junk. Persist evidence and let
+        // the error abort the run — the job stays unfinished (never finalised
+        // as `completed`) and no junk leads are exported.
+        await this.storage.saveRawSnapshot({
+          source: adapter.source,
+          kind: "json",
+          purpose: "error",
+          payload: { phase: "discovery", jobId, reason: "extraction_failed", message }
+        });
+        logger.warn("discovery extraction failed; no real firm cards found", { jobId, message });
       }
       throw error;
     }
@@ -423,6 +435,12 @@ export class JobManager {
 
 function classifyError(message: string): string {
   const lower = message.toLowerCase();
+  // extraction-quality failure — discovery found no real firm cards (only
+  // UI/map/promo junk). Checked first: the message is adapter-authored and
+  // unambiguous, so it must not be mis-bucketed by an incidental token.
+  if (lower.includes("extraction_failed") || lower.includes("extraction failed")) {
+    return "extraction_failed";
+  }
   // blocked / rate-limited — must be checked before deleted_card so "403" wins over any overlap
   if (lower.includes("captcha") || lower.includes("403") || lower.includes("429") || lower.includes("blocked")) {
     return "blocked";

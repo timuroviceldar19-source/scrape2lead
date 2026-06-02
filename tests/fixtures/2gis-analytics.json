@@ -1,0 +1,11 @@
+{
+  "service": "webvisor",
+  "result": {
+    "events": [
+      { "id": "evt-001", "name": "page_view", "ts": 1780393152936, "url": "/novosibirsk/search/Автосервисы" },
+      { "id": "evt-002", "name": "scroll", "ts": 1780393153100, "depth": 0.42 }
+    ],
+    "counters": { "hits": 17, "visits": 3 },
+    "stat": { "session": "ab12cd34" }
+  }
+}
