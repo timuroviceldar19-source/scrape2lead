@@ -1,0 +1,14 @@
+{
+  "source": "2gis",
+  "geo": "moscow",
+  "category": "autoservice",
+  "limit": 25,
+  "databasePath": "data/scrape2lead.db",
+  "exportDir": "exports",
+  "delayRangeMs": [1200, 2500],
+  "rotateEveryN": 50,
+  "maxRetries": 2,
+  "concurrency": 1,
+  "headless": false,
+  "rawSnapshotDir": "raw_snapshots"
+}

@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment — copy .env.example and fill in values; never commit .env
+.env
+
+# Runtime database
+data/*.db
+
+# Runtime export artifacts
+exports/*
+!exports/.gitkeep
+
+# Raw snapshots (fixtures are kept via tests/fixtures — not here)
+raw_snapshots/*
+!raw_snapshots/.gitkeep
+
+# Logs and temp files
+*.log
+logs/
+*.tmp
+*.cache
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Local config override — use config.example.json as starting point
+config.json

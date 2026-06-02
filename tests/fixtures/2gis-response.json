@@ -1,0 +1,32 @@
+{
+  "result": {
+    "items": [
+      {
+        "id": "70000001000000123",
+        "name": "Demo Autoservice",
+        "rubric": "autoservice",
+        "city_name": "moscow",
+        "address_name": "Lenina 1",
+        "contact": {
+          "phones": [
+            { "number": "8 (777) 123-45-67" },
+            { "number": "+7 777 123 45 67" }
+          ],
+          "email": "INFO@EXAMPLE.COM",
+          "website": "example.com"
+        },
+        "social_links": ["https://vk.com/example"]
+      },
+      {
+        "id": "70000001000000456",
+        "name": "No Phone Dental",
+        "rubric": "dentistry",
+        "city_name": "almaty",
+        "address_name": "Abaya 10",
+        "contact": {
+          "website": "https://dental.example.kz/"
+        }
+      }
+    ]
+  }
+}
