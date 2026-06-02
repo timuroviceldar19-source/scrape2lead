@@ -72,7 +72,7 @@ export function loadConfig(configPath: string, overrides: Partial<RuntimeConfig>
     proxy: envProxy ?? fileConfig.proxy,
     storageBackend,
     postgresConnectionString:
-      process.env.POSTGRES_CONNECTION_STRING || fileConfig["postgresConnectionString"],
+      process.env.POSTGRES_CONNECTION_STRING || fileConfig["postgresConnectionString"] || undefined,
     ...overrides
   });
 
