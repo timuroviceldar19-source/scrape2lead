@@ -10,5 +10,7 @@
   "maxRetries": 2,
   "concurrency": 1,
   "headless": false,
-  "rawSnapshotDir": "raw_snapshots"
+  "rawSnapshotDir": "raw_snapshots",
+  "storageBackend": "sqlite",
+  "postgresConnectionString": null
 }

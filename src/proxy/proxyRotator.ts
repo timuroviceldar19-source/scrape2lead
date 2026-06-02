@@ -1,7 +1,7 @@
 import { logger } from "../logger.js";
 import type { BrowserSessionManager } from "../browser/browserSessionManager.js";
 import type { RuntimeConfig } from "../types.js";
-import type { Storage } from "../storage/storage.js";
+import type { IStorage } from "../storage/interface.js";
 
 interface ProxyCredentials {
   server: string;
@@ -27,7 +27,7 @@ export class ProxyRotator {
 
   constructor(
     private readonly config: RuntimeConfig,
-    private readonly storage: Storage,
+    private readonly storage: IStorage,
     private readonly browserSession: BrowserSessionManager
   ) {}
 
@@ -71,7 +71,7 @@ export class ProxyRotator {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn("proxy rotation API failed", { message });
-      this.storage.saveProxyRotation({
+      await this.storage.saveProxyRotation({
         proxy: this.currentProxy,
         proxyChannel: this.currentChannel,
         ip: this.currentIp,
@@ -87,7 +87,7 @@ export class ProxyRotator {
     this.currentChannel = newProxy.channel;
     this.currentIp = newProxy.ip;
 
-    this.storage.saveProxyRotation({
+    await this.storage.saveProxyRotation({
       proxy: newProxy.server,
       proxyChannel: newProxy.channel,
       ip: newProxy.ip,
