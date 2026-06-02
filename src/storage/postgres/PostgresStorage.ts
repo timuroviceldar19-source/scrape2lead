@@ -242,9 +242,9 @@ export class PostgresStorage implements IStorage {
         open: number | null;
       }>(
         `SELECT
-           SUM(CASE WHEN status IN ('success','partial') THEN 1 ELSE 0 END) AS done,
-           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-           SUM(CASE WHEN status NOT IN ('success','partial','failed') THEN 1 ELSE 0 END) AS open
+           SUM(CASE WHEN status IN ('success','partial') THEN 1 ELSE 0 END)::int AS done,
+           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)::int AS failed,
+           SUM(CASE WHEN status NOT IN ('success','partial','failed') THEN 1 ELSE 0 END)::int AS open
          FROM company_tasks
          WHERE parse_job_id = $1`,
         [parseJobId]
@@ -551,10 +551,10 @@ export class PostgresStorage implements IStorage {
         terminal_n: number | null;
       }>(
         `SELECT
-           SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_n,
-           SUM(CASE WHEN status = 'partial'  THEN 1 ELSE 0 END) AS partial_n,
-           SUM(CASE WHEN status IN ('failed','blocked') THEN 1 ELSE 0 END) AS failed_n,
-           COUNT(*) AS terminal_n
+           SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)::int AS success_n,
+           SUM(CASE WHEN status = 'partial'  THEN 1 ELSE 0 END)::int AS partial_n,
+           SUM(CASE WHEN status IN ('failed','blocked') THEN 1 ELSE 0 END)::int AS failed_n,
+           COUNT(*)::int AS terminal_n
          FROM company_tasks
          WHERE parse_job_id = $1
            AND status IN ('success','partial','failed','blocked')`,
@@ -604,7 +604,7 @@ export class PostgresStorage implements IStorage {
       }
 
       const avgResult = await client.query<{ avg_ms: number | null }>(
-        `SELECT AVG(duration_ms) AS avg_ms FROM parse_attempts
+        `SELECT AVG(duration_ms)::float8 AS avg_ms FROM parse_attempts
          WHERE duration_ms IS NOT NULL
            AND company_task_id IN (SELECT id FROM company_tasks WHERE parse_job_id = $1)`,
         [parseJobId]
