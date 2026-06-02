@@ -6,6 +6,7 @@ import type { ISourceAdapter, RawCardDetail, RawCompanyCard, RawContacts, Runtim
 import { logger } from "../../logger.js";
 import { ApiCapture } from "./apiCapture.js";
 import { extractCardsFromPayload, findDetailPayload, mapContacts, mapDetail, toLead } from "./mapper.js";
+import { classifySoftBlock, SoftBlockError, type SoftBlockClassification, type SoftBlockEvidence } from "./softBlock.js";
 
 export class TwoGisAdapter implements ISourceAdapter {
   readonly source = "2gis";
@@ -55,6 +56,11 @@ export class TwoGisAdapter implements ISourceAdapter {
     if (captured.length > 0) {
       await page.close();
       return dedupeCards(captured).slice(0, query.limit);
+    }
+
+    const softBlock = await this.detectSoftBlock(page, capture.softBlockEvidence());
+    if (softBlock) {
+      await this.throwSoftBlock(page, softBlock);
     }
 
     const fallback = await this.domFallback(page, query);
@@ -162,6 +168,24 @@ export class TwoGisAdapter implements ISourceAdapter {
     }
     throw new Error(
       `blocked: 2GIS ${wall} interstitial — no results rendered; screenshot saved to ${screenshotPath}`
+    );
+  }
+
+  private async detectSoftBlock(page: Page, payloadEvidence: SoftBlockEvidence[]): Promise<SoftBlockClassification | null> {
+    const bodyText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+    return classifySoftBlock(bodyText, payloadEvidence);
+  }
+
+  private async throwSoftBlock(page: Page, classification: SoftBlockClassification): Promise<never> {
+    const screenshotPath = path.join(this.config.rawSnapshotDir, `${classification.reason}-${Date.now()}.png`);
+    const screenshotSaved = await page.screenshot({ path: screenshotPath, fullPage: true })
+      .then(() => true)
+      .catch(() => false);
+    throw new SoftBlockError(
+      `${classification.reason}: 2GIS rendered an empty-results page with throttling/soft-block signals` +
+        (screenshotSaved ? `; screenshot saved to ${screenshotPath}` : ""),
+      classification,
+      screenshotSaved ? screenshotPath : undefined
     );
   }
 

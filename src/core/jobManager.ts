@@ -7,6 +7,7 @@ import { exportLeads } from "../export/exporter.js";
 import { DIRECT_PROXY_BUCKET, RateLimiter } from "./rateLimiter.js";
 import { computeBackoffMs, type BackoffOptions } from "./backoff.js";
 import type { ProxyRotator } from "../proxy/proxyRotator.js";
+import { SoftBlockError } from "../adapters/2gis/softBlock.js";
 
 const DEFAULT_LEASE_MS = 60_000;
 const EMPTY_POLL_MS = 250;
@@ -143,21 +144,34 @@ export class JobManager {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const errorType = classifyError(message);
-      if (errorType === "blocked") {
-        const isCaptcha = message.toLowerCase().includes("captcha");
+      if (errorType === "blocked" || errorType === "soft_blocked") {
+        const softBlock = getSoftBlockDetails(error);
+        const isSoftBlock = errorType === "soft_blocked";
+        const isCaptcha = !isSoftBlock && message.toLowerCase().includes("captcha");
+        const purpose = isSoftBlock ? "soft_blocked" : isCaptcha ? "captcha" : "error";
+        const action = isSoftBlock
+          ? softBlock.reason === "throttled" ? "throttled_detected" : "soft_blocked_detected"
+          : isCaptcha ? "captcha_detected" : "blocked_detected";
         const snapshotId = await this.storage.saveRawSnapshot({
           source: adapter.source,
           kind: "json",
-          purpose: isCaptcha ? "captcha" : "error",
-          payload: { phase: "discovery", jobId, message }
+          purpose,
+          payload: {
+            phase: "discovery",
+            jobId,
+            reason: errorType,
+            message,
+            evidence: softBlock.evidence
+          }
         });
         await this.storage.saveCaptchaEvent({
           source: adapter.source,
-          action: isCaptcha ? "captcha_detected" : "blocked_detected",
+          action,
           snapshotId,
+          screenshotPath: softBlock.screenshotPath ?? null,
           proxyId: this.resolveProxyId() ?? null
         });
-        logger.warn("discovery blocked by anti-bot; captcha event recorded", { jobId, message });
+        logger.warn("discovery blocked; event recorded", { jobId, action, message });
       } else if (errorType === "extraction_failed") {
         // Discovery produced only UI/map/promo junk. Persist evidence and let
         // the error abort the run — the job stays unfinished (never finalised
@@ -333,7 +347,7 @@ export class JobManager {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const errorType = classifyError(message);
-      const blocked = errorType === "blocked";
+      const blocked = errorType === "blocked" || errorType === "soft_blocked";
       const isDeletedCard = errorType === "deleted_card";
       const isNoData = errorType === "no_data";
       const maxAttempts = this.config.maxRetries + 1;
@@ -370,21 +384,28 @@ export class JobManager {
 
       if (blocked) {
         // Persist evidence snapshot + captcha event for every blocked detection.
-        const isCaptcha = message.toLowerCase().includes("captcha");
+        const softBlock = getSoftBlockDetails(error);
+        const isSoftBlock = errorType === "soft_blocked";
+        const isCaptcha = !isSoftBlock && message.toLowerCase().includes("captcha");
+        const purpose = isSoftBlock ? "soft_blocked" : isCaptcha ? "captcha" : "error";
+        const action = isSoftBlock
+          ? softBlock.reason === "throttled" ? "throttled_detected" : "soft_blocked_detected"
+          : isCaptcha ? "captcha_detected" : "blocked_detected";
         const snapshotId = await this.storage.saveRawSnapshot({
           companyTaskId: task.id,
           source: adapter.source,
           externalId: card.externalId,
           kind: "json",
-          purpose: isCaptcha ? "captcha" : "error",
-          payload: { message, errorType, externalId: card.externalId }
+          purpose,
+          payload: { message, errorType, externalId: card.externalId, evidence: softBlock.evidence }
         });
         await this.storage.saveCaptchaEvent({
           source: adapter.source,
-          action: isCaptcha ? "captcha_detected" : "blocked_detected",
+          action,
           companyTaskId: task.id,
           snapshotId,
           url: card.url ?? null,
+          screenshotPath: softBlock.screenshotPath ?? null,
           proxyId: this.resolveProxyId() ?? null
         });
 
@@ -435,6 +456,9 @@ export class JobManager {
 
 function classifyError(message: string): string {
   const lower = message.toLowerCase();
+  if (lower.includes("soft_blocked") || lower.includes("soft blocked") || lower.includes("throttled")) {
+    return "soft_blocked";
+  }
   // extraction-quality failure — discovery found no real firm cards (only
   // UI/map/promo junk). Checked first: the message is adapter-authored and
   // unambiguous, so it must not be mis-bucketed by an incidental token.
@@ -462,6 +486,19 @@ function classifyError(message: string): string {
   if (lower.includes("timeout")) return "timeout";
   if (lower.includes("selector")) return "selector";
   return "error";
+}
+
+function getSoftBlockDetails(error: unknown): {
+  reason?: "soft_blocked" | "throttled";
+  evidence?: unknown;
+  screenshotPath?: string;
+} {
+  if (!(error instanceof SoftBlockError)) return {};
+  return {
+    reason: error.classification.reason,
+    evidence: error.classification.evidence,
+    screenshotPath: error.screenshotPath
+  };
 }
 
 function sleep(ms: number): Promise<void> {
