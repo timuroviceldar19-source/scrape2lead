@@ -8,6 +8,7 @@ import { DIRECT_PROXY_BUCKET, RateLimiter } from "./rateLimiter.js";
 import { computeBackoffMs, type BackoffOptions } from "./backoff.js";
 import type { ProxyRotator } from "../proxy/proxyRotator.js";
 import { SoftBlockError } from "../adapters/2gis/softBlock.js";
+import { enrichLeadFromWebsite } from "../enrichment/websiteCrawler.js";
 
 const DEFAULT_LEASE_MS = 60_000;
 const EMPTY_POLL_MS = 250;
@@ -35,6 +36,12 @@ interface EnrichmentDiagnostics {
   websiteAdded: number;
   emailAdded: number;
   messengersAdded: number;
+  websiteCrawlAttempted: number;
+  websiteCrawlSucceeded: number;
+  websiteCrawlEmailFound: number;
+  websiteCrawlMessengersFound: number;
+  websiteCrawlTimeouts: number;
+  websiteCrawlPagesVisited: number;
 }
 
 interface ContactProfile {
@@ -350,7 +357,7 @@ export class JobManager {
         purpose: "recent",
         payload: contacts.payload
       });
-      const lead = adapter.normalize(detail, contacts);
+      const lead = await this.enrichWebsiteContacts(adapter.normalize(detail, contacts), enrichmentDiagnostics);
       enrichmentDiagnostics.detailsSucceeded += 1;
       recordContactImprovements(enrichmentDiagnostics, card, lead);
       await this.storage.upsertLead(lead);
@@ -473,6 +480,22 @@ export class JobManager {
     return s.proxyChannel ?? s.proxy ?? undefined;
   }
 
+  private async enrichWebsiteContacts(
+    lead: Lead,
+    diagnostics: EnrichmentDiagnostics
+  ): Promise<Lead> {
+    const result = await enrichLeadFromWebsite(lead, this.config.websiteCrawl);
+    if (!result.telemetry.attempted) return result.lead;
+
+    diagnostics.websiteCrawlAttempted += 1;
+    if (result.telemetry.succeeded) diagnostics.websiteCrawlSucceeded += 1;
+    if (result.telemetry.emailFound) diagnostics.websiteCrawlEmailFound += 1;
+    diagnostics.websiteCrawlMessengersFound += result.telemetry.messengersFound;
+    diagnostics.websiteCrawlTimeouts += result.telemetry.timeouts;
+    diagnostics.websiteCrawlPagesVisited += result.telemetry.pagesVisited;
+    return result.lead;
+  }
+
   /**
    * Stable bucket key for the per-proxy request budget. Mirrors
    * {@link resolveProxyId} but normalises the no-rotator case to
@@ -492,7 +515,13 @@ function createEnrichmentDiagnostics(): EnrichmentDiagnostics {
     contactsImproved: 0,
     websiteAdded: 0,
     emailAdded: 0,
-    messengersAdded: 0
+    messengersAdded: 0,
+    websiteCrawlAttempted: 0,
+    websiteCrawlSucceeded: 0,
+    websiteCrawlEmailFound: 0,
+    websiteCrawlMessengersFound: 0,
+    websiteCrawlTimeouts: 0,
+    websiteCrawlPagesVisited: 0
   };
 }
 
