@@ -4,7 +4,13 @@ import {
   classifyHealthGateSnapshot,
   type HealthGateSnapshot
 } from "../scripts/auditHealthGate.js";
-import { evaluateAuditMetrics, type AuditMetrics } from "../scripts/auditRegression.js";
+import {
+  classifyAuditRuntimeEnvironmentError,
+  evaluateAuditMetrics,
+  evaluateDetailEnvironment,
+  type AuditDiagnosticsSummary,
+  type AuditMetrics
+} from "../scripts/auditRegression.js";
 
 function snapshot(overrides: Partial<HealthGateSnapshot>): HealthGateSnapshot {
   return {
@@ -29,6 +35,25 @@ function metrics(overrides: Partial<AuditMetrics>): AuditMetrics {
     messengers: 0,
     incomplete: 1,
     detailsFailed: 2,
+    ...overrides
+  };
+}
+
+function diagnostics(overrides: Partial<AuditDiagnosticsSummary>): AuditDiagnosticsSummary {
+  return {
+    detailsAttempted: 50,
+    detailsFailed: 0,
+    detailDomFallbacks: 0,
+    detailDomSparseFallbacks: 0,
+    detailDomTimeouts: 0,
+    detailDomTunnelFailures: 0,
+    detailDomProxyFailures: 0,
+    detailDomNetworkFailures: 0,
+    detailBlocked: 0,
+    detailDegraded: false,
+    websiteDiscoverySucceeded: 0,
+    websiteCrawlSucceeded: 0,
+    directoryDiscoverySucceeded: 0,
     ...overrides
   };
 }
@@ -105,6 +130,7 @@ describe("audit regression metric classifier", () => {
   });
 
   it("classifies healthy-environment bad metrics as FAIL, not ENVIRONMENT_BLOCKED", () => {
+    const environment = evaluateDetailEnvironment(diagnostics({}));
     const result = evaluateAuditMetrics(metrics({
       total: 49,
       phone: 0,
@@ -114,11 +140,58 @@ describe("audit regression metric classifier", () => {
       detailsFailed: 3
     }));
 
+    expect(environment).toBeNull();
     expect(result.status).toBe("FAIL");
     expect(result.failures).toEqual(expect.arrayContaining([
       "Total leads 49 < baseline 50",
       "Leads with phone 0 < baseline 50",
       "Details failed 3 > baseline 2"
     ]));
+  });
+
+  it("classifies passed search health plus detail sparse timeout fallback as ENVIRONMENT_BLOCKED", () => {
+    const result = evaluateDetailEnvironment(diagnostics({
+      detailsFailed: 0,
+      detailDomFallbacks: 23,
+      detailDomSparseFallbacks: 23,
+      detailDomTimeouts: 23,
+      detailDegraded: true
+    }));
+
+    expect(result).toMatchObject({
+      status: "ENVIRONMENT_BLOCKED",
+      reason: "detail_timeouts"
+    });
+  });
+
+  it("does not let detailsFailed=0 hide detail-stage degradation", () => {
+    const result = evaluateDetailEnvironment(diagnostics({
+      detailsFailed: 0,
+      detailDomFallbacks: 4,
+      detailDomSparseFallbacks: 4,
+      detailDegraded: true
+    }));
+
+    expect(result).toMatchObject({
+      status: "ENVIRONMENT_BLOCKED",
+      reason: "detail_sparse_fallback"
+    });
+  });
+});
+
+describe("audit runtime environment classifier", () => {
+  it("classifies full-run 429 errors as ENVIRONMENT_BLOCKED rate_limited", () => {
+    expect(classifyAuditRuntimeEnvironmentError(new Error("HTTP 429 Too Many Requests"), true)).toMatchObject({
+      reason: "rate_limited"
+    });
+  });
+
+  it("classifies full-run navigation timeouts after a passed search gate as environment blocks", () => {
+    expect(classifyAuditRuntimeEnvironmentError(new Error("page.goto: Timeout 60000ms exceeded"), false)).toMatchObject({
+      reason: "network_timeout"
+    });
+    expect(classifyAuditRuntimeEnvironmentError(new Error("page.goto: Timeout 60000ms exceeded"), true)).toMatchObject({
+      reason: "proxy_timeout"
+    });
   });
 });

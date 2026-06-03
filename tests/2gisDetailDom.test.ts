@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildDomFirmPayload,
   buildSearchUrl,
@@ -8,10 +8,11 @@ import {
   scorePanelCandidate,
   type DomFirmLink,
   type DomFirmSnapshot,
-  type PanelSignals
+  type PanelSignals,
+  TwoGisAdapter
 } from "../src/adapters/2gis/TwoGisAdapter.js";
 import { mapContacts, mapDetail, toLead } from "../src/adapters/2gis/mapper.js";
-import type { RawCompanyCard } from "../src/types.js";
+import type { RawCompanyCard, RuntimeConfig } from "../src/types.js";
 
 const NO_SIGNALS: PanelSignals = {
   addressAnchors: 0,
@@ -77,6 +78,23 @@ function makeSnapshot(partial: Partial<DomFirmSnapshot>): DomFirmSnapshot {
   };
 }
 
+function makeConfig(): RuntimeConfig {
+  return {
+    source: "2gis",
+    geo: "\u041d\u043e\u0432\u043e\u0441\u0438\u0431\u0438\u0440\u0441\u043a",
+    category: "\u0410\u0432\u0442\u043e\u0441\u0435\u0440\u0432\u0438\u0441\u044b",
+    limit: 50,
+    databasePath: "test.db",
+    exportDir: "exports",
+    delayRangeMs: [0, 1],
+    rotateEveryN: 50,
+    maxRetries: 2,
+    concurrency: 1,
+    headless: true,
+    rawSnapshotDir: "raw_snapshots"
+  };
+}
+
 describe("2GIS DOM detail extraction", () => {
   it("uses the 2GIS city slug for Novosibirsk search URLs", () => {
     expect(citySegment("\u041d\u043e\u0432\u043e\u0441\u0438\u0431\u0438\u0440\u0441\u043a")).toBe("novosibirsk");
@@ -138,6 +156,96 @@ describe("2GIS DOM detail extraction", () => {
     expect(JSON.stringify(payload)).not.toContain("token-with-session-data");
     expect(JSON.stringify(debug)).not.toContain("388-55-67");
     expect((debug as { scope: string }).scope).toBe("panel");
+  });
+
+  it("retries a transient detail navigation timeout before falling back to sparse discovery payload", async () => {
+    const card: RawCompanyCard = {
+      source: "2gis",
+      externalId: "141265769348198",
+      name: "\u0420\u043e\u0441\u0441\u0430",
+      category: "\u0410\u0432\u0442\u043e\u0441\u0435\u0440\u0432\u0438\u0441\u044b",
+      city: "\u041d\u043e\u0432\u043e\u0441\u0438\u0431\u0438\u0440\u0441\u043a",
+      address: "",
+      url: "https://2gis.ru/novosibirsk/firm/141265769348198",
+      payload: {
+        href: "https://2gis.ru/novosibirsk/firm/141265769348198",
+        text: "\u0420\u043e\u0441\u0441\u0430"
+      }
+    };
+    const richDomPayload = {
+      id: "141265769348198",
+      type: "branch",
+      name: "\u0420\u043e\u0441\u0441\u0430",
+      category: "\u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0446\u0435\u043d\u0442\u0440",
+      city_name: "\u041d\u043e\u0432\u043e\u0441\u0438\u0431\u0438\u0440\u0441\u043a",
+      address_name: "\u0421\u0442\u0430\u043d\u0446\u0438\u043e\u043d\u043d\u0430\u044f \u0443\u043b\u0438\u0446\u0430, 52",
+      contacts: [
+        { type: "phone", value: "+79138947539" },
+        { type: "phone", value: "+73833885567" },
+        { type: "website", value: "https://www.tcrossa.ru", url: "https://www.tcrossa.ru" }
+      ],
+      url: "https://2gis.ru/novosibirsk/firm/141265769348198"
+    };
+    const adapter = new TwoGisAdapter(
+      makeConfig(),
+      { close: async () => undefined } as unknown as ConstructorParameters<typeof TwoGisAdapter>[1]
+    );
+    const fetchSpy = vi
+      .spyOn(adapter as unknown as { fetchDomDetail: (c: RawCompanyCard) => Promise<Record<string, unknown> | null> }, "fetchDomDetail")
+      .mockRejectedValueOnce(new Error("page.goto: Timeout 60000ms exceeded"))
+      .mockResolvedValueOnce(richDomPayload);
+
+    const detail = await adapter.getCardDetail(card);
+    const contacts = adapter.getContacts(detail);
+    const lead = adapter.normalize(detail, await contacts);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(detail.detailDiagnostics).toMatchObject({
+      stage: "dom",
+      degraded: false,
+      fallbackUsed: false,
+      sparseFallback: false,
+      attempts: 2
+    });
+    expect(lead.address).toBe("\u0421\u0442\u0430\u043d\u0446\u0438\u043e\u043d\u043d\u0430\u044f \u0443\u043b\u0438\u0446\u0430, 52");
+    expect(lead.phones).toEqual(["+79138947539", "+73833885567"]);
+    expect(lead.incomplete).toBe(false);
+  });
+
+  it("marks exhausted detail navigation timeouts as degraded sparse fallback", async () => {
+    const card: RawCompanyCard = {
+      source: "2gis",
+      externalId: "141265769348198",
+      name: "\u0420\u043e\u0441\u0441\u0430",
+      category: "\u0410\u0432\u0442\u043e\u0441\u0435\u0440\u0432\u0438\u0441\u044b",
+      city: "\u041d\u043e\u0432\u043e\u0441\u0438\u0431\u0438\u0440\u0441\u043a",
+      address: "",
+      url: "https://2gis.ru/novosibirsk/firm/141265769348198",
+      payload: {
+        href: "https://2gis.ru/novosibirsk/firm/141265769348198",
+        text: "\u0420\u043e\u0441\u0441\u0430"
+      }
+    };
+    const adapter = new TwoGisAdapter(
+      makeConfig(),
+      { close: async () => undefined } as unknown as ConstructorParameters<typeof TwoGisAdapter>[1]
+    );
+    const fetchSpy = vi
+      .spyOn(adapter as unknown as { fetchDomDetail: (c: RawCompanyCard) => Promise<Record<string, unknown> | null> }, "fetchDomDetail")
+      .mockRejectedValue(new Error("page.goto: Timeout 60000ms exceeded"));
+
+    const detail = await adapter.getCardDetail(card);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(detail.detailDiagnostics).toMatchObject({
+      stage: "captured_fallback",
+      degraded: true,
+      fallbackUsed: true,
+      sparseFallback: true,
+      attempts: 2,
+      reason: "timeout"
+    });
+    expect(detail.payload).toEqual(card.payload);
   });
 
   it("does not treat 2GIS firm URLs, footer links or otello.ru as firm websites", () => {

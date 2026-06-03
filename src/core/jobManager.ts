@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { AdapterRegistry } from "../adapters/registry.js";
 import { logger } from "../logger.js";
-import type { CompanyTaskRow, Lead, RawCardDetail, RawCompanyCard, RawContacts, RuntimeConfig, ISourceAdapter } from "../types.js";
+import type {
+  CompanyTaskRow,
+  Lead,
+  RawCardDetail,
+  RawCompanyCard,
+  RawContacts,
+  RawDetailDiagnostics,
+  RuntimeConfig,
+  ISourceAdapter
+} from "../types.js";
 import type { IStorage } from "../storage/interface.js";
 import { exportLeads } from "../export/exporter.js";
 import { DIRECT_PROXY_BUCKET, RateLimiter } from "./rateLimiter.js";
@@ -33,6 +42,14 @@ interface EnrichmentDiagnostics {
   detailsAttempted: number;
   detailsSucceeded: number;
   detailsFailed: number;
+  detailDomFallbacks: number;
+  detailDomSparseFallbacks: number;
+  detailDomTimeouts: number;
+  detailDomTunnelFailures: number;
+  detailDomProxyFailures: number;
+  detailDomNetworkFailures: number;
+  detailBlocked: number;
+  detailDegraded: boolean;
   proxyTimeouts: number;
   contactsImproved: number;
   websiteAdded: number;
@@ -355,6 +372,7 @@ export class JobManager {
       await this.limiter.acquireRequest(detailBucket);
       enrichmentDiagnostics.detailsAttempted += 1;
       const detail = await adapter.getCardDetail(card);
+      recordDetailStageDiagnostics(enrichmentDiagnostics, detail.detailDiagnostics);
       await this.storage.saveRawSnapshot({
         companyTaskId: task.id,
         source: adapter.source,
@@ -403,6 +421,10 @@ export class JobManager {
       enrichmentDiagnostics.detailsFailed += 1;
       if (errorType === "timeout") enrichmentDiagnostics.proxyTimeouts += 1;
       const blocked = errorType === "blocked" || errorType === "soft_blocked";
+      if (blocked) {
+        enrichmentDiagnostics.detailBlocked += 1;
+        enrichmentDiagnostics.detailDegraded = true;
+      }
       const isDeletedCard = errorType === "deleted_card";
       const isNoData = errorType === "no_data";
       const maxAttempts = this.config.maxRetries + 1;
@@ -559,6 +581,14 @@ function createEnrichmentDiagnostics(): EnrichmentDiagnostics {
     detailsAttempted: 0,
     detailsSucceeded: 0,
     detailsFailed: 0,
+    detailDomFallbacks: 0,
+    detailDomSparseFallbacks: 0,
+    detailDomTimeouts: 0,
+    detailDomTunnelFailures: 0,
+    detailDomProxyFailures: 0,
+    detailDomNetworkFailures: 0,
+    detailBlocked: 0,
+    detailDegraded: false,
     proxyTimeouts: 0,
     contactsImproved: 0,
     websiteAdded: 0,
@@ -605,6 +635,35 @@ function sparseScore(card: RawCompanyCard): number {
   if (profile.messengers.length === 0) score += 1;
   if (!card.url) score += 1;
   return score;
+}
+
+function recordDetailStageDiagnostics(
+  diagnostics: EnrichmentDiagnostics,
+  detailDiagnostics: RawDetailDiagnostics | undefined
+): void {
+  if (!detailDiagnostics?.degraded) return;
+
+  diagnostics.detailDegraded = true;
+  if (detailDiagnostics.fallbackUsed) diagnostics.detailDomFallbacks += 1;
+  if (detailDiagnostics.sparseFallback) diagnostics.detailDomSparseFallbacks += 1;
+
+  switch (detailDiagnostics.reason) {
+    case "timeout":
+      diagnostics.detailDomTimeouts += 1;
+      diagnostics.proxyTimeouts += 1;
+      break;
+    case "tunnel_failure":
+      diagnostics.detailDomTunnelFailures += 1;
+      break;
+    case "proxy_failure":
+      diagnostics.detailDomProxyFailures += 1;
+      break;
+    case "network_failure":
+      diagnostics.detailDomNetworkFailures += 1;
+      break;
+    default:
+      break;
+  }
 }
 
 function recordContactImprovements(

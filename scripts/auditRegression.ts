@@ -28,6 +28,14 @@ export type AuditStatus = "PASS" | "FAIL" | "ENVIRONMENT_BLOCKED";
 export interface AuditDiagnosticsSummary {
   detailsAttempted: number;
   detailsFailed: number;
+  detailDomFallbacks: number;
+  detailDomSparseFallbacks: number;
+  detailDomTimeouts: number;
+  detailDomTunnelFailures: number;
+  detailDomProxyFailures: number;
+  detailDomNetworkFailures: number;
+  detailBlocked: number;
+  detailDegraded: boolean;
   websiteDiscoverySucceeded: number;
   websiteCrawlSucceeded: number;
   directoryDiscoverySucceeded: number;
@@ -49,12 +57,30 @@ export interface AuditEvaluation {
   failures: string[];
 }
 
+export type DetailEnvironmentBlockReason =
+  | "detail_tunnel_failed"
+  | "detail_proxy_degraded"
+  | "detail_timeouts"
+  | "detail_sparse_fallback"
+  | "detail_blocked";
+
+export type RuntimeEnvironmentBlockReason = "rate_limited" | "proxy_timeout" | "network_timeout" | "blocked_dom";
+
+export type AuditEnvironmentBlockReason = DetailEnvironmentBlockReason | RuntimeEnvironmentBlockReason;
+
+export interface DetailEnvironmentEvaluation {
+  status: "ENVIRONMENT_BLOCKED";
+  reason: DetailEnvironmentBlockReason;
+  detail: string;
+}
+
 export interface AuditRunResult {
   status: AuditStatus;
   exitCode: number;
   metrics?: AuditMetrics;
   diagnostics?: AuditDiagnosticsSummary;
   healthGate: AuditHealthGateResult;
+  environmentReason?: AuditEnvironmentBlockReason;
 }
 
 export function buildAuditConfig(): RuntimeConfig {
@@ -137,6 +163,96 @@ export function evaluateAuditMetrics(metrics: AuditMetrics): AuditEvaluation {
   };
 }
 
+export function evaluateDetailEnvironment(
+  diagnostics: Pick<
+    AuditDiagnosticsSummary,
+    | "detailDomFallbacks"
+    | "detailDomSparseFallbacks"
+    | "detailDomTimeouts"
+    | "detailDomTunnelFailures"
+    | "detailDomProxyFailures"
+    | "detailDomNetworkFailures"
+    | "detailBlocked"
+    | "detailDegraded"
+  >
+): DetailEnvironmentEvaluation | null {
+  if (!diagnostics.detailDegraded) return null;
+
+  if (diagnostics.detailDomTunnelFailures > 0) {
+    return {
+      status: "ENVIRONMENT_BLOCKED",
+      reason: "detail_tunnel_failed",
+      detail: `2GIS detail stage hit ${diagnostics.detailDomTunnelFailures} tunnel failure(s)`
+    };
+  }
+
+  if (diagnostics.detailDomProxyFailures > 0 || diagnostics.detailDomNetworkFailures > AUDIT_THRESHOLDS.detailsFailed) {
+    return {
+      status: "ENVIRONMENT_BLOCKED",
+      reason: "detail_proxy_degraded",
+      detail: `2GIS detail stage hit proxy/network failures (proxy=${diagnostics.detailDomProxyFailures}, network=${diagnostics.detailDomNetworkFailures})`
+    };
+  }
+
+  if (diagnostics.detailDomTimeouts > AUDIT_THRESHOLDS.detailsFailed) {
+    return {
+      status: "ENVIRONMENT_BLOCKED",
+      reason: "detail_timeouts",
+      detail: `2GIS detail stage hit ${diagnostics.detailDomTimeouts} timeout fallback(s)`
+    };
+  }
+
+  if (diagnostics.detailDomSparseFallbacks > AUDIT_THRESHOLDS.detailsFailed) {
+    return {
+      status: "ENVIRONMENT_BLOCKED",
+      reason: "detail_sparse_fallback",
+      detail: `2GIS detail stage used ${diagnostics.detailDomSparseFallbacks} sparse captured fallback(s)`
+    };
+  }
+
+  if (diagnostics.detailBlocked > AUDIT_THRESHOLDS.detailsFailed) {
+    return {
+      status: "ENVIRONMENT_BLOCKED",
+      reason: "detail_blocked",
+      detail: `2GIS detail stage hit ${diagnostics.detailBlocked} blocked detail page(s)`
+    };
+  }
+
+  return null;
+}
+
+export function classifyAuditRuntimeEnvironmentError(
+  error: unknown,
+  proxyConfigured: boolean
+): { reason: RuntimeEnvironmentBlockReason; detail: string } | null {
+  const detail = error instanceof Error ? error.message : String(error);
+  const lower = detail.toLowerCase();
+
+  if (/\b429\b|too many requests|rate[-\s]?limit|throttled/.test(lower)) {
+    return { reason: "rate_limited", detail };
+  }
+  if (lower.includes("captcha") || lower.includes("soft_blocked") || lower.includes("soft blocked") || lower.includes("blocked")) {
+    return { reason: "blocked_dom", detail };
+  }
+  if (
+    lower.includes("timeout") ||
+    lower.includes("timed out") ||
+    lower.includes("net::") ||
+    lower.includes("econnreset") ||
+    lower.includes("econnrefused") ||
+    lower.includes("socket hang up") ||
+    lower.includes("tunnel") ||
+    lower.includes("proxy")
+  ) {
+    return {
+      reason: proxyConfigured || lower.includes("proxy") || lower.includes("tunnel") ? "proxy_timeout" : "network_timeout",
+      detail
+    };
+  }
+
+  return null;
+}
+
 export async function runAudit(): Promise<AuditRunResult> {
   console.log("Starting Audit Regression Harness...");
   const config = buildAuditConfig();
@@ -167,18 +283,58 @@ export async function runAudit(): Promise<AuditRunResult> {
     storage = new Storage(dbPath, config.rawSnapshotDir);
 
     const manager = new JobManager(config, registry, storage);
-    const result = await manager.run();
+    const result = await manager.run().catch((error) => {
+      const runtimeEnvironment = classifyAuditRuntimeEnvironmentError(error, Boolean(config.proxy || config.proxyApiUrl));
+      if (!runtimeEnvironment) throw error;
+      console.error(`ENVIRONMENT_BLOCKED reason=${runtimeEnvironment.reason}`);
+      console.error(`Detail: ${runtimeEnvironment.detail}`);
+      console.error("Full live audit could not complete because runtime proxy/session/network health degraded.");
+      return {
+        environmentBlocked: runtimeEnvironment
+      } as const;
+    });
+    if ("environmentBlocked" in result) {
+      return {
+        status: "ENVIRONMENT_BLOCKED",
+        exitCode: ENVIRONMENT_BLOCKED_EXIT_CODE,
+        healthGate,
+        environmentReason: result.environmentBlocked.reason
+      };
+    }
     const { leads, diagnostics } = result;
     const metrics = summarizeAuditMetrics(leads, diagnostics);
     const diagnosticsSummary: AuditDiagnosticsSummary = {
       detailsAttempted: diagnostics.detailsAttempted,
       detailsFailed: diagnostics.detailsFailed,
+      detailDomFallbacks: diagnostics.detailDomFallbacks,
+      detailDomSparseFallbacks: diagnostics.detailDomSparseFallbacks,
+      detailDomTimeouts: diagnostics.detailDomTimeouts,
+      detailDomTunnelFailures: diagnostics.detailDomTunnelFailures,
+      detailDomProxyFailures: diagnostics.detailDomProxyFailures,
+      detailDomNetworkFailures: diagnostics.detailDomNetworkFailures,
+      detailBlocked: diagnostics.detailBlocked,
+      detailDegraded: diagnostics.detailDegraded,
       websiteDiscoverySucceeded: diagnostics.websiteDiscoverySucceeded,
       websiteCrawlSucceeded: diagnostics.websiteCrawlSucceeded,
       directoryDiscoverySucceeded: diagnostics.directoryDiscoverySucceeded
     };
 
     printAuditResults(metrics, diagnosticsSummary);
+    const detailEnvironment = evaluateDetailEnvironment(diagnosticsSummary);
+    if (detailEnvironment) {
+      console.error(`ENVIRONMENT_BLOCKED reason=${detailEnvironment.reason}`);
+      console.error(`Detail: ${detailEnvironment.detail}`);
+      console.error("Full live audit completed, but detail-stage proxy/session health degraded; metrics cannot be measured fairly.");
+      return {
+        status: "ENVIRONMENT_BLOCKED",
+        exitCode: ENVIRONMENT_BLOCKED_EXIT_CODE,
+        metrics,
+        diagnostics: diagnosticsSummary,
+        healthGate,
+        environmentReason: detailEnvironment.reason
+      };
+    }
+
     const evaluation = evaluateAuditMetrics(metrics);
     for (const failure of evaluation.failures) {
       console.error(`FAILED: ${failure}`);
@@ -211,6 +367,14 @@ function printAuditResults(metrics: AuditMetrics, diagnostics: AuditDiagnosticsS
   console.log("\n--- DIAGNOSTICS ---");
   console.log(`Details Attempted: ${diagnostics.detailsAttempted}`);
   console.log(`Details Failed: ${diagnostics.detailsFailed}`);
+  console.log(`Detail DOM Fallbacks: ${diagnostics.detailDomFallbacks}`);
+  console.log(`Detail DOM Sparse Fallbacks: ${diagnostics.detailDomSparseFallbacks}`);
+  console.log(`Detail DOM Timeouts: ${diagnostics.detailDomTimeouts}`);
+  console.log(`Detail DOM Tunnel Failures: ${diagnostics.detailDomTunnelFailures}`);
+  console.log(`Detail DOM Proxy Failures: ${diagnostics.detailDomProxyFailures}`);
+  console.log(`Detail DOM Network Failures: ${diagnostics.detailDomNetworkFailures}`);
+  console.log(`Detail Blocked Pages: ${diagnostics.detailBlocked}`);
+  console.log(`Detail Degraded: ${diagnostics.detailDegraded}`);
   console.log(`Website Discovery Succeeded: ${diagnostics.websiteDiscoverySucceeded}`);
   console.log(`Website Crawl Succeeded: ${diagnostics.websiteCrawlSucceeded}`);
   console.log(`Directory Discovery Succeeded: ${diagnostics.directoryDiscoverySucceeded}`);
