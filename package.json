@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit",
     "audit:2gis:nsk-autoservice": "tsx src/cli.ts parse --source 2gis --geo Новосибирск --category Автосервисы --limit 50",
-    "audit:regression": "tsx scripts/auditRegression.ts"
+    "audit:regression": "tsx scripts/auditRegression.ts",
+    "mvp:astana": "tsx scripts/autoserviceRadarMvp.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",
