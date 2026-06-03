@@ -34,6 +34,17 @@ const ConfigSchema = z.object({
       maxRequestsPerMinutePerProxy: z.coerce.number().int().positive().optional()
     })
     .optional(),
+  websiteCrawl: z
+    .object({
+      enabled: z.boolean().optional(),
+      maxPages: z.coerce.number().int().positive().optional(),
+      timeoutMs: z.coerce.number().int().positive().optional()
+    })
+    .default({
+      enabled: true,
+      maxPages: 3,
+      timeoutMs: 5000
+    }),
   /**
    * Storage backend selector. `"sqlite"` (default) keeps the existing
    * `better-sqlite3` behaviour; `"postgres"` switches the CLI to

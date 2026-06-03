@@ -257,6 +257,41 @@ describe("JobManager queue/state integration", () => {
     infoSpy.mockRestore();
   });
 
+  it("crawls company website for missing email after detail enrichment", async () => {
+    const contactsById = new Map<string, Partial<RawContacts>>();
+    contactsById.set("site-only", {
+      website: "https://example.com"
+    });
+    const fetchSpy = vi.fn(async () => new Response(
+      "<html><a href='mailto:hello@example.com'>hello@example.com</a></html>",
+      { headers: { "content-type": "text/html" } }
+    ));
+    vi.stubGlobal("fetch", fetchSpy);
+    const adapter = new FakeAdapter({ cards: [makeCard("site-only", "Site Only")], contactsById });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+    const infoSpy = vi.spyOn(logger, "info");
+
+    try {
+      const manager = new JobManager(ws.config, registry, ws.storage, undefined, {
+        emptyPollMs: 5
+      });
+      const result = await manager.run();
+
+      expect(result.leads[0].email).toBe("hello@example.com");
+      const diagnosticsCall = infoSpy.mock.calls.find(([message]) => message === "enrichment diagnostics");
+      expect(diagnosticsCall?.[1]).toMatchObject({
+        websiteCrawlAttempted: 1,
+        websiteCrawlSucceeded: 1,
+        websiteCrawlEmailFound: 1,
+        websiteCrawlPagesVisited: 1
+      });
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("caps blocked errors at maxAttempts and marks the task failed", async () => {
     const cards = [makeCard("ext-blocked")];
     const failOn = new Map<string, () => Error>();

@@ -111,6 +111,11 @@ export interface RuntimeConfig extends SearchQuery {
    */
   rateLimit?: RateLimitPolicy;
   /**
+   * Optional bounded post-detail crawl of company websites. Runs only for
+   * leads that already have a website but no email.
+   */
+  websiteCrawl?: WebsiteCrawlPolicy;
+  /**
    * Storage backend selector. Defaults to `"sqlite"` (preserves the
    * pre-Postgres behaviour). `"postgres"` switches the CLI to
    * `PostgresStorage`, which requires `postgresConnectionString`.
@@ -122,6 +127,12 @@ export interface RuntimeConfig extends SearchQuery {
    * never silently mis-used.
    */
   postgresConnectionString?: string;
+}
+
+export interface WebsiteCrawlPolicy {
+  enabled?: boolean;
+  maxPages?: number;
+  timeoutMs?: number;
 }
 
 export interface ParseAttempt {
