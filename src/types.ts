@@ -34,12 +34,33 @@ export interface RawCompanyCard {
   payload: unknown;
 }
 
+export type RawDetailStage = "fixture" | "dom" | "captured_fallback";
+
+export type RawDetailDegradationReason =
+  | "timeout"
+  | "tunnel_failure"
+  | "proxy_failure"
+  | "network_failure"
+  | "browser_error"
+  | "unknown";
+
+export interface RawDetailDiagnostics {
+  stage: RawDetailStage;
+  degraded: boolean;
+  fallbackUsed: boolean;
+  sparseFallback: boolean;
+  attempts: number;
+  reason?: RawDetailDegradationReason;
+  message?: string;
+}
+
 export interface RawCardDetail extends RawCompanyCard {
   email?: string | null;
   website?: string | null;
   phones?: string[];
   socialLinks?: string[];
   messengerLinks?: string[];
+  detailDiagnostics?: RawDetailDiagnostics;
 }
 
 export interface RawContacts {

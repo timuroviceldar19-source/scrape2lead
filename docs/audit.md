@@ -33,11 +33,15 @@ npm run audit:2gis:nsk-autoservice
 was met. Exit code: `0`.
 
 `FAIL` means the health gate passed, so the environment was healthy enough to
-measure, but the pipeline failed one or more baselines. Treat this as a code or
-product regression. Exit code: `1`.
+measure, the detail stage did not show proxy/session degradation, but the
+pipeline failed one or more baselines. Treat this as a code or product
+regression. Exit code: `1`.
 
-`ENVIRONMENT_BLOCKED` means the health gate could not fairly measure 2GIS before
-the expensive run. The full audit is skipped. Treat this as proxy/session/network
+`ENVIRONMENT_BLOCKED` means the audit could not fairly measure 2GIS because of
+proxy/session/network/rate-limit problems. If the search health gate fails, the
+full audit is skipped. If the search gate passes but a later discovery/detail
+navigation times out or the detail stage degrades, the run may still exit `2`
+because the metrics are not trustworthy. Treat this as proxy/session/network
 work, not a pipeline regression. Exit code: `2`.
 
 Common `ENVIRONMENT_BLOCKED` reasons:
@@ -48,6 +52,30 @@ Common `ENVIRONMENT_BLOCKED` reasons:
 - `blocked_dom`: the page loaded but exposed no start cards because 2GIS served
   a CAPTCHA, browser wall, empty soft-block page, or otherwise blocked DOM.
 - `http_error`: the search page returned another non-OK HTTP status.
+- `network_timeout` / `proxy_timeout`: a later full-run navigation timed out or
+  the proxy tunnel/session failed after the preflight had passed.
+- `detail_tunnel_failed`: detail pages hit proxy tunnel failures after the
+  search gate had passed.
+- `detail_proxy_degraded`: detail pages hit proxy/network failures after the
+  search gate had passed.
+- `detail_timeouts`: detail DOM extraction repeatedly timed out and fell back to
+  captured payloads.
+- `detail_sparse_fallback`: detail DOM extraction repeatedly fell back to sparse
+  discovery payloads such as `href/text`, so phones/addresses cannot be measured
+  fairly.
+- `detail_blocked`: detail pages were blocked after the search gate had passed.
+
+## Detail-Stage Degradation
+
+The search health gate only proves that the search page can expose starting
+cards within a short bounded probe. A longer audit can still degrade later while
+opening individual 2GIS firm pages. The harness records detail diagnostics such
+as DOM fallback count, sparse fallback count, timeout count, tunnel failures,
+proxy/network failures, and blocked detail pages.
+
+When those diagnostics cross the detail failure tolerance, the run prints
+`ENVIRONMENT_BLOCKED` even if `detailsFailed` is `0`. This prevents sparse
+fallback rows from being counted as successful detail enrichment.
 
 ## Baseline Thresholds
 

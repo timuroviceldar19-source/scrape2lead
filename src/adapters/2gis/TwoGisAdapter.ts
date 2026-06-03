@@ -2,7 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page, Response } from "playwright";
 import { BrowserSessionManager } from "../../browser/browserSessionManager.js";
-import type { ISourceAdapter, RawCardDetail, RawCompanyCard, RawContacts, RuntimeConfig, SearchQuery, SourceCapabilities } from "../../types.js";
+import type {
+  ISourceAdapter,
+  RawCardDetail,
+  RawCompanyCard,
+  RawContacts,
+  RawDetailDegradationReason,
+  RawDetailDiagnostics,
+  RuntimeConfig,
+  SearchQuery,
+  SourceCapabilities
+} from "../../types.js";
 import { logger } from "../../logger.js";
 import { ApiCapture } from "./apiCapture.js";
 import {
@@ -15,6 +25,15 @@ import {
 } from "./discoveryFallback.js";
 import { extractCardsFromPayload, findDetailPayload, mapContacts, mapDetail, toLead } from "./mapper.js";
 import { classifySoftBlock, SoftBlockError, type SoftBlockClassification, type SoftBlockEvidence } from "./softBlock.js";
+
+interface DetailDomFetchResult {
+  payload: Record<string, unknown> | null;
+  attempts: number;
+  failure?: {
+    reason: RawDetailDegradationReason;
+    message: string;
+  };
+}
 
 export class TwoGisAdapter implements ISourceAdapter {
   readonly source = "2gis";
@@ -138,34 +157,83 @@ export class TwoGisAdapter implements ISourceAdapter {
   async getCardDetail(card: RawCompanyCard): Promise<RawCardDetail> {
     const capturedPayload = findDetailPayload(this.lastPayloads, card.externalId) ?? asRecord(card.payload);
     if (this.config.fixturePath) {
-      return mapDetail(card, capturedPayload);
+      return withDetailDiagnostics(mapDetail(card, capturedPayload), {
+        stage: "fixture",
+        degraded: false,
+        fallbackUsed: false,
+        sparseFallback: false,
+        attempts: 0
+      });
     }
 
-    const domPayload = await this.fetchDomDetail(card).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      if (isBlockLikeError(message)) throw error;
-      logger.warn("2GIS detail DOM extraction failed; falling back to captured payload", {
-        externalId: card.externalId,
-        message
-      });
-      return null;
-    });
+    const domResult = await this.fetchDomDetailWithRetry(card);
 
-    if (!domPayload) return mapDetail(card, capturedPayload);
-    return mapDetail(
+    if (!domResult.payload) {
+      return withDetailDiagnostics(mapDetail(card, capturedPayload), {
+        stage: "captured_fallback",
+        degraded: true,
+        fallbackUsed: true,
+        sparseFallback: isSparseDetailPayload(capturedPayload),
+        attempts: domResult.attempts,
+        reason: domResult.failure?.reason ?? "unknown",
+        message: domResult.failure?.message
+      });
+    }
+    return withDetailDiagnostics(mapDetail(
       {
         ...card,
-        name: getRecordString(domPayload, "name") ?? card.name,
-        category: getRecordString(domPayload, "category") ?? card.category,
-        city: getRecordString(domPayload, "city_name") ?? card.city,
-        address: getRecordString(domPayload, "address_name") ?? card.address,
-        url: getRecordString(domPayload, "url") ?? card.url
+        name: getRecordString(domResult.payload, "name") ?? card.name,
+        category: getRecordString(domResult.payload, "category") ?? card.category,
+        city: getRecordString(domResult.payload, "city_name") ?? card.city,
+        address: getRecordString(domResult.payload, "address_name") ?? card.address,
+        url: getRecordString(domResult.payload, "url") ?? card.url
       },
       {
         ...capturedPayload,
-        ...domPayload
+        ...domResult.payload
       }
-    );
+    ), {
+      stage: "dom",
+      degraded: false,
+      fallbackUsed: false,
+      sparseFallback: false,
+      attempts: domResult.attempts
+    });
+  }
+
+  private async fetchDomDetailWithRetry(card: RawCompanyCard): Promise<DetailDomFetchResult> {
+    const maxAttempts = 2;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return { payload: await this.fetchDomDetail(card), attempts: attempt };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (isBlockLikeError(message)) throw error;
+        const retryable = isRetryableDetailDomError(message);
+        if (retryable && attempt < maxAttempts) {
+          logger.warn("2GIS detail DOM extraction failed; retrying once", {
+            externalId: card.externalId,
+            attempt,
+            message
+          });
+          continue;
+        }
+        logger.warn("2GIS detail DOM extraction failed; falling back to captured payload", {
+          externalId: card.externalId,
+          attempts: attempt,
+          message
+        });
+        return {
+          payload: null,
+          attempts: attempt,
+          failure: {
+            reason: classifyDetailDomFailure(message),
+            message
+          }
+        };
+      }
+    }
+    return { payload: null, attempts: maxAttempts };
   }
 
   async getContacts(detail: RawCardDetail): Promise<RawContacts> {
@@ -1207,6 +1275,73 @@ function isBlockLikeError(message: string): boolean {
     lower.includes("throttled") ||
     lower.includes("403") ||
     lower.includes("429")
+  );
+}
+
+function withDetailDiagnostics(detail: RawCardDetail, diagnostics: RawDetailDiagnostics): RawCardDetail {
+  return {
+    ...detail,
+    detailDiagnostics: diagnostics
+  };
+}
+
+function classifyDetailDomFailure(message: string): RawDetailDegradationReason {
+  const lower = message.toLowerCase();
+  if (lower.includes("err_tunnel") || lower.includes("tunnel")) return "tunnel_failure";
+  if (lower.includes("proxy")) return "proxy_failure";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "timeout";
+  if (
+    lower.includes("net::") ||
+    lower.includes("econnreset") ||
+    lower.includes("econnrefused") ||
+    lower.includes("socket hang up")
+  ) {
+    return "network_failure";
+  }
+  if (lower.includes("navigation") || lower.includes("browser") || lower.includes("page.goto")) {
+    return "browser_error";
+  }
+  return "unknown";
+}
+
+function isSparseDetailPayload(payload: Record<string, unknown>): boolean {
+  return !hasDetailSignal(payload);
+}
+
+function hasDetailSignal(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasDetailSignal);
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  for (const [key, child] of Object.entries(record)) {
+    if (
+      /^(address|address_name|full_address|phone|phones|contact|contacts|contact_groups|email|website|site|rubric|rubrics|schedule|city_name)$/i.test(key) &&
+      hasTruthyDetailValue(child)
+    ) {
+      return true;
+    }
+    if (hasDetailSignal(child)) return true;
+  }
+  return false;
+}
+
+function hasTruthyDetailValue(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "number") return true;
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") return Object.keys(value as Record<string, unknown>).length > 0;
+  return false;
+}
+
+function isRetryableDetailDomError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("timeout") ||
+    lower.includes("timed out") ||
+    lower.includes("navigation") ||
+    lower.includes("net::") ||
+    lower.includes("econnreset") ||
+    lower.includes("econnrefused") ||
+    lower.includes("socket hang up")
   );
 }
 
