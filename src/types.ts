@@ -158,6 +158,11 @@ export interface RuntimeConfig extends SearchQuery {
    * never silently mis-used.
    */
   postgresConnectionString?: string;
+  /**
+   * Base URL for 2GIS. Defaults to "https://2gis.ru".
+   * Use "https://2gis.kz" for Kazakhstan targets.
+   */
+  twoGisBaseUrl?: string;
 }
 
 export interface WebsiteCrawlPolicy {

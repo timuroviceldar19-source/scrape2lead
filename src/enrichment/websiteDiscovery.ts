@@ -231,7 +231,9 @@ export function isBlockedHost(hostname: string): boolean {
 
 const BLOCKED_HOST_SUFFIXES = [
   "2gis.ru",
+  "2gis.kz",
   "dgis.ru",
+  "dgis.kz",
   "yandex.ru",
   "ya.ru",
   "google.com",

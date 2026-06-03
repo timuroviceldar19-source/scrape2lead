@@ -98,7 +98,8 @@ export class TwoGisAdapter implements ISourceAdapter {
     const markersCapture = new MarkersResponseListener();
     markersCapture.attach(page);
 
-    const url = buildSearchUrl(variant.geo, variant.searchText);
+    const baseUrl = this.config.twoGisBaseUrl ?? "https://2gis.ru";
+    const url = buildSearchUrl(variant.geo, variant.searchText, baseUrl);
     logger.info("opening 2GIS search", {
       url,
       variantKind: variant.kind,
@@ -300,7 +301,8 @@ export class TwoGisAdapter implements ISourceAdapter {
   }
 
   private async fetchDomDetail(card: RawCompanyCard): Promise<Record<string, unknown> | null> {
-    const detailUrl = canonicalFirmUrl(card.url) ?? buildFirmUrl(this.config.geo, card.externalId);
+    const baseUrl = this.config.twoGisBaseUrl ?? "https://2gis.ru";
+    const detailUrl = canonicalFirmUrl(card.url) ?? buildFirmUrl(this.config.geo, card.externalId, baseUrl);
     const page = await this.browserSession.newPage();
     try {
       logger.info("opening 2GIS detail", { externalId: card.externalId, url: stripQuery(detailUrl) });
@@ -503,12 +505,12 @@ const MESSENGER_PROVIDERS: Array<{ provider: string; re: RegExp; hrefRe?: RegExp
   { provider: "Max", re: /(?:^|\s)(max)(?:\s|$)/i, hrefRe: /(?:^|\.)max\.ru\//i }
 ];
 
-export function buildSearchUrl(geo: string, category: string): string {
-  return `https://2gis.ru/${citySegment(geo)}/search/${encodeURIComponent(category)}`;
+export function buildSearchUrl(geo: string, category: string, baseUrl: string = "https://2gis.ru"): string {
+  return `${baseUrl}/${citySegment(geo)}/search/${encodeURIComponent(category)}`;
 }
 
-function buildFirmUrl(geo: string, externalId: string): string {
-  return `https://2gis.ru/${citySegment(geo)}/firm/${encodeURIComponent(externalId)}`;
+function buildFirmUrl(geo: string, externalId: string, baseUrl: string = "https://2gis.ru"): string {
+  return `${baseUrl}/${citySegment(geo)}/firm/${encodeURIComponent(externalId)}`;
 }
 
 export function citySegment(geo: string): string {
@@ -525,7 +527,9 @@ const CITY_SLUGS = new Map<string, string>([
   ["saint petersburg", "spb"],
   ["st petersburg", "spb"],
   ["spb", "spb"],
-  ["\u0441\u0430\u043d\u043a\u0442-\u043f\u0435\u0442\u0435\u0440\u0431\u0443\u0440\u0433", "spb"]
+  ["\u0441\u0430\u043d\u043a\u0442-\u043f\u0435\u0442\u0435\u0440\u0431\u0443\u0440\u0433", "spb"],
+  ["astana", "astana"],
+  ["\u0430\u0441\u0442\u0430\u043d\u0430", "astana"]
 ]);
 
 async function clickContactRevealControls(page: Page): Promise<ContactRevealEvidence> {
