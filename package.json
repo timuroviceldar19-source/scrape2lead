@@ -10,9 +10,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "audit:2gis:nsk-autoservice": "tsx src/cli.ts parse --source 2gis --geo Новосибирск --category Автосервисы --limit 50",
+    "audit:2gis:nsk-autoservice": "tsx scripts/auditRegression.ts",
     "audit:regression": "tsx scripts/auditRegression.ts",
-    "mvp:astana": "tsx scripts/autoserviceRadarMvp.ts",
+    "validate:kz:proxy": "tsx src/cli.ts --source 2gis --geo Астана --category Автосервисы --limit 10 --config config.kz.json",
+    "mvp:astana:small": "tsx scripts/autoserviceRadarMvp.ts --config config.kz.json --limit 20",
+    "mvp:astana": "tsx scripts/autoserviceRadarMvp.ts --config config.kz.json",
     "sales:buyer-template": "tsx scripts/generateBuyerOutreachTemplate.ts"
   },
   "dependencies": {
@@ -29,6 +31,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.18",
+    "cross-env": "^7.0.3",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vitest": "^3.1.3"

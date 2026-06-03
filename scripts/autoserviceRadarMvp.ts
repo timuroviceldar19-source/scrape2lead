@@ -252,6 +252,12 @@ async function generateMvpXlsx(leads: MvpLead[], exportPath: string) {
 }
 
 async function main() {
+  if (process.env.ALLOW_LIVE_PROXY_RUN !== "1") {
+    console.error("⚠️ LIVE PROXY RUN BLOCKED: Set ALLOW_LIVE_PROXY_RUN=1 to proceed.");
+    console.error("This protects the residential proxy budget. Use 'npm run validate:kz:proxy' for cheap checks.");
+    console.error("Expected usage: cross-env ALLOW_LIVE_PROXY_RUN=1 npm run mvp:astana");
+    process.exit(1);
+  }
   const config = loadConfig("config.example.json", {
     geo: CITY,
     headless: true,

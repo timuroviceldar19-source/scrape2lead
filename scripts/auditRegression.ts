@@ -400,6 +400,12 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
+  if (process.env.ALLOW_LIVE_PROXY_RUN !== "1") {
+    console.error("⚠️ LIVE PROXY RUN BLOCKED: Set ALLOW_LIVE_PROXY_RUN=1 to proceed.");
+    console.error("This protects the residential proxy budget. Use 'npm run validate:kz:proxy' for cheap checks.");
+    console.error("Expected usage: cross-env ALLOW_LIVE_PROXY_RUN=1 npm run audit:regression");
+    process.exit(1);
+  }
   runAudit()
     .then((result) => {
       process.exitCode = result.exitCode;

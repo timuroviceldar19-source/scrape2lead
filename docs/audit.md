@@ -1,9 +1,13 @@
 # Scrape2Lead Audit & Regression Harness
 
+> ⚠️ **ВАЖНО / WARNING**: RU baseline (Новосибирск) является устаревшим техническим референсом (legacy/release reference). 
+> **Не запускать** `npm run audit:regression` или `npm run audit:2gis:nsk-autoservice` на residential proxy без явного разрешения (`ALLOW_LIVE_PROXY_RUN=1`). 
+> Каждый live-запуск сжигает лимит proxy. Продукт теперь **AutoService Radar KZ**, и все коммерческие запуски должны использовать `2gis.kz` (Астана).
+
 ## Overview
 
 The live audit regression harness validates the core 2GIS extraction scenario:
-**Novosibirsk / Autoservices (limit 50)**.
+**Novosibirsk / Autoservices (limit 50)** *(Legacy technical baseline only)*.
 
 The script first runs a short proxy/session health gate. Only if the environment
 looks measurable does it run the expensive full pipeline:
