@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   anchorToFirmCandidate,
+  buildTwoGisDiscoveryVariants,
   evaluateStopCondition,
   FIRM_HREF_RE,
   markerIdToFirmId,
   mergeCandidates,
+  mergeDiscoveryVariantResults,
+  mergeRawCompanyCards,
   selectFirmCardCandidates,
   synthesizeCardsFromMarkersPayload,
+  synthesizeCardsFromMarkersPayloadWithStats,
   type CollectionState,
   type FirmCardAnchor,
   type FirmCardCandidate
 } from "../src/adapters/2gis/discoveryFallback.js";
+import type { RawCompanyCard, SearchQuery } from "../src/types.js";
 
 function anchor(href: string, text: string, ariaLabel = ""): FirmCardAnchor {
   return { href, text, ariaLabel };
@@ -18,6 +23,34 @@ function anchor(href: string, text: string, ariaLabel = ""): FirmCardAnchor {
 
 function candidate(externalId: string, name: string, url: string): FirmCardCandidate {
   return { externalId, name, url };
+}
+
+function rawCard(
+  externalId: string,
+  name: string,
+  overrides: Partial<RawCompanyCard> & Record<string, unknown> = {}
+): RawCompanyCard {
+  return {
+    source: "2gis",
+    externalId,
+    name,
+    category: "Автосервисы",
+    city: "Новосибирск",
+    address: "",
+    url: "",
+    payload: {},
+    ...overrides
+  };
+}
+
+function numberedCards(start: number, count: number): RawCompanyCard[] {
+  return Array.from({ length: count }, (_, index) => {
+    const id = (70000001000000000n + BigInt(start + index)).toString();
+    return rawCard(id, `Firm ${start + index}`, {
+      address: `Street ${start + index}`,
+      payload: { id, name: `Firm ${start + index}`, address_name: `Street ${start + index}` }
+    });
+  });
 }
 
 function makeState(partial: Partial<CollectionState>): CollectionState {
@@ -90,6 +123,144 @@ describe("2GIS DOM-fallback firm anchor selection", () => {
     );
     expect("https://2gis.ru/novosibirsk/firm/foo".match(FIRM_HREF_RE)).toBeNull();
     expect("https://2gis.ru/novosibirsk/geo/70000001036934908".match(FIRM_HREF_RE)).toBeNull();
+  });
+});
+
+describe("2GIS multi-query discovery expansion", () => {
+  it("builds bounded adjacent category and geo search variants with the base query first", () => {
+    const query: SearchQuery = {
+      source: "2gis",
+      geo: "Novosibirsk",
+      category: "auto service",
+      limit: 50
+    };
+
+    const variants = buildTwoGisDiscoveryVariants(query, 4);
+    expect(variants).toHaveLength(4);
+    expect(variants[0]).toEqual({ searchText: "auto service", geo: "Novosibirsk", kind: "base" });
+    expect(variants.slice(1).map((variant) => variant.kind)).toContain("category");
+  });
+
+  it("aggregates valid organic leads from multiple variant payloads until the target is reached", () => {
+    const first = numberedCards(0, 25);
+    const second = numberedCards(25, 30);
+
+    const result = mergeDiscoveryVariantResults([
+      { cards: first, telemetry: { domCards: 12, markersSynthesized: 13 } },
+      { cards: second, telemetry: { domCards: 10, markersSynthesized: 20 } }
+    ], 50, 2);
+
+    expect(result.cards).toHaveLength(50);
+    expect(result.diagnostics).toMatchObject({
+      target: 50,
+      validOrganic: 50,
+      domCards: 22,
+      markerSynthesized: 33,
+      queryVariantsTried: 2,
+      capReason: "limit_reached"
+    });
+  });
+
+  it("dedupes duplicate firms across variants by 2GIS id", () => {
+    const result = mergeDiscoveryVariantResults([
+      { cards: [rawCard("70000001000000001", "Alpha")] },
+      { cards: [rawCard("70000001000000001", "Alpha duplicate")] }
+    ], 50, 2);
+
+    expect(result.cards).toHaveLength(1);
+    expect(result.diagnostics.duplicatesRejected).toBe(1);
+  });
+
+  it("dedupes fallback ids by normalized name plus phone or address", () => {
+    const byPhone = mergeRawCompanyCards(
+      [rawCard("variant-a", "Alpha Service", { payload: { phone: "+7 (999) 111-22-33" } })],
+      [rawCard("variant-b", "alpha service", { payload: { phones: ["8 999 111 22 33"] } })]
+    );
+    expect(byPhone.cards).toHaveLength(1);
+    expect(byPhone.duplicates).toBe(1);
+
+    const byAddress = mergeRawCompanyCards(
+      [rawCard("variant-c", "Beta Service", { address: "Main street, 10" })],
+      [rawCard("variant-d", " beta   service ", { payload: { address_name: "Main street 10" } })]
+    );
+    expect(byAddress.cards).toHaveLength(1);
+    expect(byAddress.duplicates).toBe(1);
+  });
+
+  it("merges duplicate cards without losing richer contact fields", () => {
+    const first = rawCard("variant-a", "Alpha Service", {
+      address: "Short",
+      payload: {
+        phone: "+7 999 111-22-33",
+        messengers: [{ provider: "Telegram" }]
+      },
+      phones: ["+7 999 111-22-33"]
+    });
+    const second = rawCard("variant-b", "alpha service", {
+      address: "Short, building 2",
+      payload: {
+        phone: "8 999 111 22 33",
+        email: "alpha@example.com",
+        website: "alpha.example.com",
+        messengers: [{ provider: "WhatsApp" }]
+      },
+      email: "alpha@example.com",
+      website: "https://alpha.example.com",
+      messengerLinks: ["WhatsApp"]
+    });
+
+    const merged = mergeRawCompanyCards([first], [second]).cards[0] as RawCompanyCard & {
+      phones?: string[];
+      email?: string | null;
+      website?: string | null;
+      messengerLinks?: string[];
+    };
+
+    expect(merged.address).toBe("Short, building 2");
+    expect(merged.phones).toEqual(["9991112233"]);
+    expect(merged.email).toBe("alpha@example.com");
+    expect(merged.website).toBe("https://alpha.example.com");
+    expect(merged.messengerLinks).toEqual(["WhatsApp", "Telegram"]);
+  });
+
+  it("reports marker ads, cluster pins and junk names without admitting them", () => {
+    const payload = {
+      result: {
+        items: [
+          { id: "70000001000000001_hash", name: "Ad", is_advertising: true },
+          { id: "70000001000000002_hash", name: "Cluster", cluster: { count: 3 } },
+          { id: "70000001000000003_hash", name: "[light] static texture" },
+          { id: "70000001000000004_hash", name: "Organic firm" }
+        ]
+      }
+    };
+
+    const result = synthesizeCardsFromMarkersPayloadWithStats(payload, "auto service", "Novosibirsk");
+    expect(result.cards.map((card) => card.name)).toEqual(["Organic firm"]);
+    expect(result.stats).toMatchObject({
+      adsRejected: 1,
+      clustersRejected: 1,
+      junkRejected: 1
+    });
+  });
+
+  it("sets capReason when the target remains unreachable after all variants", () => {
+    const result = mergeDiscoveryVariantResults([
+      { cards: numberedCards(0, 20) },
+      { cards: numberedCards(20, 5) }
+    ], 50, 2);
+
+    expect(result.cards).toHaveLength(25);
+    expect(result.diagnostics.capReason).toBe("query_expansion_exhausted");
+  });
+
+  it("sets source_payload_exhausted when a single source payload cannot reach the target", () => {
+    const result = mergeDiscoveryVariantResults([
+      { cards: numberedCards(0, 25), telemetry: { domCards: 12, markersSynthesized: 13 } }
+    ], 50, 1);
+
+    expect(result.cards).toHaveLength(25);
+    expect(result.diagnostics.capReason).toBe("source_payload_exhausted");
   });
 });
 

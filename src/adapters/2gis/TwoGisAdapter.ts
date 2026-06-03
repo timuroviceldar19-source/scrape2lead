@@ -5,7 +5,14 @@ import { BrowserSessionManager } from "../../browser/browserSessionManager.js";
 import type { ISourceAdapter, RawCardDetail, RawCompanyCard, RawContacts, RuntimeConfig, SearchQuery, SourceCapabilities } from "../../types.js";
 import { logger } from "../../logger.js";
 import { ApiCapture } from "./apiCapture.js";
-import { collectFirmCardsViaScroll } from "./discoveryFallback.js";
+import {
+  buildTwoGisDiscoveryVariants,
+  collectFirmCardsViaScroll,
+  mergeDiscoveryVariantResults,
+  type DiscoveryVariantResult,
+  type DomFallbackTelemetry,
+  type TwoGisDiscoveryVariant
+} from "./discoveryFallback.js";
 import { extractCardsFromPayload, findDetailPayload, mapContacts, mapDetail, toLead } from "./mapper.js";
 import { classifySoftBlock, SoftBlockError, type SoftBlockClassification, type SoftBlockEvidence } from "./softBlock.js";
 
@@ -42,45 +49,76 @@ export class TwoGisAdapter implements ISourceAdapter {
       return cards;
     }
 
+    const variants = buildTwoGisDiscoveryVariants(query);
+    const variantResults: DiscoveryVariantResult[] = [];
+    const capturedPayloads: unknown[] = [];
+
+    for (const variant of variants) {
+      const result = await this.listCardsForVariant(query, variant);
+      capturedPayloads.push(...result.payloads);
+      variantResults.push({ cards: result.cards, telemetry: result.telemetry });
+      const merged = mergeDiscoveryVariantResults(variantResults, query.limit, variants.length);
+      if (merged.cards.length >= query.limit) break;
+    }
+
+    this.lastPayloads = capturedPayloads;
+    this.writeSnapshot("api-capture", this.lastPayloads);
+    const { cards, diagnostics } = mergeDiscoveryVariantResults(variantResults, query.limit, variants.length);
+    logger.info("2gis discovery source cap", diagnostics);
+    this.assertFirmCards(cards, `${this.lastPayloads.length} captured payload(s)`);
+    return cards;
+  }
+
+  private async listCardsForVariant(
+    query: SearchQuery,
+    variant: TwoGisDiscoveryVariant
+  ): Promise<{ cards: RawCompanyCard[]; payloads: unknown[]; telemetry?: DomFallbackTelemetry }> {
     const page = await this.browserSession.newPage();
     const capture = new ApiCapture();
     capture.attach(page);
-    // Separate listener for `markers/clustered` so the strict primary
-    // capture path stays untouched. The strict mapper rejects the
-    // composite id format and the missing context fields, so the
-    // primary `capture.values()` would never surface these payloads;
-    // the hybrid DOM-fallback path consumes them as a *supplement*
-    // only — they never replace the primary capture's view of what
-    // counts as a firm.
     const markersCapture = new MarkersResponseListener();
     markersCapture.attach(page);
 
-    const url = buildSearchUrl(query.geo, query.category);
-    logger.info("opening 2GIS search", { url });
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await this.detectCaptcha(page);
-    await this.scrollResults(page, query.limit);
+    const url = buildSearchUrl(variant.geo, variant.searchText);
+    logger.info("opening 2GIS search", {
+      url,
+      variantKind: variant.kind,
+      searchText: variant.searchText
+    });
 
-    this.lastPayloads = capture.values();
-    this.writeSnapshot("api-capture", this.lastPayloads);
-    const captured = this.lastPayloads.flatMap((payload) => extractCardsFromPayload(payload, query.category, query.geo));
-    if (captured.length > 0) {
-      await page.close();
-      return dedupeCards(captured).slice(0, query.limit);
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await this.detectCaptcha(page);
+      await this.scrollResults(page, query.limit);
+
+      const payloads = capture.values();
+      const captured = payloads.flatMap((payload) => extractCardsFromPayload(payload, query.category, query.geo));
+      if (captured.length > 0) {
+        return { cards: dedupeCards(captured).slice(0, query.limit), payloads };
+      }
+
+      const softBlock = await this.detectSoftBlock(page, capture.softBlockEvidence());
+      if (softBlock) {
+        await this.throwSoftBlock(page, softBlock);
+      }
+
+      logger.warn("api capture returned no cards; using DOM fallback", {
+        variantKind: variant.kind,
+        searchText: variant.searchText
+      });
+      const fallback = await collectFirmCardsViaScroll(page, query, {
+        delayRangeMs: this.config.delayRangeMs,
+        detectCaptcha: (p) => this.detectCaptcha(p),
+        markersPayloads: markersCapture.values()
+      });
+      return {
+        cards: fallback.cards,
+        payloads,
+        telemetry: fallback.telemetry
+      };
+    } finally {
+      await page.close().catch(() => undefined);
     }
-
-    const softBlock = await this.detectSoftBlock(page, capture.softBlockEvidence());
-    if (softBlock) {
-      await this.throwSoftBlock(page, softBlock);
-    }
-
-    const fallback = await this.domFallback(page, query, markersCapture.values());
-    await page.close();
-    // Validation guard: if neither API capture nor the DOM fallback produced a
-    // single real firm card, fail loudly with an extraction-quality error
-    // rather than enqueuing UI/map/promo junk as company_tasks.
-    this.assertFirmCards(fallback, `${this.lastPayloads.length} captured payload(s)`);
-    return fallback;
   }
 
   /**
