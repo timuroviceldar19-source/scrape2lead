@@ -152,6 +152,14 @@ export interface WebsiteDiscoveryPolicy {
   timeoutMs?: number;
 }
 
+export interface DirectoryContactDiscoveryPolicy {
+  enabled?: boolean;
+  maxSearches?: number;
+  maxCandidates?: number;
+  timeoutMs?: number;
+  allowlist?: string[];
+}
+
 export interface ParseAttempt {
   /** Legacy parse-session identifier. Optional — `companyTaskId` is the canonical FK. */
   jobId?: string | null;
