@@ -254,7 +254,8 @@ async function generateMvpXlsx(leads: MvpLead[], exportPath: string) {
 async function main() {
   const config = loadConfig("config.example.json", {
     geo: CITY,
-    headless: true
+    headless: true,
+    twoGisBaseUrl: "https://2gis.kz"
   });
 
   const allLeads: Lead[] = [];

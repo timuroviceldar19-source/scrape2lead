@@ -84,7 +84,12 @@ const ConfigSchema = z.object({
    * `"postgres"`. Kept separate from `databasePath` so the SQLite field
    * is never silently mis-used.
    */
-  postgresConnectionString: z.string().min(1).optional()
+  postgresConnectionString: z.string().min(1).optional(),
+  /**
+   * Base URL for 2GIS. Defaults to "https://2gis.ru".
+   * Use "https://2gis.kz" for Kazakhstan targets.
+   */
+  twoGisBaseUrl: z.string().url().optional()
 });
 
 export function loadConfig(configPath: string, overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {

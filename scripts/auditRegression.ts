@@ -23,7 +23,7 @@ export const AUDIT_THRESHOLDS = {
   detailsFailed: 2
 } as const;
 
-export type AuditStatus = "PASS" | "FAIL" | "ENVIRONMENT_BLOCKED";
+export type AuditStatus = "PASS" | "FAIL" | "ENVIRONMENT_BLOCKED" | "INCONCLUSIVE_TIMEOUT";
 
 export interface AuditDiagnosticsSummary {
   detailsAttempted: number;
@@ -336,6 +336,20 @@ export async function runAudit(): Promise<AuditRunResult> {
     }
 
     const evaluation = evaluateAuditMetrics(metrics);
+    
+    // Check for inconclusive timeout: didn't reach target, but no explicit failures
+    const hasRealFailures = metrics.detailsFailed > AUDIT_THRESHOLDS.detailsFailed || metrics.incomplete > AUDIT_THRESHOLDS.incomplete;
+    if (evaluation.status === "FAIL" && !hasRealFailures && metrics.total < AUDIT_THRESHOLDS.leads) {
+      console.error("\nINCONCLUSIVE_TIMEOUT! Run did not reach target leads, but no explicit failures detected. Likely interrupted by timeout.");
+      return {
+        status: "INCONCLUSIVE_TIMEOUT",
+        exitCode: 2,
+        metrics,
+        diagnostics: diagnosticsSummary,
+        healthGate
+      };
+    }
+
     for (const failure of evaluation.failures) {
       console.error(`FAILED: ${failure}`);
     }
