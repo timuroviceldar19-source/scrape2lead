@@ -26,6 +26,25 @@ export interface JobManagerOptions {
   leaseWatchdogMs?: number;
 }
 
+interface EnrichmentDiagnostics {
+  detailsAttempted: number;
+  detailsSucceeded: number;
+  detailsFailed: number;
+  proxyTimeouts: number;
+  contactsImproved: number;
+  websiteAdded: number;
+  emailAdded: number;
+  messengersAdded: number;
+}
+
+interface ContactProfile {
+  phones: string[];
+  address: string;
+  email: string;
+  website: string;
+  messengers: string[];
+}
+
 export class JobManager {
   private readonly limiter: RateLimiter;
   private readonly leaseMs: number;
@@ -103,8 +122,9 @@ export class JobManager {
       await this.storage.updateParseJobTotalFound(jobId, cards.length);
       logger.info("cards discovered", { jobId, count: cards.length });
 
+      const prioritizedCards = prioritizeSparseCards(cards);
       const cardMap = new Map<string, RawCompanyCard>();
-      for (const card of cards) {
+      for (const card of prioritizedCards) {
         cardMap.set(card.externalId, card);
         await this.storage.enqueueCompanyTask({
           parseJobId: jobId,
@@ -114,12 +134,14 @@ export class JobManager {
       }
 
       const concurrency = Math.max(1, this.config.concurrency);
+      const enrichmentDiagnostics = createEnrichmentDiagnostics();
       const workers = Array.from({ length: concurrency }, (_, i) =>
-        this.runWorker(`worker-${i}-${randomUUID().slice(0, 6)}`, jobId, cardMap, adapter)
+        this.runWorker(`worker-${i}-${randomUUID().slice(0, 6)}`, jobId, cardMap, adapter, enrichmentDiagnostics)
       );
       await Promise.all(workers);
 
       const status = await this.storage.finalizeParseJob(jobId);
+      logger.info("enrichment diagnostics", { jobId, ...enrichmentDiagnostics });
 
       const leads = await this.storage.listLeads();
       const exported = await exportLeads(leads, this.config.exportDir);
@@ -192,7 +214,8 @@ export class JobManager {
     workerId: string,
     jobId: string,
     cardMap: Map<string, RawCompanyCard>,
-    adapter: ISourceAdapter
+    adapter: ISourceAdapter,
+    enrichmentDiagnostics: EnrichmentDiagnostics
   ): Promise<void> {
     while (true) {
       // Persistent rate-limit gates — once tripped, this worker must stop
@@ -262,7 +285,7 @@ export class JobManager {
           return;
         }
 
-        await this.processTask(workerId, jobId, task, cardMap, adapter);
+        await this.processTask(workerId, jobId, task, cardMap, adapter, enrichmentDiagnostics);
       } finally {
         this.limiter.releaseSessionCard();
       }
@@ -274,7 +297,8 @@ export class JobManager {
     jobId: string,
     task: CompanyTaskRow,
     cardMap: Map<string, RawCompanyCard>,
-    adapter: ISourceAdapter
+    adapter: ISourceAdapter,
+    enrichmentDiagnostics: EnrichmentDiagnostics
   ): Promise<void> {
     const card = cardMap.get(task.external_id);
     if (!card) {
@@ -305,6 +329,7 @@ export class JobManager {
       // already in the bucket).
       const detailBucket = this.resolveProxyBucket();
       await this.limiter.acquireRequest(detailBucket);
+      enrichmentDiagnostics.detailsAttempted += 1;
       const detail = await adapter.getCardDetail(card);
       await this.storage.saveRawSnapshot({
         companyTaskId: task.id,
@@ -326,6 +351,8 @@ export class JobManager {
         payload: contacts.payload
       });
       const lead = adapter.normalize(detail, contacts);
+      enrichmentDiagnostics.detailsSucceeded += 1;
+      recordContactImprovements(enrichmentDiagnostics, card, lead);
       await this.storage.upsertLead(lead);
       const isPartial = lead.incomplete;
       if (isPartial) {
@@ -347,6 +374,8 @@ export class JobManager {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const errorType = classifyError(message);
+      enrichmentDiagnostics.detailsFailed += 1;
+      if (errorType === "timeout") enrichmentDiagnostics.proxyTimeouts += 1;
       const blocked = errorType === "blocked" || errorType === "soft_blocked";
       const isDeletedCard = errorType === "deleted_card";
       const isNoData = errorType === "no_data";
@@ -452,6 +481,128 @@ export class JobManager {
   private resolveProxyBucket(): string {
     return this.resolveProxyId() ?? DIRECT_PROXY_BUCKET;
   }
+}
+
+function createEnrichmentDiagnostics(): EnrichmentDiagnostics {
+  return {
+    detailsAttempted: 0,
+    detailsSucceeded: 0,
+    detailsFailed: 0,
+    proxyTimeouts: 0,
+    contactsImproved: 0,
+    websiteAdded: 0,
+    emailAdded: 0,
+    messengersAdded: 0
+  };
+}
+
+function prioritizeSparseCards(cards: RawCompanyCard[]): RawCompanyCard[] {
+  return cards
+    .map((card, index) => ({ card, index, score: sparseScore(card) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item) => item.card);
+}
+
+function sparseScore(card: RawCompanyCard): number {
+  const profile = cardContactProfile(card);
+  let score = 0;
+  if (profile.phones.length === 0) score += 4;
+  if (!profile.address) score += 3;
+  if (!profile.website) score += 2;
+  if (!profile.email) score += 1;
+  if (profile.messengers.length === 0) score += 1;
+  if (!card.url) score += 1;
+  return score;
+}
+
+function recordContactImprovements(
+  diagnostics: EnrichmentDiagnostics,
+  card: RawCompanyCard,
+  lead: Lead
+): void {
+  const before = cardContactProfile(card);
+  const after = leadContactProfile(lead);
+  let improved = false;
+
+  if (after.phones.length > before.phones.length) improved = true;
+  if (!before.address && after.address) improved = true;
+  if (!before.email && after.email) {
+    diagnostics.emailAdded += 1;
+    improved = true;
+  }
+  if (!before.website && after.website) {
+    diagnostics.websiteAdded += 1;
+    improved = true;
+  }
+  if (after.messengers.length > before.messengers.length) improved = true;
+  if (before.messengers.length === 0 && after.messengers.length > 0) {
+    diagnostics.messengersAdded += 1;
+  }
+
+  if (improved) diagnostics.contactsImproved += 1;
+}
+
+function cardContactProfile(card: RawCompanyCard): ContactProfile {
+  const rich = card as RawCompanyCard & {
+    phones?: string[];
+    email?: string | null;
+    website?: string | null;
+    messengerLinks?: string[];
+  };
+  return {
+    phones: uniqueStrings([
+      ...(rich.phones ?? []),
+      ...collectStringsByKey(card.payload, /phone|phones|number/i)
+    ]),
+    address: firstString(card.address, findStringByKey(card.payload, /^(?:address|address_name|full_address)$/i)),
+    email: firstString(rich.email ?? undefined, findStringByKey(card.payload, /^email$/i)),
+    website: firstString(rich.website ?? undefined, findStringByKey(card.payload, /^(?:website|site)$/i)),
+    messengers: uniqueStrings([
+      ...(rich.messengerLinks ?? []),
+      ...collectStringsByKey(card.payload, /messenger/i)
+    ])
+  };
+}
+
+function leadContactProfile(lead: Lead): ContactProfile {
+  return {
+    phones: uniqueStrings(lead.phones),
+    address: firstString(lead.address),
+    email: firstString(lead.email),
+    website: firstString(lead.website),
+    messengers: uniqueStrings(lead.messenger_links)
+  };
+}
+
+function findStringByKey(value: unknown, keyPattern: RegExp): string | undefined {
+  return collectStringsByKey(value, keyPattern).find((item) => item.trim().length > 0);
+}
+
+function collectStringsByKey(value: unknown, keyPattern: RegExp): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => collectStringsByKey(item, keyPattern));
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const own = Object.entries(record).flatMap(([key, child]) => {
+    if (!keyPattern.test(key)) return [];
+    return collectStrings(child);
+  });
+  return [...own, ...Object.values(record).flatMap((child) => collectStringsByKey(child, keyPattern))];
+}
+
+function collectStrings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (typeof value === "number") return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(collectStrings);
+  if (value && typeof value === "object") return Object.values(value as Record<string, unknown>).flatMap(collectStrings);
+  return [];
+}
+
+function firstString(...values: Array<string | null | undefined>): string {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0)?.trim() ?? "";
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function classifyError(message: string): string {

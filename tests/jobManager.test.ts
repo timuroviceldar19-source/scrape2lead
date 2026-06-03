@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdapterRegistry } from "../src/adapters/registry.js";
 import { JobManager } from "../src/core/jobManager.js";
+import { logger } from "../src/logger.js";
 import { RATE_LIMIT_WINDOW_MS } from "../src/core/rateLimiter.js";
 import { Storage } from "../src/storage/storage.js";
 import { SoftBlockError } from "../src/adapters/2gis/softBlock.js";
@@ -35,10 +36,12 @@ interface FakeAdapterOptions {
   incomplete?: Set<string>;
   /** If set, getCardDetail sleeps this many ms before returning/throwing. */
   delayMs?: number;
+  contactsById?: Map<string, Partial<RawContacts>>;
 }
 
 class FakeAdapter implements ISourceAdapter {
   source = "2gis";
+  detailCalls: string[] = [];
   constructor(private readonly opts: FakeAdapterOptions) {}
 
   capabilities(): SourceCapabilities {
@@ -60,6 +63,7 @@ class FakeAdapter implements ISourceAdapter {
   }
 
   async getCardDetail(card: RawCompanyCard): Promise<RawCardDetail> {
+    this.detailCalls.push(card.externalId);
     if (this.opts.delayMs) await sleep(this.opts.delayMs);
     const make = this.opts.failOn?.get(card.externalId);
     if (make) throw make();
@@ -67,14 +71,15 @@ class FakeAdapter implements ISourceAdapter {
   }
 
   async getContacts(detail: RawCardDetail): Promise<RawContacts> {
+    const override = this.opts.contactsById?.get(detail.externalId) ?? {};
     return {
       externalId: detail.externalId,
-      phones: ["+71234567890"],
-      email: null,
-      website: null,
-      socialLinks: [],
-      messengerLinks: [],
-      payload: { contacts: true }
+      phones: override.phones ?? ["+71234567890"],
+      email: override.email ?? null,
+      website: override.website ?? null,
+      socialLinks: override.socialLinks ?? [],
+      messengerLinks: override.messengerLinks ?? [],
+      payload: override.payload ?? { contacts: true }
     };
   }
 
@@ -191,6 +196,65 @@ describe("JobManager queue/state integration", () => {
     expect(reclaimed?.lease_until).toBeNull();
     expect(reclaimed?.worker_id).toBeNull();
     expect(result.leads.map((l) => l.external_id).sort()).toEqual(["ext-1", "ext-2"]);
+  });
+
+  it("prioritizes sparse discovery cards before rich cards when the session cap stops early", async () => {
+    ws.config.rateLimit = { maxCardsPerSession: 1 };
+    const rich = {
+      ...makeCard("rich", "Rich Company"),
+      address: "Lenina 1",
+      url: "https://2gis.ru/moscow/firm/rich",
+      payload: {
+        id: "rich",
+        phone: "+71234567890",
+        email: "rich@example.com",
+        website: "https://rich.example.com",
+        messengers: [{ provider: "Telegram" }]
+      }
+    };
+    const sparse = makeCard("sparse", "Sparse Company");
+    const adapter = new FakeAdapter({ cards: [rich, sparse] });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+
+    const manager = new JobManager(ws.config, registry, ws.storage, undefined, {
+      emptyPollMs: 5
+    });
+    const result = await manager.run();
+
+    expect(adapter.detailCalls).toEqual(["sparse"]);
+    expect(result.status).toBe("running");
+    expect(result.leads.map((lead) => lead.external_id)).toEqual(["sparse"]);
+  });
+
+  it("logs enrichment diagnostics for detail success and contact additions", async () => {
+    const contactsById = new Map<string, Partial<RawContacts>>();
+    contactsById.set("sparse", {
+      email: "sparse@example.com",
+      website: "https://sparse.example.com",
+      messengerLinks: ["WhatsApp"]
+    });
+    const adapter = new FakeAdapter({ cards: [makeCard("sparse", "Sparse Company")], contactsById });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+    const infoSpy = vi.spyOn(logger, "info");
+
+    const manager = new JobManager(ws.config, registry, ws.storage, undefined, {
+      emptyPollMs: 5
+    });
+    await manager.run();
+
+    const diagnosticsCall = infoSpy.mock.calls.find(([message]) => message === "enrichment diagnostics");
+    expect(diagnosticsCall?.[1]).toMatchObject({
+      detailsAttempted: 1,
+      detailsSucceeded: 1,
+      detailsFailed: 0,
+      contactsImproved: 1,
+      websiteAdded: 1,
+      emailAdded: 1,
+      messengersAdded: 1
+    });
+    infoSpy.mockRestore();
   });
 
   it("caps blocked errors at maxAttempts and marks the task failed", async () => {
