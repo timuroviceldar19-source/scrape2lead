@@ -121,6 +121,11 @@ export interface RuntimeConfig extends SearchQuery {
    */
   websiteDiscovery?: WebsiteDiscoveryPolicy;
   /**
+   * Optional bounded search-engine discovery of directory pages (zoon, yell,
+   * etc.) to extract contacts. Runs only for leads without email.
+   */
+  directoryContactDiscovery?: DirectoryContactDiscoveryPolicy;
+  /**
    * Storage backend selector. Defaults to `"sqlite"` (preserves the
    * pre-Postgres behaviour). `"postgres"` switches the CLI to
    * `PostgresStorage`, which requires `postgresConnectionString`.

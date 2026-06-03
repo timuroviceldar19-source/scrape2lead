@@ -357,6 +357,59 @@ describe("JobManager queue/state integration", () => {
     }
   });
 
+  it("enriches missing contacts through directory contact discovery", async () => {
+    const contactsById = new Map<string, Partial<RawContacts>>();
+    contactsById.set("dir-only", {
+      phones: ["+79130000000"],
+      email: null,
+      website: null
+    });
+    ws.config.directoryContactDiscovery = {
+      enabled: true,
+      maxSearches: 1,
+      maxCandidates: 1,
+      allowlist: ["zoon.ru"]
+    };
+
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.includes("duckduckgo.com") || url.includes("bing.com")) {
+        return new Response('<a href="https://zoon.ru/nsk/test/">Test</a>', {
+          headers: { "content-type": "text/html" }
+        } as any);
+      }
+      if (url.includes("zoon.ru")) {
+        return new Response("Email: found@zoon.ru Phone: 79130000000", {
+          headers: { "content-type": "text/html" }
+        } as any);
+      }
+      return new Response("", { status: 404 } as any);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const adapter = new FakeAdapter({ cards: [makeCard("dir-only", "Dir Only")], contactsById });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+    const infoSpy = vi.spyOn(logger, "info");
+
+    try {
+      const manager = new JobManager(ws.config, registry, ws.storage, undefined, {
+        emptyPollMs: 5
+      });
+      const result = await manager.run();
+
+      expect(result.leads[0].email).toBe("found@zoon.ru");
+      const diagnosticsCall = infoSpy.mock.calls.find(([message]) => message === "enrichment diagnostics");
+      expect(diagnosticsCall?.[1]).toMatchObject({
+        directoryDiscoveryAttempted: 1,
+        directoryDiscoverySucceeded: 1,
+        directoryDiscoveryEmailFound: 1
+      });
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("caps blocked errors at maxAttempts and marks the task failed", async () => {
     const cards = [makeCard("ext-blocked")];
     const failOn = new Map<string, () => Error>();
