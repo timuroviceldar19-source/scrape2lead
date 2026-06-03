@@ -11,5 +11,11 @@
   "concurrency": 1,
   "headless": false,
   "rawSnapshotDir": "raw_snapshots",
+  "websiteDiscovery": {
+    "enabled": false,
+    "maxSearches": 2,
+    "maxCandidates": 4,
+    "timeoutMs": 5000
+  },
   "storageBackend": "sqlite"
 }

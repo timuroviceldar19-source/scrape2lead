@@ -9,6 +9,7 @@ import { computeBackoffMs, type BackoffOptions } from "./backoff.js";
 import type { ProxyRotator } from "../proxy/proxyRotator.js";
 import { SoftBlockError } from "../adapters/2gis/softBlock.js";
 import { enrichLeadFromWebsite } from "../enrichment/websiteCrawler.js";
+import { discoverLeadWebsite } from "../enrichment/websiteDiscovery.js";
 
 const DEFAULT_LEASE_MS = 60_000;
 const EMPTY_POLL_MS = 250;
@@ -42,6 +43,13 @@ interface EnrichmentDiagnostics {
   websiteCrawlMessengersFound: number;
   websiteCrawlTimeouts: number;
   websiteCrawlPagesVisited: number;
+  websiteDiscoveryAttempted: number;
+  websiteDiscoverySucceeded: number;
+  websiteDiscoveryWebsiteFound: number;
+  websiteDiscoverySearchRequests: number;
+  websiteDiscoveryCandidatesValidated: number;
+  websiteDiscoveryCandidatesRejected: number;
+  websiteDiscoveryTimeouts: number;
 }
 
 interface ContactProfile {
@@ -357,7 +365,8 @@ export class JobManager {
         purpose: "recent",
         payload: contacts.payload
       });
-      const lead = await this.enrichWebsiteContacts(adapter.normalize(detail, contacts), enrichmentDiagnostics);
+      const discoveredLead = await this.discoverWebsite(adapter.normalize(detail, contacts), enrichmentDiagnostics);
+      const lead = await this.enrichWebsiteContacts(discoveredLead, enrichmentDiagnostics);
       enrichmentDiagnostics.detailsSucceeded += 1;
       recordContactImprovements(enrichmentDiagnostics, card, lead);
       await this.storage.upsertLead(lead);
@@ -496,6 +505,20 @@ export class JobManager {
     return result.lead;
   }
 
+  private async discoverWebsite(lead: Lead, diagnostics: EnrichmentDiagnostics): Promise<Lead> {
+    const result = await discoverLeadWebsite(lead, this.config.websiteDiscovery);
+    if (!result.telemetry.attempted) return result.lead;
+
+    diagnostics.websiteDiscoveryAttempted += 1;
+    if (result.telemetry.succeeded) diagnostics.websiteDiscoverySucceeded += 1;
+    if (result.telemetry.websiteFound) diagnostics.websiteDiscoveryWebsiteFound += 1;
+    diagnostics.websiteDiscoverySearchRequests += result.telemetry.searchRequests;
+    diagnostics.websiteDiscoveryCandidatesValidated += result.telemetry.candidatesValidated;
+    diagnostics.websiteDiscoveryCandidatesRejected += result.telemetry.candidatesRejected;
+    diagnostics.websiteDiscoveryTimeouts += result.telemetry.timeouts;
+    return result.lead;
+  }
+
   /**
    * Stable bucket key for the per-proxy request budget. Mirrors
    * {@link resolveProxyId} but normalises the no-rotator case to
@@ -521,7 +544,14 @@ function createEnrichmentDiagnostics(): EnrichmentDiagnostics {
     websiteCrawlEmailFound: 0,
     websiteCrawlMessengersFound: 0,
     websiteCrawlTimeouts: 0,
-    websiteCrawlPagesVisited: 0
+    websiteCrawlPagesVisited: 0,
+    websiteDiscoveryAttempted: 0,
+    websiteDiscoverySucceeded: 0,
+    websiteDiscoveryWebsiteFound: 0,
+    websiteDiscoverySearchRequests: 0,
+    websiteDiscoveryCandidatesValidated: 0,
+    websiteDiscoveryCandidatesRejected: 0,
+    websiteDiscoveryTimeouts: 0
   };
 }
 
