@@ -292,6 +292,71 @@ describe("JobManager queue/state integration", () => {
     }
   });
 
+  it("discovers a missing company website and crawls it for email", async () => {
+    const contactsById = new Map<string, Partial<RawContacts>>();
+    contactsById.set("no-site", {
+      phones: ["+71234567890"],
+      email: null,
+      website: null
+    });
+    ws.config.websiteDiscovery = {
+      enabled: true,
+      maxSearches: 1,
+      maxCandidates: 1,
+      timeoutMs: 100
+    };
+    ws.config.websiteCrawl = {
+      enabled: true,
+      maxPages: 2,
+      timeoutMs: 100
+    };
+
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.includes("duckduckgo.com/html")) {
+        return new Response("<a href='https://site-only.example'>Site Only official</a>", {
+          headers: { "content-type": "text/html" }
+        });
+      }
+      if (url === "https://site-only.example") {
+        return new Response("Site Only moscow Lenina 1 +7 123 456-78-90", {
+          headers: { "content-type": "text/html" }
+        });
+      }
+      if (url === "https://site-only.example/contacts") {
+        return new Response("<a href='mailto:hello@site-only.example'>Email</a>", {
+          headers: { "content-type": "text/html" }
+        });
+      }
+      return new Response("", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const adapter = new FakeAdapter({ cards: [makeCard("no-site", "Site Only")], contactsById });
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+    const infoSpy = vi.spyOn(logger, "info");
+
+    try {
+      const manager = new JobManager(ws.config, registry, ws.storage, undefined, {
+        emptyPollMs: 5
+      });
+      const result = await manager.run();
+
+      expect(result.leads[0].website).toBe("https://site-only.example");
+      expect(result.leads[0].email).toBe("hello@site-only.example");
+      const diagnosticsCall = infoSpy.mock.calls.find(([message]) => message === "enrichment diagnostics");
+      expect(diagnosticsCall?.[1]).toMatchObject({
+        websiteDiscoveryAttempted: 1,
+        websiteDiscoverySucceeded: 1,
+        websiteDiscoveryWebsiteFound: 1,
+        websiteCrawlAttempted: 1,
+        websiteCrawlEmailFound: 1
+      });
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("caps blocked errors at maxAttempts and marks the task failed", async () => {
     const cards = [makeCard("ext-blocked")];
     const failOn = new Map<string, () => Error>();

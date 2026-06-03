@@ -116,6 +116,11 @@ export interface RuntimeConfig extends SearchQuery {
    */
   websiteCrawl?: WebsiteCrawlPolicy;
   /**
+   * Optional bounded search-engine discovery of official company websites.
+   * Runs only for leads that still have neither website nor email.
+   */
+  websiteDiscovery?: WebsiteDiscoveryPolicy;
+  /**
    * Storage backend selector. Defaults to `"sqlite"` (preserves the
    * pre-Postgres behaviour). `"postgres"` switches the CLI to
    * `PostgresStorage`, which requires `postgresConnectionString`.
@@ -132,6 +137,13 @@ export interface RuntimeConfig extends SearchQuery {
 export interface WebsiteCrawlPolicy {
   enabled?: boolean;
   maxPages?: number;
+  timeoutMs?: number;
+}
+
+export interface WebsiteDiscoveryPolicy {
+  enabled?: boolean;
+  maxSearches?: number;
+  maxCandidates?: number;
   timeoutMs?: number;
 }
 
