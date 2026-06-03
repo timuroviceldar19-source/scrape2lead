@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Page } from "playwright";
+import type { Page, Response } from "playwright";
 import { BrowserSessionManager } from "../../browser/browserSessionManager.js";
 import type { ISourceAdapter, RawCardDetail, RawCompanyCard, RawContacts, RuntimeConfig, SearchQuery, SourceCapabilities } from "../../types.js";
 import { logger } from "../../logger.js";
 import { ApiCapture } from "./apiCapture.js";
+import { collectFirmCardsViaScroll } from "./discoveryFallback.js";
 import { extractCardsFromPayload, findDetailPayload, mapContacts, mapDetail, toLead } from "./mapper.js";
 import { classifySoftBlock, SoftBlockError, type SoftBlockClassification, type SoftBlockEvidence } from "./softBlock.js";
 
@@ -44,6 +45,15 @@ export class TwoGisAdapter implements ISourceAdapter {
     const page = await this.browserSession.newPage();
     const capture = new ApiCapture();
     capture.attach(page);
+    // Separate listener for `markers/clustered` so the strict primary
+    // capture path stays untouched. The strict mapper rejects the
+    // composite id format and the missing context fields, so the
+    // primary `capture.values()` would never surface these payloads;
+    // the hybrid DOM-fallback path consumes them as a *supplement*
+    // only — they never replace the primary capture's view of what
+    // counts as a firm.
+    const markersCapture = new MarkersResponseListener();
+    markersCapture.attach(page);
 
     const url = buildSearchUrl(query.geo, query.category);
     logger.info("opening 2GIS search", { url });
@@ -64,7 +74,7 @@ export class TwoGisAdapter implements ISourceAdapter {
       await this.throwSoftBlock(page, softBlock);
     }
 
-    const fallback = await this.domFallback(page, query);
+    const fallback = await this.domFallback(page, query, markersCapture.values());
     await page.close();
     // Validation guard: if neither API capture nor the DOM fallback produced a
     // single real firm card, fail loudly with an extraction-quality error
@@ -155,28 +165,32 @@ export class TwoGisAdapter implements ISourceAdapter {
     }
   }
 
-  private async domFallback(page: Page, query: SearchQuery): Promise<RawCompanyCard[]> {
+  private async domFallback(page: Page, query: SearchQuery, markersPayloads: unknown[] = []): Promise<RawCompanyCard[]> {
     logger.warn("api capture returned no cards; using DOM fallback");
-    const cards = await page.evaluate(({ category, geo }) => {
-      const anchors = [...document.querySelectorAll("a[href*='/firm/']")];
-      return anchors.map((anchor) => {
-        const element = anchor as HTMLAnchorElement;
-        const text = element.textContent?.replace(/\s+/g, " ").trim() ?? "";
-        const href = element.href;
-        const id = href.match(/firm\/(\d+)/)?.[1] ?? href;
-        return {
-          source: "2gis",
-          externalId: id,
-          name: text || id,
-          category,
-          city: geo,
-          address: "",
-          url: href,
-          payload: { href, text }
-        };
-      });
-    }, { category: query.category, geo: query.geo });
-    return dedupeCards(cards).slice(0, query.limit);
+    // Progressive scroll-and-collect: the previous version grabbed only
+    // the firm anchors already in the DOM, which capped discovery to
+    // whatever was rendered above the fold. The helper scrolls the
+    // results panel until the configured limit is reached, no new cards
+    // appear for N scrolls, an anti-bot wall is detected, the max
+    // scroll budget is exhausted, or the overall timeout trips. CAPTCHA
+    // detection is delegated back into the adapter's own probe so the
+    // existing thrown-error / evidence-snapshot pipeline is preserved.
+    //
+    // 2GIS renders the results list as a virtual scroller that only
+    // exposes ~12 firm anchors in the DOM, no matter how much the
+    // panel is scrolled. The hybrid supplement passes the
+    // `markers/clustered` payloads (already collected by the separate
+    // listener attached in `listCards`) into the helper so the
+    // synthesis can top the result set up to `query.limit`. The
+    // synthesis is strictly additive — it never replaces the
+    // DOM-collected cards and only runs when the loop finished
+    // below the target.
+    const { cards } = await collectFirmCardsViaScroll(page, query, {
+      delayRangeMs: this.config.delayRangeMs,
+      detectCaptcha: (p) => this.detectCaptcha(p),
+      markersPayloads
+    });
+    return cards;
   }
 
   private async fetchDomDetail(card: RawCompanyCard): Promise<Record<string, unknown> | null> {
@@ -1173,4 +1187,68 @@ function dedupeCards(cards: RawCompanyCard[]): RawCompanyCard[] {
     seen.add(card.externalId);
     return true;
   });
+}
+
+/**
+ * Lightweight listener for `markers/clustered` responses, kept
+ * deliberately separate from {@link ApiCapture} so the strict primary
+ * capture path stays untouched. The mapper rejects the composite
+ * `id` format (`<numeric>_<hash>`) and the missing context fields
+ * (address_name, contact_groups, etc.) — that is by design and we
+ * must not paper over it here. The hybrid DOM-fallback path
+ * consumes the raw payloads as a *supplement* (see
+ * {@link collectFirmCardsViaScroll}'s `markersPayloads` option), so
+ * the values exposed by this listener are only ever used as a
+ * post-loop top-up and never feed the primary discovery contract.
+ *
+ * The URL allowlist is path-shaped (`/3.0/markers/clustered`) so
+ * unrelated endpoints never slip in. We deliberately do not parse
+ * or validate the payload here — the synthesis helper in
+ * `discoveryFallback.ts` owns the structural rules and the unit
+ * tests pin them. Streaming / partial JSON responses are dropped
+ * silently (same posture as `ApiCapture`).
+ */
+class MarkersResponseListener {
+  private readonly payloads: unknown[] = [];
+  private readonly urls: string[] = [];
+
+  attach(page: Page): void {
+    page.on("response", (response) => {
+      void this.capture(response);
+    });
+  }
+
+  values(): unknown[] {
+    return [...this.payloads];
+  }
+
+  responseUrls(): string[] {
+    return [...this.urls];
+  }
+
+  private async capture(response: Response): Promise<void> {
+    const url = response.url();
+    if (!MARKERS_CLUSTERED_PATH_RE.test(url)) return;
+    const contentType = response.headers()["content-type"] ?? "";
+    if (!contentType.includes("json")) return;
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return;
+    }
+    this.payloads.push(body);
+    this.urls.push(safeMarkersUrl(url));
+  }
+}
+
+const MARKERS_CLUSTERED_PATH_RE = /catalog\.api\.(?:2gis|dgis)\.ru\/3\.0\/markers\/clustered\b/;
+
+function safeMarkersUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return "<unparsable-url>";
+  }
 }
