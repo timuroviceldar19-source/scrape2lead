@@ -17,7 +17,8 @@
     "mvp:astana": "tsx scripts/autoserviceRadarMvp.ts --config config.kz.json",
     "sales:buyer-template": "tsx scripts/generateBuyerOutreachTemplate.ts",
     "sales:sprint-workbook": "tsx scripts/generateSalesSprintWorkbook.ts",
-    "api:2gis:smoke": "tsx scripts/test2gisPlacesApi.ts"
+    "api:2gis:smoke": "tsx scripts/test2gisPlacesApi.ts",
+    "operator:intake": "tsx scripts/operatorIntake.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",

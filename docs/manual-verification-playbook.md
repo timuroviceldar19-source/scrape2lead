@@ -1,7 +1,19 @@
 # Manual Verification Playbook: AutoService Radar KZ
 
+## 🚀 Рекомендуемый инструмент: Operator Intake Tool
+**Вместо ручного форматирования Excel настоятельно рекомендуется использовать [Operator Intake Tool](./operator-intake.md).**
+Он автоматизирует извлечение телефонов, WhatsApp, Telegram, email и сайтов из скопированного текста, автоматически проверяет дубликаты, рассчитывает `completeness_score` и безопасно добавляет строку в `exports/autoservice-radar-astana-real-sample-50.xlsx` с созданием бэкапа.
+
+**Быстрый старт:**
+1. Скопируйте текст карточки компании из 2GIS.
+2. Запустите: `npm run operator:intake -- --parse-text "вставленный_текст"`
+3. Добавьте `company_name`, `category` и `source_url` в полученный JSON.
+4. Запустите: `npm run operator:intake -- --append '{"company_name": "...", ...}'`
+
+---
+
 ## Цель
-Добрать вручную 40 компаний для формирования sales-ready sample (итого 50 строк: 10 реальных + 40 ручных) в файле `exports/autoservice-radar-astana-real-sample-50.xlsx`.
+Добрать вручную 35 компаний для формирования sales-ready sample (итого 50 строк: 15 проверенных + 35 ручных) в файле `exports/autoservice-radar-astana-real-sample-50.xlsx`.
 
 ## Распределение по категориям
 Необходимо собрать данные равномерно по 4 категориям (по 10 компаний на каждую):
