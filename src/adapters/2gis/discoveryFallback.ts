@@ -69,6 +69,43 @@ export interface FirmCardCandidate {
   url: string;
 }
 
+export type DiscoveryCapReason =
+  | "limit_reached"
+  | "source_payload_exhausted"
+  | "query_expansion_exhausted";
+
+export interface TwoGisDiscoveryVariant {
+  searchText: string;
+  geo: string;
+  kind: "base" | "category" | "geo";
+}
+
+export interface DiscoverySourceCapDiagnostics {
+  target: number;
+  validOrganic: number;
+  domCards: number;
+  markerSynthesized: number;
+  queryVariantsTried: number;
+  duplicatesRejected: number;
+  adsRejected: number;
+  clustersRejected: number;
+  junkRejected: number;
+  capReason: DiscoveryCapReason;
+}
+
+export interface DiscoveryVariantResult {
+  cards: RawCompanyCard[];
+  telemetry?: Partial<Pick<DomFallbackTelemetry,
+    | "domCards"
+    | "markersSynthesized"
+    | "duplicates"
+    | "markerDuplicatesRejected"
+    | "adsRejected"
+    | "clustersRejected"
+    | "junkRejected"
+  >>;
+}
+
 /** Regex matching `/firm/<digits>` segments in 2GIS list anchors. */
 export const FIRM_HREF_RE = /\/firm\/(\d{6,})(?:[/?#]|$)/;
 
@@ -142,6 +179,159 @@ export function mergeCandidates(
     added += 1;
   }
   return { merged, added, duplicates };
+}
+
+export function buildTwoGisDiscoveryVariants(
+  query: SearchQuery,
+  maxVariants = 6
+): TwoGisDiscoveryVariant[] {
+  const variants: TwoGisDiscoveryVariant[] = [];
+  const seen = new Set<string>();
+  const add = (variant: TwoGisDiscoveryVariant): void => {
+    const key = `${variant.kind}:${normalizeText(variant.geo)}:${normalizeText(variant.searchText)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    variants.push(variant);
+  };
+
+  const category = query.category.trim();
+  const geo = query.geo.trim();
+  add({ searchText: category, geo, kind: "base" });
+
+  for (const searchText of deriveCategorySearchTexts(category)) {
+    add({ searchText, geo, kind: "category" });
+    if (variants.length >= maxVariants) return variants;
+  }
+
+  for (const searchText of deriveGeoSearchTexts(category, geo)) {
+    add({ searchText, geo, kind: "geo" });
+    if (variants.length >= maxVariants) return variants;
+  }
+
+  return variants.slice(0, maxVariants);
+}
+
+function deriveCategorySearchTexts(category: string): string[] {
+  const normalized = normalizeText(category);
+  const out: string[] = [];
+  const add = (value: string): void => {
+    const trimmed = value.trim();
+    if (trimmed && normalizeText(trimmed) !== normalized) out.push(trimmed);
+  };
+
+  if (/\b(?:auto\s*service|car\s*repair|garage)\b/i.test(category) ||
+      /(?:автосервис|сто|ремонт\s+авто|ремонт\s+автомобил|техцентр)/i.test(category)) {
+    add("автосервис");
+    add("СТО");
+    add("ремонт автомобилей");
+    add("техцентр");
+  }
+
+  if (/(?:стоматолог|зубн)|\b(?:dentist|dental)\b/i.test(category)) {
+    add("стоматология");
+    add("стоматологическая клиника");
+    add("зубная клиника");
+  }
+
+  if (/(?:клиник|медицинск)|\b(?:clinic|medical center)\b/i.test(category)) {
+    add("медицинский центр");
+    add("клиника");
+  }
+
+  if (/(?:ресторан)|\brestaurant\b/i.test(category)) {
+    add("ресторан");
+  }
+
+  return out;
+}
+
+function deriveGeoSearchTexts(category: string, geo: string): string[] {
+  const out = [`${category} ${geo}`];
+  const parts = geo.split(/[,\u2013-]/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    out.push(`${category} ${parts[parts.length - 1]}`);
+  }
+  return out;
+}
+
+export function mergeDiscoveryVariantResults(
+  results: DiscoveryVariantResult[],
+  target: number,
+  plannedVariants = results.length
+): { cards: RawCompanyCard[]; diagnostics: DiscoverySourceCapDiagnostics } {
+  let cards: RawCompanyCard[] = [];
+  let duplicatesRejected = 0;
+  let domCards = 0;
+  let markerSynthesized = 0;
+  let adsRejected = 0;
+  let clustersRejected = 0;
+  let junkRejected = 0;
+
+  for (const result of results) {
+    const merged = mergeRawCompanyCards(cards, result.cards);
+    cards = merged.cards;
+    duplicatesRejected += merged.duplicates;
+    duplicatesRejected += result.telemetry?.duplicates ?? 0;
+    duplicatesRejected += result.telemetry?.markerDuplicatesRejected ?? 0;
+    domCards += result.telemetry?.domCards ?? 0;
+    markerSynthesized += result.telemetry?.markersSynthesized ?? 0;
+    adsRejected += result.telemetry?.adsRejected ?? 0;
+    clustersRejected += result.telemetry?.clustersRejected ?? 0;
+    junkRejected += result.telemetry?.junkRejected ?? 0;
+    if (cards.length >= target) {
+      cards = cards.slice(0, target);
+      break;
+    }
+  }
+
+  const capReason: DiscoveryCapReason = cards.length >= target
+    ? "limit_reached"
+    : plannedVariants > 1 && results.length >= plannedVariants
+      ? "query_expansion_exhausted"
+      : "source_payload_exhausted";
+
+  return {
+    cards: cards.slice(0, target),
+    diagnostics: {
+      target,
+      validOrganic: Math.min(cards.length, target),
+      domCards,
+      markerSynthesized,
+      queryVariantsTried: results.length,
+      duplicatesRejected,
+      adsRejected,
+      clustersRejected,
+      junkRejected,
+      capReason
+    }
+  };
+}
+
+export function mergeRawCompanyCards(
+  existing: RawCompanyCard[],
+  incoming: RawCompanyCard[]
+): { cards: RawCompanyCard[]; added: number; duplicates: number } {
+  const cards = existing.slice();
+  const index = buildCardKeyIndex(cards);
+  let added = 0;
+  let duplicates = 0;
+
+  for (const card of incoming) {
+    const keys = discoveryCardKeys(card);
+    const duplicateAt = keys.map((key) => index.get(key)).find((value) => value !== undefined);
+    if (duplicateAt === undefined) {
+      cards.push(card);
+      for (const key of keys) index.set(key, cards.length - 1);
+      added += 1;
+      continue;
+    }
+
+    duplicates += 1;
+    cards[duplicateAt] = mergeRawCompanyCard(cards[duplicateAt], card);
+    for (const key of discoveryCardKeys(cards[duplicateAt])) index.set(key, duplicateAt);
+  }
+
+  return { cards, added, duplicates };
 }
 
 /** Reason the scroll-and-collect loop terminated. Surfaced in diagnostics. */
@@ -228,6 +418,7 @@ export interface DomFallbackOptions {
  */
 export interface DomFallbackTelemetry {
   collected: number;
+  domCards: number;
   duplicates: number;
   scrollAttempts: number;
   perStep: number[];
@@ -253,6 +444,10 @@ export interface DomFallbackTelemetry {
    * the synthesis helper).
    */
   markersRejected: number;
+  markerDuplicatesRejected: number;
+  adsRejected: number;
+  clustersRejected: number;
+  junkRejected: number;
 }
 
 /**
@@ -426,6 +621,200 @@ function stripQuery(url: string): string {
   }
 }
 
+const FIRM_NUMERIC_ID_RE = /^\d{6,}$/;
+
+function buildCardKeyIndex(cards: RawCompanyCard[]): Map<string, number> {
+  const index = new Map<string, number>();
+  cards.forEach((card, cardIndex) => {
+    for (const key of discoveryCardKeys(card)) {
+      if (!index.has(key)) index.set(key, cardIndex);
+    }
+  });
+  return index;
+}
+
+function discoveryCardKeys(card: RawCompanyCard): string[] {
+  const keys: string[] = [];
+  if (FIRM_NUMERIC_ID_RE.test(card.externalId)) {
+    keys.push(`id:${card.externalId}`);
+  }
+
+  const name = normalizeText(card.name);
+  if (!name) return keys;
+
+  const phone = extractPhonesFromCard(card)[0];
+  if (phone) keys.push(`name_phone:${name}:${phone}`);
+
+  const address = normalizeText(firstString(card.address, findStringByKey(card.payload, /^(?:address|address_name|full_address)$/i)));
+  if (address) keys.push(`name_address:${name}:${address}`);
+
+  return keys;
+}
+
+function mergeRawCompanyCard(existing: RawCompanyCard, incoming: RawCompanyCard): RawCompanyCard {
+  const mergedPayload = mergePayloads(existing.payload, incoming.payload);
+  const merged = {
+    ...existing,
+    name: firstString(existing.name, incoming.name),
+    category: firstString(existing.category, incoming.category),
+    city: firstString(existing.city, incoming.city),
+    address: pickRicherString(existing.address, incoming.address),
+    url: firstString(existing.url, incoming.url),
+    payload: mergedPayload
+  } as RawCompanyCard & {
+    phones?: string[];
+    email?: string | null;
+    website?: string | null;
+    socialLinks?: string[];
+    messengerLinks?: string[];
+  };
+  const incomingRich = incoming as RawCompanyCard & {
+    phones?: string[];
+    email?: string | null;
+    website?: string | null;
+    socialLinks?: string[];
+    messengerLinks?: string[];
+  };
+  const existingRich = existing as RawCompanyCard & {
+    phones?: string[];
+    email?: string | null;
+    website?: string | null;
+    socialLinks?: string[];
+    messengerLinks?: string[];
+  };
+
+  merged.phones = uniqueStrings([...extractPhonesFromCard(existing), ...extractPhonesFromCard(incoming)]);
+  if (merged.phones.length === 0) delete merged.phones;
+  merged.email = firstString(existingRich.email ?? undefined, incomingRich.email ?? undefined, findStringByKey(mergedPayload, /email/i)) || null;
+  merged.website = firstString(existingRich.website ?? undefined, incomingRich.website ?? undefined, findStringByKey(mergedPayload, /website|site/i)) || null;
+  merged.socialLinks = uniqueStrings([...(existingRich.socialLinks ?? []), ...(incomingRich.socialLinks ?? [])]);
+  if (merged.socialLinks.length === 0) delete merged.socialLinks;
+  merged.messengerLinks = uniqueStrings([
+    ...(existingRich.messengerLinks ?? []),
+    ...(incomingRich.messengerLinks ?? []),
+    ...extractMessengersFromPayload(mergedPayload)
+  ]);
+  if (merged.messengerLinks.length === 0) delete merged.messengerLinks;
+
+  return merged;
+}
+
+function normalizeText(value: string | null | undefined): string {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizePhone(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length <= 10) return digits;
+  return digits.slice(-10);
+}
+
+function extractPhonesFromCard(card: RawCompanyCard): string[] {
+  const rich = card as RawCompanyCard & { phones?: string[] };
+  const values = [
+    ...(rich.phones ?? []),
+    ...collectStringsByKey(card.payload, /phone|phones|number/i)
+  ];
+  return uniqueStrings(values.map(normalizePhone).filter((value) => value.length >= 7));
+}
+
+function extractMessengersFromPayload(payload: unknown): string[] {
+  const out: string[] = [];
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const rec = value as Record<string, unknown>;
+    const provider = rec.provider;
+    const label = rec.label;
+    if (typeof provider === "string" && provider.trim()) out.push(provider.trim());
+    else if (typeof label === "string" && label.trim()) out.push(label.trim());
+    for (const [key, child] of Object.entries(rec)) {
+      if (/messenger/i.test(key)) walk(child);
+    }
+  };
+  walk(payload);
+  return uniqueStrings(out);
+}
+
+function findStringByKey(value: unknown, keyPattern: RegExp): string | undefined {
+  return collectStringsByKey(value, keyPattern).find((item) => item.trim().length > 0);
+}
+
+function collectStringsByKey(value: unknown, keyPattern: RegExp): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => collectStringsByKey(item, keyPattern));
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const own = Object.entries(record).flatMap(([key, child]) => {
+    if (!keyPattern.test(key)) return [];
+    return collectStrings(child);
+  });
+  return [...own, ...Object.values(record).flatMap((child) => collectStringsByKey(child, keyPattern))];
+}
+
+function collectStrings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (typeof value === "number") return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(collectStrings);
+  if (value && typeof value === "object") return Object.values(value as Record<string, unknown>).flatMap(collectStrings);
+  return [];
+}
+
+function firstString(...values: Array<string | null | undefined>): string {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0)?.trim() ?? "";
+}
+
+function pickRicherString(a: string | null | undefined, b: string | null | undefined): string {
+  const left = firstString(a);
+  const right = firstString(b);
+  if (!left) return right;
+  if (!right) return left;
+  return right.length > left.length ? right : left;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function mergePayloads(existing: unknown, incoming: unknown): unknown {
+  if (!isPlainRecord(existing)) return incoming ?? existing;
+  if (!isPlainRecord(incoming)) return existing;
+  const out: Record<string, unknown> = { ...existing };
+  for (const [key, value] of Object.entries(incoming)) {
+    const current = out[key];
+    if (current === undefined || current === null || current === "") {
+      out[key] = value;
+    } else if (Array.isArray(current) && Array.isArray(value)) {
+      out[key] = uniqueByJson([...current, ...value]);
+    } else if (isPlainRecord(current) && isPlainRecord(value)) {
+      out[key] = mergePayloads(current, value);
+    }
+  }
+  return out;
+}
+
+function uniqueByJson(values: unknown[]): unknown[] {
+  const seen = new Set<string>();
+  const out: unknown[] = [];
+  for (const value of values) {
+    const key = JSON.stringify(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Composite-id format used by `markers/clustered`. 2GIS concatenates the
  * real firm id (a long numeric run) with a per-session / per-position
@@ -505,6 +894,19 @@ function isAdvertisingMarker(item: Record<string, unknown>): boolean {
   return false;
 }
 
+export interface MarkerSynthesisStats {
+  adsRejected: number;
+  clustersRejected: number;
+  junkRejected: number;
+  invalidRejected: number;
+  duplicatesRejected: number;
+}
+
+export interface MarkerSynthesisResult {
+  cards: FirmCardCandidate[];
+  stats: MarkerSynthesisStats;
+}
+
 /**
  * Synthesize firm candidates from a single `markers/clustered` response.
  * The strict mapper in `mapper.ts` rejects these payloads on two
@@ -532,27 +934,68 @@ export function synthesizeCardsFromMarkersPayload(
   category: string,
   city: string
 ): FirmCardCandidate[] {
+  return synthesizeCardsFromMarkersPayloadWithStats(payload, category, city).cards;
+}
+
+export function synthesizeCardsFromMarkersPayloadWithStats(
+  payload: unknown,
+  category: string,
+  city: string
+): MarkerSynthesisResult {
   void category;
   void city;
-  if (!payload || typeof payload !== "object") return [];
+  const stats: MarkerSynthesisStats = {
+    adsRejected: 0,
+    clustersRejected: 0,
+    junkRejected: 0,
+    invalidRejected: 0,
+    duplicatesRejected: 0
+  };
+  if (!payload || typeof payload !== "object") return { cards: [], stats };
   const top = payload as Record<string, unknown>;
   const result = top.result;
-  if (!result || typeof result !== "object") return [];
+  if (!result || typeof result !== "object") return { cards: [], stats };
   const items = (result as Record<string, unknown>).items;
-  if (!Array.isArray(items)) return [];
+  if (!Array.isArray(items)) return { cards: [], stats };
   const out: FirmCardCandidate[] = [];
   const seen = new Set<string>();
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
     const rec = item as Record<string, unknown>;
-    if (isAdvertisingMarker(rec)) continue;
+    if (rec.is_advertising === true || rec.has_ads_model === true) {
+      stats.adsRejected += 1;
+      continue;
+    }
+    const cluster = rec.cluster;
+    if (cluster && typeof cluster === "object" && (cluster as Record<string, unknown>).count &&
+        typeof (cluster as Record<string, unknown>).count === "number" &&
+        ((cluster as Record<string, unknown>).count as number) > 1) {
+      stats.clustersRejected += 1;
+      continue;
+    }
+    if (isAdvertisingMarker(rec)) {
+      stats.adsRejected += 1;
+      continue;
+    }
     const compositeId = typeof rec.id === "string" ? rec.id : "";
     const firmId = markerIdToFirmId(compositeId);
-    if (!firmId) continue;
-    if (seen.has(firmId)) continue;
+    if (!firmId) {
+      stats.invalidRejected += 1;
+      continue;
+    }
+    if (seen.has(firmId)) {
+      stats.duplicatesRejected += 1;
+      continue;
+    }
     const name = typeof rec.name === "string" ? rec.name.replace(/\s+/g, " ").trim() : "";
-    if (!name) continue;
-    if (MARKER_JUNK_NAME_PATTERNS.some((re) => re.test(name))) continue;
+    if (!name) {
+      stats.invalidRejected += 1;
+      continue;
+    }
+    if (MARKER_JUNK_NAME_PATTERNS.some((re) => re.test(name))) {
+      stats.junkRejected += 1;
+      continue;
+    }
     seen.add(firmId);
     // Markers carry no per-firm /firm/<id> href in their payload, so
     // `url` is left empty. The orchestrator maps the final merged
@@ -566,7 +1009,7 @@ export function synthesizeCardsFromMarkersPayload(
       url: ""
     });
   }
-  return out;
+  return { cards: out, stats };
 }
 
 /**
@@ -737,22 +1180,38 @@ export async function collectFirmCardsViaScroll(
   // stop-reason telemetry stays meaningful (a `no_new_cards` outcome
   // is not silently masked by the supplement).
   const markersPayloads = opts.markersPayloads ?? [];
+  const domCards = collected.length;
   let markersSynthesized = 0;
   let markersRejected = 0;
+  let markerDuplicatesRejected = 0;
+  let adsRejected = 0;
+  let clustersRejected = 0;
+  let junkRejected = 0;
   if (markersPayloads.length > 0 && collected.length < target) {
     for (const payload of markersPayloads) {
-      const synthesized = synthesizeCardsFromMarkersPayload(
+      const synthesized = synthesizeCardsFromMarkersPayloadWithStats(
         payload,
         query.category,
         query.geo
       );
-      const merged = mergeCandidates(collected, synthesized);
+      adsRejected += synthesized.stats.adsRejected;
+      clustersRejected += synthesized.stats.clustersRejected;
+      junkRejected += synthesized.stats.junkRejected;
+      markersRejected +=
+        synthesized.stats.adsRejected +
+        synthesized.stats.clustersRejected +
+        synthesized.stats.junkRejected +
+        synthesized.stats.invalidRejected +
+        synthesized.stats.duplicatesRejected;
+      markerDuplicatesRejected += synthesized.stats.duplicatesRejected;
+      const merged = mergeCandidates(collected, synthesized.cards);
       markersSynthesized += merged.added;
       // Anything in the synthesized batch that did not make it into
       // the merged set is by definition a duplicate of an existing
       // `externalId`; we count it as `markersRejected` so the total
       // seen vs total kept stays auditable.
-      markersRejected += synthesized.length - merged.added;
+      markersRejected += synthesized.cards.length - merged.added;
+      markerDuplicatesRejected += synthesized.cards.length - merged.added;
       collected = merged.merged;
       if (collected.length >= target) break;
     }
@@ -771,13 +1230,18 @@ export async function collectFirmCardsViaScroll(
 
   const telemetry: DomFallbackTelemetry = {
     collected: cards.length,
+    domCards,
     duplicates,
     scrollAttempts,
     perStep,
     stopReason,
     scrollProbes,
     markersSynthesized,
-    markersRejected
+    markersRejected,
+    markerDuplicatesRejected,
+    adsRejected,
+    clustersRejected,
+    junkRejected
   };
 
   logger.info("2gis dom fallback scroll summary", {
@@ -797,7 +1261,11 @@ export async function collectFirmCardsViaScroll(
     loadMoreClicks,
     markersPayloadsSeen: markersPayloads.length,
     markersSynthesized,
-    markersRejected
+    markersRejected,
+    markerDuplicatesRejected,
+    adsRejected,
+    clustersRejected,
+    junkRejected
   });
 
   return { cards, telemetry };
