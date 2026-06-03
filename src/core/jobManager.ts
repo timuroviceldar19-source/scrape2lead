@@ -90,7 +90,7 @@ export class JobManager {
     this.leaseWatchdogMs = options?.leaseWatchdogMs;
   }
 
-  async run(): Promise<{ leads: Lead[]; csvPath: string; xlsxPath: string; jobId: string; status: string }> {
+  async run(): Promise<{ leads: Lead[]; csvPath: string; xlsxPath: string; jobId: string; status: string; diagnostics: EnrichmentDiagnostics }> {
     // Startup lease recovery — always runs once before workers begin.
     const recovered = await this.storage.recoverExpiredLeases();
     if (recovered > 0) {
@@ -170,7 +170,7 @@ export class JobManager {
       const leads = await this.storage.listLeads();
       const exported = await exportLeads(leads, this.config.exportDir);
       logger.info("job completed", { jobId, status, leads: leads.length, ...exported });
-      return { leads, ...exported, jobId, status };
+      return { leads, ...exported, jobId, status, diagnostics: enrichmentDiagnostics };
     } finally {
       clearInterval(watchdogHandle);
     }

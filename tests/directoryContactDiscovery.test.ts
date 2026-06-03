@@ -11,9 +11,11 @@ describe("directoryContactDiscovery", () => {
     address: "Lenina 1",
     phones: ["79130000000"],
     category: "Autoservice",
+    social_links: [],
     messenger_links: [],
+    parsed_at: new Date().toISOString(),
     incomplete: true,
-    emails: [],
+    website: null,
     email: ""
   };
 
@@ -61,7 +63,7 @@ describe("directoryContactDiscovery", () => {
     expect(result.telemetry.emailFound).toBe(true);
     expect(result.lead.email).toBe("support@zoon-test.ru");
     expect(result.lead.messenger_links).toContain("WhatsApp");
-    expect(result.lead.website).toBeUndefined(); // Should NOT set website
+    expect(result.lead.website).toBeNull(); // Should NOT set website
   });
 
   it("should reject non-allowlisted hosts", async () => {

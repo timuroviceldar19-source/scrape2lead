@@ -206,10 +206,10 @@ function extractEmails(html: string, url: string): string[] {
 
   const fromMailto = [...html.matchAll(/mailto:([^"'?<#\s]+)/gi)]
     .map((match) => normalizeEmail(decodeURIComponentSafe(match[1])))
-    .filter((email): email is string => Boolean(email) && !isDirectoryGeneric(email));
+    .filter((email): email is string => Boolean(email) && !isDirectoryGeneric(email as string));
   const fromText = [...html.matchAll(EMAIL_RE)]
     .map((match) => normalizeEmail(match[0]))
-    .filter((email): email is string => Boolean(email) && !isDirectoryGeneric(email));
+    .filter((email): email is string => Boolean(email) && !isDirectoryGeneric(email as string));
   return [...new Set([...fromMailto, ...fromText])];
 }
 
