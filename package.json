@@ -13,7 +13,7 @@
     "audit:2gis:nsk-autoservice": "tsx scripts/auditRegression.ts",
     "audit:regression": "tsx scripts/auditRegression.ts",
     "validate:kz:proxy": "tsx src/cli.ts --source 2gis --geo Астана --category Автосервисы --limit 10 --config config.kz.json",
-    "mvp:astana:small": "tsx scripts/autoserviceRadarMvp.ts --config config.kz.json --limit 20",
+    "mvp:astana:small": "tsx scripts/mvp-astana-small.ts",
     "mvp:astana": "tsx scripts/autoserviceRadarMvp.ts --config config.kz.json",
     "sales:buyer-template": "tsx scripts/generateBuyerOutreachTemplate.ts"
   },
