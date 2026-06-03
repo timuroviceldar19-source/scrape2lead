@@ -10,6 +10,7 @@ import type { ProxyRotator } from "../proxy/proxyRotator.js";
 import { SoftBlockError } from "../adapters/2gis/softBlock.js";
 import { enrichLeadFromWebsite } from "../enrichment/websiteCrawler.js";
 import { discoverLeadWebsite } from "../enrichment/websiteDiscovery.js";
+import { discoverDirectoryContacts } from "../enrichment/directoryContactDiscovery.js";
 
 const DEFAULT_LEASE_MS = 60_000;
 const EMPTY_POLL_MS = 250;
@@ -50,6 +51,14 @@ interface EnrichmentDiagnostics {
   websiteDiscoveryCandidatesValidated: number;
   websiteDiscoveryCandidatesRejected: number;
   websiteDiscoveryTimeouts: number;
+  directoryDiscoveryAttempted: number;
+  directoryDiscoverySucceeded: number;
+  directoryDiscoveryEmailFound: number;
+  directoryDiscoveryMessengersFound: number;
+  directoryDiscoverySearchRequests: number;
+  directoryDiscoveryCandidatesVisited: number;
+  directoryDiscoveryCandidatesRejected: number;
+  directoryDiscoveryTimeouts: number;
 }
 
 interface ContactProfile {
@@ -366,7 +375,8 @@ export class JobManager {
         payload: contacts.payload
       });
       const discoveredLead = await this.discoverWebsite(adapter.normalize(detail, contacts), enrichmentDiagnostics);
-      const lead = await this.enrichWebsiteContacts(discoveredLead, enrichmentDiagnostics);
+      const crawledLead = await this.enrichWebsiteContacts(discoveredLead, enrichmentDiagnostics);
+      const lead = await this.discoverDirectoryContacts(crawledLead, enrichmentDiagnostics);
       enrichmentDiagnostics.detailsSucceeded += 1;
       recordContactImprovements(enrichmentDiagnostics, card, lead);
       await this.storage.upsertLead(lead);
@@ -519,6 +529,21 @@ export class JobManager {
     return result.lead;
   }
 
+  private async discoverDirectoryContacts(lead: Lead, diagnostics: EnrichmentDiagnostics): Promise<Lead> {
+    const result = await discoverDirectoryContacts(lead, this.config.directoryContactDiscovery);
+    if (!result.telemetry.attempted) return result.lead;
+
+    diagnostics.directoryDiscoveryAttempted += 1;
+    if (result.telemetry.succeeded) diagnostics.directoryDiscoverySucceeded += 1;
+    if (result.telemetry.emailFound) diagnostics.directoryDiscoveryEmailFound += 1;
+    diagnostics.directoryDiscoveryMessengersFound += result.telemetry.messengersFound;
+    diagnostics.directoryDiscoverySearchRequests += result.telemetry.searchRequests;
+    diagnostics.directoryDiscoveryCandidatesVisited += result.telemetry.candidatesVisited;
+    diagnostics.directoryDiscoveryCandidatesRejected += result.telemetry.candidatesRejected;
+    diagnostics.directoryDiscoveryTimeouts += result.telemetry.timeouts;
+    return result.lead;
+  }
+
   /**
    * Stable bucket key for the per-proxy request budget. Mirrors
    * {@link resolveProxyId} but normalises the no-rotator case to
@@ -551,7 +576,15 @@ function createEnrichmentDiagnostics(): EnrichmentDiagnostics {
     websiteDiscoverySearchRequests: 0,
     websiteDiscoveryCandidatesValidated: 0,
     websiteDiscoveryCandidatesRejected: 0,
-    websiteDiscoveryTimeouts: 0
+    websiteDiscoveryTimeouts: 0,
+    directoryDiscoveryAttempted: 0,
+    directoryDiscoverySucceeded: 0,
+    directoryDiscoveryEmailFound: 0,
+    directoryDiscoveryMessengersFound: 0,
+    directoryDiscoverySearchRequests: 0,
+    directoryDiscoveryCandidatesVisited: 0,
+    directoryDiscoveryCandidatesRejected: 0,
+    directoryDiscoveryTimeouts: 0
   };
 }
 

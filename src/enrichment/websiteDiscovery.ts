@@ -16,7 +16,7 @@ export interface WebsiteDiscoveryResult {
   telemetry: WebsiteDiscoveryTelemetry;
 }
 
-interface SearchCandidate {
+export interface SearchCandidate {
   url: string;
   text: string;
 }
@@ -104,7 +104,7 @@ function buildSearchUrls(lead: Lead): string[] {
   return urls;
 }
 
-function extractSearchCandidates(html: string): SearchCandidate[] {
+export function extractSearchCandidates(html: string): SearchCandidate[] {
   const decoded = decodeHtmlEntities(html);
   const candidates: SearchCandidate[] = [];
 
@@ -162,7 +162,7 @@ function scoreCandidate(url: string, searchText: string, pageText: string, lead:
   return score;
 }
 
-async function fetchText(url: string, timeoutMs: number): Promise<{ text: string | null; timedOut: boolean }> {
+export async function fetchText(url: string, timeoutMs: number): Promise<{ text: string | null; timedOut: boolean }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -185,7 +185,7 @@ async function fetchText(url: string, timeoutMs: number): Promise<{ text: string
   }
 }
 
-function normalizeCandidateUrl(value: string): string | null {
+export function normalizeCandidateUrl(value: string): string | null {
   const unwrapped = unwrapSearchRedirect(value);
   const normalized = normalizeUrl(unwrapped);
   if (!normalized) return null;
@@ -198,7 +198,7 @@ function normalizeCandidateUrl(value: string): string | null {
   return `${parsed.origin}${parsed.pathname === "/" ? "" : parsed.pathname}`;
 }
 
-function unwrapSearchRedirect(value: string): string {
+export function unwrapSearchRedirect(value: string): string {
   const decoded = decodeHtmlEntities(value.trim());
   try {
     const parsed = new URL(decoded, "https://search.local");
@@ -224,7 +224,7 @@ function decodeSearchUrlParam(value: string): string {
   }
 }
 
-function isBlockedHost(hostname: string): boolean {
+export function isBlockedHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^www\./, "");
   return BLOCKED_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
 }
@@ -270,11 +270,11 @@ const BLOCKED_HOST_SUFFIXES = [
   "drive2.ru"
 ];
 
-function textFromHtml(html: string): string {
+export function textFromHtml(html: string): string {
   return decodeHtmlEntities(html.replace(SCRIPT_STYLE_RE, " ").replace(STRIP_TAGS_RE, " ")).replace(/\s+/g, " ").trim();
 }
 
-function businessTokens(value: string): string[] {
+export function businessTokens(value: string): string[] {
   const stopWords = new Set([
     "www",
     "http",
@@ -288,7 +288,7 @@ function businessTokens(value: string): string[] {
   return [...new Set(normalizeText(value).split(/\s+/).filter((token) => token.length >= 3 && !stopWords.has(token)))];
 }
 
-function normalizeText(value: string): string {
+export function normalizeText(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
@@ -296,20 +296,20 @@ function normalizeText(value: string): string {
     .trim();
 }
 
-function digitsOnly(value: string): string {
+export function digitsOnly(value: string): string {
   return value.replace(/\D/g, "");
 }
 
-function lastPhoneDigits(value: string): string {
+export function lastPhoneDigits(value: string): string {
   const digits = digitsOnly(value);
   return digits.length >= 7 ? digits.slice(-7) : "";
 }
 
-function compact(values: Array<string | null | undefined>): string {
+export function compact(values: Array<string | null | undefined>): string {
   return values.map((value) => value?.trim()).filter(Boolean).join(" ");
 }
 
-function decodeHtmlEntities(value: string): string {
+export function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
@@ -326,10 +326,10 @@ function decodeURIComponentSafe(value: string): string {
   }
 }
 
-function clampPositiveInt(value: number | undefined, fallback: number): number {
+export function clampPositiveInt(value: number | undefined, fallback: number): number {
   return Number.isInteger(value) && value !== undefined && value > 0 ? value : fallback;
 }
 
-function isAbortError(error: unknown): boolean {
+export function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }

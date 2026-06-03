@@ -58,6 +58,20 @@ const ConfigSchema = z.object({
       maxCandidates: 4,
       timeoutMs: 5000
     }),
+  directoryContactDiscovery: z
+    .object({
+      enabled: z.boolean().optional(),
+      maxSearches: z.coerce.number().int().positive().optional(),
+      maxCandidates: z.coerce.number().int().positive().optional(),
+      timeoutMs: z.coerce.number().int().positive().optional(),
+      allowlist: z.array(z.string()).optional()
+    })
+    .default({
+      enabled: false,
+      maxSearches: 2,
+      maxCandidates: 4,
+      timeoutMs: 5000
+    }),
   /**
    * Storage backend selector. `"sqlite"` (default) keeps the existing
    * `better-sqlite3` behaviour; `"postgres"` switches the CLI to
