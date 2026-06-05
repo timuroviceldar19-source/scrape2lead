@@ -1,6 +1,7 @@
 import type { Lead, RuntimeConfig } from "../../types.js";
 import { TwoGisAdapter } from "../../adapters/2gis/TwoGisAdapter.js";
 import { BrowserSessionManager } from "../../browser/browserSessionManager.js";
+import { hasUsefulNormalizedForm, normalizeQuery } from "../queryNormalize.js";
 import type { IEnrichmentAdapter, EnrichmentRawResult } from "./EnrichmentAdapter.js";
 
 export class TwoGisEnrichmentAdapter implements IEnrichmentAdapter {
@@ -25,14 +26,24 @@ export class TwoGisEnrichmentAdapter implements IEnrichmentAdapter {
       return { status: "unsupported_city", source: "2gis", error_message: "Missing company_name or city" };
     }
 
+    // Strip the marketing/legal-form noise from the company name before
+    // handing it to 2GIS. Kaspi-sourced names regularly contain tags
+    // such as "НДС", "Официальный дистрибьютор", "ИП Ашимова" or a
+    // trailing ".kz" that 2GIS throttles (empty-results page). When
+    // the normalised form is empty (e.g. the original was just "НДС")
+    // we fall back to the original name so 2GIS still gets something.
+    const searchCategory = hasUsefulNormalizedForm(lead.company_name)
+      ? normalizeQuery(lead.company_name)
+      : lead.company_name;
+
     try {
-      const enrichmentConfig: RuntimeConfig = { ...this.config, geo: lead.city, category: lead.company_name };
+      const enrichmentConfig: RuntimeConfig = { ...this.config, geo: lead.city, category: searchCategory };
       const adapter = new TwoGisAdapter(enrichmentConfig, this.browserSession);
 
       const cards = await adapter.searchCompanies({
         source: "2gis",
         geo: lead.city,
-        category: lead.company_name,
+        category: searchCategory,
         limit: 3
       });
 
