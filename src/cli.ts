@@ -37,10 +37,15 @@ program
   .option("--city <city>", "filter by city")
   .option("--plan", "only show which leads would be processed (no HTTP, no DB write)")
   .option("--no-write", "perform real HTTP requests and scoring, but do not write to DB")
+  .option(
+    "--include-ready-to-call",
+    "also enrich leads with crm_status='Ready to call' that still lack address/website"
+  )
   .action(async (cmdOptions) => {
     const config = loadConfig(cmdOptions.config, {});
     const limit = Number(cmdOptions.limit) || 100;
     const city = cmdOptions.city as string | undefined;
+    const includeReadyToCall = Boolean(cmdOptions.includeReadyToCall);
     // Commander automatically converts --no-write to write: false
     const mode = cmdOptions.plan ? 'plan' : (cmdOptions.write === false ? 'no-write' : 'write');
 
@@ -51,8 +56,11 @@ program
       return;
     }
 
-    const leads = await storage.getLeadsNeedingEnrichment(limit, city);
-    logger.info(`Enrichment mode: ${mode.toUpperCase()}`, { count: leads.length });
+    const leads = await storage.getLeadsNeedingEnrichment(limit, city, includeReadyToCall);
+    logger.info(`Enrichment mode: ${mode.toUpperCase()}`, {
+      count: leads.length,
+      includeReadyToCall
+    });
 
     const browserSession = new BrowserSessionManager(config);
     const adapter = new TwoGisEnrichmentAdapter(config, browserSession);

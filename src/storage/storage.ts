@@ -258,14 +258,32 @@ export class Storage implements IStorage {
     return rows.map((row) => this.mapRowToLead(row));
   }
 
-  async getLeadsNeedingEnrichment(limit = 100, city?: string): Promise<Lead[]> {
+  async getLeadsNeedingEnrichment(
+    limit = 100,
+    city?: string,
+    includeReadyToCall = false
+  ): Promise<Lead[]> {
+    // Default: only leads that the parser flagged as 'Needs enrichment' —
+    // these are leads where at least one contact channel is missing or
+    // invalid and they need a 2GIS lookup to fill the gap.
+    //
+    // Optional: also pull in 'Ready to call' leads. These come from sources
+    // like Kaspi that already validate a phone number but do not return
+    // address or website. Running enrichment on them upgrades them to
+    // 'Ready to contact' (with address/website) or leaves them in
+    // 'Ready to call' (no upgrade). 'enriched' rows are excluded so we
+    // never re-process a lead whose enrichment already succeeded.
+    const crmFilter = includeReadyToCall
+      ? `crm_status IN ('Needs enrichment', 'Ready to call')`
+      : `crm_status = 'Needs enrichment'`;
+
     let sql = `
       SELECT * FROM leads
-      WHERE crm_status = 'Needs enrichment'
+      WHERE ${crmFilter}
         AND (
-          phone_status != 'valid' OR
-          address_status != 'valid' OR
-          website_status != 'valid'
+          COALESCE(phone_status,   'invalid') != 'valid' OR
+          COALESCE(address_status, 'invalid') != 'valid' OR
+          COALESCE(website_status, 'invalid') != 'valid'
         )
         AND (enrichment_status IS NULL OR enrichment_status = 'pending' OR enrichment_status = 'failed')
     `;
