@@ -4,6 +4,7 @@ import { validatePhone, validateAddress, validateWebsite } from "./validator.js"
 import { calculateConfidenceScore } from "./scoring.js";
 import type { Storage } from "../storage/storage.js";
 import { logger } from "../logger.js";
+import type { ProxyRotator } from "../proxy/proxyRotator.js";
 
 export type EnrichmentMode = 'plan' | 'no-write' | 'write';
 
@@ -27,7 +28,8 @@ export interface EnrichmentDecision {
 export class EnrichmentProcessor {
   constructor(
     private readonly adapter: IEnrichmentAdapter,
-    private readonly storage: Storage
+    private readonly storage: Storage,
+    private readonly proxyRotator?: ProxyRotator
   ) {}
 
   async processLead(lead: Lead, mode: EnrichmentMode = 'write'): Promise<EnrichmentDecision> {
@@ -43,74 +45,92 @@ export class EnrichmentProcessor {
       };
     }
 
-    logger.info(mode === 'no-write' ? "[NO-WRITE] Starting enrichment for lead" : "Starting enrichment for lead", { 
-      company: lead.company_name, 
-      city: lead.city 
+    logger.info(mode === 'no-write' ? "[NO-WRITE] Starting enrichment for lead" : "Starting enrichment for lead", {
+      company: lead.company_name,
+      city: lead.city
     });
 
-    // 1. Fetch raw data
-    const rawResult = await this.adapter.enrich(lead);
+    try {
+      // 1. Fetch raw data
+      const rawResult = await this.adapter.enrich(lead);
 
-    // 2. Handle failure states early
-    if (rawResult.status === "unsupported_city" || rawResult.status === "failed" || rawResult.status === "captcha_or_blocked") {
-      logger.warn(mode === 'no-write' ? "[NO-WRITE] Would mark as failed/blocked" : "Enrichment failed or blocked", { status: rawResult.status, error: rawResult.error_message });
-      const decision = this.handleFailure(lead, rawResult);
+      // 2. Handle failure states early
+      if (rawResult.status === "unsupported_city" || rawResult.status === "failed" || rawResult.status === "captcha_or_blocked") {
+        logger.warn(mode === 'no-write' ? "[NO-WRITE] Would mark as failed/blocked" : "Enrichment failed or blocked", { status: rawResult.status, error: rawResult.error_message });
+        const decision = this.handleFailure(lead, rawResult);
+        decision.found_name = rawResult.found_name;
+        decision.phone_raw = rawResult.phone_raw;
+        decision.enrichment_error = rawResult.error_message;
+        if (mode === 'write') await this.persistDecision(lead, decision, rawResult);
+        else this.logPreview(lead, decision);
+        return decision;
+      }
+
+      if (rawResult.status === "not_found") {
+        logger.info(mode === 'no-write' ? "[NO-WRITE] Would mark as not found" : "Enrichment not found", { company: lead.company_name });
+        const decision = this.handleNotFound(lead);
+        decision.found_name = rawResult.found_name;
+        if (mode === 'write') await this.persistDecision(lead, decision, rawResult);
+        else this.logPreview(lead, decision);
+        return decision;
+      }
+
+      // 3. Validate
+      const phoneValidation = validatePhone(rawResult.phone_raw);
+      const addressValidation = validateAddress(rawResult.address_raw);
+      const websiteValidation = validateWebsite(rawResult.website_raw);
+
+      const hasValidSignal = phoneValidation.status === "valid" || websiteValidation.status === "valid";
+
+      // 4. Score
+      const metadata = (rawResult.raw_match_metadata as { category?: string; city?: string }) || {};
+      const score = calculateConfidenceScore(
+        lead.company_name,
+        rawResult.found_name || "",
+        lead.city,
+        metadata.city || lead.city,
+        lead.category || "",
+        metadata.category || "",
+        hasValidSignal
+      );
+
+      logger.info("Enrichment score calculated", { score: score.total, level: score.confidence_level, found_name: rawResult.found_name });
+
+      // 5. Decide
+      const decision = this.makeDecision(score, phoneValidation, addressValidation, websiteValidation, rawResult);
+
+      // Attach preview fields
       decision.found_name = rawResult.found_name;
       decision.phone_raw = rawResult.phone_raw;
-      decision.enrichment_error = rawResult.error_message;
-      if (mode === 'write') await this.persistDecision(lead, decision, rawResult);
-      else this.logPreview(lead, decision);
+      decision.phone_normalized = phoneValidation.normalized;
+      decision.address_status = addressValidation.status;
+      decision.website_status = websiteValidation.status;
+
+      // 6. Update DB or Log Preview
+      if (mode === 'write') {
+        await this.persistDecision(lead, decision, rawResult);
+      } else {
+        this.logPreview(lead, decision);
+      }
+
       return decision;
+    } finally {
+      // 7. Tick the proxy rotator in `finally` so it fires for EVERY lead,
+      //    including failed/throttled/not_found paths. Browser restarts
+      //    (proxy swap) must not interrupt in-flight requests, so we tick
+      //    after the per-lead work is done. The rotator is a no-op when
+      //    neither `proxyApiUrl` nor `proxy` is configured.
+      if (this.proxyRotator) {
+        try {
+          await this.proxyRotator.tick();
+        } catch (error) {
+          logger.warn("proxy rotator tick failed", {
+            lead_id: lead.lead_id,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
     }
-
-    if (rawResult.status === "not_found") {
-      logger.info(mode === 'no-write' ? "[NO-WRITE] Would mark as not found" : "Enrichment not found", { company: lead.company_name });
-      const decision = this.handleNotFound(lead);
-      decision.found_name = rawResult.found_name;
-      if (mode === 'write') await this.persistDecision(lead, decision, rawResult);
-      else this.logPreview(lead, decision);
-      return decision;
-    }
-
-    // 3. Validate
-    const phoneValidation = validatePhone(rawResult.phone_raw);
-    const addressValidation = validateAddress(rawResult.address_raw);
-    const websiteValidation = validateWebsite(rawResult.website_raw);
-
-    const hasValidSignal = phoneValidation.status === "valid" || websiteValidation.status === "valid";
-
-    // 4. Score
-    const metadata = (rawResult.raw_match_metadata as { category?: string; city?: string }) || {};
-    const score = calculateConfidenceScore(
-      lead.company_name,
-      rawResult.found_name || "",
-      lead.city,
-      metadata.city || lead.city,
-      lead.category || "",
-      metadata.category || "",
-      hasValidSignal
-    );
-
-    logger.info("Enrichment score calculated", { score: score.total, level: score.confidence_level, found_name: rawResult.found_name });
-
-    // 5. Decide
-    const decision = this.makeDecision(score, phoneValidation, addressValidation, websiteValidation, rawResult);
-    
-    // Attach preview fields
-    decision.found_name = rawResult.found_name;
-    decision.phone_raw = rawResult.phone_raw;
-    decision.phone_normalized = phoneValidation.normalized;
-    decision.address_status = addressValidation.status;
-    decision.website_status = websiteValidation.status;
-
-    // 6. Update DB or Log Preview
-    if (mode === 'write') {
-      await this.persistDecision(lead, decision, rawResult);
-    } else {
-      this.logPreview(lead, decision);
-    }
-
-    return decision;
   }
 
   private logPreview(lead: Lead, decision: EnrichmentDecision): void {

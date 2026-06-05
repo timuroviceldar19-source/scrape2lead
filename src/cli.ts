@@ -54,8 +54,17 @@ program
     const leads = await storage.getLeadsNeedingEnrichment(limit, city);
     logger.info(`Enrichment mode: ${mode.toUpperCase()}`, { count: leads.length });
 
-    const adapter = new TwoGisEnrichmentAdapter(config);
-    const processor = new EnrichmentProcessor(adapter, storage);
+    const browserSession = new BrowserSessionManager(config);
+    const adapter = new TwoGisEnrichmentAdapter(config, browserSession);
+    // ProxyRotator is created whenever any proxy is configured (static
+    // server OR rotation API). With only a static server it operates in
+    // "no-api" mode: it just restarts the browser every `rotateEveryN`
+    // leads, which is enough to pick up a fresh IP from a backconnect
+    // gateway like dataimpulse port 823.
+    const rotator = config.proxyApiUrl || config.proxy
+      ? new ProxyRotator(config, storage, browserSession)
+      : undefined;
+    const processor = new EnrichmentProcessor(adapter, storage, rotator);
 
     const stats = {
       total: leads.length,
@@ -88,6 +97,11 @@ program
 
     logger.info("Enrichment completed", stats);
     await processor.close();
+    // processor.close() only closes the browser if the adapter owns it. In
+    // the enrich CLI path we create the BrowserSessionManager at the top so
+    // the ProxyRotator can restart it on proxy rotation, so we own the
+    // close here.
+    await browserSession.close();
     storage.close();
   });
 
@@ -128,7 +142,9 @@ if (!process.argv.includes("enrich")) {
       adapter = new TwoGisAdapter(config, browserSession);
     }
 
-    const rotator = config.proxyApiUrl ? new ProxyRotator(config, storage, browserSession) : undefined;
+    const rotator = config.proxyApiUrl || config.proxy
+      ? new ProxyRotator(config, storage, browserSession)
+      : undefined;
     registry.register(adapter);
     const manager = new JobManager(config, registry, storage, rotator);
     const result = await manager.run();

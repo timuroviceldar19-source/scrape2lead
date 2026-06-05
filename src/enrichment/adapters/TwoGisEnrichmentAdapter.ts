@@ -5,9 +5,19 @@ import type { IEnrichmentAdapter, EnrichmentRawResult } from "./EnrichmentAdapte
 
 export class TwoGisEnrichmentAdapter implements IEnrichmentAdapter {
   private browserSession: BrowserSessionManager;
+  private ownsBrowserSession: boolean;
 
-  constructor(private readonly config: RuntimeConfig) {
-    this.browserSession = new BrowserSessionManager(config);
+  constructor(
+    private readonly config: RuntimeConfig,
+    sharedBrowserSession?: BrowserSessionManager
+  ) {
+    if (sharedBrowserSession) {
+      this.browserSession = sharedBrowserSession;
+      this.ownsBrowserSession = false;
+    } else {
+      this.browserSession = new BrowserSessionManager(config);
+      this.ownsBrowserSession = true;
+    }
   }
 
   async enrich(lead: Lead): Promise<EnrichmentRawResult> {
@@ -57,6 +67,8 @@ export class TwoGisEnrichmentAdapter implements IEnrichmentAdapter {
   }
 
   async close(): Promise<void> {
-    await this.browserSession.close();
+    if (this.ownsBrowserSession) {
+      await this.browserSession.close();
+    }
   }
 }
