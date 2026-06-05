@@ -89,7 +89,17 @@ const ConfigSchema = z.object({
    * Base URL for 2GIS. Defaults to "https://2gis.ru".
    * Use "https://2gis.kz" for Kazakhstan targets.
    */
-  twoGisBaseUrl: z.string().url().optional()
+  twoGisBaseUrl: z.string().url().optional(),
+  /**
+   * Base URL for Kaspi. Defaults to "https://kaspi.kz".
+   */
+  kaspiBaseUrl: z.string().url().optional(),
+  /**
+   * Optional lead quality filters. Leads not meeting these thresholds will be
+   * excluded from the final export (but may still be logged in the database).
+   */
+  minRating: z.coerce.number().min(0).optional(),
+  minReviewCount: z.coerce.number().int().min(0).optional()
 });
 
 export function loadConfig(configPath: string, overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {

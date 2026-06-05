@@ -70,10 +70,20 @@ export class Storage implements IStorage {
     const insertLead = this.db.prepare(`
       INSERT INTO leads (
         source, external_id, company_name, category, city, address, phones,
-        email, website, social_links, messenger_links, parsed_at, incomplete
+        email, website, social_links, messenger_links, parsed_at, incomplete,
+        rating, review_count, product_count, shop_categories,
+        lead_id, source_search_city, merchant_city_guess, city_status,
+        address_raw, address_clean, phone_raw, phone_normalized, phone_status,
+        email_raw, email_status, kaspi_profile_url, real_website, messenger_flags,
+        lead_score, priority, contactability, crm_status, next_action, parser_note
       ) VALUES (
         @source, @external_id, @company_name, @category, @city, @address, @phones,
-        @email, @website, @social_links, @messenger_links, @parsed_at, @incomplete
+        @email, @website, @social_links, @messenger_links, @parsed_at, @incomplete,
+        @rating, @review_count, @product_count, @shop_categories,
+        @lead_id, @source_search_city, @merchant_city_guess, @city_status,
+        @address_raw, @address_clean, @phone_raw, @phone_normalized, @phone_status,
+        @email_raw, @email_status, @kaspi_profile_url, @real_website, @messenger_flags,
+        @lead_score, @priority, @contactability, @crm_status, @next_action, @parser_note
       )
       ON CONFLICT(source, external_id) DO UPDATE SET
         company_name = excluded.company_name,
@@ -86,7 +96,31 @@ export class Storage implements IStorage {
         social_links = excluded.social_links,
         messenger_links = excluded.messenger_links,
         parsed_at = excluded.parsed_at,
-        incomplete = excluded.incomplete
+        incomplete = excluded.incomplete,
+        rating = excluded.rating,
+        review_count = excluded.review_count,
+        product_count = excluded.product_count,
+        shop_categories = excluded.shop_categories,
+        lead_id = excluded.lead_id,
+        source_search_city = excluded.source_search_city,
+        merchant_city_guess = excluded.merchant_city_guess,
+        city_status = excluded.city_status,
+        address_raw = excluded.address_raw,
+        address_clean = excluded.address_clean,
+        phone_raw = excluded.phone_raw,
+        phone_normalized = excluded.phone_normalized,
+        phone_status = excluded.phone_status,
+        email_raw = excluded.email_raw,
+        email_status = excluded.email_status,
+        kaspi_profile_url = excluded.kaspi_profile_url,
+        real_website = excluded.real_website,
+        messenger_flags = excluded.messenger_flags,
+        lead_score = excluded.lead_score,
+        priority = excluded.priority,
+        contactability = excluded.contactability,
+        crm_status = excluded.crm_status,
+        next_action = excluded.next_action,
+        parser_note = excluded.parser_note
     `);
     const insertPhone = this.db.prepare(`
       INSERT OR IGNORE INTO lead_phones (phone, source, external_id)
@@ -99,7 +133,32 @@ export class Storage implements IStorage {
         phones: JSON.stringify(lead.phones),
         social_links: JSON.stringify(lead.social_links),
         messenger_links: JSON.stringify(lead.messenger_links),
-        incomplete: lead.incomplete ? 1 : 0
+        shop_categories: lead.shop_categories ? JSON.stringify(lead.shop_categories) : null,
+        incomplete: lead.incomplete ? 1 : 0,
+        // Provide explicit nulls for optional fields to satisfy better-sqlite3 named parameters
+        rating: lead.rating ?? null,
+        review_count: lead.review_count ?? null,
+        product_count: lead.product_count ?? null,
+        lead_id: lead.lead_id ?? null,
+        source_search_city: lead.source_search_city ?? null,
+        merchant_city_guess: lead.merchant_city_guess ?? null,
+        city_status: lead.city_status ?? null,
+        address_raw: lead.address_raw ?? null,
+        address_clean: lead.address_clean ?? null,
+        phone_raw: lead.phone_raw ?? null,
+        phone_normalized: lead.phone_normalized ?? null,
+        phone_status: lead.phone_status ?? null,
+        email_raw: lead.email_raw ?? null,
+        email_status: lead.email_status ?? null,
+        kaspi_profile_url: lead.kaspi_profile_url ?? null,
+        real_website: lead.real_website ?? null,
+        messenger_flags: lead.messenger_flags ?? null,
+        lead_score: lead.lead_score ?? null,
+        priority: lead.priority ?? null,
+        contactability: lead.contactability ?? null,
+        crm_status: lead.crm_status ?? null,
+        next_action: lead.next_action ?? null,
+        parser_note: lead.parser_note ?? null
       });
       for (const phone of lead.phones) {
         insertPhone.run(phone, lead.source, lead.external_id);
@@ -141,9 +200,8 @@ export class Storage implements IStorage {
     );
   }
 
-  async listLeads(): Promise<Lead[]> {
-    const rows = this.db.prepare("SELECT * FROM leads ORDER BY company_name ASC").all() as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
+  private mapRowToLead(row: Record<string, unknown>): Lead {
+    return {
       source: String(row.source),
       external_id: String(row.external_id),
       company_name: String(row.company_name),
@@ -156,8 +214,133 @@ export class Storage implements IStorage {
       social_links: JSON.parse(String(row.social_links)) as string[],
       messenger_links: JSON.parse(String(row.messenger_links)) as string[],
       parsed_at: String(row.parsed_at),
-      incomplete: Boolean(row.incomplete)
-    }));
+      incomplete: Boolean(row.incomplete),
+      // Kaspi-specific fields
+      rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : undefined,
+      review_count: row.review_count !== null && row.review_count !== undefined ? Number(row.review_count) : undefined,
+      product_count: row.product_count !== null && row.product_count !== undefined ? Number(row.product_count) : undefined,
+      shop_categories: row.shop_categories ? (JSON.parse(String(row.shop_categories)) as string[]) : undefined,
+      // CRM-ready fields
+      lead_id: row.lead_id ? String(row.lead_id) : undefined,
+      source_search_city: row.source_search_city ? String(row.source_search_city) : undefined,
+      merchant_city_guess: row.merchant_city_guess ? String(row.merchant_city_guess) : undefined,
+      city_status: row.city_status ? String(row.city_status) as "ok" | "mismatch" | "needs_check" : undefined,
+      address_raw: row.address_raw ? String(row.address_raw) : undefined,
+      address_clean: row.address_clean ? String(row.address_clean) : undefined,
+      address_status: row.address_status ? String(row.address_status) as "valid" | "invalid" | "empty" : undefined,
+      phone_raw: row.phone_raw ? String(row.phone_raw) : undefined,
+      phone_normalized: row.phone_normalized ? String(row.phone_normalized) : undefined,
+      phone_status: row.phone_status ? String(row.phone_status) as "valid" | "invalid" | "empty" : undefined,
+      email_raw: row.email_raw ? String(row.email_raw) : undefined,
+      email_status: row.email_status ? String(row.email_status) as "valid" | "invalid" | "empty" : undefined,
+      kaspi_profile_url: row.kaspi_profile_url ? String(row.kaspi_profile_url) : undefined,
+      real_website: row.real_website ? String(row.real_website) : undefined,
+      website_status: row.website_status ? String(row.website_status) as "valid" | "invalid" | "empty" : undefined,
+      messenger_flags: row.messenger_flags ? String(row.messenger_flags) : undefined,
+      lead_score: row.lead_score !== null && row.lead_score !== undefined ? Number(row.lead_score) : undefined,
+      priority: row.priority ? String(row.priority) as "A" | "B" | "C" | "D" : undefined,
+      contactability: row.contactability ? String(row.contactability) as "Phone ready" | "No usable contact" : undefined,
+      crm_status: row.crm_status ? String(row.crm_status) as "Ready to call" | "Needs enrichment" | "Ready to contact" | "Needs manual review" | "Not enough data" : undefined,
+      next_action: row.next_action ? String(row.next_action) : undefined,
+      parser_note: row.parser_note ? String(row.parser_note) : undefined,
+      // Enrichment tracking fields
+      enrichment_source: row.enrichment_source ? String(row.enrichment_source) as "2gis" | "google" | "none" : undefined,
+      enrichment_url: row.enrichment_url ? String(row.enrichment_url) : undefined,
+      confidence_score: row.confidence_score !== null && row.confidence_score !== undefined ? Number(row.confidence_score) : undefined,
+      enrichment_status: row.enrichment_status ? String(row.enrichment_status) as "pending" | "enriched" | "manual_review" | "not_found" | "failed" : undefined,
+      enrichment_attempted_at: row.enrichment_attempted_at ? String(row.enrichment_attempted_at) : undefined,
+      enrichment_error: row.enrichment_error ? String(row.enrichment_error) : undefined
+    };
+  }
+
+  async listLeads(): Promise<Lead[]> {
+    const rows = this.db.prepare("SELECT * FROM leads ORDER BY company_name ASC").all() as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapRowToLead(row));
+  }
+
+  async getLeadsNeedingEnrichment(limit = 100, city?: string): Promise<Lead[]> {
+    let sql = `
+      SELECT * FROM leads
+      WHERE crm_status = 'Needs enrichment'
+        AND (
+          phone_status != 'valid' OR
+          address_status != 'valid' OR
+          website_status != 'valid'
+        )
+        AND (enrichment_status IS NULL OR enrichment_status = 'pending' OR enrichment_status = 'failed')
+    `;
+    const params: unknown[] = [];
+
+    if (city) {
+      sql += ` AND city = ?`;
+      params.push(city);
+    }
+
+    sql += ` ORDER BY lead_score DESC LIMIT ?`;
+    params.push(limit);
+
+    const rows = this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapRowToLead(row));
+  }
+
+  async updateLeadEnrichment(
+    leadId: string,
+    data: Partial<Pick<Lead,
+      'phone_raw' | 'phone_normalized' | 'phone_status' |
+      'address_raw' | 'address_clean' | 'address_status' |
+      'real_website' | 'website_status' |
+      'enrichment_source' | 'enrichment_url' | 'confidence_score' |
+      'enrichment_status' | 'enrichment_attempted_at' | 'enrichment_error' |
+      'lead_score' | 'priority' | 'contactability' | 'crm_status' | 'next_action'
+    >>
+  ): Promise<void> {
+    const updateLead = this.db.prepare(`
+      UPDATE leads SET
+        phone_raw = COALESCE(@phone_raw, phone_raw),
+        phone_normalized = COALESCE(@phone_normalized, phone_normalized),
+        phone_status = COALESCE(@phone_status, phone_status),
+        address_raw = COALESCE(@address_raw, address_raw),
+        address_clean = COALESCE(@address_clean, address_clean),
+        address_status = COALESCE(@address_status, address_status),
+        real_website = COALESCE(@real_website, real_website),
+        website_status = COALESCE(@website_status, website_status),
+        enrichment_source = COALESCE(@enrichment_source, enrichment_source),
+        enrichment_url = COALESCE(@enrichment_url, enrichment_url),
+        confidence_score = COALESCE(@confidence_score, confidence_score),
+        enrichment_status = COALESCE(@enrichment_status, enrichment_status),
+        enrichment_attempted_at = COALESCE(@enrichment_attempted_at, enrichment_attempted_at),
+        enrichment_error = COALESCE(@enrichment_error, enrichment_error),
+        lead_score = COALESCE(@lead_score, lead_score),
+        priority = COALESCE(@priority, priority),
+        contactability = COALESCE(@contactability, contactability),
+        crm_status = COALESCE(@crm_status, crm_status),
+        next_action = COALESCE(@next_action, next_action)
+      WHERE lead_id = @lead_id
+    `);
+
+    // Provide explicit nulls for optional fields to satisfy better-sqlite3 named parameters
+    updateLead.run({ 
+      lead_id: leadId,
+      phone_raw: data.phone_raw ?? null,
+      phone_normalized: data.phone_normalized ?? null,
+      phone_status: data.phone_status ?? null,
+      address_raw: data.address_raw ?? null,
+      address_clean: data.address_clean ?? null,
+      address_status: data.address_status ?? null,
+      real_website: data.real_website ?? null,
+      website_status: data.website_status ?? null,
+      enrichment_source: data.enrichment_source ?? null,
+      enrichment_url: data.enrichment_url ?? null,
+      confidence_score: data.confidence_score ?? null,
+      enrichment_status: data.enrichment_status ?? null,
+      enrichment_attempted_at: data.enrichment_attempted_at ?? null,
+      enrichment_error: data.enrichment_error ?? null,
+      lead_score: data.lead_score ?? null,
+      priority: data.priority ?? null,
+      contactability: data.contactability ?? null,
+      crm_status: data.crm_status ?? null,
+      next_action: data.next_action ?? null
+    });
   }
 
   /**

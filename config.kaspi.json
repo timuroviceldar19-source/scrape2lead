@@ -1,0 +1,18 @@
+{
+  "source": "kaspi",
+  "geo": "Астана",
+  "category": "Стройматериалы",
+  "limit": 50,
+  "databasePath": "data/scrape2lead-kaspi.db",
+  "exportDir": "exports",
+  "delayRangeMs": [1500, 3000],
+  "rotateEveryN": 30,
+  "maxRetries": 2,
+  "concurrency": 1,
+  "headless": true,
+  "rawSnapshotDir": "raw_snapshots",
+  "kaspiBaseUrl": "https://kaspi.kz",
+  "storageBackend": "sqlite",
+  "minRating": 4.5,
+  "minReviewCount": 50
+}

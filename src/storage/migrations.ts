@@ -203,6 +203,56 @@ const migrations = [
       DROP TABLE captcha_events;
       ALTER TABLE captcha_events_new RENAME TO captcha_events;
     `
+  },
+  {
+    version: 5,
+    sql: `
+      -- Add Kaspi-specific lead quality and metadata columns
+      ALTER TABLE leads ADD COLUMN rating REAL;
+      ALTER TABLE leads ADD COLUMN review_count INTEGER;
+      ALTER TABLE leads ADD COLUMN product_count INTEGER;
+      ALTER TABLE leads ADD COLUMN shop_categories TEXT;
+    `
+  },
+  {
+    version: 6,
+    sql: `
+      -- Add CRM-ready enrichment columns
+      ALTER TABLE leads ADD COLUMN lead_id TEXT;
+      ALTER TABLE leads ADD COLUMN source_search_city TEXT;
+      ALTER TABLE leads ADD COLUMN merchant_city_guess TEXT;
+      ALTER TABLE leads ADD COLUMN city_status TEXT;
+      ALTER TABLE leads ADD COLUMN address_raw TEXT;
+      ALTER TABLE leads ADD COLUMN address_clean TEXT;
+      ALTER TABLE leads ADD COLUMN phone_raw TEXT;
+      ALTER TABLE leads ADD COLUMN phone_normalized TEXT;
+      ALTER TABLE leads ADD COLUMN phone_status TEXT;
+      ALTER TABLE leads ADD COLUMN email_raw TEXT;
+      ALTER TABLE leads ADD COLUMN email_status TEXT;
+      ALTER TABLE leads ADD COLUMN kaspi_profile_url TEXT;
+      ALTER TABLE leads ADD COLUMN real_website TEXT;
+      ALTER TABLE leads ADD COLUMN messenger_flags TEXT;
+      ALTER TABLE leads ADD COLUMN lead_score INTEGER;
+      ALTER TABLE leads ADD COLUMN priority TEXT;
+      ALTER TABLE leads ADD COLUMN contactability TEXT;
+      ALTER TABLE leads ADD COLUMN crm_status TEXT;
+      ALTER TABLE leads ADD COLUMN next_action TEXT;
+      ALTER TABLE leads ADD COLUMN parser_note TEXT;
+    `
+  },
+  {
+    version: 7,
+    sql: `
+      -- Add enrichment tracking and stricter validation status columns
+      ALTER TABLE leads ADD COLUMN address_status TEXT;
+      ALTER TABLE leads ADD COLUMN website_status TEXT;
+      ALTER TABLE leads ADD COLUMN enrichment_source TEXT;
+      ALTER TABLE leads ADD COLUMN enrichment_url TEXT;
+      ALTER TABLE leads ADD COLUMN confidence_score REAL;
+      ALTER TABLE leads ADD COLUMN enrichment_status TEXT;
+      ALTER TABLE leads ADD COLUMN enrichment_attempted_at TEXT;
+      ALTER TABLE leads ADD COLUMN enrichment_error TEXT;
+    `
   }
 ];
 

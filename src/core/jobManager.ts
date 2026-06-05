@@ -184,7 +184,28 @@ export class JobManager {
       const status = await this.storage.finalizeParseJob(jobId);
       logger.info("enrichment diagnostics", { jobId, ...enrichmentDiagnostics });
 
-      const leads = await this.storage.listLeads();
+      const allLeads = await this.storage.listLeads();
+      
+      // Apply quality filters if configured
+      const leads = allLeads.filter((lead) => {
+        if (this.config.minRating !== undefined && (lead.rating ?? 0) < this.config.minRating) {
+          return false;
+        }
+        if (this.config.minReviewCount !== undefined && (lead.review_count ?? 0) < this.config.minReviewCount) {
+          return false;
+        }
+        return true;
+      });
+
+      if (leads.length < allLeads.length) {
+        logger.info("leads filtered by quality thresholds", {
+          total: allLeads.length,
+          exported: leads.length,
+          minRating: this.config.minRating,
+          minReviewCount: this.config.minReviewCount
+        });
+      }
+
       const exported = await exportLeads(leads, this.config.exportDir);
       logger.info("job completed", { jobId, status, leads: leads.length, ...exported });
       return { leads, ...exported, jobId, status, diagnostics: enrichmentDiagnostics };
