@@ -116,11 +116,26 @@ program
     storage.close();
   });
 
-// Parse arguments FIRST, then check if a command was executed
-program.parse(process.argv);
+// `--config` is intentionally NOT declared on the root program so that
+// the same flag binds to subcommands (notably `enrich`) instead of being
+// shadowed by the root. The default scraping path needs it too, so we
+// strip `--config <path>` (and `-c <path>` / `--config=<path>`) from
+// argv before parsing — but ONLY when the user is invoking the root
+// scrape path (no `enrich` subcommand). Subcommands still see --config.
+const argvForParse = process.argv.includes("enrich")
+  ? process.argv
+  : process.argv.filter((arg, i, arr) => {
+      if (arg === "-c" || arg === "--config") return false;
+      if (arg.startsWith("--config=")) return false;
+      if (i > 0 && (arr[i - 1] === "-c" || arr[i - 1] === "--config")) return false;
+      return true;
+    });
 
-// Default run (scraping) if no specific command like 'enrich' was invoked
-if (!process.argv.includes("enrich")) {
+// Default scrape action — commander runs this when no subcommand is matched.
+// Without it, the moment any subcommand (like `enrich`) is registered, commander
+// treats a no-args invocation as a help request and prints+exits before our
+// scrape code gets a chance to run.
+program.action(async () => {
   const options = program.opts();
   const overrides: Partial<RuntimeConfig> = {};
   if (options.source) overrides.source = options.source;
@@ -142,10 +157,10 @@ if (!process.argv.includes("enrich")) {
   if (options.headed) overrides.headless = false;
   if (options.fixture) overrides.fixturePath = options.fixture;
 
-  // `--config` is intentionally NOT declared on the root program so that the
-  // same flag binds to subcommands (notably `enrich`) instead of being shadowed
-  // by the root. The default scraping path needs it too, so we extract it from
-  // argv manually here.
+  // `--config` is intentionally NOT declared on the root program so that
+  // the same flag binds to subcommands (notably `enrich`) instead of being
+  // shadowed by the root. The default scraping path needs it too, so we
+  // extract it from argv manually here.
   const configPath = readConfigArg(process.argv) ?? "config.example.json";
 
   let storage: IStorage | null = null;
@@ -179,7 +194,11 @@ if (!process.argv.includes("enrich")) {
     await adapter?.close();
     void postgresStorage;
   }
-}
+});
+
+// Parse arguments; the default action above runs the scrape path, the
+// `enrich` subcommand runs its own action.
+await program.parseAsync(argvForParse);
 
 /**
  * Backend selector. SQLite stays the default so the existing CLI surface,
