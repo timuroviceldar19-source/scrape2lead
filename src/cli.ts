@@ -20,7 +20,6 @@ const program = new Command();
 program
   .name("scrape2lead")
   .description("Scrape2Lead MVP CLI")
-  .option("-c, --config <path>", "config file path", "config.example.json")
   .option("--source <source>", "source adapter (overrides config)")
   .option("--geo <geo>", "target city (overrides config)")
   .option("--category <category>", "target category (overrides config)")
@@ -107,12 +106,18 @@ if (!process.argv.includes("enrich")) {
   if (options.headed) overrides.headless = false;
   if (options.fixture) overrides.fixturePath = options.fixture;
 
+  // `--config` is intentionally NOT declared on the root program so that the
+  // same flag binds to subcommands (notably `enrich`) instead of being shadowed
+  // by the root. The default scraping path needs it too, so we extract it from
+  // argv manually here.
+  const configPath = readConfigArg(process.argv) ?? "config.example.json";
+
   let storage: IStorage | null = null;
   let adapter: ISourceAdapter | null = null;
   let postgresStorage: PostgresStorage | null = null;
 
   try {
-    const config = loadConfig(options.config, overrides);
+    const config = loadConfig(configPath, overrides);
     storage = await buildStorage(config);
     const registry = new AdapterRegistry();
     const browserSession = new BrowserSessionManager(config);
@@ -162,4 +167,23 @@ async function buildStorage(config: RuntimeConfig): Promise<IStorage> {
     return pg;
   }
   return new Storage(config.databasePath, config.rawSnapshotDir);
+}
+
+/**
+ * Extract `--config <path>` / `-c <path>` from a raw argv list. Returns
+ * `undefined` when the flag is absent. Used by the default scraping path
+ * because the root program intentionally does not declare `--config`
+ * (see the comment in the default-scrape branch for the rationale).
+ */
+export function readConfigArg(argv: string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "-c" || arg === "--config") {
+      return argv[i + 1];
+    }
+    if (arg.startsWith("--config=")) {
+      return arg.slice("--config=".length);
+    }
+  }
+  return undefined;
 }
