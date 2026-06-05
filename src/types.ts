@@ -59,6 +59,7 @@ export interface Lead {
   enrichment_status?: "pending" | "enriched" | "manual_review" | "not_found" | "failed";
   enrichment_attempted_at?: string;
   enrichment_error?: string;
+  found_name?: string;
 }
 
 export interface RawCompanyCard {

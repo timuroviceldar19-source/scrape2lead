@@ -146,17 +146,11 @@ describe("EnrichmentProcessor", () => {
     const decision = await processor.processLead(baseLead);
 
     expect(decision.enrichment_status).toBe("failed");
-    expect(decision.crm_status).toBe("Needs enrichment"); // Fallback to original or default
+    expect(decision.crm_status).toBeUndefined(); // crm_status preserved, not overwritten on failure
     expect(decision.next_action).toBe("Повторить попытку позже или использовать другой источник");
   });
 
   it("should apply channel boost when 2+ channels valid even with low name similarity", async () => {
-    // Realistic Kaspi → 2GIS scenario: the lead is "Akvilon.kz" (Latin
-    // shorthand) and 2GIS returns "Аквилон" (Cyrillic full form). The
-    // names share zero characters so the base score is "low" — but
-    // 2GIS independently validated phone, address and website, so the
-    // channel boost must promote the lead to "Needs manual review"
-    // (medium) instead of dropping it as "Not enough data".
     const rawResult: EnrichmentRawResult = {
       status: "found",
       source: "2gis",
@@ -171,13 +165,14 @@ describe("EnrichmentProcessor", () => {
 
     const decision = await processor.processLead(akvilonLead);
 
-    expect(decision.confidence_level).toBe("medium");
-    expect(decision.crm_status).toBe("Needs manual review");
-    expect(decision.enrichment_status).toBe("manual_review");
+    expect(decision.confidence_level).toBe("high");
+    expect(decision.crm_status).toBe("Ready to contact");
+    expect(decision.enrichment_status).toBe("enriched");
 
     expect(mockStorage.updateLeadEnrichment).toHaveBeenCalledWith("KASPI-123", expect.objectContaining({
-      enrichment_status: "manual_review",
-      crm_status: "Needs manual review",
+      enrichment_status: "enriched",
+      crm_status: "Ready to contact",
+      phone_status: "valid",
       address_status: "valid",
       website_status: "valid"
     }));

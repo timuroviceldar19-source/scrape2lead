@@ -83,16 +83,17 @@ export class EnrichmentProcessor {
       const hasValidSignal = phoneValidation.status === "valid" || websiteValidation.status === "valid";
 
       // 4. Score
-      const metadata = (rawResult.raw_match_metadata as { category?: string; city?: string }) || {};
-      const score = calculateConfidenceScore(
-        lead.company_name,
-        rawResult.found_name || "",
-        lead.city,
-        metadata.city || lead.city,
-        lead.category || "",
-        metadata.category || "",
-        hasValidSignal
-      );
+    const metadata = (rawResult.raw_match_metadata as { category?: string; city?: string }) || {};
+    const score = calculateConfidenceScore(
+      lead.company_name,
+      rawResult.found_name || "",
+      lead.city,
+      metadata.city || lead.city,
+      lead.category || "",
+      metadata.category || "",
+      hasValidSignal,
+      websiteValidation.clean
+    );
 
       logger.info("Enrichment score calculated", { score: score.total, level: score.confidence_level, found_name: rawResult.found_name });
 
@@ -152,10 +153,13 @@ export class EnrichmentProcessor {
   private async persistDecision(lead: Lead, decision: EnrichmentDecision, rawResult: EnrichmentRawResult): Promise<void> {
     const leadId = lead.lead_id || `${lead.source.toUpperCase()}-${lead.external_id}`;
     
-    // Extract validated fields
     const phoneValidation = validatePhone(rawResult.phone_raw);
     const addressValidation = validateAddress(rawResult.address_raw);
     const websiteValidation = validateWebsite(rawResult.website_raw);
+
+    const phoneStatusToWrite = lead.phone_status === "valid" 
+      ? undefined 
+      : phoneValidation.status;
 
     await this.storage.updateLeadEnrichment(leadId, {
       enrichment_source: rawResult.source,
@@ -165,13 +169,14 @@ export class EnrichmentProcessor {
       enrichment_attempted_at: new Date().toISOString(),
       enrichment_error: decision.updated_lead.enrichment_error,
       phone_normalized: phoneValidation.normalized || undefined,
-      phone_status: phoneValidation.status,
+      phone_status: phoneStatusToWrite,
       address_clean: addressValidation.clean || undefined,
       address_status: addressValidation.status,
       real_website: websiteValidation.clean || undefined,
       website_status: websiteValidation.status,
       crm_status: decision.crm_status,
-      next_action: decision.next_action
+      next_action: decision.next_action,
+      found_name: rawResult.found_name || undefined
     });
   }
 
@@ -226,7 +231,7 @@ export class EnrichmentProcessor {
 
   private handleFailure(lead: Lead, raw: EnrichmentRawResult): EnrichmentDecision {
     return {
-      crm_status: (lead.crm_status as any) || "Needs enrichment",
+      crm_status: undefined as any,
       next_action: "Повторить попытку позже или использовать другой источник",
       enrichment_status: "failed",
       confidence_score: 0,

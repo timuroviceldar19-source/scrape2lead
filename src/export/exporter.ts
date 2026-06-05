@@ -121,7 +121,7 @@ function flattenLead(lead: Lead): Record<string, string | boolean | number | und
     phone_status: lead.phone_status ?? "",
     address_clean: lead.address_clean ?? "",
     address_status: lead.address_status ?? "",
-    real_website: lead.real_website ?? lead.website ?? "",
+    real_website: lead.real_website ?? "",
     website_status: lead.website_status ?? "",
     email_raw: lead.email_raw ?? lead.email ?? "",
     email_status: lead.email_status ?? "",

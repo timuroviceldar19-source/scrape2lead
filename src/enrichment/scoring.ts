@@ -47,15 +47,18 @@ export function calculateNameSimilarity(original: string, found: string): number
   const normFound = normalizeQuery(found);
   if (!normOrig || !normFound) return 0;
 
-  // Symmetrise the comparison: take the Levenshtein similarity of the
-  // shorter string against itself-prefixed-by-the-longer, so that
-  // appending tokens to either side does not collapse the score.
   const [a, b] = normOrig.length <= normFound.length ? [normOrig, normFound] : [normFound, normOrig];
   const distance = levenshtein(a, b);
   const maxLength = b.length;
   if (maxLength === 0) return 1;
 
-  return 1 - distance / maxLength;
+  const baseSimilarity = 1 - distance / maxLength;
+  
+  if (baseSimilarity < 0.5 && (b.includes(a) || a.includes(b))) {
+    return Math.max(baseSimilarity, 0.8);
+  }
+  
+  return baseSimilarity;
 }
 
 export interface EnrichmentScore {
@@ -74,11 +77,21 @@ export function calculateConfidenceScore(
   foundCity: string,
   originalCategory: string,
   foundCategory: string,
-  hasValidPhoneOrWebsite: boolean
+  hasValidPhoneOrWebsite: boolean,
+  websiteUrl?: string | null
 ): EnrichmentScore {
-  const nameSim = calculateNameSimilarity(originalName, foundName);
+  let nameSim = calculateNameSimilarity(originalName, foundName);
+  
+  if (nameSim < 0.5 && websiteUrl) {
+    const normName = normalizeQuery(originalName);
+    try {
+      const domain = new URL(websiteUrl).hostname.replace(/^www\./, "").split(".")[0];
+      if (normName && domain.includes(normName)) {
+        nameSim = Math.max(nameSim, 0.9);
+      }
+    } catch {}
+  }
 
-  // Для городов мы просто сравниваем их без учета регистра, не удаляя название города
   const normOrigCity = originalCity.toLowerCase().trim();
   const normFoundCity = foundCity.toLowerCase().trim();
   const cityMatch = (normOrigCity && normFoundCity && normOrigCity === normFoundCity) ? 1.0 : 0.0;

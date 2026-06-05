@@ -309,7 +309,7 @@ export class Storage implements IStorage {
       'real_website' | 'website_status' |
       'enrichment_source' | 'enrichment_url' | 'confidence_score' |
       'enrichment_status' | 'enrichment_attempted_at' | 'enrichment_error' |
-      'lead_score' | 'priority' | 'contactability' | 'crm_status' | 'next_action'
+      'lead_score' | 'priority' | 'contactability' | 'crm_status' | 'next_action' | 'found_name'
     >>
   ): Promise<void> {
     const updateLead = this.db.prepare(`
@@ -332,7 +332,8 @@ export class Storage implements IStorage {
         priority = COALESCE(@priority, priority),
         contactability = COALESCE(@contactability, contactability),
         crm_status = COALESCE(@crm_status, crm_status),
-        next_action = COALESCE(@next_action, next_action)
+        next_action = COALESCE(@next_action, next_action),
+        found_name = COALESCE(@found_name, found_name)
       WHERE lead_id = @lead_id
     `);
 
@@ -357,7 +358,8 @@ export class Storage implements IStorage {
       priority: data.priority ?? null,
       contactability: data.contactability ?? null,
       crm_status: data.crm_status ?? null,
-      next_action: data.next_action ?? null
+      next_action: data.next_action ?? null,
+      found_name: data.found_name ?? null
     });
   }
 

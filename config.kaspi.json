@@ -17,6 +17,7 @@
   "headless": true,
   "rawSnapshotDir": "raw_snapshots",
   "kaspiBaseUrl": "https://kaspi.kz",
+  "twoGisBaseUrl": "https://2gis.kz",
   "storageBackend": "sqlite",
   "minRating": 4.5,
   "minReviewCount": 50
