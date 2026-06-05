@@ -1,7 +1,7 @@
 import type { Lead } from "../types.js";
 import type { IEnrichmentAdapter, EnrichmentRawResult } from "./adapters/EnrichmentAdapter.js";
 import { validatePhone, validateAddress, validateWebsite } from "./validator.js";
-import { calculateConfidenceScore } from "./scoring.js";
+import { applyChannelBoost, calculateConfidenceScore } from "./scoring.js";
 import type { Storage } from "../storage/storage.js";
 import { logger } from "../logger.js";
 import type { ProxyRotator } from "../proxy/proxyRotator.js";
@@ -177,22 +177,34 @@ export class EnrichmentProcessor {
 
   private makeDecision(
     score: ReturnType<typeof calculateConfidenceScore>,
-    _phone: ReturnType<typeof validatePhone>,
-    _address: ReturnType<typeof validateAddress>,
-    _website: ReturnType<typeof validateWebsite>,
+    phone: ReturnType<typeof validatePhone>,
+    address: ReturnType<typeof validateAddress>,
+    website: ReturnType<typeof validateWebsite>,
     _raw: EnrichmentRawResult
   ): EnrichmentDecision {
-    // Note: The decision logic strictly follows the confidence level,
+    // The base decision logic strictly follows the confidence level,
     // as requested. The validated fields are applied via the DB update.
+    //
+    // However, a name-only "low" score is misleading when 2GIS returned
+    // multiple independently-validated contact channels: that is
+    // independent evidence the business is real and contactable, and
+    // the lead deserves "Needs manual review" rather than "Not enough
+    // data". See scoring.applyChannelBoost for the full rationale.
+    const boost = applyChannelBoost(score.confidence_level, {
+      phone: phone.status,
+      address: address.status,
+      website: website.status
+    });
+
     let crm_status: EnrichmentDecision["crm_status"];
     let next_action: string;
     let enrichment_status: EnrichmentDecision["enrichment_status"];
 
-    if (score.confidence_level === "high") {
+    if (boost.level === "high") {
       crm_status = "Ready to contact";
       next_action = "Позвонить";
       enrichment_status = "enriched";
-    } else if (score.confidence_level === "medium") {
+    } else if (boost.level === "medium") {
       crm_status = "Needs manual review";
       next_action = "Проверить совпадение компании вручную";
       enrichment_status = "manual_review";
@@ -207,7 +219,7 @@ export class EnrichmentProcessor {
       next_action,
       enrichment_status,
       confidence_score: score.total,
-      confidence_level: score.confidence_level,
+      confidence_level: boost.level,
       updated_lead: {} // Actual updates are handled directly in updateLeadEnrichment
     };
   }

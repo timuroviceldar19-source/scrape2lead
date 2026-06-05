@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { normalizeText, calculateNameSimilarity, calculateConfidenceScore } from "../../src/enrichment/scoring.js";
+import {
+  normalizeText,
+  calculateNameSimilarity,
+  calculateConfidenceScore,
+  applyChannelBoost
+} from "../../src/enrichment/scoring.js";
 
 describe("Enrichment Scoring", () => {
-  describe("normalizeText", () => {
+  describe("normalizeText (legacy — still used for category normalisation)", () => {
     it("should normalize and remove city suffixes", () => {
       // "тоо" остается, так как это префикс юрлица, а не город
       expect(normalizeText("  ТОО '12 Месяцев Астана'  ")).toBe("тоо 12 месяцев");
@@ -13,33 +18,57 @@ describe("Enrichment Scoring", () => {
     });
   });
 
+  describe("calculateNameSimilarity (now goes through queryNormalize)", () => {
+    it("strips TLDs and legal-form noise from both names", () => {
+      // "12 Месяцев Астана" and "ТОО 12 Месяцев" both normalise to
+      // "12 месяцев" once the city and the "ТОО" prefix are dropped.
+      expect(calculateNameSimilarity("12 Месяцев Астана", "ТОО 12 Месяцев")).toBe(1);
+      expect(calculateNameSimilarity("Akvilon.kz", "Аквилон")).toBe(0); // Latin vs Cyrillic — no shared characters
+    });
+
+    it("returns 0 for names with zero shared characters", () => {
+      // "аквилон" (7 cyrillic chars) and "bcdfghj" (7 latin chars)
+      // share no characters at all, so Levenshtein gives 7 and the
+      // similarity is exactly 0.
+      expect(calculateNameSimilarity("Аквилон", "bcdfghj")).toBe(0);
+    });
+
+    it("returns a small but non-zero value for names that share a few letters", () => {
+      // "строймир" and "продукты" share 'р' and 'о' (the algorithm
+      // aligns them and saves 2 substitutions), so the similarity is
+      // small but not zero.
+      const sim = calculateNameSimilarity("СтройМир", "Продукты");
+      expect(sim).toBeGreaterThan(0);
+      expect(sim).toBeLessThan(0.3);
+    });
+  });
+
   describe("calculateConfidenceScore", () => {
-    it("should return MEDIUM confidence for good match with valid phone (prefix difference)", () => {
-      // "тоо 12 месяцев" vs "12 месяцев" gives ~0.71 similarity.
-      // Total score: (0.71 * 0.55) + (1.0 * 0.20) + (1.0 * 0.15) + (1.0 * 0.10) = ~0.84
+    it("returns HIGH for a perfect match with valid signal", () => {
+      // After normalisation both names reduce to "12 месяцев", so
+      // nameSim is 1.0 and the total reaches the high threshold.
       const score = calculateConfidenceScore(
         "12 Месяцев Астана", "ТОО 12 Месяцев",
         "Астана", "Астана",
         "Стройматериалы", "Стройматериалы и ремонт",
-        true // has valid phone
-      );
-      expect(score.confidence_level).toBe("medium");
-      expect(score.total).toBeGreaterThanOrEqual(0.80);
-      expect(score.total).toBeLessThan(0.85);
-    });
-
-    it("should return HIGH confidence for exact match with valid phone", () => {
-      const score = calculateConfidenceScore(
-        "12 Месяцев Астана", "12 Месяцев",
-        "Астана", "Астана",
-        "Стройматериалы", "Стройматериалы",
-        true // has valid phone
+        true
       );
       expect(score.confidence_level).toBe("high");
       expect(score.total).toBeGreaterThanOrEqual(0.85);
     });
 
-    it("should return LOW confidence for mismatched city and name", () => {
+    it("returns HIGH for an exact match with valid phone", () => {
+      const score = calculateConfidenceScore(
+        "12 Месяцев Астана", "12 Месяцев",
+        "Астана", "Астана",
+        "Стройматериалы", "Стройматериалы",
+        true
+      );
+      expect(score.confidence_level).toBe("high");
+      expect(score.total).toBeGreaterThanOrEqual(0.85);
+    });
+
+    it("returns LOW for mismatched city and name", () => {
       const score = calculateConfidenceScore(
         "СтройМир Астана", "Продукты Алматы",
         "Астана", "Алматы",
@@ -48,6 +77,61 @@ describe("Enrichment Scoring", () => {
       );
       expect(score.confidence_level).toBe("low");
       expect(score.total).toBeLessThan(0.65);
+    });
+
+    it("returns LOW for a name with the new TLD/legal-form noise stripped (Akvilon.kz vs Аквилон)", () => {
+      // Both names still reduce to a single Latin vs Cyrillic word with
+      // no shared characters, so the base score stays low even though
+      // the noise was stripped. This is the case the channel boost
+      // is designed to rescue.
+      const score = calculateConfidenceScore(
+        "Akvilon.kz", "Аквилон",
+        "Астана", "Астана",
+        "Стройматериалы", "Стройматериалы",
+        true
+      );
+      expect(score.confidence_level).toBe("low");
+      expect(score.total).toBeLessThan(0.65);
+    });
+  });
+
+  describe("applyChannelBoost", () => {
+    it("promotes low → medium when 2+ channels are valid", () => {
+      const result = applyChannelBoost("low", { phone: "valid", address: "valid", website: "invalid" });
+      expect(result.level).toBe("medium");
+      expect(result.applied).toBe(true);
+      expect(result.validChannelCount).toBe(2);
+    });
+
+    it("promotes low → medium when all 3 channels are valid", () => {
+      const result = applyChannelBoost("low", { phone: "valid", address: "valid", website: "valid" });
+      expect(result.level).toBe("medium");
+      expect(result.applied).toBe(true);
+      expect(result.validChannelCount).toBe(3);
+    });
+
+    it("keeps low when only 1 channel is valid", () => {
+      const result = applyChannelBoost("low", { phone: "valid", address: "invalid", website: "empty" });
+      expect(result.level).toBe("low");
+      expect(result.applied).toBe(false);
+      expect(result.validChannelCount).toBe(1);
+    });
+
+    it("keeps low when 0 channels are valid", () => {
+      const result = applyChannelBoost("low", { phone: "invalid", address: "empty", website: "empty" });
+      expect(result.level).toBe("low");
+      expect(result.applied).toBe(false);
+      expect(result.validChannelCount).toBe(0);
+    });
+
+    it("never downgrades high or medium", () => {
+      expect(applyChannelBoost("high", { phone: "invalid", address: "invalid", website: "invalid" }).level).toBe("high");
+      expect(applyChannelBoost("medium", { phone: "invalid", address: "invalid", website: "invalid" }).level).toBe("medium");
+    });
+
+    it("treats 'empty' as not-valid (only 'valid' counts)", () => {
+      const result = applyChannelBoost("low", { phone: "empty", address: "empty", website: "empty" });
+      expect(result.validChannelCount).toBe(0);
     });
   });
 });

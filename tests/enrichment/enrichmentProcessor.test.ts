@@ -70,10 +70,15 @@ describe("EnrichmentProcessor", () => {
     const rawResult: EnrichmentRawResult = {
       status: "found",
       source: "2gis",
-      found_name: "ТОО СтройМир", // Slight name difference lowers score
+      // "СтройМастер" shares the "строй" prefix with the lead's
+      // "СтройМир" but is a clearly different brand. After name
+      // normalisation the similarity is ~0.64, which keeps the score
+      // inside the 0.65-0.85 medium band even with all 3 channels
+      // valid.
+      found_name: "СтройМастер",
       phone_raw: "+77771234567",
       address_raw: "г. Алматы, пр. Абая 100",
-      website_raw: "https://stroymir.kz",
+      website_raw: "https://stroymaster.kz",
       raw_match_metadata: { category: "Стройматериалы", city: "Алматы" }
     };
     vi.mocked(mockAdapter.enrich).mockResolvedValue(rawResult);
@@ -143,5 +148,38 @@ describe("EnrichmentProcessor", () => {
     expect(decision.enrichment_status).toBe("failed");
     expect(decision.crm_status).toBe("Needs enrichment"); // Fallback to original or default
     expect(decision.next_action).toBe("Повторить попытку позже или использовать другой источник");
+  });
+
+  it("should apply channel boost when 2+ channels valid even with low name similarity", async () => {
+    // Realistic Kaspi → 2GIS scenario: the lead is "Akvilon.kz" (Latin
+    // shorthand) and 2GIS returns "Аквилон" (Cyrillic full form). The
+    // names share zero characters so the base score is "low" — but
+    // 2GIS independently validated phone, address and website, so the
+    // channel boost must promote the lead to "Needs manual review"
+    // (medium) instead of dropping it as "Not enough data".
+    const rawResult: EnrichmentRawResult = {
+      status: "found",
+      source: "2gis",
+      found_name: "Аквилон",
+      phone_raw: "+77771234567",
+      address_raw: "г. Астана, ул. Куйши Дина 32",
+      website_raw: "https://akvilon.kz",
+      raw_match_metadata: { category: "Стройматериалы", city: "Астана" }
+    };
+    const akvilonLead: Lead = { ...baseLead, company_name: "Akvilon.kz", city: "Астана" };
+    vi.mocked(mockAdapter.enrich).mockResolvedValue(rawResult);
+
+    const decision = await processor.processLead(akvilonLead);
+
+    expect(decision.confidence_level).toBe("medium");
+    expect(decision.crm_status).toBe("Needs manual review");
+    expect(decision.enrichment_status).toBe("manual_review");
+
+    expect(mockStorage.updateLeadEnrichment).toHaveBeenCalledWith("KASPI-123", expect.objectContaining({
+      enrichment_status: "manual_review",
+      crm_status: "Needs manual review",
+      address_status: "valid",
+      website_status: "valid"
+    }));
   });
 });
