@@ -324,7 +324,7 @@ export class TwoGisAdapter implements ISourceAdapter {
         snapshot = await collectDomFirmSnapshot(page);
       }
 
-      const dom = buildDomFirmPayload(snapshot, card, this.config.category, this.config.geo, reveal);
+      const dom = buildDomFirmPayload(snapshot, card, this.config.category ?? "", this.config.geo, reveal);
       this.logDetailDebug(card.externalId, dom.debug);
       return dom.payload;
     } finally {

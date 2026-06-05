@@ -22,7 +22,10 @@ program
   .description("Scrape2Lead MVP CLI")
   .option("--source <source>", "source adapter (overrides config)")
   .option("--geo <geo>", "target city (overrides config)")
-  .option("--category <category>", "target category (overrides config)")
+  .option(
+    "--category <category>",
+    "target category (overrides config). Comma-separated values set the `categories` array, e.g. `--category 'Автозапчасти,Шины и диски'`"
+  )
   .option("--limit <limit>", "max cards (overrides config)")
   .option("--headless", "run browser headless")
   .option("--headed", "run browser with visible window")
@@ -122,7 +125,18 @@ if (!process.argv.includes("enrich")) {
   const overrides: Partial<RuntimeConfig> = {};
   if (options.source) overrides.source = options.source;
   if (options.geo) overrides.geo = options.geo;
-  if (options.category) overrides.category = options.category;
+  if (options.category) {
+    const parts = options.category
+      .split(",")
+      .map((c: string) => c.trim())
+      .filter(Boolean);
+    if (parts.length > 1) {
+      overrides.categories = parts;
+      overrides.category = undefined;
+    } else {
+      overrides.category = parts[0];
+    }
+  }
   if (options.limit) overrides.limit = Number(options.limit);
   if (options.headless) overrides.headless = true;
   if (options.headed) overrides.headless = false;

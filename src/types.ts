@@ -148,7 +148,20 @@ export interface RateLimitPolicy {
   maxRequestsPerMinutePerProxy?: number;
 }
 
-export interface RuntimeConfig extends SearchQuery {
+export interface RuntimeConfig extends Omit<SearchQuery, "category"> {
+  /**
+   * Single target category. Kept for backward compatibility with configs that
+   * only need one niche. Mutually exclusive with {@link categories} — when both
+   * are set, {@link categories} wins.
+   */
+  category?: string;
+  /**
+   * Multiple target categories. When provided, JobManager runs one parse job
+   * per category (resumable per-niche) and the adapter is invoked once with
+   * each category. Last matching category wins on the lead's `category`
+   * column — use `shop_categories` JSON for the full match set.
+   */
+  categories?: string[];
   databasePath: string;
   exportDir: string;
   delayRangeMs: [number, number];

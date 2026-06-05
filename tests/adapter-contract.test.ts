@@ -23,7 +23,7 @@ describe("ISourceAdapter contract", () => {
     const adapter = new TwoGisAdapter(config);
 
     expect(adapter.capabilities().needsBrowser).toBe(true);
-    const cards = await adapter.searchCompanies(config);
+    const cards = await adapter.searchCompanies({ ...config, category: config.category ?? "" });
     const detail = await adapter.getCardDetail(cards[0]);
     const contacts = await adapter.getContacts(detail);
     const lead = adapter.normalize(detail, contacts);
@@ -53,7 +53,7 @@ describe("ISourceAdapter contract", () => {
     expect(adapter.capabilities().needsBrowser).toBe(true);
     expect(adapter.capabilities().supportsApiCapture).toBe(true);
     
-    const cards = await adapter.searchCompanies(config);
+    const cards = await adapter.searchCompanies({ ...config, category: config.category ?? "" });
     expect(cards.length).toBeGreaterThan(0);
     
     const detail = await adapter.getCardDetail(cards[0]);
