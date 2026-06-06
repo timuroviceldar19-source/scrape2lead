@@ -249,7 +249,9 @@ export class Storage implements IStorage {
       confidence_score: row.confidence_score !== null && row.confidence_score !== undefined ? Number(row.confidence_score) : undefined,
       enrichment_status: row.enrichment_status ? String(row.enrichment_status) as "pending" | "enriched" | "manual_review" | "not_found" | "failed" : undefined,
       enrichment_attempted_at: row.enrichment_attempted_at ? String(row.enrichment_attempted_at) : undefined,
-      enrichment_error: row.enrichment_error ? String(row.enrichment_error) : undefined
+      enrichment_error: row.enrichment_error !== null && row.enrichment_error !== undefined ? String(row.enrichment_error) : null,
+      found_name: row.found_name ? String(row.found_name) : undefined,
+      found_category: row.found_category ? String(row.found_category) : undefined
     };
   }
 
@@ -309,7 +311,7 @@ export class Storage implements IStorage {
       'real_website' | 'website_status' |
       'enrichment_source' | 'enrichment_url' | 'confidence_score' |
       'enrichment_status' | 'enrichment_attempted_at' | 'enrichment_error' |
-      'lead_score' | 'priority' | 'contactability' | 'crm_status' | 'next_action' | 'found_name'
+      'lead_score' | 'priority' | 'contactability' | 'crm_status' | 'next_action' | 'found_name' | 'found_category'
     >>
   ): Promise<void> {
     const updateLead = this.db.prepare(`
@@ -327,17 +329,17 @@ export class Storage implements IStorage {
         confidence_score = COALESCE(@confidence_score, confidence_score),
         enrichment_status = COALESCE(@enrichment_status, enrichment_status),
         enrichment_attempted_at = COALESCE(@enrichment_attempted_at, enrichment_attempted_at),
-        enrichment_error = COALESCE(@enrichment_error, enrichment_error),
+        enrichment_error = @enrichment_error,
         lead_score = COALESCE(@lead_score, lead_score),
         priority = COALESCE(@priority, priority),
         contactability = COALESCE(@contactability, contactability),
         crm_status = COALESCE(@crm_status, crm_status),
         next_action = COALESCE(@next_action, next_action),
-        found_name = COALESCE(@found_name, found_name)
+        found_name = COALESCE(@found_name, found_name),
+        found_category = COALESCE(@found_category, found_category)
       WHERE lead_id = @lead_id
     `);
 
-    // Provide explicit nulls for optional fields to satisfy better-sqlite3 named parameters
     updateLead.run({ 
       lead_id: leadId,
       phone_raw: data.phone_raw ?? null,
@@ -359,7 +361,8 @@ export class Storage implements IStorage {
       contactability: data.contactability ?? null,
       crm_status: data.crm_status ?? null,
       next_action: data.next_action ?? null,
-      found_name: data.found_name ?? null
+      found_name: data.found_name ?? null,
+      found_category: data.found_category ?? null
     });
   }
 

@@ -2,14 +2,27 @@ import { normalizeQuery } from "./queryNormalize.js";
 
 const CITIES_TO_REMOVE = new Set(["астана", "алматы", "павлодар", "актобе", "караганда", "шымкент", "актау", "атырау", "уральск", "костанай", "петропавловск", "тараз"]);
 
+const GENERIC_WORDS = new Set([
+  "auto", "avto", "авто", "shop", "store", "market", "mart",
+  "kz", "kazakhstan", "group", "company", "service", "trade",
+  "parts", "center", "центр", "магазин"
+]);
+
+export function isGenericOrShort(normalizedName: string): boolean {
+  if (normalizedName.length < 5) return true;
+  const tokens = normalizedName.split(/\s+/).filter(t => t.length > 0);
+  if (tokens.length === 0) return true;
+  return tokens.every(t => GENERIC_WORDS.has(t));
+}
+
 export function normalizeText(text: string): string {
   if (!text) return "";
   return text
     .toLowerCase()
     .replace(/ё/g, "е")
-    .replace(/[^\p{L}\p{N}\s]/gu, "") // Убираем кавычки, скобки, пунктуацию
-    .split(/\s+/)                     // Разбиваем на слова
-    .filter(word => word.length > 0 && !CITIES_TO_REMOVE.has(word)) // Убираем города
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .split(/\s+/)
+    .filter(word => word.length > 0 && !CITIES_TO_REMOVE.has(word))
     .join(" ")
     .trim();
 }
@@ -30,18 +43,6 @@ function levenshtein(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
-/**
- * Calculates the maximum character-level (Levenshtein) similarity between
- * two company names, computed on the SHORTER of the two normalised forms
- * so that a long company description does not artificially pull the
- * score down to zero.
- *
- * Both inputs are run through {@link normalizeQuery} which strips TLDs,
- * legal-form tokens ("НДС", "ИП", "ТОО", "Company", "Ltd"), prepositions
- * and city names. This is the same normalisation the search query goes
- * through, so the result of the 2GIS query and the lead's stored name
- * end up in the same token space.
- */
 export function calculateNameSimilarity(original: string, found: string): number {
   const normOrig = normalizeQuery(original);
   const normFound = normalizeQuery(found);
@@ -52,13 +53,7 @@ export function calculateNameSimilarity(original: string, found: string): number
   const maxLength = b.length;
   if (maxLength === 0) return 1;
 
-  const baseSimilarity = 1 - distance / maxLength;
-  
-  if (baseSimilarity < 0.5 && (b.includes(a) || a.includes(b))) {
-    return Math.max(baseSimilarity, 0.8);
-  }
-  
-  return baseSimilarity;
+  return 1 - distance / maxLength;
 }
 
 export interface EnrichmentScore {
@@ -77,30 +72,48 @@ export function calculateConfidenceScore(
   foundCity: string,
   originalCategory: string,
   foundCategory: string,
-  hasValidPhoneOrWebsite: boolean,
+  hasValidPhone: boolean,
+  hasValidAddress: boolean,
+  hasValidWebsite: boolean,
   websiteUrl?: string | null
 ): EnrichmentScore {
   let nameSim = calculateNameSimilarity(originalName, foundName);
-  
-  if (nameSim < 0.5 && websiteUrl) {
-    const normName = normalizeQuery(originalName);
+
+  const normOrig = normalizeQuery(originalName);
+  const normFound = normalizeQuery(foundName);
+
+  const normOrigCat = normalizeText(originalCategory);
+  const normFoundCat = normalizeText(foundCategory);
+  const categoryMatch = (normOrigCat && normFoundCat && (normFoundCat.includes(normOrigCat) || normOrigCat.includes(normFoundCat))) ? 1.0 : 0.0;
+
+  let domainMatch = false;
+  if (websiteUrl && normOrig) {
     try {
       const domain = new URL(websiteUrl).hostname.replace(/^www\./, "").split(".")[0];
-      if (normName && domain.includes(normName)) {
-        nameSim = Math.max(nameSim, 0.9);
-      }
+      domainMatch = domain.includes(normOrig);
     } catch {}
+  }
+
+  const hasAdditionalSignal = domainMatch || categoryMatch > 0 || hasValidPhone || hasValidAddress;
+
+  if (nameSim < 0.5 && domainMatch && normOrig && !isGenericOrShort(normOrig)) {
+    nameSim = Math.max(nameSim, 0.9);
+  }
+
+  if (nameSim < 0.5 && normOrig && normFound) {
+    const [a, b] = normOrig.length <= normFound.length ? [normOrig, normFound] : [normFound, normOrig];
+    const isSubstringMatch = b.includes(a) || a.includes(b);
+    if (isSubstringMatch && !isGenericOrShort(a) && hasAdditionalSignal) {
+      nameSim = Math.max(nameSim, 0.8);
+    }
   }
 
   const normOrigCity = originalCity.toLowerCase().trim();
   const normFoundCity = foundCity.toLowerCase().trim();
   const cityMatch = (normOrigCity && normFoundCity && normOrigCity === normFoundCity) ? 1.0 : 0.0;
 
-  const normOrigCat = normalizeText(originalCategory);
-  const normFoundCat = normalizeText(foundCategory);
-  const categoryMatch = (normOrigCat && normFoundCat && (normFoundCat.includes(normOrigCat) || normOrigCat.includes(normFoundCat))) ? 1.0 : 0.0;
-
-  const signalScore = hasValidPhoneOrWebsite ? 1.0 : 0.0;
+  const hasValidSignal = hasValidPhone || hasValidWebsite;
+  const signalScore = hasValidSignal ? 1.0 : 0.0;
 
   const total = (nameSim * 0.55) + (cityMatch * 0.20) + (categoryMatch * 0.15) + (signalScore * 0.10);
 

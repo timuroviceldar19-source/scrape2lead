@@ -44,12 +44,17 @@ program
     "--include-ready-to-call",
     "also enrich leads with crm_status='Ready to call' that still lack address/website"
   )
+  .option("--delay-min <ms>", "minimum delay between leads in ms", "3000")
+  .option("--delay-max <ms>", "maximum delay between leads in ms", "6000")
+  .option("--throttle-cooldown <seconds>", "cooldown after throttle/captcha in seconds", "120")
   .action(async (cmdOptions) => {
     const config = loadConfig(cmdOptions.config, {});
     const limit = Number(cmdOptions.limit) || 100;
     const city = cmdOptions.city as string | undefined;
     const includeReadyToCall = Boolean(cmdOptions.includeReadyToCall);
-    // Commander automatically converts --no-write to write: false
+    const delayMin = Number(cmdOptions.delayMin) || 3000;
+    const delayMax = Number(cmdOptions.delayMax) || 6000;
+    const throttleCooldown = Number(cmdOptions.throttleCooldown) || 120;
     const mode = cmdOptions.plan ? 'plan' : (cmdOptions.write === false ? 'no-write' : 'write');
 
     const storage = await buildStorage(config);
@@ -62,16 +67,13 @@ program
     const leads = await storage.getLeadsNeedingEnrichment(limit, city, includeReadyToCall);
     logger.info(`Enrichment mode: ${mode.toUpperCase()}`, {
       count: leads.length,
-      includeReadyToCall
+      includeReadyToCall,
+      delayRange: [delayMin, delayMax],
+      throttleCooldown
     });
 
     const browserSession = new BrowserSessionManager(config);
     const adapter = new TwoGisEnrichmentAdapter(config, browserSession);
-    // ProxyRotator is created whenever any proxy is configured (static
-    // server OR rotation API). With only a static server it operates in
-    // "no-api" mode: it just restarts the browser every `rotateEveryN`
-    // leads, which is enough to pick up a fresh IP from a backconnect
-    // gateway like dataimpulse port 823.
     const rotator = config.proxyApiUrl || config.proxy
       ? new ProxyRotator(config, storage, browserSession)
       : undefined;
@@ -86,11 +88,18 @@ program
       captcha_or_blocked: 0
     };
 
-    for (const lead of leads) {
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const randomDelay = () => Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
+
+    for (let i = 0; i < leads.length; i++) {
+      const lead = leads[i];
       try {
         const decision = await processor.processLead(lead, mode);
         if (decision.isCaptchaOrBlocked) {
           stats.captcha_or_blocked++;
+          const cooldownMs = throttleCooldown * 1000;
+          logger.warn(`Throttle/captcha detected, cooling down ${throttleCooldown}s`);
+          await sleep(cooldownMs);
         } else if (decision.enrichment_status === "enriched") {
           stats.enriched++;
         } else if (decision.enrichment_status === "manual_review") {
@@ -103,6 +112,12 @@ program
       } catch (error) {
         logger.error("Lead processing crashed", { external_id: lead.external_id, error: error instanceof Error ? error.message : String(error) });
         stats.failed++;
+      }
+
+      if (i < leads.length - 1) {
+        const delay = randomDelay();
+        logger.info(`Waiting ${delay}ms before next lead...`);
+        await sleep(delay);
       }
     }
 

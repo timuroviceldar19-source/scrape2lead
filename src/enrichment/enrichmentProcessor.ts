@@ -80,8 +80,6 @@ export class EnrichmentProcessor {
       const addressValidation = validateAddress(rawResult.address_raw);
       const websiteValidation = validateWebsite(rawResult.website_raw);
 
-      const hasValidSignal = phoneValidation.status === "valid" || websiteValidation.status === "valid";
-
       // 4. Score
     const metadata = (rawResult.raw_match_metadata as { category?: string; city?: string }) || {};
     const score = calculateConfidenceScore(
@@ -91,7 +89,9 @@ export class EnrichmentProcessor {
       metadata.city || lead.city,
       lead.category || "",
       metadata.category || "",
-      hasValidSignal,
+      phoneValidation.status === "valid",
+      addressValidation.status === "valid",
+      websiteValidation.status === "valid",
       websiteValidation.clean
     );
 
@@ -168,15 +168,18 @@ export class EnrichmentProcessor {
       enrichment_status: decision.enrichment_status,
       enrichment_attempted_at: new Date().toISOString(),
       enrichment_error: decision.updated_lead.enrichment_error,
+      phone_raw: rawResult.phone_raw || undefined,
       phone_normalized: phoneValidation.normalized || undefined,
       phone_status: phoneStatusToWrite,
+      address_raw: rawResult.address_raw || undefined,
       address_clean: addressValidation.clean || undefined,
       address_status: addressValidation.status,
       real_website: websiteValidation.clean || undefined,
       website_status: websiteValidation.status,
       crm_status: decision.crm_status,
       next_action: decision.next_action,
-      found_name: rawResult.found_name || undefined
+      found_name: rawResult.found_name || undefined,
+      found_category: rawResult.found_category || undefined
     });
   }
 

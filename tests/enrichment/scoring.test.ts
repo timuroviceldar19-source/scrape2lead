@@ -45,13 +45,11 @@ describe("Enrichment Scoring", () => {
 
   describe("calculateConfidenceScore", () => {
     it("returns HIGH for a perfect match with valid signal", () => {
-      // After normalisation both names reduce to "12 месяцев", so
-      // nameSim is 1.0 and the total reaches the high threshold.
       const score = calculateConfidenceScore(
         "12 Месяцев Астана", "ТОО 12 Месяцев",
         "Астана", "Астана",
         "Стройматериалы", "Стройматериалы и ремонт",
-        true
+        true, false, false
       );
       expect(score.confidence_level).toBe("high");
       expect(score.total).toBeGreaterThanOrEqual(0.85);
@@ -62,7 +60,7 @@ describe("Enrichment Scoring", () => {
         "12 Месяцев Астана", "12 Месяцев",
         "Астана", "Астана",
         "Стройматериалы", "Стройматериалы",
-        true
+        true, false, false
       );
       expect(score.confidence_level).toBe("high");
       expect(score.total).toBeGreaterThanOrEqual(0.85);
@@ -73,25 +71,53 @@ describe("Enrichment Scoring", () => {
         "СтройМир Астана", "Продукты Алматы",
         "Астана", "Алматы",
         "Стройматериалы", "Продукты",
-        false
+        false, false, false
       );
       expect(score.confidence_level).toBe("low");
       expect(score.total).toBeLessThan(0.65);
     });
 
     it("returns LOW for a name with the new TLD/legal-form noise stripped (Akvilon.kz vs Аквилон)", () => {
-      // Both names still reduce to a single Latin vs Cyrillic word with
-      // no shared characters, so the base score stays low even though
-      // the noise was stripped. This is the case the channel boost
-      // is designed to rescue.
       const score = calculateConfidenceScore(
         "Akvilon.kz", "Аквилон",
         "Астана", "Астана",
         "Стройматериалы", "Стройматериалы",
-        true
+        true, false, false
       );
       expect(score.confidence_level).toBe("low");
       expect(score.total).toBeLessThan(0.65);
+    });
+
+    it("blocks substring boost for generic/short names", () => {
+      const score = calculateConfidenceScore(
+        "Auto", "AutoMart",
+        "Астана", "Астана",
+        "Автосервис", "Автосервис",
+        true, true, false
+      );
+      expect(score.confidence_level).not.toBe("high");
+    });
+
+    it("allows domain boost for non-generic names", () => {
+      const score = calculateConfidenceScore(
+        "AIKOS", "Аквилон",
+        "Астана", "Астана",
+        "Электроника", "Электроника",
+        true, true, true,
+        "https://aikos.kz"
+      );
+      expect(score.name_similarity).toBeGreaterThanOrEqual(0.9);
+    });
+
+    it("blocks domain boost for generic names", () => {
+      const score = calculateConfidenceScore(
+        "Auto", "Some Other",
+        "Астана", "Астана",
+        "Автосервис", "Автосервис",
+        true, true, true,
+        "https://automart.kz"
+      );
+      expect(score.name_similarity).toBeLessThan(0.9);
     });
   });
 

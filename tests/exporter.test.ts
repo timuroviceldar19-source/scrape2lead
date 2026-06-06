@@ -84,8 +84,8 @@ describe("Exporter", () => {
     const allSheet = workbook.getWorksheet("Все лиды");
     expect(allSheet?.getRow(1).getCell(1).value).toBe("Приоритет");
     expect(allSheet?.getRow(1).getCell(5).value).toBe("Компания");
-    expect(allSheet?.getRow(1).getCell(8).value).toBe("Телефон");
-    expect(allSheet?.getRow(1).getCell(9).value).toBe("Статус телефона");
+    expect(allSheet?.getRow(1).getCell(10).value).toBe("Телефон");
+    expect(allSheet?.getRow(1).getCell(11).value).toBe("Статус телефона");
   });
 
   it("includes dictionary sheet with explanations", async () => {

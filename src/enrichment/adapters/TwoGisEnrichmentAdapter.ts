@@ -59,6 +59,7 @@ export class TwoGisEnrichmentAdapter implements IEnrichmentAdapter {
         status: "found",
         source: "2gis",
         found_name: detail.name,
+        found_category: detail.category,
         phone_raw: contacts.phones?.[0],
         address_raw: detail.address,
         website_raw: contacts.website || detail.website || undefined,

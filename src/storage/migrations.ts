@@ -1,6 +1,12 @@
 import type Database from "better-sqlite3";
 
-const migrations = [
+interface Migration {
+  version: number;
+  sql?: string;
+  run?: (db: Database.Database) => void;
+}
+
+const migrations: Migration[] = [
   {
     version: 1,
     sql: `
@@ -253,6 +259,21 @@ const migrations = [
       ALTER TABLE leads ADD COLUMN enrichment_attempted_at TEXT;
       ALTER TABLE leads ADD COLUMN enrichment_error TEXT;
     `
+  },
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE leads ADD COLUMN found_category TEXT;
+    `
+  },
+  {
+    version: 9,
+    run: (db: Database.Database) => {
+      const cols = db.prepare("PRAGMA table_info(leads)").all() as Array<{ name: string }>;
+      if (!cols.some(c => c.name === "found_name")) {
+        db.exec("ALTER TABLE leads ADD COLUMN found_name TEXT");
+      }
+    }
   }
 ];
 
@@ -270,7 +291,11 @@ export function runMigrations(db: Database.Database): void {
   try {
     for (const migration of pending) {
       db.transaction(() => {
-        db.exec(migration.sql);
+        if (migration.run) {
+          migration.run(db);
+        } else if (migration.sql) {
+          db.exec(migration.sql);
+        }
         db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)")
           .run(migration.version, new Date().toISOString());
       })();

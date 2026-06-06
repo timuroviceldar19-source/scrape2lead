@@ -58,8 +58,9 @@ export interface Lead {
   confidence_score?: number;
   enrichment_status?: "pending" | "enriched" | "manual_review" | "not_found" | "failed";
   enrichment_attempted_at?: string;
-  enrichment_error?: string;
+  enrichment_error?: string | null;
   found_name?: string;
+  found_category?: string;
 }
 
 export interface RawCompanyCard {

@@ -6,6 +6,7 @@ export interface EnrichmentRawResult {
   status: EnrichmentStatus;
   source: "2gis" | "google" | "none";
   found_name?: string;
+  found_category?: string;
   phone_raw?: string;
   address_raw?: string;
   website_raw?: string;
