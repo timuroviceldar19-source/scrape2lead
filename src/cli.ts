@@ -52,15 +52,29 @@ kz
   .argument("<csvFile>", "CSV file with BIN values")
   .option("--skip-stat", "skip stat.gov collection")
   .option("--skip-tenders", "skip tender collection")
+  .option("--skip-zakup", "skip zakup.sk.kz collection (goszakup only)")
   .option("--delay-ms <ms>", "delay between requests in ms", "2000")
   .option("--force-refresh", "ignore stat.gov TTL cache")
-  .action(async (csvFile: string, options: { skipStat?: boolean; skipTenders?: boolean; delayMs: string; forceRefresh?: boolean }) => {
+  .option("--goszakup-active-only", "only keep goszakup tenders with active status")
+  .option("--goszakup-max-pages <pages>", "max pages to fetch from goszakup API", "20")
+  .action(async (csvFile: string, options: {
+    skipStat?: boolean;
+    skipTenders?: boolean;
+    skipZakup?: boolean;
+    delayMs: string;
+    forceRefresh?: boolean;
+    goszakupActiveOnly?: boolean;
+    goszakupMaxPages?: string;
+  }) => {
     const result = await runKzEnrich({
       csvFile,
       skipStat: Boolean(options.skipStat),
       skipTenders: Boolean(options.skipTenders),
+      skipZakup: Boolean(options.skipZakup),
       delayMs: Number(options.delayMs) || 2000,
-      forceRefresh: Boolean(options.forceRefresh)
+      forceRefresh: Boolean(options.forceRefresh),
+      goszakupActiveOnly: Boolean(options.goszakupActiveOnly),
+      goszakupMaxPages: Number(options.goszakupMaxPages) || 20
     });
     console.log(formatKzEnrichResult(result));
   });

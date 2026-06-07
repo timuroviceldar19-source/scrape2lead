@@ -474,9 +474,9 @@ npm run kz:export -- --format xlsx --out exports/kz-report.xlsx
 
 ### Этап 3 — goszakup production
 
-- [ ] Получить `GOSZAKUP_TOKEN`.
-- [ ] Пагинация API при > 1 страницы результатов.
-- [ ] Фильтр «только активные закупки».
+- [x] Получить `GOSZAKUP_TOKEN`.
+- [x] Пагинация API при > 1 страницы результатов.
+- [x] Фильтр «только активные закупки».
 
 ### Этап 4 — Продуктовый слой (post-MVP)
 

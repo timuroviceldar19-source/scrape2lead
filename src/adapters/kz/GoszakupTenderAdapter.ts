@@ -11,6 +11,7 @@ export class GoszakupTenderAdapter implements ITenderSourceAdapter {
   }
 
   async fetchTendersByBin(bin: string): Promise<TenderRecord[]> {
-    return fetchGoszakupTenders(bin);
+    const result = await fetchGoszakupTenders(bin);
+    return result.tenders;
   }
 }

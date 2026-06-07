@@ -1,80 +1,85 @@
-import { isValidBin } from "./csv.js";
+import { fetchAllTrdBuyByBin, GoszakupAuthError, type GoszakupClientOptions } from "./goszakupClient.js";
+import { mapGoszakupTender, type GoszakupMapContext } from "./goszakupMapper.js";
+import { loadBuyStatusRef, getActiveStatusIds, isActiveBuyStatus, resetStatusRefCache } from "./goszakupStatus.js";
 import type { TenderRecord } from "./tenderTypes.js";
 
 export interface GoszakupCollectOptions {
   token?: string;
+  activeOnly?: boolean;
+  maxPages?: number;
+  maxRetries?: number;
+  fetchFn?: typeof fetch;
 }
 
-export function isGoszakupAvailable(options: GoszakupCollectOptions = {}): boolean {
+export interface GoszakupBatchResult {
+  tenders: TenderRecord[];
+  raw: number;
+  filtered: number;
+  pages: number;
+}
+
+export interface GoszakupSingleResult {
+  tenders: TenderRecord[];
+  raw: number;
+  filtered: number;
+  pages: number;
+}
+
+export function isGoszakupAvailable(options: { token?: string } = {}): boolean {
   return Boolean(options.token ?? process.env.GOSZAKUP_TOKEN);
 }
 
 export async function fetchGoszakupTenders(
   bin: string,
   options: GoszakupCollectOptions = {}
-): Promise<TenderRecord[]> {
+): Promise<GoszakupSingleResult> {
   const token = options.token ?? process.env.GOSZAKUP_TOKEN ?? "";
   if (!token) {
-    console.warn("goszakup.gov.kz: skipped, GOSZAKUP_TOKEN is not set");
-    return [];
-  }
-  if (!isValidBin(bin)) {
-    console.warn(`goszakup.gov.kz: skip invalid BIN ${bin}`);
-    return [];
+    return { tenders: [], raw: 0, filtered: 0, pages: 0 };
   }
 
-  const response = await fetch(`https://ows.goszakup.gov.kz/trd-buy/biin/${bin}`, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  const clientOpts: GoszakupClientOptions = {
+    token,
+    maxPages: options.maxPages,
+    maxRetries: options.maxRetries,
+    fetchFn: options.fetchFn
+  };
+
+  const { items, pages } = await fetchAllTrdBuyByBin(bin, clientOpts);
+
+  const statusMap = options.activeOnly
+    ? await loadBuyStatusRef(clientOpts)
+    : new Map<number, string>();
+
+  const ctx: GoszakupMapContext = { bin, statusMap };
+  const activeIds = options.activeOnly ? getActiveStatusIds() : undefined;
+
+  let accepted = 0;
+  let rejected = 0;
+  const tenders: TenderRecord[] = [];
+
+  for (const item of items) {
+    const statusId = item.ref_buy_status_id != null ? Number(item.ref_buy_status_id) : null;
+    if (options.activeOnly && !isActiveBuyStatus(statusId, activeIds)) {
+      rejected++;
+      continue;
     }
-  });
 
-  if (!response.ok) {
-    console.warn(`goszakup.gov.kz: HTTP ${response.status} for ${bin}`);
-    return [];
+    const record = mapGoszakupTender(item, ctx);
+    if (record) {
+      tenders.push(record);
+      accepted++;
+    } else {
+      rejected++;
+    }
   }
 
-  const payload = await response.json() as unknown;
-  return extractItems(payload).map((item) => mapGoszakupTender(item, bin));
-}
-
-function extractItems(payload: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(payload)) return payload.filter(isObject);
-  if (!isObject(payload)) return [];
-  for (const key of ["items", "data", "results", "content"]) {
-    const value = payload[key];
-    if (Array.isArray(value)) return value.filter(isObject);
-  }
-  return [];
-}
-
-function mapGoszakupTender(item: Record<string, unknown>, bin: string): TenderRecord {
-  const id = stringValue(item.id);
-  const number = stringValue(item.number) || id || "N/A";
   return {
-    source: "goszakup.gov.kz",
-    bin,
-    tender_number: number,
-    tender_name: stringValue(item.nameRu) || stringValue(item.nameKz) || stringValue(item.name_ru) || "N/A",
-    customer_name: stringValue(item.customerName) || stringValue(item.customer_name_ru),
-    budget_amount: stringValue(item.sum) || stringValue(item.price),
-    currency: "KZT",
-    start_date: stringValue(item.startDate) || stringValue(item.start_date),
-    end_date: stringValue(item.endDate) || stringValue(item.end_date),
-    status: stringValue(item.status) || stringValue(item.status_name),
-    method: stringValue(item.method) || stringValue(item.method_name),
-    url: `https://goszakup.gov.kz/ru/trd-buy/${id || number}`,
-    parsed_at: new Date().toISOString()
+    tenders,
+    raw: items.length,
+    filtered: rejected,
+    pages
   };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function stringValue(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  return String(value);
-}
+export { GoszakupAuthError };

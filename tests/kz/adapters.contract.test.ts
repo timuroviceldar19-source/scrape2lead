@@ -49,7 +49,7 @@ describe("KZ adapters", () => {
     const { GoszakupTenderAdapter } = await import("../../src/adapters/kz/GoszakupTenderAdapter.js");
     const tender = tenderRecord("goszakup.gov.kz");
     isGoszakupAvailable.mockReturnValue(true);
-    fetchGoszakupTenders.mockResolvedValue([tender]);
+    fetchGoszakupTenders.mockResolvedValue({ tenders: [tender], raw: 1, filtered: 0, pages: 1 });
 
     const adapter = new GoszakupTenderAdapter();
     const result = await adapter.fetchTendersByBin("220540025781");

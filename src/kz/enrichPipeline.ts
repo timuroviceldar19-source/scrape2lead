@@ -8,8 +8,11 @@ export interface KzEnrichOptions {
   databasePath?: string;
   skipStat?: boolean;
   skipTenders?: boolean;
+  skipZakup?: boolean;
   delayMs?: number;
   forceRefresh?: boolean;
+  goszakupActiveOnly?: boolean;
+  goszakupMaxPages?: number;
 }
 
 export interface KzEnrichResult {
@@ -35,7 +38,10 @@ export async function runKzEnrich(options: KzEnrichOptions): Promise<KzEnrichRes
   if (!options.skipTenders) {
     tenders = await collectTendersForBins(bins, {
       databasePath: options.databasePath,
-      delayMs: options.delayMs
+      delayMs: options.delayMs,
+      skipZakup: options.skipZakup,
+      goszakupActiveOnly: options.goszakupActiveOnly,
+      goszakupMaxPages: options.goszakupMaxPages
     });
   }
 

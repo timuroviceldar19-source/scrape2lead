@@ -1,0 +1,39 @@
+{
+  "total": 2,
+  "limit": 50,
+  "next_page": "",
+  "items": [
+    {
+      "id": 415500,
+      "number_anno": "415500-1",
+      "name_ru": "Тестовая закупка",
+      "name_kz": null,
+      "customer_name_ru": "ТОО \"ALAU\"",
+      "customer_name_kz": null,
+      "org_name_ru": "ТОО \"ALAU\"",
+      "org_name_kz": null,
+      "org_bin": "061040006408",
+      "total_sum": 10000,
+      "ref_buy_status_id": 210,
+      "start_date": "2026-01-08 05:01:18",
+      "end_date": "2026-06-19 05:01:18",
+      "ref_trade_methods_id": 7
+    },
+    {
+      "id": 415501,
+      "number_anno": "415501-1",
+      "name_ru": "Закрытая закупка",
+      "name_kz": null,
+      "customer_name_ru": "ТОО \"ALAU\"",
+      "customer_name_kz": null,
+      "org_name_ru": "ТОО \"ALAU\"",
+      "org_name_kz": null,
+      "org_bin": "061040006408",
+      "total_sum": 5000,
+      "ref_buy_status_id": 230,
+      "start_date": "2020-01-01 00:00:00",
+      "end_date": "2020-02-01 00:00:00",
+      "ref_trade_methods_id": 7
+    }
+  ]
+}

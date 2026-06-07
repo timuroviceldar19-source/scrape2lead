@@ -24,7 +24,9 @@
     "kz:enrich": "tsx scripts/kz-enrich.ts",
     "kz:tenders": "tsx scripts/tenders-collector.ts",
     "kz:merge": "tsx scripts/merge-stat-gov-data.ts",
-    "kz:export": "tsx scripts/kz-export.ts"
+    "kz:audit": "tsx scripts/kz-batch-audit.ts",
+    "kz:export": "tsx scripts/kz-export.ts",
+    "kz:goszakup:smoke": "tsx scripts/goszakup-smoke.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",

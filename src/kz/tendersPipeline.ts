@@ -1,5 +1,5 @@
 import { isValidBin, sleep } from "./csv.js";
-import { fetchGoszakupTenders, isGoszakupAvailable } from "./goszakupCollector.js";
+import { fetchGoszakupTenders, GoszakupAuthError, isGoszakupAvailable } from "./goszakupCollector.js";
 import { KzStorage } from "./kzStorage.js";
 import { collectZakupTendersForBatch } from "./zakupCollector.js";
 
@@ -9,6 +9,8 @@ export interface TendersPipelineOptions {
   headless?: boolean;
   skipZakup?: boolean;
   skipGoszakup?: boolean;
+  goszakupActiveOnly?: boolean;
+  goszakupMaxPages?: number;
 }
 
 export interface TenderCollectStats {
@@ -16,6 +18,9 @@ export interface TenderCollectStats {
   skipped: number;
   zakupCount: number;
   goszakupCount: number;
+  goszakupRaw: number;
+  goszakupFiltered: number;
+  goszakupPages: number;
   totalTenders: number;
 }
 
@@ -32,6 +37,9 @@ export async function collectTendersForBins(
     skipped: bins.length - validBins.length,
     zakupCount: 0,
     goszakupCount: 0,
+    goszakupRaw: 0,
+    goszakupFiltered: 0,
+    goszakupPages: 0,
     totalTenders: 0
   };
 
@@ -68,13 +76,26 @@ export async function collectTendersForBins(
       } else {
         for (const bin of validBins) {
           try {
-            const tenders = await fetchGoszakupTenders(bin);
-            storage.upsertTenders(tenders);
-            stats.goszakupCount += tenders.length;
-            stats.totalTenders += tenders.length;
+            const result = await fetchGoszakupTenders(bin, {
+              activeOnly: options.goszakupActiveOnly,
+              maxPages: options.goszakupMaxPages
+            });
+            storage.upsertTenders(result.tenders);
+            stats.goszakupCount += result.tenders.length;
+            stats.goszakupRaw += result.raw;
+            stats.goszakupFiltered += result.filtered;
+            stats.goszakupPages += result.pages;
+            stats.totalTenders += result.tenders.length;
+            console.log(
+              `goszakup.gov.kz: bin=${bin} pages=${result.pages} raw=${result.raw} accepted=${result.tenders.length} active_only=${options.goszakupActiveOnly ?? false}`
+            );
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            storage.recordEnrichError(bin, "goszakup", message);
+            if (error instanceof GoszakupAuthError) {
+              storage.recordEnrichError(bin, "goszakup", "invalid or expired token");
+            } else {
+              const message = error instanceof Error ? error.message : String(error);
+              storage.recordEnrichError(bin, "goszakup", message);
+            }
           }
           if (options.delayMs && options.delayMs > 0) await sleep(options.delayMs);
         }

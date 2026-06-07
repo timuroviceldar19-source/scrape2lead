@@ -10,8 +10,10 @@ npm run kz:tenders -- bins.csv
 
 ## Sources
 
-- `zakup.sk.kz`: Playwright collection from `https://zakup.sk.kz/#/lots` with API capture after submitting a company-name search. Company names come from `stat_gov_data`.
-- `goszakup.gov.kz`: REST call to `https://ows.goszakup.gov.kz/trd-buy/biin/<BIN>`. If `GOSZAKUP_TOKEN` is missing, this source is skipped without failing the batch.
+- `zakup.sk.kz`: Playwright collection from `https://zakup.sk.kz/#/lots` with API capture after submitting a company-name search. Company names come from `stat_gov_data`. Text-based discovery — use `zakupTenderFilter` for relevance gating.
+- `goszakup.gov.kz`: REST v3 API at `https://ows.goszakup.gov.kz/v3/trd-buy/bin/{BIN}`. BIN-based verified lookup with pagination. If `GOSZAKUP_TOKEN` is missing, this source is skipped without failing the batch.
+
+**API docs:** https://goszakup.gov.kz/ru/developer/ows_v3
 
 ## Unified Schema
 
@@ -50,11 +52,42 @@ Useful flags:
 ```bash
 npm run kz:enrich -- bins.csv --skip-stat
 npm run kz:enrich -- bins.csv --skip-tenders
+npm run kz:enrich -- bins.csv --skip-zakup               # goszakup only
+npm run kz:enrich -- bins.csv --goszakup-active-only      # only active tenders
+npm run kz:enrich -- bins.csv --goszakup-max-pages 10
 npm run kz:enrich -- bins.csv --delay-ms 2000
 npm run kz:enrich -- bins.csv --force-refresh
 ```
 
-`stat_gov_data` is cached by `updated_at`. Default TTL is 7 days and can be changed with `STAT_GOV_CACHE_TTL_DAYS`; `--force-refresh` bypasses the cache.
+## Goszakup API v3
+
+**Endpoint:** `GET https://ows.goszakup.gov.kz/v3/trd-buy/bin/{BIN}`
+
+**Response:**
+```json
+{
+  "total": 32,
+  "limit": 50,
+  "next_page": "/v3/trd-buy/bin/{BIN}?page=next&search_after=...",
+  "items": [{ "id", "number_anno", "name_ru", "customer_name_ru", "org_bin", ... }]
+}
+```
+
+**Pagination:** Follow `next_page` until empty string. Max pages controlled by `GOSZAKUP_MAX_PAGES` (default 20).
+
+**Active filter:** `GOSZAKUP_ACTIVE_ONLY=1` keeps only tenders with `ref_buy_status_id` in the active set (default: 210, 220). Override with `GOSZAKUP_ACTIVE_STATUS_IDS=210,220`.
+
+**HTTP retry:** 429 and 5xx errors retry with exponential backoff (max 3 attempts). 401/403 records an enrich error and stops.
+
+**Status names:** Loaded from `/v3/refs/ref_buy_status` and cached per batch.
+
+### Smoke Test
+
+```bash
+npm run kz:goszakup:smoke -- 061040006408
+```
+
+Read-only check: requires `GOSZAKUP_TOKEN`, prints pages/raw/accepted counts and first 3 tenders.
 
 ## XLSX Export
 
