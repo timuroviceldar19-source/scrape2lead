@@ -4,6 +4,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import { isValidBin, sleep } from "./csv.js";
 import { normalizeCompanyName } from "./normalizeCompanyName.js";
 import type { TenderRecord } from "./tenderTypes.js";
+import { filterZakupTenders, type ZakupRejectReason } from "./zakupTenderFilter.js";
 
 interface ZakupCompanyInput {
   bin: string;
@@ -21,6 +22,8 @@ export interface ZakupBatchResult {
   processed: number;
   skipped: number;
   failed: number;
+  filtered: number;
+  accepted: number;
   errors: Array<{ bin: string; message: string }>;
 }
 
@@ -32,7 +35,15 @@ export async function collectZakupTendersForBatch(
 ): Promise<ZakupBatchResult> {
   const browser = await chromium.launch({ headless: options.headless ?? false });
   const delayMs = options.delayMs ?? 2000;
-  const result: ZakupBatchResult = { tenders: [], processed: 0, skipped: 0, failed: 0, errors: [] };
+  const result: ZakupBatchResult = {
+    tenders: [],
+    processed: 0,
+    skipped: 0,
+    failed: 0,
+    filtered: 0,
+    accepted: 0,
+    errors: []
+  };
 
   try {
     for (const company of companies) {
@@ -56,8 +67,24 @@ export async function collectZakupTendersForBatch(
 
       result.processed++;
       try {
-        const tenders = await fetchZakupTenders(browser, company.bin, company.companyName, searchName, options.debugDir ?? DEFAULT_DEBUG_DIR);
+        const { tenders, rawCount, rejectedReasons } = await fetchZakupTenders(
+          browser,
+          company.bin,
+          company.companyName,
+          searchName,
+          options.debugDir ?? DEFAULT_DEBUG_DIR
+        );
         result.tenders.push(...tenders);
+        result.accepted += tenders.length;
+        result.filtered += rawCount - tenders.length;
+
+        const reasonCounts: Partial<Record<ZakupRejectReason, number>> = {};
+        for (const r of rejectedReasons) {
+          reasonCounts[r] = (reasonCounts[r] ?? 0) + 1;
+        }
+        console.log(
+          `zakup.sk.kz: bin=${company.bin} search="${searchName}" raw=${rawCount} accepted=${tenders.length} rejected=${rawCount - tenders.length} reasons=${JSON.stringify(reasonCounts)}`
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`zakup.sk.kz: ${company.bin} failed: ${message}`);
@@ -80,18 +107,20 @@ async function fetchZakupTenders(
   companyName: string,
   searchName: string,
   debugDir: string
-): Promise<TenderRecord[]> {
+): Promise<{ tenders: TenderRecord[]; rawCount: number; rejectedReasons: ZakupRejectReason[] }> {
   const context = await browser.newContext();
   const page = await context.newPage();
-  let searchSubmitted = false;
-  let apiData: unknown = null;
+
+  let searchSubmittedAt = 0;
+  let capturedData: unknown = null;
 
   page.on("response", async (response) => {
-    if (!searchSubmitted) return;
+    if (!searchSubmittedAt) return;
     const url = response.url();
     if (!url.includes("4dv3rts")) return;
+    if (capturedData) return;
     try {
-      apiData = await response.json();
+      capturedData = await response.json();
     } catch {
       // Non-JSON responses are irrelevant for tender capture.
     }
@@ -106,14 +135,31 @@ async function fetchZakupTenders(
 
     await searchInput.fill(searchName);
     await page.waitForTimeout(500);
-    searchSubmitted = true;
+
+    const responsePromise = page.waitForResponse(
+      (res) => {
+        const url = res.url();
+        return res.ok() && url.includes("4dv3rts");
+      },
+      { timeout: 15_000 }
+    ).catch(() => null);
+
+    searchSubmittedAt = Date.now();
     await searchInput.press("Enter");
-    await page.waitForTimeout(5_000);
+    await responsePromise;
+    await page.waitForTimeout(2_000);
 
     fs.mkdirSync(debugDir, { recursive: true });
     await page.screenshot({ path: path.join(debugDir, `zakup-search-${bin}.png`) });
 
-    return extractZakupItems(apiData).map((item) => mapZakupTender(item, bin, companyName));
+    const rawItems = extractZakupItems(capturedData);
+    const filterResult = filterZakupTenders(rawItems, bin, companyName);
+
+    return {
+      tenders: filterResult.accepted,
+      rawCount: rawItems.length,
+      rejectedReasons: filterResult.rejected.map((r) => r.reason)
+    };
   } finally {
     await page.close();
     await context.close();
@@ -124,8 +170,7 @@ async function findSearchInput(page: Page) {
   const selectors = [
     'input[placeholder*="Слово"]',
     'input[placeholder*="поиска"]',
-    'input[type="search"]',
-    "input"
+    'input[type="search"]'
   ];
   for (const selector of selectors) {
     const input = await page.$(selector);
@@ -146,30 +191,6 @@ function extractZakupItems(data: unknown): Array<Record<string, unknown>> {
   return [];
 }
 
-function mapZakupTender(item: Record<string, unknown>, bin: string, companyName: string): TenderRecord {
-  const number = stringValue(item.number) || stringValue(item.id) || "N/A";
-  return {
-    source: "zakup.sk.kz",
-    bin,
-    tender_number: number,
-    tender_name: stringValue(item.nameRu) || stringValue(item.nameKk) || "N/A",
-    customer_name: companyName,
-    budget_amount: stringValue(item.sumTruNoNds),
-    currency: "KZT",
-    start_date: stringValue(item.acceptanceBeginDateTime),
-    end_date: stringValue(item.acceptanceEndDateTime),
-    status: stringValue(item.advertStatus),
-    method: stringValue(item.tenderType),
-    url: `https://zakup.sk.kz/#/lots/${number}`,
-    parsed_at: new Date().toISOString()
-  };
-}
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function stringValue(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  return String(value);
 }

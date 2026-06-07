@@ -54,6 +54,9 @@ export async function collectTendersForBins(
       for (const error of zakupResult.errors) {
         storage.recordEnrichError(error.bin, "zakup", error.message);
       }
+      if (zakupResult.filtered > 0 && zakupResult.accepted === 0) {
+        storage.recordEnrichError("batch", "zakup", `all ${zakupResult.filtered} lots rejected by relevance filter`);
+      }
       stats.zakupCount = zakupResult.tenders.length;
       stats.totalTenders += zakupResult.tenders.length;
       stats.skipped += zakupResult.skipped;

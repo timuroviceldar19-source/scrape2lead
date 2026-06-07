@@ -90,3 +90,18 @@ GOSZAKUP_TOKEN=your_token_here
 ```
 
 Without the token, `zakup.sk.kz` still runs and `goszakup.gov.kz` is reported as skipped.
+
+## Zakup Relevance Filter
+
+`zakup.sk.kz` performs a **text search**, not a BIN lookup. The portal's default feed returns lots unrelated to the searched company. To prevent false positives, `filterZakupTenders()` applies two gates:
+
+| Gate | Logic |
+|---|---|
+| **title match** | At least 1 meaningful token from the company name (after normalization and generic-word removal) must appear in `tender_name`. |
+| **default feed** | If every tender number in the batch matches `tests/fixtures/zakup-default-feed.json`, the entire batch is rejected. |
+
+**Conservative by default** — a lot is saved only when `hasZakupTitleMatch` is true. 0 saved lots is better than 10 false positives.
+
+`customer_name` is set from `stat_gov_data` **only after** a lot passes the filter. Lots that are rejected are never persisted.
+
+For verified supplier data, use `goszakup.gov.kz` (BIN-based lookup with token).
