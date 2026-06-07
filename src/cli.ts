@@ -1,4 +1,6 @@
 import "dotenv/config";
+import { spawn } from "node:child_process";
+import Database from "better-sqlite3";
 import { Command } from "commander";
 import { AdapterRegistry } from "./adapters/registry.js";
 import { TwoGisAdapter } from "./adapters/2gis/index.js";
@@ -14,6 +16,10 @@ import type { IStorage } from "./storage/interface.js";
 import type { RuntimeConfig, ISourceAdapter } from "./types.js";
 import { EnrichmentProcessor } from "./enrichment/enrichmentProcessor.js";
 import { TwoGisEnrichmentAdapter } from "./enrichment/adapters/TwoGisEnrichmentAdapter.js";
+import { formatKzEnrichResult, runKzEnrich } from "./kz/enrichPipeline.js";
+import { readBinsFromCsv } from "./kz/csv.js";
+import { exportKzReport } from "./kz/kzExporter.js";
+import { mergeStatGovData } from "../scripts/merge-stat-gov-data.js";
 
 const program = new Command();
 
@@ -30,6 +36,65 @@ program
   .option("--headless", "run browser headless")
   .option("--headed", "run browser with visible window")
   .option("--fixture <path>", "read captured JSON fixture instead of opening browser");
+
+const kz = program.command("kz").description("Kazakhstan company intelligence pipeline");
+
+kz
+  .command("login")
+  .description("Create or refresh stat.gov.kz browser session")
+  .action(async () => {
+    await runScript("scripts/stat-gov-login.ts");
+  });
+
+kz
+  .command("enrich")
+  .description("Run KZ stat.gov + tenders enrichment for BIN CSV")
+  .argument("<csvFile>", "CSV file with BIN values")
+  .option("--skip-stat", "skip stat.gov collection")
+  .option("--skip-tenders", "skip tender collection")
+  .option("--delay-ms <ms>", "delay between requests in ms", "2000")
+  .option("--force-refresh", "ignore stat.gov TTL cache")
+  .action(async (csvFile: string, options: { skipStat?: boolean; skipTenders?: boolean; delayMs: string; forceRefresh?: boolean }) => {
+    const result = await runKzEnrich({
+      csvFile,
+      skipStat: Boolean(options.skipStat),
+      skipTenders: Boolean(options.skipTenders),
+      delayMs: Number(options.delayMs) || 2000,
+      forceRefresh: Boolean(options.forceRefresh)
+    });
+    console.log(formatKzEnrichResult(result));
+  });
+
+kz
+  .command("export")
+  .description("Export KZ company cards, tenders, summary and errors to XLSX")
+  .option("--bins <csvFile>", "optional CSV file with BIN values")
+  .option("--out <path>", "output XLSX path")
+  .option("--format <format>", "export format", "xlsx")
+  .action(async (options: { bins?: string; out?: string; format: string }) => {
+    if (options.format !== "xlsx") {
+      throw new Error("Only --format xlsx is supported for KZ export");
+    }
+    const result = await exportKzReport({
+      bins: options.bins ? readBinsFromCsv(options.bins) : undefined,
+      outPath: options.out
+    });
+    console.log(`kz export: ${result.xlsxPath}`);
+    console.log(`companies=${result.companies} tenders=${result.tenders} errors=${result.errors}`);
+  });
+
+kz
+  .command("merge")
+  .description("Merge stat.gov data into leads")
+  .action(() => {
+    const db = new Database("data/scrape2lead.db");
+    try {
+      const stats = mergeStatGovData(db);
+      console.log(`merge stat.gov: matched=${stats.matched} skipped=${stats.skipped}`);
+    } finally {
+      db.close();
+    }
+  });
 
 program
   .command("enrich")
@@ -214,6 +279,21 @@ program.action(async () => {
 // Parse arguments; the default action above runs the scrape path, the
 // `enrich` subcommand runs its own action.
 await program.parseAsync(argvForParse);
+
+async function runScript(scriptPath: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const executable = process.platform === "win32" ? "npx.cmd" : "npx";
+    const child = spawn(executable, ["tsx", scriptPath], {
+      stdio: "inherit",
+      shell: false
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${scriptPath} exited with code ${code ?? "null"}`));
+    });
+  });
+}
 
 /**
  * Backend selector. SQLite stays the default so the existing CLI surface,

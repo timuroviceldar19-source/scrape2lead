@@ -21,6 +21,7 @@ export interface ZakupBatchResult {
   processed: number;
   skipped: number;
   failed: number;
+  errors: Array<{ bin: string; message: string }>;
 }
 
 const DEFAULT_DEBUG_DIR = "data/debug";
@@ -31,7 +32,7 @@ export async function collectZakupTendersForBatch(
 ): Promise<ZakupBatchResult> {
   const browser = await chromium.launch({ headless: options.headless ?? false });
   const delayMs = options.delayMs ?? 2000;
-  const result: ZakupBatchResult = { tenders: [], processed: 0, skipped: 0, failed: 0 };
+  const result: ZakupBatchResult = { tenders: [], processed: 0, skipped: 0, failed: 0, errors: [] };
 
   try {
     for (const company of companies) {
@@ -61,6 +62,7 @@ export async function collectZakupTendersForBatch(
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`zakup.sk.kz: ${company.bin} failed: ${message}`);
         result.failed++;
+        result.errors.push({ bin: company.bin, message });
       }
 
       if (delayMs > 0) await sleep(delayMs);

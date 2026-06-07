@@ -295,6 +295,19 @@ const migrations: Migration[] = [
       ensureStatGovDataTable(db);
       ensureUnifiedTenderDataTable(db);
     }
+  },
+  {
+    version: 12,
+    sql: `
+      CREATE TABLE IF NOT EXISTS kz_enrich_errors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bin TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_kz_enrich_errors_bin ON kz_enrich_errors(bin);
+    `
   }
 ];
 

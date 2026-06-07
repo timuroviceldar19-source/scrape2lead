@@ -14,6 +14,7 @@ describe("KZ v11 migration", () => {
     expect(statColumns).toContain("raw_snapshot_path");
     expect(tenderColumns).toContain("source");
     expect(tenderColumns).toContain("tender_number");
+    expect(columns(db, "kz_enrich_errors")).toContain("message");
 
     db.close();
   });

@@ -1,7 +1,5 @@
 import dotenv from "dotenv";
-import { readBinsFromCsv } from "../src/kz/csv.js";
-import { collectStatGovForBins } from "../src/kz/statGovCollector.js";
-import { collectTendersForBins } from "../src/kz/tendersPipeline.js";
+import { formatKzEnrichResult, runKzEnrich } from "../src/kz/enrichPipeline.js";
 
 dotenv.config();
 
@@ -10,6 +8,7 @@ interface Args {
   skipStat: boolean;
   skipTenders: boolean;
   delayMs: number;
+  forceRefresh: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -17,7 +16,8 @@ function parseArgs(argv: string[]): Args {
     csvFile: null,
     skipStat: argv.includes("--skip-stat"),
     skipTenders: argv.includes("--skip-tenders"),
-    delayMs: 2000
+    delayMs: 2000,
+    forceRefresh: argv.includes("--force-refresh")
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -39,29 +39,18 @@ function parseArgs(argv: string[]): Args {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (!args.csvFile) {
-    console.error("Usage: npx tsx scripts/kz-enrich.ts bins.csv [--skip-stat] [--skip-tenders] [--delay-ms 2000]");
+    console.error("Usage: npx tsx scripts/kz-enrich.ts bins.csv [--skip-stat] [--skip-tenders] [--delay-ms 2000] [--force-refresh]");
     process.exit(1);
   }
 
-  const bins = readBinsFromCsv(args.csvFile);
-  let statSummary = "skipped";
-  let tenderSummary = "skipped";
-
-  if (!args.skipStat) {
-    const stat = await collectStatGovForBins(bins, { delayMs: args.delayMs });
-    statSummary = `processed=${stat.processed} success=${stat.success} failed=${stat.failed} skipped=${stat.skipped}`;
-  }
-
-  if (!args.skipTenders) {
-    const tenders = await collectTendersForBins(bins, { delayMs: args.delayMs });
-    tenderSummary =
-      `processed=${tenders.processed} zakup=${tenders.zakupCount} ` +
-      `goszakup=${tenders.goszakupCount} total=${tenders.totalTenders} skipped=${tenders.skipped}`;
-  }
-
-  console.log("KZ enrich summary");
-  console.log(`stat: ${statSummary}`);
-  console.log(`tenders: ${tenderSummary}`);
+  const result = await runKzEnrich({
+    csvFile: args.csvFile,
+    skipStat: args.skipStat,
+    skipTenders: args.skipTenders,
+    delayMs: args.delayMs,
+    forceRefresh: args.forceRefresh
+  });
+  console.log(formatKzEnrichResult(result));
 }
 
 main().catch((error) => {

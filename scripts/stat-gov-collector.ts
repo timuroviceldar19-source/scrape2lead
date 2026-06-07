@@ -10,7 +10,7 @@ async function main(): Promise<void> {
 
   const bins = readBinsFromCsv(csvFile);
   const stats = await collectStatGovForBins(bins);
-  console.log(`stat.gov: processed=${stats.processed} success=${stats.success} failed=${stats.failed} skipped=${stats.skipped}`);
+  console.log(`stat.gov: processed=${stats.processed} success=${stats.success} failed=${stats.failed} skipped=${stats.skipped} cached=${stats.cached}`);
 }
 
 main().catch((error) => {

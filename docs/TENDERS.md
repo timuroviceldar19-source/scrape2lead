@@ -41,6 +41,7 @@ Every row must have `source` set to either `zakup.sk.kz` or `goszakup.gov.kz`.
 ```bash
 npm run kz:login
 npm run kz:enrich -- bins.csv
+npm run kz:export -- --out exports/kz-report.xlsx
 npm run kz:merge
 ```
 
@@ -50,7 +51,24 @@ Useful flags:
 npm run kz:enrich -- bins.csv --skip-stat
 npm run kz:enrich -- bins.csv --skip-tenders
 npm run kz:enrich -- bins.csv --delay-ms 2000
+npm run kz:enrich -- bins.csv --force-refresh
 ```
+
+`stat_gov_data` is cached by `updated_at`. Default TTL is 7 days and can be changed with `STAT_GOV_CACHE_TTL_DAYS`; `--force-refresh` bypasses the cache.
+
+## XLSX Export
+
+```bash
+npm run kz:export
+npm run dev -- kz export --bins bins.csv --out exports/kz-report.xlsx
+```
+
+The workbook has four sheets:
+
+- `Companies`: stat.gov company cards plus tender aggregates.
+- `Tenders`: flat tender records with company name.
+- `Summary`: totals by company coverage, source and tender status.
+- `Errors`: rows from `kz_enrich_errors`.
 
 ## Input
 

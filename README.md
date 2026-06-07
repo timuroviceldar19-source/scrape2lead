@@ -42,11 +42,13 @@ npm run dev -- --help  # run CLI via tsx without building
 ```bash
 npm run kz:login              # interactive stat.gov session
 npm run kz:enrich -- bins.csv # stat.gov + zakup.sk.kz + goszakup.gov.kz
+npm run kz:export             # XLSX report: Companies, Tenders, Summary, Errors
 npm run kz:tenders -- bins.csv
 npm run kz:merge
 ```
 
-Use `--skip-stat`, `--skip-tenders`, and `--delay-ms 2000` with `kz:enrich` for partial reruns.
+The same flow is available through `npm run dev -- kz login|enrich|export|merge`.
+Use `--skip-stat`, `--skip-tenders`, `--delay-ms 2000`, and `--force-refresh` with `kz enrich` for partial reruns and cache control.
 
 ## Run against a saved fixture (no network required)
 

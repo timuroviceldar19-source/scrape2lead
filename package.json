@@ -23,7 +23,8 @@
     "kz:login": "tsx scripts/stat-gov-login.ts",
     "kz:enrich": "tsx scripts/kz-enrich.ts",
     "kz:tenders": "tsx scripts/tenders-collector.ts",
-    "kz:merge": "tsx scripts/merge-stat-gov-data.ts"
+    "kz:merge": "tsx scripts/merge-stat-gov-data.ts",
+    "kz:export": "tsx scripts/kz-export.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",

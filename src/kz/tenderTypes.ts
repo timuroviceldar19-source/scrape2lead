@@ -41,3 +41,26 @@ export interface TenderRecord {
   url: string | null;
   parsed_at: string;
 }
+
+export interface CompanyCard extends StatGovRecord {
+  tender_count_total: number;
+  tender_count_active: number;
+  tender_budget_sum: number | null;
+  tender_sources: string;
+  last_tender_end_date: string | null;
+}
+
+export interface EnrichError {
+  id: number;
+  bin: string;
+  stage: "stat_gov" | "zakup" | "goszakup" | string;
+  message: string;
+  created_at: string;
+}
+
+export const ACTIVE_TENDER_STATUSES = new Set([
+  "PUBLISHED",
+  "ACTIVE",
+  "OPEN",
+  "PUBLISHED_SUPPLIER_SELECTION"
+]);
