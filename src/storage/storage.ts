@@ -75,7 +75,9 @@ export class Storage implements IStorage {
         lead_id, source_search_city, merchant_city_guess, city_status,
         address_raw, address_clean, phone_raw, phone_normalized, phone_status,
         email_raw, email_status, kaspi_profile_url, real_website, messenger_flags,
-        lead_score, priority, contactability, crm_status, next_action, parser_note
+        lead_score, priority, contactability, crm_status, next_action, parser_note,
+        bin, registration_date, oked, oked_name, director, founder,
+        legal_status, company_age_years, legal_form
       ) VALUES (
         @source, @external_id, @company_name, @category, @city, @address, @phones,
         @email, @website, @social_links, @messenger_links, @parsed_at, @incomplete,
@@ -83,7 +85,9 @@ export class Storage implements IStorage {
         @lead_id, @source_search_city, @merchant_city_guess, @city_status,
         @address_raw, @address_clean, @phone_raw, @phone_normalized, @phone_status,
         @email_raw, @email_status, @kaspi_profile_url, @real_website, @messenger_flags,
-        @lead_score, @priority, @contactability, @crm_status, @next_action, @parser_note
+        @lead_score, @priority, @contactability, @crm_status, @next_action, @parser_note,
+        @bin, @registration_date, @oked, @oked_name, @director, @founder,
+        @legal_status, @company_age_years, @legal_form
       )
       ON CONFLICT(source, external_id) DO UPDATE SET
         company_name = excluded.company_name,
@@ -120,7 +124,16 @@ export class Storage implements IStorage {
         contactability = excluded.contactability,
         crm_status = excluded.crm_status,
         next_action = excluded.next_action,
-        parser_note = excluded.parser_note
+        parser_note = excluded.parser_note,
+        bin = excluded.bin,
+        registration_date = excluded.registration_date,
+        oked = excluded.oked,
+        oked_name = excluded.oked_name,
+        director = excluded.director,
+        founder = excluded.founder,
+        legal_status = excluded.legal_status,
+        company_age_years = excluded.company_age_years,
+        legal_form = excluded.legal_form
     `);
     const insertPhone = this.db.prepare(`
       INSERT OR IGNORE INTO lead_phones (phone, source, external_id)
@@ -158,7 +171,16 @@ export class Storage implements IStorage {
         contactability: lead.contactability ?? null,
         crm_status: lead.crm_status ?? null,
         next_action: lead.next_action ?? null,
-        parser_note: lead.parser_note ?? null
+        parser_note: lead.parser_note ?? null,
+        bin: lead.bin ?? null,
+        registration_date: lead.registration_date ?? null,
+        oked: lead.oked ?? null,
+        oked_name: lead.oked_name ?? null,
+        director: lead.director ?? null,
+        founder: lead.founder ?? null,
+        legal_status: lead.legal_status ?? null,
+        company_age_years: lead.company_age_years ?? null,
+        legal_form: lead.legal_form ?? null
       });
       for (const phone of lead.phones) {
         insertPhone.run(phone, lead.source, lead.external_id);
@@ -251,7 +273,16 @@ export class Storage implements IStorage {
       enrichment_attempted_at: row.enrichment_attempted_at ? String(row.enrichment_attempted_at) : undefined,
       enrichment_error: row.enrichment_error !== null && row.enrichment_error !== undefined ? String(row.enrichment_error) : null,
       found_name: row.found_name ? String(row.found_name) : undefined,
-      found_category: row.found_category ? String(row.found_category) : undefined
+      found_category: row.found_category ? String(row.found_category) : undefined,
+      bin: row.bin ? String(row.bin) : undefined,
+      registration_date: row.registration_date ? String(row.registration_date) : undefined,
+      oked: row.oked ? String(row.oked) : undefined,
+      oked_name: row.oked_name ? String(row.oked_name) : undefined,
+      director: row.director ? String(row.director) : undefined,
+      founder: row.founder ? String(row.founder) : undefined,
+      legal_status: row.legal_status ? String(row.legal_status) as "active" | "inactive" | "liquidated" | "reorganizing" | "unknown" : undefined,
+      company_age_years: row.company_age_years !== null && row.company_age_years !== undefined ? Number(row.company_age_years) : undefined,
+      legal_form: row.legal_form ? String(row.legal_form) : undefined
     };
   }
 

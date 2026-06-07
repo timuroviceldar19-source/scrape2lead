@@ -37,6 +37,17 @@ npm run lint      # type-check without emitting (reports type errors)
 npm run dev -- --help  # run CLI via tsx without building
 ```
 
+## KZ Pipeline (v2)
+
+```bash
+npm run kz:login              # interactive stat.gov session
+npm run kz:enrich -- bins.csv # stat.gov + zakup.sk.kz + goszakup.gov.kz
+npm run kz:tenders -- bins.csv
+npm run kz:merge
+```
+
+Use `--skip-stat`, `--skip-tenders`, and `--delay-ms 2000` with `kz:enrich` for partial reruns.
+
 ## Run against a saved fixture (no network required)
 
 ```bash

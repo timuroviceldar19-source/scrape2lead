@@ -61,6 +61,17 @@ export interface Lead {
   enrichment_error?: string | null;
   found_name?: string;
   found_category?: string;
+
+  // stat.gov.kz fields
+  bin?: string;
+  registration_date?: string;
+  oked?: string;
+  oked_name?: string;
+  director?: string;
+  founder?: string;
+  legal_status?: "active" | "inactive" | "liquidated" | "reorganizing" | "unknown";
+  company_age_years?: number;
+  legal_form?: string;
 }
 
 export interface RawCompanyCard {

@@ -11,6 +11,8 @@ dist/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/stat-gov-session.json
+data/debug/
 
 # Runtime export artifacts
 exports/*

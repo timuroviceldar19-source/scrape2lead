@@ -19,7 +19,11 @@
     "sales:buyer-template": "tsx scripts/generateBuyerOutreachTemplate.ts",
     "sales:sprint-workbook": "tsx scripts/generateSalesSprintWorkbook.ts",
     "api:2gis:smoke": "tsx scripts/test2gisPlacesApi.ts",
-    "operator:intake": "tsx scripts/operatorIntake.ts"
+    "operator:intake": "tsx scripts/operatorIntake.ts",
+    "kz:login": "tsx scripts/stat-gov-login.ts",
+    "kz:enrich": "tsx scripts/kz-enrich.ts",
+    "kz:tenders": "tsx scripts/tenders-collector.ts",
+    "kz:merge": "tsx scripts/merge-stat-gov-data.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",
