@@ -69,7 +69,11 @@ export async function collectStatGovForBins(
 
       stats.processed++;
       try {
-        const result = await fetchStatGovByBin(page, bin, options.debugDir ?? DEFAULT_DEBUG_DIR);
+        const result = await fetchStatGovByBinWithRetry(
+          page,
+          bin,
+          options.debugDir ?? DEFAULT_DEBUG_DIR
+        );
         if (result.record) {
           storage.upsertStatGov({
             ...result.record,
@@ -97,18 +101,47 @@ export async function collectStatGovForBins(
   return stats;
 }
 
+const STAT_GOV_MAX_RETRIES = 3;
+
+export async function fetchStatGovByBinWithRetry(
+  page: Page,
+  bin: string,
+  debugDir = DEFAULT_DEBUG_DIR,
+  maxRetries = STAT_GOV_MAX_RETRIES
+): Promise<{ record: StatGovRecord | null; rawSnapshotPath: string | null }> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fetchStatGovByBin(page, bin, debugDir);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (!isRetriableStatGovError(lastError) || attempt === maxRetries) break;
+      const backoff = 1000 * attempt;
+      console.warn(
+        `stat.gov: bin=${bin} attempt ${attempt}/${maxRetries} failed: ${lastError.message}; retry in ${backoff}ms`
+      );
+      await sleep(backoff);
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+    }
+  }
+
+  throw lastError!;
+}
+
 export async function fetchStatGovByBin(
   page: Page,
   bin: string,
   debugDir = DEFAULT_DEBUG_DIR
 ): Promise<{ record: StatGovRecord | null; rawSnapshotPath: string | null }> {
   await page.goto("https://stat.gov.kz/ru/cabinet/juridical/by/bin/", {
-    waitUntil: "networkidle",
+    waitUntil: "domcontentloaded",
     timeout: 30_000
   });
+  await page.waitForSelector('input[name="bin"]', { timeout: 30_000 });
   await page.fill('input[name="bin"]', bin);
   await page.click('button[type="submit"]');
-  await page.waitForLoadState("networkidle", { timeout: 15_000 });
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
   const html = await page.content();
   fs.mkdirSync(debugDir, { recursive: true });
@@ -119,6 +152,14 @@ export async function fetchStatGovByBin(
     record: parseStatGovHtml(html),
     rawSnapshotPath
   };
+}
+
+function isRetriableStatGovError(error: Error): boolean {
+  const message = error.message.toLowerCase();
+  return message.includes("timeout")
+    || message.includes("waiting for")
+    || message.includes("navigation")
+    || message.includes("net::");
 }
 
 function loadSession(sessionPath: string): { storageState: BrowserContextOptions["storageState"]; savedAt?: string } {

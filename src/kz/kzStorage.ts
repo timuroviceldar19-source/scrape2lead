@@ -86,6 +86,12 @@ export class KzStorage {
           THEN CAST(REPLACE(REPLACE(t.budget_amount, ' ', ''), ',', '.') AS REAL)
           ELSE NULL
         END) AS tender_budget_sum,
+        SUM(CASE
+          WHEN ${activeTenderStatusSqlCase("t.status")}
+            AND t.budget_amount IS NOT NULL AND TRIM(t.budget_amount) != ''
+          THEN CAST(REPLACE(REPLACE(t.budget_amount, ' ', ''), ',', '.') AS REAL)
+          ELSE NULL
+        END) AS tender_active_budget_sum,
         GROUP_CONCAT(DISTINCT t.source) AS tender_sources,
         MAX(NULLIF(t.end_date, '')) AS last_tender_end_date,
         r.phone AS registry_phone,
@@ -109,6 +115,9 @@ export class KzStorage {
       tender_budget_sum: row.tender_budget_sum === null || row.tender_budget_sum === undefined
         ? null
         : Number(row.tender_budget_sum),
+      tender_active_budget_sum: row.tender_active_budget_sum === null || row.tender_active_budget_sum === undefined
+        ? null
+        : Number(row.tender_active_budget_sum),
       tender_sources: row.tender_sources ? String(row.tender_sources) : "",
       last_tender_end_date: stringOrNull(row.last_tender_end_date),
       registry_phone: stringOrNull(row.registry_phone),

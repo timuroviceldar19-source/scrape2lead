@@ -38,12 +38,14 @@ describe("KzStorage", () => {
     storage.upsertTenders([
       tender("goszakup.gov.kz", "100000000005", "C-1", "Действует", "1000", "2026-12-01"),
       tender("goszakup.gov.kz", "100000000005", "C-2", "Исполнен", "2000", "2026-01-01"),
-      tender("goszakup.gov.kz", "100000000005", "C-3", "Изменен", "500", "2026-12-15")
+      tender("goszakup.gov.kz", "100000000005", "C-3", "Изменен", "500", "2026-12-15"),
+      tender("goszakup.gov.kz", "100000000005", "C-4", "Передан.Действует", "250", "2026-12-20")
     ]);
 
     const card = storage.getCompanyCards(["100000000005"])[0];
-    expect(card.tender_count_total).toBe(3);
-    expect(card.tender_count_active).toBe(2);
+    expect(card.tender_count_total).toBe(4);
+    expect(card.tender_count_active).toBe(3);
+    expect(card.tender_active_budget_sum).toBe(1750);
 
     db.close();
   });

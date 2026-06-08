@@ -42,10 +42,13 @@ export interface TenderRecord {
   parsed_at: string;
 }
 
+export type LeadPriority = "A" | "B" | "C" | "";
+
 export interface CompanyCard extends StatGovRecord {
   tender_count_total: number;
   tender_count_active: number;
   tender_budget_sum: number | null;
+  tender_active_budget_sum: number | null;
   tender_sources: string;
   last_tender_end_date: string | null;
   registry_phone?: string | null;
@@ -74,6 +77,7 @@ export const ACTIVE_TENDER_STATUSES_LATIN = new Set([
 /** goszakup HTML supplier contracts — exact match (Cyrillic is not folded by SQLite UPPER). */
 export const ACTIVE_TENDER_STATUSES_EXACT = new Set([
   "Действует",
+  "Передан.Действует",
   "Изменен",
   "Создано доп.соглашение",
   "Частично исполнен"

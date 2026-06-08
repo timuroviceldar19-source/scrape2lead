@@ -6,6 +6,7 @@ import {
   parseGoszakupAnnounceHtml,
   parseGoszakupLotsHtml,
   parseGoszakupContractHtml,
+  parseGoszakupPagination,
   type GoszakupAnnounceItem,
   type GoszakupLotItem,
   type GoszakupContractItem
@@ -30,7 +31,8 @@ export interface GoszakupHtmlResult {
 
 const DEFAULT_DEBUG_DIR = "data/debug";
 const BASE_URL = "https://goszakup.gov.kz";
-const MAX_PAGES_DEFAULT = 10;
+const RECORDS_PER_PAGE = 50;
+const MAX_PAGES_DEFAULT = Number(process.env.GOSZAKUP_HTML_MAX_PAGES ?? 50);
 
 export async function collectGoszakupHtmlForBins(
   bins: string[],
@@ -123,6 +125,13 @@ export async function collectGoszakupHtmlForBins(
   return result;
 }
 
+export function buildGoszakupHtmlPageUrl(baseUrl: string, pageNum = 0, recordsPerPage = RECORDS_PER_PAGE): string {
+  const separator = baseUrl.includes("?") ? "&" : "?";
+  const params = `count_record=${recordsPerPage}`;
+  if (pageNum <= 0) return `${baseUrl}${separator}${params}`;
+  return `${baseUrl}${separator}${params}&page=${pageNum}`;
+}
+
 async function collectPaginated<T>(
   page: Page,
   baseUrl: string,
@@ -136,9 +145,7 @@ async function collectPaginated<T>(
   let pageNum = 0;
 
   while (pageNum < maxPages) {
-    const url = pageNum === 0
-      ? baseUrl
-      : `${baseUrl}&count_record=50&page=${pageNum}`;
+    const url = buildGoszakupHtmlPageUrl(baseUrl, pageNum);
 
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: pageLoadTimeoutMs });
     await page.waitForTimeout(1500);
@@ -157,10 +164,14 @@ async function collectPaginated<T>(
 
     allItems.push(...items);
 
-    const hasNextPage = html.includes(`page=${pageNum + 1}`) && !html.includes(`page=${pageNum + 2}`);
-    const hasMorePages = html.includes(`page=${pageNum + 1}`);
+    const pagination = parseGoszakupPagination(html);
+    const totalPages = Math.min(
+      pagination.totalPages > 0 ? pagination.totalPages : 1,
+      maxPages
+    );
+    if (pageNum + 1 >= totalPages) break;
+    if (items.length < RECORDS_PER_PAGE) break;
 
-    if (!hasMorePages) break;
     pageNum++;
   }
 

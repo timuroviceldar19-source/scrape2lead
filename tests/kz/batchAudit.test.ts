@@ -21,6 +21,7 @@ const baseCompany = (bin: string, name: string): CompanyCard => ({
   updated_at: "2026-06-07T00:00:00.000Z",
   tender_count_total: 0,
   tender_count_active: 0,
+  tender_active_budget_sum: null,
   tender_budget_sum: null,
   tender_sources: "",
   last_tender_end_date: null

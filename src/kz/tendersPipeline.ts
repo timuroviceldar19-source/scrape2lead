@@ -116,7 +116,8 @@ export async function collectTendersForBins(
       try {
         const htmlResult = await collectGoszakupHtmlForBins(validBins, {
           headless: options.headless,
-          delayMs: options.delayMs
+          delayMs: options.delayMs,
+          maxPages: Number(process.env.GOSZAKUP_HTML_MAX_PAGES ?? 50)
         });
         storage.upsertTenders(htmlResult.tenders);
         stats.goszakupHtmlCount = htmlResult.announces.length;

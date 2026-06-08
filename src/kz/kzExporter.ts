@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
+import { scoreCompanyCards, type ScoredCompanyCard } from "./kzLeadScore.js";
 import { KzStorage } from "./kzStorage.js";
-import type { CompanyCard, EnrichError, TenderRecord } from "./tenderTypes.js";
+import type { EnrichError, TenderRecord } from "./tenderTypes.js";
 
 export interface KzExportOptions {
   databasePath?: string;
@@ -17,7 +18,7 @@ export interface KzExportResult {
   errors: number;
 }
 
-const COMPANY_COLUMNS: Array<{ header: string; key: keyof CompanyCard; width: number }> = [
+const COMPANY_COLUMNS: Array<{ header: string; key: keyof ScoredCompanyCard; width: number }> = [
   { header: "БИН", key: "bin", width: 16 },
   { header: "Компания", key: "name", width: 42 },
   { header: "Дата регистрации", key: "registration_date", width: 18 },
@@ -37,6 +38,9 @@ const COMPANY_COLUMNS: Array<{ header: string; key: keyof CompanyCard; width: nu
   { header: "Всего закупок", key: "tender_count_total", width: 16 },
   { header: "Активные закупки", key: "tender_count_active", width: 18 },
   { header: "Сумма закупок", key: "tender_budget_sum", width: 18 },
+  { header: "Сумма активных", key: "tender_active_budget_sum", width: 18 },
+  { header: "Приоритет лида", key: "lead_priority", width: 14 },
+  { header: "High volume", key: "high_volume", width: 14 },
   { header: "Источники закупок", key: "tender_sources", width: 24 },
   { header: "Последняя дата окончания", key: "last_tender_end_date", width: 24 },
   { header: "Обновлено", key: "updated_at", width: 24 }
@@ -62,7 +66,7 @@ const TENDER_COLUMNS: Array<{ header: string; key: keyof TenderRecord | "company
 export async function exportKzReport(options: KzExportOptions = {}): Promise<KzExportResult> {
   const storage = new KzStorage({ databasePath: options.databasePath });
   try {
-    const cards = storage.getCompanyCards(options.bins);
+    const cards = scoreCompanyCards(storage.getCompanyCards(options.bins));
     const cardBins = cards.map((card) => card.bin);
     const binsForTenders = options.bins && options.bins.length > 0 ? options.bins : cardBins;
     const tenders = storage.getTendersByBins(binsForTenders);
@@ -91,16 +95,18 @@ export async function exportKzReport(options: KzExportOptions = {}): Promise<KzE
   }
 }
 
-function addCompaniesSheet(workbook: ExcelJS.Workbook, cards: CompanyCard[]): void {
+function addCompaniesSheet(workbook: ExcelJS.Workbook, cards: ScoredCompanyCard[]): void {
   const sheet = workbook.addWorksheet("Companies");
   sheet.columns = COMPANY_COLUMNS;
   sheet.addRows(cards.map((card) => ({ ...card })));
   styleSheet(sheet);
-  const budgetCol = COMPANY_COLUMNS.findIndex((col) => col.key === "tender_budget_sum") + 1;
-  sheet.getColumn(budgetCol).numFmt = "#,##0.00";
+  for (const key of ["tender_budget_sum", "tender_active_budget_sum"] as const) {
+    const budgetCol = COMPANY_COLUMNS.findIndex((col) => col.key === key) + 1;
+    if (budgetCol > 0) sheet.getColumn(budgetCol).numFmt = "#,##0.00";
+  }
 }
 
-function addTendersSheet(workbook: ExcelJS.Workbook, tenders: TenderRecord[], cards: CompanyCard[]): void {
+function addTendersSheet(workbook: ExcelJS.Workbook, tenders: TenderRecord[], cards: ScoredCompanyCard[]): void {
   const sheet = workbook.addWorksheet("Tenders");
   const companyNames = new Map(cards.map((card) => [card.bin, card.name]));
   sheet.columns = TENDER_COLUMNS;
@@ -113,7 +119,7 @@ function addTendersSheet(workbook: ExcelJS.Workbook, tenders: TenderRecord[], ca
   sheet.getColumn(budgetCol).numFmt = "#,##0.00";
 }
 
-function addSummarySheet(workbook: ExcelJS.Workbook, cards: CompanyCard[], tenders: TenderRecord[]): void {
+function addSummarySheet(workbook: ExcelJS.Workbook, cards: ScoredCompanyCard[], tenders: TenderRecord[]): void {
   const sheet = workbook.addWorksheet("Summary");
   sheet.columns = [
     { header: "Метрика", key: "metric", width: 36 },
@@ -126,7 +132,10 @@ function addSummarySheet(workbook: ExcelJS.Workbook, cards: CompanyCard[], tende
     { metric: "Компаний с закупками", value: withTenders },
     { metric: "Закупок всего", value: tenders.length },
     { metric: "Активных закупок", value: cards.reduce((sum, card) => sum + card.tender_count_active, 0) },
-    { metric: "Сумма бюджетов", value: cards.reduce((sum, card) => sum + (card.tender_budget_sum ?? 0), 0) }
+    { metric: "Сумма бюджетов", value: cards.reduce((sum, card) => sum + (card.tender_budget_sum ?? 0), 0) },
+    { metric: "Сумма активных бюджетов", value: cards.reduce((sum, card) => sum + (card.tender_active_budget_sum ?? 0), 0) },
+    { metric: "Лидов приоритета A", value: cards.filter((card) => card.lead_priority === "A").length },
+    { metric: "High volume компаний", value: cards.filter((card) => card.high_volume).length }
   ]);
 
   sheet.addRow({});

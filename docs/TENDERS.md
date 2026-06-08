@@ -201,3 +201,42 @@ Registry records are cached for 7 days by default. Override with `GOSZAKUP_REGIS
 ### Storage
 
 Data goes to `goszakup_registry_data` table (migration v13), joined into the Companies sheet at export via `bin`.
+
+## Goszakup HTML Scraper (no token, Stage 4)
+
+When `GOSZAKUP_TOKEN` is missing, the pipeline can still collect tender-related data from public HTML pages via Playwright:
+
+| URL | Role | Persisted |
+|---|---|---|
+| `/ru/search/announce?filter[customer]=BIN` | company as **customer** | yes → `tender_data` |
+| `/ru/search/lots?filter[customer]=BIN` | lots as customer | parsed only (not saved yet) |
+| `/ru/registry/contract?filter[supplier]=BIN` | company as **supplier** | yes → `tender_data` |
+
+Supplier contracts are the main value for TOO harvest batches: they show government buyers the company already works with.
+
+### Commands
+
+```bash
+npm run kz:contracts:smoke -- 061040006408
+npm run kz:lots:smoke -- 061040006408
+npm run dev -- kz enrich bins.csv                      # HTML on by default
+npm run dev -- kz enrich bins.csv --skip-goszakup-html # disable HTML scraper
+```
+
+### Pagination
+
+- `count_record=50` on every page
+- Default max pages: `GOSZAKUP_HTML_MAX_PAGES=50` (up to ~2500 rows per BIN per endpoint)
+- Pagination parsed via `parseGoszakupPagination()` instead of fragile `page=N` substring checks
+
+### Active contract statuses in export
+
+`Companies.tender_count_active` and `Сумма активных` include Russian HTML contract statuses (`Действует`, `Передан.Действует`, `Изменен`, …) because SQLite `UPPER()` does not fold Cyrillic.
+
+### Lead scoring (Companies sheet)
+
+Export adds:
+
+- `Сумма активных` — budget sum for active contracts only
+- `Приоритет лида` — `A` / `B` / `C` from active count + active budget + total volume
+- `High volume` — `true` when `tender_count_total >= 50`
