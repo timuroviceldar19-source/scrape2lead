@@ -10,7 +10,9 @@ export interface KzEnrichOptions {
   skipStat?: boolean;
   skipTenders?: boolean;
   skipZakup?: boolean;
+  skipGoszakup?: boolean;
   skipGoszakupRegistry?: boolean;
+  skipGoszakupHtml?: boolean;
   registryOnly?: boolean;
   registryForceRefresh?: boolean;
   delayMs?: number;
@@ -59,6 +61,7 @@ export async function runKzEnrich(options: KzEnrichOptions): Promise<KzEnrichRes
       databasePath: options.databasePath,
       delayMs: options.delayMs,
       skipZakup: options.skipZakup,
+      skipGoszakupHtml: options.skipGoszakupHtml,
       goszakupActiveOnly: options.goszakupActiveOnly,
       goszakupMaxPages: options.goszakupMaxPages,
       zakupMaxRetries: options.zakupMaxRetries
@@ -87,7 +90,7 @@ export function formatKzEnrichResult(result: KzEnrichResult): string {
     ? `processed=${result.registry.processed} success=${result.registry.success} not_found=${result.registry.not_found} cached=${result.registry.cached} failed=${result.registry.failed}`
     : "skipped";
   const tenders = result.tenders
-    ? `processed=${result.tenders.processed} zakup=${result.tenders.zakupCount} goszakup=${result.tenders.goszakupCount} total=${result.tenders.totalTenders} skipped=${result.tenders.skipped}`
+    ? `processed=${result.tenders.processed} zakup=${result.tenders.zakupCount} goszakup=${result.tenders.goszakupCount} goszakup_html=${result.tenders.goszakupHtmlCount}+${result.tenders.goszakupHtmlLots}lots+${result.tenders.goszakupHtmlContracts}contracts total=${result.tenders.totalTenders} skipped=${result.tenders.skipped}`
     : "skipped";
 
   return [

@@ -1,5 +1,6 @@
 import { isValidBin, sleep } from "./csv.js";
 import { fetchGoszakupTenders, GoszakupAuthError, isGoszakupAvailable } from "./goszakupCollector.js";
+import { collectGoszakupHtmlForBins } from "./goszakupHtmlCollector.js";
 import { KzStorage } from "./kzStorage.js";
 import { collectZakupTendersForBatch } from "./zakupCollector.js";
 
@@ -9,6 +10,7 @@ export interface TendersPipelineOptions {
   headless?: boolean;
   skipZakup?: boolean;
   skipGoszakup?: boolean;
+  skipGoszakupHtml?: boolean;
   goszakupActiveOnly?: boolean;
   goszakupMaxPages?: number;
   zakupMaxRetries?: number;
@@ -22,6 +24,9 @@ export interface TenderCollectStats {
   goszakupRaw: number;
   goszakupFiltered: number;
   goszakupPages: number;
+  goszakupHtmlCount: number;
+  goszakupHtmlLots: number;
+  goszakupHtmlContracts: number;
   totalTenders: number;
 }
 
@@ -41,6 +46,9 @@ export async function collectTendersForBins(
     goszakupRaw: 0,
     goszakupFiltered: 0,
     goszakupPages: 0,
+    goszakupHtmlCount: 0,
+    goszakupHtmlLots: 0,
+    goszakupHtmlContracts: 0,
     totalTenders: 0
   };
 
@@ -101,6 +109,27 @@ export async function collectTendersForBins(
           }
           if (options.delayMs && options.delayMs > 0) await sleep(options.delayMs);
         }
+      }
+    }
+
+    if (!options.skipGoszakupHtml) {
+      try {
+        const htmlResult = await collectGoszakupHtmlForBins(validBins, {
+          headless: options.headless,
+          delayMs: options.delayMs
+        });
+        storage.upsertTenders(htmlResult.tenders);
+        stats.goszakupHtmlCount = htmlResult.announces.length;
+        stats.goszakupHtmlLots = htmlResult.lots.length;
+        stats.goszakupHtmlContracts = htmlResult.contracts.length;
+        stats.totalTenders += htmlResult.tenders.length;
+        console.log(
+          `goszakup html: announces=${htmlResult.announces.length} lots=${htmlResult.lots.length} contracts=${htmlResult.contracts.length}`
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`goszakup html: failed: ${message}`);
+        storage.recordEnrichError("batch", "goszakup_html", message);
       }
     }
   } finally {

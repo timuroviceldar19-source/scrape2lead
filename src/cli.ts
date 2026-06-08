@@ -54,6 +54,7 @@ kz
   .option("--skip-tenders", "skip tender collection")
   .option("--skip-zakup", "skip zakup.sk.kz collection (goszakup only)")
   .option("--skip-goszakup-registry", "skip public goszakup registry collection")
+  .option("--skip-goszakup-html", "skip goszakup.gov.kz HTML scraping (lots/announces)")
   .option("--registry-only", "only run goszakup registry (skip stat + tenders)")
   .option("--delay-ms <ms>", "delay between requests in ms", "2000")
   .option("--force-refresh", "ignore stat.gov TTL cache")
@@ -65,6 +66,7 @@ kz
     skipTenders?: boolean;
     skipZakup?: boolean;
     skipGoszakupRegistry?: boolean;
+    skipGoszakupHtml?: boolean;
     registryOnly?: boolean;
     delayMs: string;
     forceRefresh?: boolean;
@@ -78,6 +80,7 @@ kz
       skipTenders: Boolean(options.skipTenders),
       skipZakup: Boolean(options.skipZakup),
       skipGoszakupRegistry: Boolean(options.skipGoszakupRegistry),
+      skipGoszakupHtml: Boolean(options.skipGoszakupHtml),
       registryOnly: Boolean(options.registryOnly),
       delayMs: Number(options.delayMs) || 2000,
       forceRefresh: Boolean(options.forceRefresh),
