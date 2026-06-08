@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
 import { runMigrations } from "../storage/migrations.js";
 import {
-  ACTIVE_TENDER_STATUSES,
+  ACTIVE_TENDER_STATUSES_EXACT,
+  ACTIVE_TENDER_STATUSES_LATIN,
   type CompanyCard,
   type EnrichError,
   type StatGovRecord,
@@ -79,7 +80,7 @@ export class KzStorage {
         COALESCE(s.updated_at, r.updated_at) AS updated_at,
         COALESCE(s.raw_snapshot_path, r.raw_snapshot_path) AS raw_snapshot_path,
         COUNT(t.id) AS tender_count_total,
-        SUM(CASE WHEN UPPER(COALESCE(t.status, '')) IN (${activeStatusSqlList()}) THEN 1 ELSE 0 END) AS tender_count_active,
+        SUM(CASE WHEN ${activeTenderStatusSqlCase("t.status")} THEN 1 ELSE 0 END) AS tender_count_active,
         SUM(CASE
           WHEN t.budget_amount IS NOT NULL AND TRIM(t.budget_amount) != ''
           THEN CAST(REPLACE(REPLACE(t.budget_amount, ' ', ''), ',', '.') AS REAL)
@@ -333,6 +334,12 @@ function stringOrNull(value: unknown): string | null {
   return text === "" ? null : text;
 }
 
-function activeStatusSqlList(): string {
-  return Array.from(ACTIVE_TENDER_STATUSES).map((status) => `'${status}'`).join(", ");
+function activeTenderStatusSqlCase(column: string): string {
+  const latin = Array.from(ACTIVE_TENDER_STATUSES_LATIN)
+    .map((status) => `'${status}'`)
+    .join(", ");
+  const exact = Array.from(ACTIVE_TENDER_STATUSES_EXACT)
+    .map((status) => `'${status.replace(/'/g, "''")}'`)
+    .join(", ");
+  return `UPPER(COALESCE(${column}, '')) IN (${latin}) OR COALESCE(${column}, '') IN (${exact})`;
 }

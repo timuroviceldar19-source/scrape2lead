@@ -31,6 +31,23 @@ describe("KzStorage", () => {
     db.close();
   });
 
+  it("counts goszakup HTML contract statuses as active", () => {
+    const db = new Database(":memory:");
+    const storage = new KzStorage({ db });
+    storage.upsertStatGov(company("100000000005", "ContractCo"));
+    storage.upsertTenders([
+      tender("goszakup.gov.kz", "100000000005", "C-1", "Действует", "1000", "2026-12-01"),
+      tender("goszakup.gov.kz", "100000000005", "C-2", "Исполнен", "2000", "2026-01-01"),
+      tender("goszakup.gov.kz", "100000000005", "C-3", "Изменен", "500", "2026-12-15")
+    ]);
+
+    const card = storage.getCompanyCards(["100000000005"])[0];
+    expect(card.tender_count_total).toBe(3);
+    expect(card.tender_count_active).toBe(2);
+
+    db.close();
+  });
+
   it("checks stat.gov TTL freshness from updated_at", () => {
     const db = new Database(":memory:");
     const storage = new KzStorage({ db });

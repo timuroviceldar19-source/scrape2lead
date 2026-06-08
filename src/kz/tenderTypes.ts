@@ -63,9 +63,28 @@ export interface EnrichError {
   created_at: string;
 }
 
-export const ACTIVE_TENDER_STATUSES = new Set([
+/** zakup.sk.kz / goszakup API — SQLite UPPER() folds ASCII only. */
+export const ACTIVE_TENDER_STATUSES_LATIN = new Set([
   "PUBLISHED",
   "ACTIVE",
   "OPEN",
   "PUBLISHED_SUPPLIER_SELECTION"
 ]);
+
+/** goszakup HTML supplier contracts — exact match (Cyrillic is not folded by SQLite UPPER). */
+export const ACTIVE_TENDER_STATUSES_EXACT = new Set([
+  "Действует",
+  "Изменен",
+  "Создано доп.соглашение",
+  "Частично исполнен"
+]);
+
+/** @deprecated Use ACTIVE_TENDER_STATUSES_LATIN */
+export const ACTIVE_TENDER_STATUSES = ACTIVE_TENDER_STATUSES_LATIN;
+
+export function isActiveTenderStatus(status: string | null | undefined): boolean {
+  if (!status) return false;
+  const trimmed = status.trim();
+  if (ACTIVE_TENDER_STATUSES_EXACT.has(trimmed)) return true;
+  return ACTIVE_TENDER_STATUSES_LATIN.has(trimmed.toUpperCase());
+}
