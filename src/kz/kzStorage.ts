@@ -60,10 +60,24 @@ export class KzStorage {
 
   getCompanyCards(bins?: string[]): CompanyCard[] {
     const params = bins && bins.length > 0 ? bins : [];
-    const filter = params.length > 0 ? `WHERE s.bin IN (${params.map(() => "?").join(",")})` : "";
+    const filter = params.length > 0 ? `WHERE c.bin IN (${params.map(() => "?").join(",")})` : "";
     const rows = this.db.prepare(`
+      WITH company_bins AS (
+        SELECT bin FROM stat_gov_data
+        UNION
+        SELECT bin FROM goszakup_registry_data
+      )
       SELECT
-        s.*,
+        c.bin,
+        COALESCE(s.name, r.name_ru) AS name,
+        COALESCE(s.registration_date, r.registration_date) AS registration_date,
+        s.oked, s.oked_name,
+        COALESCE(s.address, r.legal_address, r.location_address) AS address,
+        COALESCE(s.director, r.director_name) AS director,
+        s.legal_status, s.krp_code, s.krp_name, s.kfs_code, s.kfs_name,
+        s.sector_code, s.sector_name,
+        COALESCE(s.updated_at, r.updated_at) AS updated_at,
+        COALESCE(s.raw_snapshot_path, r.raw_snapshot_path) AS raw_snapshot_path,
         COUNT(t.id) AS tender_count_total,
         SUM(CASE WHEN UPPER(COALESCE(t.status, '')) IN (${activeStatusSqlList()}) THEN 1 ELSE 0 END) AS tender_count_active,
         SUM(CASE
@@ -78,12 +92,13 @@ export class KzStorage {
         r.website AS registry_website,
         r.participant_id,
         r.role AS registry_role
-      FROM stat_gov_data s
-      LEFT JOIN tender_data t ON t.bin = s.bin
-      LEFT JOIN goszakup_registry_data r ON r.bin = s.bin
+      FROM company_bins c
+      LEFT JOIN stat_gov_data s ON s.bin = c.bin
+      LEFT JOIN tender_data t ON t.bin = c.bin
+      LEFT JOIN goszakup_registry_data r ON r.bin = c.bin
       ${filter}
-      GROUP BY s.bin
-      ORDER BY s.name COLLATE NOCASE
+      GROUP BY c.bin
+      ORDER BY name COLLATE NOCASE
     `).all(...params) as Array<Record<string, unknown>>;
 
     return rows.map((row) => ({

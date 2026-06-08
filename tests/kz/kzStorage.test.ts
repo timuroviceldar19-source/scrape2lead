@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { KzStorage } from "../../src/kz/kzStorage.js";
+import type { GoszakupRegistryRecord } from "../../src/kz/registryTypes.js";
 import type { StatGovRecord, TenderRecord } from "../../src/kz/tenderTypes.js";
 
 describe("KzStorage", () => {
@@ -57,6 +58,41 @@ describe("KzStorage", () => {
       message: "timeout"
     });
 
+    db.close();
+  });
+
+  it("includes registry-only BIN in company cards", () => {
+    const db = new Database(":memory:");
+    const storage = new KzStorage({ db });
+    storage.upsertGoszakupRegistry({
+      bin: "241240019455",
+      participant_id: "12345",
+      name_ru: "ТОО ALATAU STROY 2030",
+      name_kz: null,
+      rnn: null,
+      role: "Поставщик",
+      residency: null,
+      phone: "+77072454647",
+      email: "torekhanuly_m@mail.ru",
+      website: null,
+      registration_date: null,
+      last_update_date: null,
+      kopf: null,
+      ownership_form: null,
+      economic_sector: null,
+      director_name: null,
+      director_iin: null,
+      legal_address: null,
+      location_address: null,
+      registry_url: "https://goszakup.gov.kz/ru/registry/show_supplier/12345",
+      updated_at: "2026-06-07T00:00:00.000Z",
+      raw_snapshot_path: null
+    });
+    const cards = storage.getCompanyCards(["241240019455"]);
+    expect(cards).toHaveLength(1);
+    expect(cards[0].name).toBe("ТОО ALATAU STROY 2030");
+    expect(cards[0].registry_phone).toBe("+77072454647");
+    expect(cards[0].participant_id).toBe("12345");
     db.close();
   });
 });

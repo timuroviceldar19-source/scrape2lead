@@ -123,8 +123,16 @@ async function fetchRegistryForBin(
   const rawSnapshotPath = path.join(debugDir, `goszakup-registry-${bin}.html`);
   fs.writeFileSync(rawSnapshotPath, profileHtml, "utf8");
 
+  const record = parseRegistryProfileHtml(profileHtml, bin);
+  if (!record) {
+    return { record: null, rawSnapshotPath };
+  }
   return {
-    record: parseRegistryProfileHtml(profileHtml, bin),
+    record: {
+      ...record,
+      participant_id: record.participant_id ?? searchResult.participant_id,
+      registry_url: record.registry_url ?? searchResult.profile_url
+    },
     rawSnapshotPath
   };
 }

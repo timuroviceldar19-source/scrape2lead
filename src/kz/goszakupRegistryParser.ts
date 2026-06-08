@@ -191,30 +191,57 @@ function nullable(value: string | null): string | null {
   return value && value.trim() ? value.trim() : null;
 }
 
-function normalizePhone(raw: string | null): string | null {
+export function normalizePhone(raw: string | null): string | null {
   if (!raw) return null;
-  const digits = raw.replace(/[^\d+]/g, "");
-  if (!digits) return null;
-  if (digits.startsWith("8") && digits.length === 11) {
-    return `+7${digits.slice(1)}`;
+  const candidates = raw.split(/[,;/]/);
+  for (const candidate of candidates) {
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    const digits = trimmed.replace(/[^\d]/g, "");
+    if (!digits) continue;
+    let normalized: string | null = null;
+    if (trimmed.startsWith("+")) {
+      const afterPlus = digits;
+      if (afterPlus.length === 12 && afterPlus.startsWith("7")) {
+        normalized = `+${afterPlus}`;
+      } else if (afterPlus.length === 11 && afterPlus.startsWith("7")) {
+        normalized = `+${afterPlus}`;
+      }
+    } else if (digits.length === 11 && digits.startsWith("8")) {
+      normalized = `+7${digits.slice(1)}`;
+    } else if (digits.length === 11 && digits.startsWith("7")) {
+      normalized = `+${digits}`;
+    } else if (digits.length === 10) {
+      normalized = `+7${digits}`;
+    }
+    if (normalized && normalized.length === 12) {
+      return normalized;
+    }
   }
-  if (digits.startsWith("7") && digits.length === 11 && !digits.startsWith("+")) {
-    return `+${digits}`;
-  }
-  if (digits.startsWith("+7") && digits.length === 12) {
-    return digits;
-  }
-  return digits.startsWith("+") ? digits : `+${digits}`;
+  return null;
 }
 
-function normalizeWebsite(raw: string | null): string | null {
+const WEBSITE_PLACEHOLDERS = new Set(["-", "—", "нет", "n/a", "отсутствует"]);
+
+export function normalizeWebsite(raw: string | null): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-    return `https://${trimmed}`;
+  if (trimmed.includes("@")) return null;
+  if (WEBSITE_PLACEHOLDERS.has(trimmed.toLowerCase())) return null;
+  let url = trimmed;
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    url = `https://${url}`;
   }
-  return trimmed;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname;
+    if (hostname.length < 4) return null;
+    if (!hostname.includes(".")) return null;
+    return url;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeDateToIso(value: string | null): string | null {

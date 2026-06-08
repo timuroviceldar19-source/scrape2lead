@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseRegistryProfileHtml, parseRegistrySearchHtml } from "../../src/kz/goszakupRegistryParser.js";
+import { normalizePhone, normalizeWebsite, parseRegistryProfileHtml, parseRegistrySearchHtml } from "../../src/kz/goszakupRegistryParser.js";
 
 const FIXTURES = path.resolve("tests/fixtures");
 
@@ -73,5 +73,62 @@ describe("website normalization", () => {
 
     const withScheme = baseHtml + `<div class="divTableCell">Веб-сайт</div><div class="divTableCell">https://example.kz</div>`;
     expect(parseRegistryProfileHtml(withScheme, "123456789012")?.website).toBe("https://example.kz");
+  });
+});
+
+describe("normalizePhone", () => {
+  it("accepts +7XXXXXXXXXX format", () => {
+    expect(normalizePhone("+77272581800")).toBe("+77272581800");
+  });
+  it("accepts formatted phone with spaces and dashes", () => {
+    expect(normalizePhone("+7 (727) 258-18-00")).toBe("+77272581800");
+  });
+  it("converts 8XXXXXXXXXX to +7", () => {
+    expect(normalizePhone("87272581800")).toBe("+77272581800");
+  });
+  it("accepts valid KZ mobile", () => {
+    expect(normalizePhone("+77071017793")).toBe("+77071017793");
+  });
+  it("rejects concatenated garbage", () => {
+    expect(normalizePhone("+34369387011878787")).toBeNull();
+  });
+  it("rejects null input", () => {
+    expect(normalizePhone(null)).toBeNull();
+  });
+  it("rejects empty string", () => {
+    expect(normalizePhone("")).toBeNull();
+  });
+});
+
+describe("normalizeWebsite", () => {
+  it("adds https:// for plain domain", () => {
+    expect(normalizeWebsite("www.nsk.kz")).toBe("https://www.nsk.kz");
+  });
+  it("preserves existing https scheme", () => {
+    expect(normalizeWebsite("https://www.zharykled.kz")).toBe("https://www.zharykled.kz");
+  });
+  it("preserves existing http scheme", () => {
+    expect(normalizeWebsite("http://royalfitness.kz/")).toBe("http://royalfitness.kz/");
+  });
+  it("rejects email in website field", () => {
+    expect(normalizeWebsite("pernebeknps10@mail.ru")).toBeNull();
+  });
+  it("rejects placeholder dash", () => {
+    expect(normalizeWebsite("-")).toBeNull();
+  });
+  it("rejects placeholder em-dash", () => {
+    expect(normalizeWebsite("—")).toBeNull();
+  });
+  it("rejects placeholder text", () => {
+    expect(normalizeWebsite("нет")).toBeNull();
+    expect(normalizeWebsite("n/a")).toBeNull();
+    expect(normalizeWebsite("отсутствует")).toBeNull();
+  });
+  it("rejects null and empty", () => {
+    expect(normalizeWebsite(null)).toBeNull();
+    expect(normalizeWebsite("")).toBeNull();
+  });
+  it("rejects hostname without dot", () => {
+    expect(normalizeWebsite("localhost")).toBeNull();
   });
 });
