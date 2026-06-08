@@ -83,18 +83,18 @@ function seedLead(overrides: Partial<Lead> & { lead_id: string }): void {
       lead_id: overrides.lead_id,
       lead_score: overrides.lead_score ?? 0.5,
       priority: "B",
-      crm_status: overrides.crm_status ?? null,
-      phone_status: overrides.phone_status ?? null,
-      address_status: overrides.address_status ?? null,
-      website_status: overrides.website_status ?? null,
-      enrichment_status: overrides.enrichment_status ?? null
+      crm_status: overrides.crm_status ?? undefined,
+      phone_status: overrides.phone_status ?? undefined,
+      address_status: overrides.address_status ?? undefined,
+      website_status: overrides.website_status ?? undefined,
+      enrichment_status: overrides.enrichment_status ?? undefined
     });
 }
 
 describe("Storage.getLeadsNeedingEnrichment — crm_status filter", () => {
   it("default mode skips Ready to call rows", async () => {
-    seedLead({ lead_id: "L-NE-1", crm_status: "Needs enrichment", address_status: null, website_status: null, enrichment_status: null });
-    seedLead({ lead_id: "L-RC-1", crm_status: "Ready to call",     address_status: null, website_status: null, enrichment_status: null, phone_status: "valid" });
+    seedLead({ lead_id: "L-NE-1", crm_status: "Needs enrichment", address_status: undefined, website_status: undefined, enrichment_status: undefined });
+    seedLead({ lead_id: "L-RC-1", crm_status: "Ready to call",     address_status: undefined, website_status: undefined, enrichment_status: undefined, phone_status: "valid" });
     seedLead({ lead_id: "L-RC-2", crm_status: "Ready to contact",  address_status: "valid", website_status: "valid", enrichment_status: "enriched" });
 
     const leads = await harness.storage.getLeadsNeedingEnrichment(100);
@@ -102,10 +102,10 @@ describe("Storage.getLeadsNeedingEnrichment — crm_status filter", () => {
   });
 
   it("includeReadyToCall=true pulls in Ready to call leads with missing address or website", async () => {
-    seedLead({ lead_id: "L-NE-1", crm_status: "Needs enrichment", address_status: null, website_status: null, enrichment_status: null });
-    seedLead({ lead_id: "L-RC-1", crm_status: "Ready to call",     address_status: null, website_status: null, enrichment_status: null, phone_status: "valid" });
-    seedLead({ lead_id: "L-RC-2", crm_status: "Ready to call",     address_status: "valid", website_status: null, enrichment_status: null, phone_status: "valid" });
-    seedLead({ lead_id: "L-RC-3", crm_status: "Ready to call",     address_status: "valid", website_status: "valid", enrichment_status: null, phone_status: "valid" });
+    seedLead({ lead_id: "L-NE-1", crm_status: "Needs enrichment", address_status: undefined, website_status: undefined, enrichment_status: undefined });
+    seedLead({ lead_id: "L-RC-1", crm_status: "Ready to call",     address_status: undefined, website_status: undefined, enrichment_status: undefined, phone_status: "valid" });
+    seedLead({ lead_id: "L-RC-2", crm_status: "Ready to call",     address_status: "valid", website_status: undefined, enrichment_status: undefined, phone_status: "valid" });
+    seedLead({ lead_id: "L-RC-3", crm_status: "Ready to call",     address_status: "valid", website_status: "valid", enrichment_status: undefined, phone_status: "valid" });
     seedLead({ lead_id: "L-RC-4", crm_status: "Ready to contact",  address_status: "valid", website_status: "valid", enrichment_status: "enriched" });
 
     const leads = await harness.storage.getLeadsNeedingEnrichment(100, undefined, true);
@@ -114,8 +114,8 @@ describe("Storage.getLeadsNeedingEnrichment — crm_status filter", () => {
   });
 
   it("includeReadyToCall=true still skips already-enriched rows (idempotency)", async () => {
-    seedLead({ lead_id: "L-RC-DONE", crm_status: "Ready to call",  address_status: null, website_status: null, enrichment_status: "enriched", phone_status: "valid" });
-    seedLead({ lead_id: "L-RC-OPEN", crm_status: "Ready to call",  address_status: null, website_status: null, enrichment_status: null,      phone_status: "valid" });
+    seedLead({ lead_id: "L-RC-DONE", crm_status: "Ready to call",  address_status: undefined, website_status: undefined, enrichment_status: "enriched", phone_status: "valid" });
+    seedLead({ lead_id: "L-RC-OPEN", crm_status: "Ready to call",  address_status: undefined, website_status: undefined, enrichment_status: undefined,      phone_status: "valid" });
 
     const leads = await harness.storage.getLeadsNeedingEnrichment(100, undefined, true);
     expect(leads.map((l) => l.lead_id)).toEqual(["L-RC-OPEN"]);
@@ -127,7 +127,7 @@ describe("Storage.getLeadsNeedingEnrichment — crm_status filter", () => {
       crm_status: "Ready to call",
       address_status: "valid",
       website_status: "valid",
-      enrichment_status: null,
+      enrichment_status: undefined,
       phone_status: "valid"
     });
 
@@ -136,9 +136,9 @@ describe("Storage.getLeadsNeedingEnrichment — crm_status filter", () => {
   });
 
   it("limit and city still apply in includeReadyToCall mode", async () => {
-    seedLead({ lead_id: "A-1", crm_status: "Ready to call", city: "Астана",  address_status: null, website_status: null, enrichment_status: null, lead_score: 0.9, phone_status: "valid" });
-    seedLead({ lead_id: "A-2", crm_status: "Ready to call", city: "Астана",  address_status: null, website_status: null, enrichment_status: null, lead_score: 0.5, phone_status: "valid" });
-    seedLead({ lead_id: "B-1", crm_status: "Ready to call", city: "Алматы",  address_status: null, website_status: null, enrichment_status: null, lead_score: 0.8, phone_status: "valid" });
+    seedLead({ lead_id: "A-1", crm_status: "Ready to call", city: "Астана",  address_status: undefined, website_status: undefined, enrichment_status: undefined, lead_score: 0.9, phone_status: "valid" });
+    seedLead({ lead_id: "A-2", crm_status: "Ready to call", city: "Астана",  address_status: undefined, website_status: undefined, enrichment_status: undefined, lead_score: 0.5, phone_status: "valid" });
+    seedLead({ lead_id: "B-1", crm_status: "Ready to call", city: "Алматы",  address_status: undefined, website_status: undefined, enrichment_status: undefined, lead_score: 0.8, phone_status: "valid" });
 
     const onlyAstana = await harness.storage.getLeadsNeedingEnrichment(100, "Астана", true);
     expect(onlyAstana.map((l) => l.lead_id)).toEqual(["A-1", "A-2"]);

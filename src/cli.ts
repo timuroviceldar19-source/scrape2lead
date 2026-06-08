@@ -19,6 +19,7 @@ import { TwoGisEnrichmentAdapter } from "./enrichment/adapters/TwoGisEnrichmentA
 import { formatKzEnrichResult, runKzEnrich } from "./kz/enrichPipeline.js";
 import { readBinsFromCsv } from "./kz/csv.js";
 import { exportKzReport } from "./kz/kzExporter.js";
+import { exportUnifiedReport } from "./kz/unifiedExporter.js";
 import { mergeStatGovData } from "../scripts/merge-stat-gov-data.js";
 
 const program = new Command();
@@ -107,6 +108,23 @@ kz
     });
     console.log(`kz export: ${result.xlsxPath}`);
     console.log(`companies=${result.companies} tenders=${result.tenders} errors=${result.errors}`);
+  });
+
+kz
+  .command("export-unified")
+  .description("Export unified XLSX: 2GIS leads + KZ enrich + scoring")
+  .option("--out <path>", "output XLSX path")
+  .option("--priority <priority>", "filter by lead priority (A, B, C)")
+  .option("--bins <csvFile>", "optional CSV file with BIN values")
+  .action(async (options: { out?: string; priority?: string; bins?: string }) => {
+    const result = await exportUnifiedReport({
+      outPath: options.out,
+      priority: options.priority,
+      bins: options.bins ? readBinsFromCsv(options.bins) : undefined
+    });
+    console.log(`kz export-unified: ${result.xlsxPath}`);
+    console.log(`leads=${result.leads} tenders=${result.tenders} errors=${result.errors}`);
+    console.log(`merge: total=${result.mergeStats.total_leads} with_bin=${result.mergeStats.with_bin} exact=${result.mergeStats.matched_exact} fuzzy_stat=${result.mergeStats.matched_fuzzy_stat} fuzzy_reg=${result.mergeStats.matched_fuzzy_registry} unmatched=${result.mergeStats.unmatched} with_tenders=${result.mergeStats.with_tenders}`);
   });
 
 kz

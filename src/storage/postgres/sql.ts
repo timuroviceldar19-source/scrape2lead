@@ -140,12 +140,16 @@ export const POSTGRES_SQL = {
     INSERT INTO leads (
       source, external_id, company_name, category, city, address,
       phones, email, website, social_links, messenger_links,
-      parsed_at, incomplete
+      parsed_at, incomplete,
+      bin, registration_date, oked, oked_name, director, founder,
+      legal_status, company_age_years, legal_form
     )
     VALUES (
       $1, $2, $3, $4, $5, $6,
       $7::jsonb, $8, $9, $10::jsonb, $11::jsonb,
-      $12::timestamptz, $13
+      $12::timestamptz, $13,
+      $14, $15, $16, $17, $18, $19,
+      $20, $21, $22
     )
     ON CONFLICT (source, external_id) DO UPDATE SET
       company_name    = EXCLUDED.company_name,
@@ -158,7 +162,16 @@ export const POSTGRES_SQL = {
       social_links    = EXCLUDED.social_links,
       messenger_links = EXCLUDED.messenger_links,
       parsed_at       = EXCLUDED.parsed_at,
-      incomplete      = EXCLUDED.incomplete
+      incomplete      = EXCLUDED.incomplete,
+      bin             = EXCLUDED.bin,
+      registration_date = EXCLUDED.registration_date,
+      oked            = EXCLUDED.oked,
+      oked_name       = EXCLUDED.oked_name,
+      director        = EXCLUDED.director,
+      founder         = EXCLUDED.founder,
+      legal_status    = EXCLUDED.legal_status,
+      company_age_years = EXCLUDED.company_age_years,
+      legal_form      = EXCLUDED.legal_form
   `,
 
   LIST_LEADS: `SELECT * FROM leads ORDER BY company_name ASC`,

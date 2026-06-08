@@ -491,7 +491,11 @@ npm run kz:export -- --format xlsx --out exports/kz-report.xlsx
 
 ### Этап 4 — Продуктовый слой (post-MVP)
 
-- [ ] Связь с `leads` / feeder 2GIS.
+- [x] Связь с `leads` / feeder 2GIS.
+  - `src/kz/leadKzMerge.ts` — matching leads ↔ KZ (exact bin, fuzzy name stat, fuzzy name registry fallback).
+  - `src/kz/unifiedExporter.ts` — unified XLSX: 2GIS leads + KZ enrich + scoring.
+  - CLI: `kz export-unified [--out path] [--priority A|B|C]`.
+  - `writeKzToLeads()` — write-back stat.gov fields to leads table.
 - [ ] Telegram-уведомления о новых закупках.
 - [ ] Postgres как production backend.
 - [ ] Scheduled re-run (cron / Celery-аналог).

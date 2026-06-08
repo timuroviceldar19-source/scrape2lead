@@ -26,11 +26,13 @@
     "kz:merge": "tsx scripts/merge-stat-gov-data.ts",
     "kz:audit": "tsx scripts/kz-batch-audit.ts",
     "kz:export": "tsx scripts/kz-export.ts",
+    "kz:export-top-a": "tsx scripts/kz-export-top-a.mts",
     "kz:goszakup:smoke": "tsx scripts/goszakup-smoke.ts",
     "kz:lots:smoke": "tsx scripts/goszakup-lots-smoke.ts",
     "kz:contracts:smoke": "tsx scripts/goszakup-contracts-smoke.ts",
     "kz:zakup:smoke": "tsx scripts/zakup-smoke.ts",
     "kz:registry": "tsx scripts/goszakup-registry-collector.ts",
+    "kz:export-unified": "tsx src/cli.ts kz export-unified",
     "kz:harvest": "tsx scripts/harvest-registry-bins.ts"
   },
   "dependencies": {

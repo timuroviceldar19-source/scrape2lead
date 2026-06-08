@@ -168,6 +168,20 @@ const MIGRATIONS: Migration[] = [
         cards_on_ip   INTEGER
       );
     `
+  },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE leads ADD COLUMN bin TEXT;
+      ALTER TABLE leads ADD COLUMN registration_date TEXT;
+      ALTER TABLE leads ADD COLUMN oked TEXT;
+      ALTER TABLE leads ADD COLUMN oked_name TEXT;
+      ALTER TABLE leads ADD COLUMN director TEXT;
+      ALTER TABLE leads ADD COLUMN founder TEXT;
+      ALTER TABLE leads ADD COLUMN legal_status TEXT;
+      ALTER TABLE leads ADD COLUMN company_age_years INTEGER;
+      ALTER TABLE leads ADD COLUMN legal_form TEXT;
+    `
   }
 ];
 
