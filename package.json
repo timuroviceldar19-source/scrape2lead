@@ -28,7 +28,8 @@
     "kz:export": "tsx scripts/kz-export.ts",
     "kz:goszakup:smoke": "tsx scripts/goszakup-smoke.ts",
     "kz:zakup:smoke": "tsx scripts/zakup-smoke.ts",
-    "kz:registry": "tsx scripts/goszakup-registry-collector.ts"
+    "kz:registry": "tsx scripts/goszakup-registry-collector.ts",
+    "kz:harvest": "tsx scripts/harvest-registry-bins.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",
