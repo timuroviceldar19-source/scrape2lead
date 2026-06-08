@@ -139,6 +139,39 @@ Without the token, `zakup.sk.kz` still runs and `goszakup.gov.kz` is reported as
 
 For verified supplier data, use `goszakup.gov.kz` (BIN-based lookup with token).
 
+## Zakup Reliability (Stage 3.6)
+
+`zakup.sk.kz` is an Angular SPA — the search input may not be rendered when the page loads. Stage 3.6 adds retry and stable readiness checks.
+
+### Retry policy
+
+- **Max retries:** 3 (configurable via `ZAKUP_MAX_RETRIES` env or `--zakup-max-retries` CLI flag)
+- **Retriable errors:** `search input not found`, `timeout`, `net::`, `navigation`
+- **Backoff:** linear (1s × attempt number)
+- **Page reload** between retry attempts
+
+### Page readiness
+
+Instead of `waitUntil: "networkidle"` (flaky on SPA with long-polling), the collector uses:
+1. `domcontentloaded` + `load` events
+2. `dismissZakupOverlays()` — best-effort click on cookie/modals
+3. 1.5s Angular bootstrap pause
+4. `waitForZakupSearchInput()` — iterates 8 selectors with per-selector 3s timeout
+
+### Debug artifacts
+
+On final retry failure, the collector saves:
+- `data/debug/zakup-fail-{bin}.png` — screenshot
+- `data/debug/zakup-fail-{bin}.html` — page source
+
+### Smoke test
+
+```bash
+npm run kz:zakup:smoke -- 140540002824 "APEX TECHNOLOGIES"
+```
+
+Single BIN test with headed browser, uses retry settings from `.env`.
+
 ## Goszakup Public Registry (no token)
 
 Stage 3.5 adds a **public registry collector** that scrapes `goszakup.gov.kz/ru/registry/supplierreg` — no `GOSZAKUP_TOKEN` required. This supplements stat.gov data with contact info (phone, email, website) and registry metadata (participant number, role).

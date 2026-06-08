@@ -59,6 +59,7 @@ kz
   .option("--force-refresh", "ignore stat.gov TTL cache")
   .option("--goszakup-active-only", "only keep goszakup tenders with active status")
   .option("--goszakup-max-pages <pages>", "max pages to fetch from goszakup API", "20")
+  .option("--zakup-max-retries <retries>", "max retries for zakup.sk.kz search input", "3")
   .action(async (csvFile: string, options: {
     skipStat?: boolean;
     skipTenders?: boolean;
@@ -69,6 +70,7 @@ kz
     forceRefresh?: boolean;
     goszakupActiveOnly?: boolean;
     goszakupMaxPages?: string;
+    zakupMaxRetries?: string;
   }) => {
     const result = await runKzEnrich({
       csvFile,
@@ -80,7 +82,8 @@ kz
       delayMs: Number(options.delayMs) || 2000,
       forceRefresh: Boolean(options.forceRefresh),
       goszakupActiveOnly: Boolean(options.goszakupActiveOnly),
-      goszakupMaxPages: Number(options.goszakupMaxPages) || 20
+      goszakupMaxPages: Number(options.goszakupMaxPages) || 20,
+      zakupMaxRetries: Number(options.zakupMaxRetries) || 3
     });
     console.log(formatKzEnrichResult(result));
   });

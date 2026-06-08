@@ -27,6 +27,7 @@
     "kz:audit": "tsx scripts/kz-batch-audit.ts",
     "kz:export": "tsx scripts/kz-export.ts",
     "kz:goszakup:smoke": "tsx scripts/goszakup-smoke.ts",
+    "kz:zakup:smoke": "tsx scripts/zakup-smoke.ts",
     "kz:registry": "tsx scripts/goszakup-registry-collector.ts"
   },
   "dependencies": {

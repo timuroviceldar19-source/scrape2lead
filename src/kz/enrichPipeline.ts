@@ -17,6 +17,7 @@ export interface KzEnrichOptions {
   forceRefresh?: boolean;
   goszakupActiveOnly?: boolean;
   goszakupMaxPages?: number;
+  zakupMaxRetries?: number;
 }
 
 export interface KzEnrichResult {
@@ -59,7 +60,8 @@ export async function runKzEnrich(options: KzEnrichOptions): Promise<KzEnrichRes
       delayMs: options.delayMs,
       skipZakup: options.skipZakup,
       goszakupActiveOnly: options.goszakupActiveOnly,
-      goszakupMaxPages: options.goszakupMaxPages
+      goszakupMaxPages: options.goszakupMaxPages,
+      zakupMaxRetries: options.zakupMaxRetries
     });
   }
 

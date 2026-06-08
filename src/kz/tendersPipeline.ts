@@ -11,6 +11,7 @@ export interface TendersPipelineOptions {
   skipGoszakup?: boolean;
   goszakupActiveOnly?: boolean;
   goszakupMaxPages?: number;
+  zakupMaxRetries?: number;
 }
 
 export interface TenderCollectStats {
@@ -56,7 +57,8 @@ export async function collectTendersForBins(
       }
       const zakupResult = await collectZakupTendersForBatch(companies, {
         delayMs: options.delayMs ?? 2000,
-        headless: options.headless
+        headless: options.headless,
+        maxRetries: options.zakupMaxRetries
       });
       storage.upsertTenders(zakupResult.tenders);
       for (const error of zakupResult.errors) {

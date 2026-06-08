@@ -1,10 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, type Page } from "playwright";
 import { isValidBin, sleep } from "./csv.js";
 import { normalizeCompanyName } from "./normalizeCompanyName.js";
 import type { TenderRecord } from "./tenderTypes.js";
 import { filterZakupTenders, type ZakupRejectReason } from "./zakupTenderFilter.js";
+import {
+  ZAKUP_LOTS_URL,
+  dismissZakupOverlays,
+  isRetriableZakupError,
+  waitForZakupSearchInput
+} from "./zakupPageHelpers.js";
 
 interface ZakupCompanyInput {
   bin: string;
@@ -15,6 +21,8 @@ export interface ZakupCollectOptions {
   delayMs?: number;
   headless?: boolean;
   debugDir?: string;
+  maxRetries?: number;
+  pageLoadTimeoutMs?: number;
 }
 
 export interface ZakupBatchResult {
@@ -35,6 +43,10 @@ export async function collectZakupTendersForBatch(
 ): Promise<ZakupBatchResult> {
   const browser = await chromium.launch({ headless: options.headless ?? false });
   const delayMs = options.delayMs ?? 2000;
+  const debugDir = options.debugDir ?? DEFAULT_DEBUG_DIR;
+  const maxRetries = options.maxRetries ?? Number(process.env.ZAKUP_MAX_RETRIES ?? 3);
+  const pageLoadTimeoutMs = options.pageLoadTimeoutMs ?? Number(process.env.ZAKUP_PAGE_TIMEOUT_MS ?? 30000);
+
   const result: ZakupBatchResult = {
     tenders: [],
     processed: 0,
@@ -44,6 +56,12 @@ export async function collectZakupTendersForBatch(
     accepted: 0,
     errors: []
   };
+
+  const context = await browser.newContext({
+    locale: "ru-RU",
+    viewport: { width: 1400, height: 900 }
+  });
+  const page = await context.newPage();
 
   try {
     for (const company of companies) {
@@ -67,12 +85,14 @@ export async function collectZakupTendersForBatch(
 
       result.processed++;
       try {
-        const { tenders, rawCount, rejectedReasons } = await fetchZakupTenders(
-          browser,
+        const { tenders, rawCount, rejectedReasons } = await fetchZakupTendersWithRetry(
+          page,
           company.bin,
           company.companyName,
           searchName,
-          options.debugDir ?? DEFAULT_DEBUG_DIR
+          debugDir,
+          maxRetries,
+          pageLoadTimeoutMs
         );
         result.tenders.push(...tenders);
         result.accepted += tenders.length;
@@ -95,88 +115,94 @@ export async function collectZakupTendersForBatch(
       if (delayMs > 0) await sleep(delayMs);
     }
   } finally {
+    await context.close();
     await browser.close();
   }
 
   return result;
 }
 
-async function fetchZakupTenders(
-  browser: Browser,
+async function fetchZakupTendersWithRetry(
+  page: Page,
   bin: string,
   companyName: string,
   searchName: string,
-  debugDir: string
+  debugDir: string,
+  maxRetries: number,
+  pageLoadTimeoutMs: number
 ): Promise<{ tenders: TenderRecord[]; rawCount: number; rejectedReasons: ZakupRejectReason[] }> {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-
-  let searchSubmittedAt = 0;
-  let capturedData: unknown = null;
-
-  page.on("response", async (response) => {
-    if (!searchSubmittedAt) return;
-    const url = response.url();
-    if (!url.includes("4dv3rts")) return;
-    if (capturedData) return;
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      capturedData = await response.json();
-    } catch {
-      // Non-JSON responses are irrelevant for tender capture.
+      return await fetchZakupTendersOnce(page, bin, companyName, searchName, debugDir, pageLoadTimeoutMs);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const retriable = isRetriableZakupError(lastError);
+      if (!retriable || attempt === maxRetries) break;
+      const backoff = 1000 * attempt;
+      console.warn(`zakup.sk.kz: bin=${bin} attempt ${attempt}/${maxRetries} failed: ${lastError.message}; retry in ${backoff}ms`);
+      await sleep(backoff);
+      await page.reload({ waitUntil: "domcontentloaded", timeout: pageLoadTimeoutMs }).catch(() => {});
     }
-  });
-
-  try {
-    await page.goto("https://zakup.sk.kz/#/lots", { waitUntil: "networkidle", timeout: 30_000 });
-    const searchInput = await findSearchInput(page);
-    if (!searchInput) {
-      throw new Error("search input not found; not saving default lots");
-    }
-
-    await searchInput.fill(searchName);
-    await page.waitForTimeout(500);
-
-    const responsePromise = page.waitForResponse(
-      (res) => {
-        const url = res.url();
-        return res.ok() && url.includes("4dv3rts");
-      },
-      { timeout: 15_000 }
-    ).catch(() => null);
-
-    searchSubmittedAt = Date.now();
-    await searchInput.press("Enter");
-    await responsePromise;
-    await page.waitForTimeout(2_000);
-
-    fs.mkdirSync(debugDir, { recursive: true });
-    await page.screenshot({ path: path.join(debugDir, `zakup-search-${bin}.png`) });
-
-    const rawItems = extractZakupItems(capturedData);
-    const filterResult = filterZakupTenders(rawItems, bin, companyName);
-
-    return {
-      tenders: filterResult.accepted,
-      rawCount: rawItems.length,
-      rejectedReasons: filterResult.rejected.map((r) => r.reason)
-    };
-  } finally {
-    await page.close();
-    await context.close();
   }
+
+  fs.mkdirSync(debugDir, { recursive: true });
+  await page.screenshot({ path: path.join(debugDir, `zakup-fail-${bin}.png`) }).catch(() => {});
+  const html = await page.content().catch(() => "");
+  if (html) {
+    fs.writeFileSync(path.join(debugDir, `zakup-fail-${bin}.html`), html, "utf8");
+  }
+
+  throw lastError!;
 }
 
-async function findSearchInput(page: Page) {
-  const selectors = [
-    'input[placeholder*="Слово"]',
-    'input[placeholder*="поиска"]',
-    'input[type="search"]'
-  ];
-  for (const selector of selectors) {
-    const input = await page.$(selector);
-    if (input) return input;
+async function fetchZakupTendersOnce(
+  page: Page,
+  bin: string,
+  companyName: string,
+  searchName: string,
+  debugDir: string,
+  pageLoadTimeoutMs: number
+): Promise<{ tenders: TenderRecord[]; rawCount: number; rejectedReasons: ZakupRejectReason[] }> {
+  let capturedData: unknown = null;
+
+  await page.goto(ZAKUP_LOTS_URL, { waitUntil: "domcontentloaded", timeout: pageLoadTimeoutMs });
+  await dismissZakupOverlays(page);
+  await page.waitForLoadState("load").catch(() => {});
+  await page.waitForTimeout(1500);
+
+  const searchInput = await waitForZakupSearchInput(page, { timeoutMs: 15000 });
+  if (!searchInput) {
+    throw new Error("search input not found; not saving default lots");
   }
-  return null;
+
+  await searchInput.fill("");
+  await searchInput.fill(searchName);
+  await page.waitForTimeout(500);
+
+  const responsePromise = page.waitForResponse(
+    (res) => res.ok() && res.url().includes("4dv3rts"),
+    { timeout: 15_000 }
+  ).catch(() => null);
+
+  await searchInput.press("Enter");
+  const response = await responsePromise;
+  if (response) {
+    capturedData = await response.json().catch(() => null);
+  }
+  await page.waitForTimeout(2_000);
+
+  fs.mkdirSync(debugDir, { recursive: true });
+  await page.screenshot({ path: path.join(debugDir, `zakup-search-${bin}.png`) });
+
+  const rawItems = extractZakupItems(capturedData);
+  const filterResult = filterZakupTenders(rawItems, bin, companyName);
+
+  return {
+    tenders: filterResult.accepted,
+    rawCount: rawItems.length,
+    rejectedReasons: filterResult.rejected.map((r) => r.reason)
+  };
 }
 
 function extractZakupItems(data: unknown): Array<Record<string, unknown>> {
