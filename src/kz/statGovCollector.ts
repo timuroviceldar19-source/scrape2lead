@@ -3,7 +3,7 @@ import path from "node:path";
 import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright";
 import { isValidBin, sleep } from "./csv.js";
 import { KzStorage } from "./kzStorage.js";
-import { parseStatGovHtml } from "./statGovParser.js";
+import { getStatGovFetchFailure, parseStatGovHtml } from "./statGovParser.js";
 import type { StatGovRecord } from "./tenderTypes.js";
 
 export interface StatGovCollectOptions {
@@ -83,7 +83,7 @@ export async function collectStatGovForBins(
           stats.success++;
         } else {
           stats.failed++;
-          storage.recordEnrichError(bin, "stat_gov", "record not found in stat.gov HTML");
+          storage.recordEnrichError(bin, "stat_gov", getStatGovFetchFailure(result.html));
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -108,7 +108,7 @@ export async function fetchStatGovByBinWithRetry(
   bin: string,
   debugDir = DEFAULT_DEBUG_DIR,
   maxRetries = STAT_GOV_MAX_RETRIES
-): Promise<{ record: StatGovRecord | null; rawSnapshotPath: string | null }> {
+): Promise<{ record: StatGovRecord | null; rawSnapshotPath: string | null; html: string }> {
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -133,7 +133,7 @@ export async function fetchStatGovByBin(
   page: Page,
   bin: string,
   debugDir = DEFAULT_DEBUG_DIR
-): Promise<{ record: StatGovRecord | null; rawSnapshotPath: string | null }> {
+): Promise<{ record: StatGovRecord | null; rawSnapshotPath: string | null; html: string }> {
   await page.goto("https://stat.gov.kz/ru/cabinet/juridical/by/bin/", {
     waitUntil: "domcontentloaded",
     timeout: 30_000
@@ -150,7 +150,8 @@ export async function fetchStatGovByBin(
 
   return {
     record: parseStatGovHtml(html),
-    rawSnapshotPath
+    rawSnapshotPath,
+    html
   };
 }
 

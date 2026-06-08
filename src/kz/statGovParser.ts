@@ -54,6 +54,18 @@ export function parseStatGovHtml(html: string): StatGovRecord | null {
   };
 }
 
+export const STAT_GOV_BIN_NOT_FOUND_ERROR = "stat.gov: BIN not found in BNS database";
+
+export function isStatGovBinNotFound(html: string): boolean {
+  const text = cleanHtmlText(html).toLowerCase();
+  return text.includes("данные, удовлетворяющие вашему запросу, не найдены");
+}
+
+export function getStatGovFetchFailure(html: string): string {
+  if (isStatGovBinNotFound(html)) return STAT_GOV_BIN_NOT_FOUND_ERROR;
+  return "record not found in stat.gov HTML";
+}
+
 export function mapLegalStatus(input: string | null | undefined): LegalStatus {
   if (!input) return "unknown";
   const value = input.toLowerCase();
