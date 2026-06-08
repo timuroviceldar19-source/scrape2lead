@@ -72,6 +72,7 @@ npm run kz:export -- --bins bins-batch.csv
 |---|---|---|---|---|
 | `bins-batch-33-harvest.csv` | 33 | 33/33 | 33/33 | 33/33 |
 | `bins-batch-50-v2.csv` | 50 | 50/50 | 50/50 | 50/50 |
+| `bins-batch-100.csv` | 100 | 99/100 | 100/100 | 100/100 |
 
 ---
 

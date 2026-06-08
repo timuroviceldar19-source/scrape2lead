@@ -9,7 +9,12 @@ import { validateHarvestCandidate } from "../src/kz/binValidation.js";
 import { parseRegistrySearchRows } from "../src/kz/harvestRegistryParser.js";
 
 const REGISTRY_URL = "https://goszakup.gov.kz/ru/registry/supplierreg";
-const SEARCH_TERM = "ТОО";
+const SEARCH_TERMS = [
+  "ТОО",
+  "TOO",
+  "Товарищество с ограниченной",
+  ..."АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЫЭЮЯ".split("").map((c) => `ТОО ${c}`)
+];
 
 interface HarvestStats {
   scanned: number;
@@ -29,9 +34,9 @@ async function main(): Promise<void> {
   const page = await browser.newPage();
 
   try {
-    let pageNum = 0;
-    while (accepted.size < targetCount && pageNum < 10) {
-      pageNum++;
+    for (const searchTerm of SEARCH_TERMS) {
+      if (accepted.size >= targetCount) break;
+
       await page.goto(REGISTRY_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
       await page.waitForTimeout(1500);
 
@@ -39,33 +44,43 @@ async function main(): Promise<void> {
         'input[placeholder*="Наименование"], input[placeholder*="БИН"], input[name="search_bin"], input[name="bin_iin"]'
       );
       await searchInput.first().waitFor({ timeout: 10_000 });
-      await searchInput.first().fill(SEARCH_TERM);
+      await searchInput.first().fill(searchTerm);
       await page.locator('button:has-text("Найти"), button[type="submit"]').first().click();
       await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
       await page.waitForTimeout(1000);
 
-      const rows = parseRegistrySearchRows(await page.content());
-      for (const row of rows) {
-        if (accepted.has(row.bin)) continue;
-        stats.scanned++;
-        const verdict = validateHarvestCandidate(row);
-        if (!verdict.accepted) {
-          const reason = verdict.reason ?? "unknown";
-          stats.rejected[reason] = (stats.rejected[reason] ?? 0) + 1;
-          continue;
+      let pageNum = 0;
+      while (accepted.size < targetCount && pageNum < 5) {
+        pageNum++;
+        const rows = parseRegistrySearchRows(await page.content());
+        let addedOnPage = 0;
+
+        for (const row of rows) {
+          if (accepted.has(row.bin)) continue;
+          stats.scanned++;
+          const verdict = validateHarvestCandidate(row);
+          if (!verdict.accepted) {
+            const reason = verdict.reason ?? "unknown";
+            stats.rejected[reason] = (stats.rejected[reason] ?? 0) + 1;
+            continue;
+          }
+          accepted.set(row.bin, row);
+          stats.accepted++;
+          addedOnPage++;
+          if (accepted.size >= targetCount) break;
         }
-        accepted.set(row.bin, row);
-        stats.accepted++;
+
+        console.log(
+          `term="${searchTerm}" page=${pageNum} rows=${rows.length} added=${addedOnPage} accepted=${accepted.size}/${targetCount}`
+        );
+
         if (accepted.size >= targetCount) break;
+        if (rows.length === 0) break;
+
+        const hasNext = await goToNextResultsPage(page);
+        if (!hasNext) break;
+        await page.waitForTimeout(1200);
       }
-
-      console.log(
-        `page=${pageNum} scanned=${stats.scanned} accepted=${accepted.size}/${targetCount} rejected=${JSON.stringify(stats.rejected)}`
-      );
-
-      // Single search page usually enough for 50; break if no new rows
-      if (rows.length === 0) break;
-      break;
     }
   } finally {
     await browser.close();
@@ -83,7 +98,7 @@ async function main(): Promise<void> {
     metaPath,
     JSON.stringify(
       {
-        search_term: SEARCH_TERM,
+        search_terms: SEARCH_TERMS,
         target_count: targetCount,
         accepted_count: list.length,
         stats,
@@ -97,6 +112,28 @@ async function main(): Promise<void> {
 
   console.log(`Wrote ${list.length} BINs to ${outPath}`);
   console.log(`Meta: ${metaPath}`);
+}
+
+async function goToNextResultsPage(page: import("playwright").Page): Promise<boolean> {
+  const selectors = [
+    'a.page-link:has-text("»")',
+    'a:has-text("»")',
+    'button:has-text("Следующая")',
+    'a:has-text("Следующая")',
+    'li.next:not(.disabled) a',
+    '.pagination .active + li a'
+  ];
+
+  for (const selector of selectors) {
+    const link = page.locator(selector).first();
+    if ((await link.count()) === 0) continue;
+    if (!(await link.isVisible().catch(() => false))) continue;
+    await link.click();
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    return true;
+  }
+
+  return false;
 }
 
 main().catch((error) => {
