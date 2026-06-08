@@ -1,0 +1,262 @@
+{
+  "search_term": "ТОО",
+  "target_count": 50,
+  "accepted_count": 50,
+  "stats": {
+    "scanned": 50,
+    "accepted": 50,
+    "rejected": {}
+  },
+  "companies": [
+    {
+      "bin": "160640003364",
+      "name": "ТОО \"Vita Pharma\"",
+      "participant_id": "154292"
+    },
+    {
+      "bin": "230640040166",
+      "name": "ТОО \"Karo Stroy\"",
+      "participant_id": "898109"
+    },
+    {
+      "bin": "100740005402",
+      "name": "ТОО \"Алемар\"",
+      "participant_id": "822739"
+    },
+    {
+      "bin": "230440039501",
+      "name": "ТОО \"NOK Engineering\"",
+      "participant_id": "918484"
+    },
+    {
+      "bin": "251140015034",
+      "name": "ТОО \"Өнербек Құрылыс\"",
+      "participant_id": "917816"
+    },
+    {
+      "bin": "220140027545",
+      "name": "ТОО \"ИПОИР\"",
+      "participant_id": "918480"
+    },
+    {
+      "bin": "130440016948",
+      "name": "ТОО \"Астана Ин-Групп\"",
+      "participant_id": "137326"
+    },
+    {
+      "bin": "251140008844",
+      "name": "ТОО «НЭИ «IQadam»",
+      "participant_id": "907649"
+    },
+    {
+      "bin": "201240028328",
+      "name": "ТОО \"MCompany Group\"",
+      "participant_id": "461061"
+    },
+    {
+      "bin": "101240004904",
+      "name": "ТОО \"ALBATECH KZ\"",
+      "participant_id": "520879"
+    },
+    {
+      "bin": "171240002336",
+      "name": "ТОО \"Барыс KST\"",
+      "participant_id": "250915"
+    },
+    {
+      "bin": "190240033169",
+      "name": "ТОО \"Semey Glass Group\"",
+      "participant_id": "870772"
+    },
+    {
+      "bin": "161240005993",
+      "name": "ТОО \"Техно Ритейл\"",
+      "participant_id": "918463"
+    },
+    {
+      "bin": "180340011813",
+      "name": "ТОО \"Кингстон\"",
+      "participant_id": "272342"
+    },
+    {
+      "bin": "180440026964",
+      "name": "ТОО \"Freedom Connect\"",
+      "participant_id": "437269"
+    },
+    {
+      "bin": "121240020088",
+      "name": "ТОО \"Дирекция строительства и технического обсследования\"",
+      "participant_id": "114509"
+    },
+    {
+      "bin": "011140006135",
+      "name": "ТОО \"NurDorStroy\"",
+      "participant_id": "532587"
+    },
+    {
+      "bin": "251240037356",
+      "name": "ТОО \"НурБагдат\"",
+      "participant_id": "901543"
+    },
+    {
+      "bin": "031240007715",
+      "name": "ТОО \"Эгида-KZ\"",
+      "participant_id": "506602"
+    },
+    {
+      "bin": "131040013288",
+      "name": "ТОО \"АстанаПроектСтрой\"",
+      "participant_id": "141993"
+    },
+    {
+      "bin": "160440006044",
+      "name": "ТОО \"Repoint (Репойнт)\"",
+      "participant_id": "847502"
+    },
+    {
+      "bin": "230940041978",
+      "name": "ТОО \"ТОО \"Проф-СМК\"\"",
+      "participant_id": "917052"
+    },
+    {
+      "bin": "030440001473",
+      "name": "ТОО \"Торговый дом GOOD LOOK\"",
+      "participant_id": "918422"
+    },
+    {
+      "bin": "201240020273",
+      "name": "ТОО \"SafeNetra Systems\"",
+      "participant_id": "899115"
+    },
+    {
+      "bin": "220640004643",
+      "name": "ТОО \"ASLAN ЛогистикГрупп\"",
+      "participant_id": "889950"
+    },
+    {
+      "bin": "191240004356",
+      "name": "ТОО \"AG Digital KZ\"",
+      "participant_id": "390276"
+    },
+    {
+      "bin": "250340015445",
+      "name": "ТОО \"ТОО МК Ритайл\"",
+      "participant_id": "918401"
+    },
+    {
+      "bin": "190440014615",
+      "name": "ТОО \"TS Group company\"",
+      "participant_id": "373349"
+    },
+    {
+      "bin": "220840023548",
+      "name": "ТОО \"SEDA Medical (СЕДА Медикал)\"",
+      "participant_id": "631524"
+    },
+    {
+      "bin": "250440028817",
+      "name": "ТОО \"НЦПКС\"",
+      "participant_id": "780534"
+    },
+    {
+      "bin": "230440003779",
+      "name": "ТОО \"Kemenger Prom\"",
+      "participant_id": "610947"
+    },
+    {
+      "bin": "211040034555",
+      "name": "ТОО \"Q-Networks\"",
+      "participant_id": "628903"
+    },
+    {
+      "bin": "250540034637",
+      "name": "ТОО \"BMZ Engineering\"",
+      "participant_id": "918386"
+    },
+    {
+      "bin": "230140035369",
+      "name": "ТОО \"PROFIMED-A\"",
+      "participant_id": "918382"
+    },
+    {
+      "bin": "161040010972",
+      "name": "ТОО \"КДТС\"",
+      "participant_id": "895183"
+    },
+    {
+      "bin": "060240031126",
+      "name": "ТОО \"Comfort Draft\"",
+      "participant_id": "918375"
+    },
+    {
+      "bin": "211140028415",
+      "name": "ТОО \"Учёт IT\"",
+      "participant_id": "758913"
+    },
+    {
+      "bin": "141040014575",
+      "name": "ТОО \"Парус ПВ\"",
+      "participant_id": "918373"
+    },
+    {
+      "bin": "060340006892",
+      "name": "ТОО \"МегаСтройАктау\"",
+      "participant_id": "155409"
+    },
+    {
+      "bin": "240140002563",
+      "name": "ТОО \"Comfort Territory\"",
+      "participant_id": "766295"
+    },
+    {
+      "bin": "041040003658",
+      "name": "ТОО \"ERG Service\" (И-Ар-Джи Сервис)",
+      "participant_id": "640735"
+    },
+    {
+      "bin": "021240004293",
+      "name": "ТОО \"ДЕЗОФАРМ\"",
+      "participant_id": "8448"
+    },
+    {
+      "bin": "210540034907",
+      "name": "ТОО \"Аймак Строй Проект\"",
+      "participant_id": "606197"
+    },
+    {
+      "bin": "030440001880",
+      "name": "ТОО \"Alem Stroy Invest PLC\"",
+      "participant_id": "596553"
+    },
+    {
+      "bin": "180340014104",
+      "name": "ТОО \"BONS CONSTRUCTION\"",
+      "participant_id": "273469"
+    },
+    {
+      "bin": "140440014243",
+      "name": "ТОО \"Al-Su.Kz\"",
+      "participant_id": "103004"
+    },
+    {
+      "bin": "101040002148",
+      "name": "ТОО \"Корпорация \"МСК-Строй\"",
+      "participant_id": "124208"
+    },
+    {
+      "bin": "171040036591",
+      "name": "ТОО \"UMKA-AST\"",
+      "participant_id": "337137"
+    },
+    {
+      "bin": "240940034789",
+      "name": "ТОО \"ЭлементLift-KZ\"",
+      "participant_id": "918338"
+    },
+    {
+      "bin": "181140029693",
+      "name": "ТОО \"Elite Trading Group\"",
+      "participant_id": "918335"
+    }
+  ]
+}

@@ -67,6 +67,12 @@ npm run kz:export -- --bins bins-batch.csv
 
 Рекомендуется сначала **пилот 10 БИН**, потом полный batch.
 
+**Проверенные наборы (harvest v2):**
+| Файл | BIN | stat | registry | export |
+|---|---|---|---|---|
+| `bins-batch-33-harvest.csv` | 33 | 33/33 | 33/33 | 33/33 |
+| `bins-batch-50-v2.csv` | 50 | 50/50 | 50/50 | 50/50 |
+
 ---
 
 ## 3. Аудит качества
