@@ -1,5 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { normalizeCompanyName } from "./normalizeCompanyName.js";
 import type { TenderRecord } from "./tenderTypes.js";
 

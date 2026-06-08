@@ -478,6 +478,17 @@ npm run kz:export -- --format xlsx --out exports/kz-report.xlsx
 - [x] Пагинация API при > 1 страницы результатов.
 - [x] Фильтр «только активные закупки».
 
+### Этап 3.5 — goszakup public registry (без токена)
+
+- [x] Миграция v13 — таблица `goszakup_registry_data`.
+- [x] Парсер HTML карточки участника (`goszakupRegistryParser.ts`).
+- [x] Коллектор Playwright (`goszakupRegistryCollector.ts`) — поиск по БИН, переход на карточку.
+- [x] Storage методы: `getGoszakupRegistryByBin`, `isGoszakupRegistryFresh`, `upsertGoszakupRegistry`.
+- [x] Интеграция в `enrichPipeline` (флаги `--skip-goszakup-registry`, `--registry-only`).
+- [x] Export: новые колонки Companies (телефон, email, сайт, № участника, роль).
+- [x] CLI подкоманда `kz registry` + скрипт `kz:registry`.
+- [x] Unit-тесты парсера с fixtures.
+
 ### Этап 4 — Продуктовый слой (post-MVP)
 
 - [ ] Связь с `leads` / feeder 2GIS.
@@ -497,6 +508,7 @@ npm run kz:export -- --format xlsx --out exports/kz-report.xlsx
 | `POSTGRES_CONNECTION_STRING` | При postgres | Connection string |
 | `KZ_ENRICH_DELAY_MS` | Опц. | Пауза между БИН (default: 2000) |
 | `STAT_GOV_CACHE_TTL_DAYS` | Опц. | default: 7 |
+| `GOSZAKUP_REGISTRY_CACHE_TTL_DAYS` | Опц. | default: 7 |
 
 ---
 

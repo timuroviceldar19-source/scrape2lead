@@ -26,7 +26,8 @@
     "kz:merge": "tsx scripts/merge-stat-gov-data.ts",
     "kz:audit": "tsx scripts/kz-batch-audit.ts",
     "kz:export": "tsx scripts/kz-export.ts",
-    "kz:goszakup:smoke": "tsx scripts/goszakup-smoke.ts"
+    "kz:goszakup:smoke": "tsx scripts/goszakup-smoke.ts",
+    "kz:registry": "tsx scripts/goszakup-registry-collector.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",

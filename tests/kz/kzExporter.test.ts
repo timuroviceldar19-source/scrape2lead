@@ -35,7 +35,7 @@ describe("exportKzReport", () => {
     expect(workbook.getWorksheet("Companies")?.rowCount).toBe(2);
     expect(workbook.getWorksheet("Tenders")?.rowCount).toBe(2);
     expect(workbook.getWorksheet("Errors")?.rowCount).toBe(2);
-    expect(workbook.getWorksheet("Companies")?.getRow(2).getCell(12).value).toBe(1);
+    expect(workbook.getWorksheet("Companies")?.getRow(2).getCell(17).value).toBe(1);
   });
 });
 

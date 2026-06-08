@@ -48,6 +48,11 @@ export interface CompanyCard extends StatGovRecord {
   tender_budget_sum: number | null;
   tender_sources: string;
   last_tender_end_date: string | null;
+  registry_phone?: string | null;
+  registry_email?: string | null;
+  registry_website?: string | null;
+  participant_id?: string | null;
+  registry_role?: string | null;
 }
 
 export interface EnrichError {

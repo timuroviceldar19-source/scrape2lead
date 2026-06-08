@@ -308,6 +308,36 @@ const migrations: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_kz_enrich_errors_bin ON kz_enrich_errors(bin);
     `
+  },
+  {
+    version: 13,
+    sql: `
+      CREATE TABLE IF NOT EXISTS goszakup_registry_data (
+        bin TEXT PRIMARY KEY,
+        participant_id TEXT,
+        name_ru TEXT,
+        name_kz TEXT,
+        rnn TEXT,
+        role TEXT,
+        residency TEXT,
+        phone TEXT,
+        email TEXT,
+        website TEXT,
+        registration_date TEXT,
+        last_update_date TEXT,
+        kopf TEXT,
+        ownership_form TEXT,
+        economic_sector TEXT,
+        director_name TEXT,
+        director_iin TEXT,
+        legal_address TEXT,
+        location_address TEXT,
+        registry_url TEXT,
+        updated_at TEXT NOT NULL,
+        raw_snapshot_path TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_goszakup_registry_participant ON goszakup_registry_data(participant_id);
+    `
   }
 ];
 

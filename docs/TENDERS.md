@@ -138,3 +138,33 @@ Without the token, `zakup.sk.kz` still runs and `goszakup.gov.kz` is reported as
 `customer_name` is set from `stat_gov_data` **only after** a lot passes the filter. Lots that are rejected are never persisted.
 
 For verified supplier data, use `goszakup.gov.kz` (BIN-based lookup with token).
+
+## Goszakup Public Registry (no token)
+
+Stage 3.5 adds a **public registry collector** that scrapes `goszakup.gov.kz/ru/registry/supplierreg` — no `GOSZAKUP_TOKEN` required. This supplements stat.gov data with contact info (phone, email, website) and registry metadata (participant number, role).
+
+### What it provides vs other sources
+
+| Source | Data |
+|---|---|
+| stat.gov | Registration, ОКЭД, director, legal status |
+| **goszakup registry** | **Phone, email, website, participant ID, role, residency** |
+| goszakup API (token) | Tender history by BIN |
+
+### Commands
+
+```bash
+npm run kz:registry -- bins.csv
+npm run dev -- kz registry bins.csv
+npm run dev -- kz enrich bins.csv --skip-tenders --skip-stat    # registry only
+npm run dev -- kz enrich bins.csv --skip-goszakup-registry       # disable registry
+npm run dev -- kz enrich bins.csv --registry-only                # registry only (alias)
+```
+
+### TTL cache
+
+Registry records are cached for 7 days by default. Override with `GOSZAKUP_REGISTRY_CACHE_TTL_DAYS` in `.env`. Use `--force-refresh` to bypass.
+
+### Storage
+
+Data goes to `goszakup_registry_data` table (migration v13), joined into the Companies sheet at export via `bin`.

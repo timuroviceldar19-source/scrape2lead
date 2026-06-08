@@ -53,6 +53,8 @@ kz
   .option("--skip-stat", "skip stat.gov collection")
   .option("--skip-tenders", "skip tender collection")
   .option("--skip-zakup", "skip zakup.sk.kz collection (goszakup only)")
+  .option("--skip-goszakup-registry", "skip public goszakup registry collection")
+  .option("--registry-only", "only run goszakup registry (skip stat + tenders)")
   .option("--delay-ms <ms>", "delay between requests in ms", "2000")
   .option("--force-refresh", "ignore stat.gov TTL cache")
   .option("--goszakup-active-only", "only keep goszakup tenders with active status")
@@ -61,6 +63,8 @@ kz
     skipStat?: boolean;
     skipTenders?: boolean;
     skipZakup?: boolean;
+    skipGoszakupRegistry?: boolean;
+    registryOnly?: boolean;
     delayMs: string;
     forceRefresh?: boolean;
     goszakupActiveOnly?: boolean;
@@ -71,6 +75,8 @@ kz
       skipStat: Boolean(options.skipStat),
       skipTenders: Boolean(options.skipTenders),
       skipZakup: Boolean(options.skipZakup),
+      skipGoszakupRegistry: Boolean(options.skipGoszakupRegistry),
+      registryOnly: Boolean(options.registryOnly),
       delayMs: Number(options.delayMs) || 2000,
       forceRefresh: Boolean(options.forceRefresh),
       goszakupActiveOnly: Boolean(options.goszakupActiveOnly),
@@ -108,6 +114,24 @@ kz
     } finally {
       db.close();
     }
+  });
+
+kz
+  .command("registry")
+  .description("Collect public goszakup.gov.kz registry data (no token required)")
+  .argument("<csvFile>", "CSV file with BIN values")
+  .option("--delay-ms <ms>", "delay between requests in ms", "2000")
+  .option("--force-refresh", "ignore TTL cache")
+  .option("--headless", "run browser headless", true)
+  .action(async (csvFile: string, options: { delayMs: string; forceRefresh?: boolean; headless: boolean }) => {
+    const bins = readBinsFromCsv(csvFile);
+    const { collectGoszakupRegistryForBins } = await import("./kz/goszakupRegistryCollector.js");
+    const stats = await collectGoszakupRegistryForBins(bins, {
+      delayMs: Number(options.delayMs) || 2000,
+      forceRefresh: Boolean(options.forceRefresh),
+      headless: Boolean(options.headless)
+    });
+    console.log(`registry: processed=${stats.processed} success=${stats.success} not_found=${stats.not_found} cached=${stats.cached} failed=${stats.failed}`);
   });
 
 program
