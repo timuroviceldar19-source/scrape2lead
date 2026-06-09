@@ -24,6 +24,7 @@ function card(overrides: Partial<CompanyCard>): CompanyCard {
     tender_active_budget_sum: null,
     tender_sources: "",
     last_tender_end_date: null,
+    stat_missing: false,
     ...overrides
   };
 }

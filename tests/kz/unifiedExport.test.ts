@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { exportUnifiedReport } from "../../src/kz/unifiedExporter.js";
 import { formatLeadPhone } from "../../src/kz/leadKzMerge.js";
 import { mergeLeadsWithKz } from "../../src/kz/leadKzMerge.js";
+import { scoreCompanyCards } from "../../src/kz/kzLeadScore.js";
 import { KzStorage } from "../../src/kz/kzStorage.js";
 
 const TEST_DB_PATH = path.join("data", "test-unified-export.db");
@@ -60,7 +61,7 @@ describe("unifiedExporter", () => {
 
     const db = new Database(TEST_DB_PATH);
     const storage = new KzStorage({ db });
-    const { matches } = mergeLeadsWithKz(db, storage.getCompanyCards());
+    const { matches } = mergeLeadsWithKz(db, scoreCompanyCards(storage.getCompanyCards()));
     storage.close();
     db.close();
 
