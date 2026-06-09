@@ -438,6 +438,10 @@ class FakeAdapter implements ISourceAdapter {
       incomplete: false
     };
   }
+
+  async close(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 function makeCard(externalId: string, name = `Company ${externalId}`): RawCompanyCard {

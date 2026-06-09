@@ -1,4 +1,4 @@
-export type SourceId = "2gis" | string;
+export type SourceId = "2gis" | "kaspi" | string;
 
 export interface SearchQuery {
   source: SourceId;
@@ -21,6 +21,57 @@ export interface Lead {
   messenger_links: string[];
   parsed_at: string;
   incomplete: boolean;
+  
+  // Kaspi-specific enrichment fields
+  rating?: number;
+  review_count?: number;
+  product_count?: number;
+  shop_categories?: string[];
+
+  // CRM-ready enrichment fields
+  lead_id?: string;
+  source_search_city?: string;
+  merchant_city_guess?: string;
+  city_status?: "ok" | "mismatch" | "needs_check";
+  address_raw?: string;
+  address_clean?: string;
+  address_status?: "valid" | "invalid" | "empty";
+  phone_raw?: string;
+  phone_normalized?: string;
+  phone_status?: "valid" | "invalid" | "empty";
+  email_raw?: string;
+  email_status?: "valid" | "invalid" | "empty";
+  kaspi_profile_url?: string;
+  real_website?: string;
+  website_status?: "valid" | "invalid" | "empty";
+  messenger_flags?: string;
+  lead_score?: number;
+  priority?: "A" | "B" | "C" | "D";
+  contactability?: "Phone ready" | "No usable contact";
+  crm_status?: "Ready to call" | "Needs enrichment" | "Ready to contact" | "Needs manual review" | "Not enough data";
+  next_action?: string;
+  parser_note?: string;
+
+  // Enrichment tracking fields
+  enrichment_source?: "2gis" | "google" | "none";
+  enrichment_url?: string;
+  confidence_score?: number;
+  enrichment_status?: "pending" | "enriched" | "manual_review" | "not_found" | "failed";
+  enrichment_attempted_at?: string;
+  enrichment_error?: string | null;
+  found_name?: string;
+  found_category?: string;
+
+  // stat.gov.kz fields
+  bin?: string;
+  registration_date?: string;
+  oked?: string;
+  oked_name?: string;
+  director?: string;
+  founder?: string;
+  legal_status?: "active" | "inactive" | "liquidated" | "reorganizing" | "unknown";
+  company_age_years?: number;
+  legal_form?: string;
 }
 
 export interface RawCompanyCard {
@@ -89,6 +140,7 @@ export interface ISourceAdapter {
   getCardDetail(card: RawCompanyCard): Promise<RawCardDetail>;
   getContacts(detail: RawCardDetail): Promise<RawContacts>;
   normalize(detail: RawCardDetail, contacts: RawContacts): Lead;
+  close(): Promise<void>;
 }
 
 /**
@@ -109,7 +161,20 @@ export interface RateLimitPolicy {
   maxRequestsPerMinutePerProxy?: number;
 }
 
-export interface RuntimeConfig extends SearchQuery {
+export interface RuntimeConfig extends Omit<SearchQuery, "category"> {
+  /**
+   * Single target category. Kept for backward compatibility with configs that
+   * only need one niche. Mutually exclusive with {@link categories} — when both
+   * are set, {@link categories} wins.
+   */
+  category?: string;
+  /**
+   * Multiple target categories. When provided, JobManager runs one parse job
+   * per category (resumable per-niche) and the adapter is invoked once with
+   * each category. Last matching category wins on the lead's `category`
+   * column — use `shop_categories` JSON for the full match set.
+   */
+  categories?: string[];
   databasePath: string;
   exportDir: string;
   delayRangeMs: [number, number];
@@ -163,6 +228,16 @@ export interface RuntimeConfig extends SearchQuery {
    * Use "https://2gis.kz" for Kazakhstan targets.
    */
   twoGisBaseUrl?: string;
+  /**
+   * Base URL for Kaspi. Defaults to "https://kaspi.kz".
+   */
+  kaspiBaseUrl?: string;
+  /**
+   * Optional lead quality filters. Leads not meeting these thresholds will be
+   * excluded from the final export (but may still be logged in the database).
+   */
+  minRating?: number;
+  minReviewCount?: number;
 }
 
 export interface WebsiteCrawlPolicy {

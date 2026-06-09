@@ -100,6 +100,10 @@ class FakeAdapter implements ISourceAdapter {
       incomplete: this.opts.incomplete?.has(detail.externalId) ?? false
     };
   }
+
+  async close(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 function makeCard(externalId: string, name = `Company ${externalId}`): RawCompanyCard {

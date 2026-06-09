@@ -1,83 +1,200 @@
-# Scrape2Lead v1.7
+# Scrape2Lead — KZ Company Intelligence
 
-Local TypeScript MVP for collecting and normalising B2B leads. Platform core + `2gis` source adapter.
+TypeScript CLI for enriching **Kazakhstan companies by BIN**: stat.gov.kz legal data, goszakup registry contacts, and public procurement contracts — with optional **2GIS/Kaspi feeder** for phone/address leads.
 
-## What is included
+**Product focus (v2):** CSV of BINs → enrich → scored XLSX for sales and tender monitoring.
 
-- CLI job runner (`source`, `geo`, `category`, `limit`).
-- Source adapter contract: `searchCompanies`, `listCards`, `getCardDetail`, `getContacts`, `normalize`, `capabilities`.
-- 2GIS adapter — Playwright browser session, JSON API capture, DOM fallback, CAPTCHA detection, fixture mode.
-- SQLite storage via `better-sqlite3` with versioned migrations and `UNIQUE(source, external_id)` deduplication.
-- Lead normaliser: phones, email, URL, social links, incomplete flag.
-- CSV/XLSX export.
-- Proxy rotator with channel/IP tracking and per-attempt proxy ID recording.
-- Job telemetry: success/partial/failed rates, captcha count, ban count, proxy rotation count, average parse time, cards-per-hour.
-- Unit and integration tests (Vitest).
+**Legacy layer (v1.7):** 2GIS/Kaspi scrape adapters, enrichment, proxy rotation — still in the repo as a feeder, not the primary acceptance path.
 
-## Requirements
+Spec: [`docs/TZ_v2.md`](docs/TZ_v2.md) · Batch ops: [`docs/kz-batch-runbook.md`](docs/kz-batch-runbook.md)
 
-- Node.js >= 20
-- npm >= 9
+---
 
-## Setup (clean machine)
+## Quick start (KZ)
 
 ```bash
 npm install
 npx playwright install chromium
-cp .env.example .env          # fill in values if using a proxy
-cp config.example.json config.json  # adjust as needed
+cp .env.example .env
 ```
+
+Prepare `bins.csv` (one 12-digit BIN per line, header `bin` optional):
+
+```text
+bin
+061040006408
+960440000716
+```
+
+```bash
+npm run kz:login                              # stat.gov QR session (operator step)
+npm run dev -- kz enrich bins.csv             # stat + registry + tenders
+npm run kz:export -- --bins bins.csv          # XLSX: Companies, Tenders, Summary, Errors
+```
+
+Harvest TOO BINs from goszakup public registry:
+
+```bash
+npm run kz:harvest -- 50 bins-batch-50.csv
+```
+
+---
+
+## Data sources
+
+| Source | Role | Auth |
+|--------|------|------|
+| **stat.gov.kz** | Primary: name, OKED, director, address, registration | QR via egov mobile (`kz:login`) |
+| **goszakup registry** | Phone, email, website, participant ID | Public HTML (no token) |
+| **goszakup HTML** | Supplier **contracts** by BIN | Public site (Playwright) |
+| **goszakup API** | Tenders by BIN | `GOSZAKUP_TOKEN` (optional) |
+| **zakup.sk.kz** | Samruk-Kazyna lots by company name | Public (conservative filter) |
+| **2GIS / Kaspi** | Feeder: contacts + company names → BIN backfill | Public scrape |
+
+Without `GOSZAKUP_TOKEN`, contracts still load via **goszakup HTML**; API tenders are skipped.
+
+---
+
+## KZ commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run kz:login` | Save stat.gov session to `data/stat-gov-session.json` |
+| `npm run kz:enrich -- bins.csv` | Full enrich pipeline (same as `dev -- kz enrich`) |
+| `npm run kz:registry -- bins.csv` | goszakup public registry only |
+| `npm run kz:export -- --bins bins.csv` | KZ XLSX with lead scoring columns |
+| `npm run kz:export-top-a` | Sales slice: priority **A** from scored batch export |
+| `npm run kz:merge` | Write stat.gov fields back into `leads` table |
+| `npm run kz:export-unified` | Unified XLSX: 2GIS leads + KZ + scoring |
+| `npm run kz:feeder-top-a -- bins.csv` | Top-A feeder: 2GIS → backfill BIN → enrich → unified |
+| `npm run kz:audit -- bins.csv` | Quality audit workbook (zakup heuristics) |
+| `npm run kz:harvest -- N out.csv` | Harvest TOO BINs from goszakup registry |
+
+CLI equivalents: `npm run dev -- kz login|enrich|export|merge|export-unified …`
+
+### Enrich flags (partial reruns)
+
+```bash
+npm run dev -- kz enrich bins.csv --skip-stat
+npm run dev -- kz enrich bins.csv --skip-tenders
+npm run dev -- kz enrich bins.csv --registry-only
+npm run dev -- kz enrich bins.csv --force-refresh --delay-ms 2000
+```
+
+### Unified export (2GIS + KZ)
+
+```bash
+npm run dev -- kz merge
+npm run dev -- kz export-unified --priority A --out exports/unified.xlsx
+npm run dev -- kz export-unified --enrich-missing --priority A   # auto-enrich lead BINs first
+```
+
+Leads sheet includes **2GIS phone/address** when matched by BIN or fuzzy name.
+
+### Top-A feeder (2GIS → sales file)
+
+```bash
+cp config.feeder.example.json config.feeder.json   # local config, not committed
+npm run kz:feeder-top-a -- bins-batch-100.csv
+# --skip-2gis  --config path  --out exports/foo.xlsx
+```
+
+Uses `data/scrape2lead.db` by default (`KZ_DATABASE_PATH` to override).
+
+---
+
+## Exports
+
+| File | Contents |
+|------|----------|
+| KZ export (`kz:export`) | Companies + Tenders + Summary + Errors; scoring columns (`Приоритет лида`, `High volume`, `Stat missing`) |
+| Unified export | **Leads** (2GIS contacts + KZ match) + Tenders + Summary + Errors |
+| Top-A slice (`kz:export-top-a`) | Priority A companies sorted by active contract budget |
+
+Runtime output: `exports/` (gitignored).
+
+---
 
 ## Development
 
 ```bash
-npm run build     # compile TypeScript → dist/
-npm test          # run the full test suite
-npm run lint      # type-check without emitting (reports type errors)
-npm run dev -- --help  # run CLI via tsx without building
+npm run build
+npm test
+npm run lint
+npm run dev -- --help
+npm run dev -- kz --help
 ```
 
-## Run against a saved fixture (no network required)
+KZ tests: `npx vitest run tests/kz`
 
-```bash
-npm run dev -- --fixture tests/fixtures/2gis-response.json \
-               --geo moscow --category autoservice --limit 10
-```
+Requirements: Node.js ≥ 20, npm ≥ 9, Playwright Chromium.
 
-## Run against 2GIS live
-
-```bash
-npm run dev -- --config config.json --geo moscow --category autoservice --limit 25 --headed
-```
-
-> **Note:** 2GIS selectors and API response shapes can change without notice.  
-> A CAPTCHA is logged as a runtime event and the adapter saves a JSON evidence snapshot under `raw_snapshots/`.
+---
 
 ## Environment variables
 
-Copy `.env.example` to `.env` and fill in values. Variables:
+Copy `.env.example` → `.env`.
 
 | Variable | Description |
-|---|---|
-| `PROXY_API_URL` | Rotation endpoint — GET returns a new proxy URL (JSON or plain text). Leave blank to disable rotation. |
-| `PROXY_SERVER` | Static proxy fallback (`http://host:port` or `socks5://host:port`). |
-| `PROXY_USERNAME` | Proxy username (optional). |
-| `PROXY_PASSWORD` | Proxy password (optional). |
+|----------|-------------|
+| `GOSZAKUP_TOKEN` | Bearer token for goszakup OWS API (optional) |
+| `STAT_GOV_SESSION_PATH` | stat.gov session file (default: `data/stat-gov-session.json`) |
+| `STAT_GOV_CACHE_TTL_DAYS` | stat.gov cache TTL (default: 7) |
+| `KZ_ENRICH_DELAY_MS` | Pause between BINs (default: 2000) |
+| `GOSZAKUP_REGISTRY_CACHE_TTL_DAYS` | Registry cache TTL (default: 7) |
+| `KZ_DATABASE_PATH` | SQLite path for KZ/feeder (default: `data/scrape2lead.db`) |
+| `STORAGE_BACKEND` | `sqlite` (default) or `postgres` |
+| `POSTGRES_CONNECTION_STRING` | Required when `STORAGE_BACKEND=postgres` |
+| `PROXY_*` | Optional proxy rotation for 2GIS/Kaspi scrape |
+
+Session files and tokens stay in `data/` / `.env` — never commit them.
+
+---
+
+## Legacy: 2GIS / Kaspi scrape (v1.7)
+
+Platform core: adapter contract, JobManager, normalizer, proxy rotator, telemetry, SQLite/Postgres storage.
+
+```bash
+cp config.example.json config.json
+npm run dev -- --config config.json --geo "Алматы" --category "Автосервисы" --limit 25
+```
+
+Fixture mode (no network):
+
+```bash
+npm run dev -- --fixture tests/fixtures/2gis-response.json \
+               --geo astana --category autoservice --limit 10
+```
+
+2GIS remains useful as a **feeder** (phones + names) merged with KZ data via `kz:merge` and `kz:export-unified`. See [`docs/prompts/gpt-stage5-2gis-leads.md`](docs/prompts/gpt-stage5-2gis-leads.md).
+
+---
 
 ## Project layout
 
 ```
 src/
-  adapters/     source adapter implementations and registry
-  browser/      Playwright session manager
-  core/         JobManager, RateLimiter, backoff, telemetry
-  export/       CSV/XLSX export
-  proxy/        ProxyRotator
-  storage/      Storage class and SQLite migrations
-  types.ts
-  cli.ts
-tests/          Vitest test suite
-data/           SQLite databases (runtime, excluded from git)
-exports/        CSV/XLSX output (runtime, excluded from git)
-raw_snapshots/  Evidence snapshots (runtime, excluded from git)
+  kz/           stat.gov, goszakup, zakup collectors, scoring, unified export
+  adapters/     2GIS, Kaspi source adapters
+  enrichment/   contact enrichment and lead scoring (legacy)
+  storage/      SQLite migrations + Postgres backend
+  export/       CSV/XLSX helpers
+  core/         JobManager, rate limiter, telemetry
+  cli.ts        Main CLI + `kz` subcommands
+scripts/        Collectors, feeder, harvest, smoke tests
+docs/           TZ v2, runbooks, stage prompts
+data/           SQLite DBs, sessions (runtime, gitignored)
+exports/        XLSX/CSV output (runtime, gitignored)
 ```
+
+---
+
+## Documentation map
+
+| Doc | Purpose |
+|-----|---------|
+| [`docs/TZ_v2.md`](docs/TZ_v2.md) | Full spec: sources, schema, acceptance criteria |
+| [`docs/kz-batch-runbook.md`](docs/kz-batch-runbook.md) | 50–100 BIN batch, audit, quality gates |
+| [`docs/TENDERS.md`](docs/TENDERS.md) | goszakup HTML contracts vs announces |
+| `scrape2lead_tz_v1.7.md` | Original 2GIS platform spec (archived priority) |

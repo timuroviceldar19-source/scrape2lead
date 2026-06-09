@@ -49,15 +49,35 @@ export class ProxyRotator {
   }
 
   shouldRotate(): boolean {
-    return (
-      this.config.proxyApiUrl !== undefined &&
-      this.cardCount > 0 &&
-      this.cardCount % this.config.rotateEveryN === 0
-    );
+    if (this.config.rotateEveryN <= 0) return false;
+    if (this.cardCount <= 0) return false;
+    return this.cardCount % this.config.rotateEveryN === 0;
   }
 
   async rotate(reason: string): Promise<void> {
-    if (!this.config.proxyApiUrl) return;
+    if (!this.config.proxyApiUrl) {
+      // "no-api" mode: dataimpulse-style backconnect gateway. The rotating
+      // port (e.g. gw.dataimpulse.com:823) hands out a fresh IP per TCP
+      // connection, so a browser restart is enough to rotate. Fetching a
+      // new proxy from an API is not required.
+      if (!this.config.proxy) return;
+      const cardsOnIp = this.cardsOnIp;
+      this.cardsOnIp = 0;
+      await this.browserSession.restartWithProxy(this.config.proxy);
+      await this.storage.saveProxyRotation({
+        proxy: this.config.proxy.server,
+        proxyChannel: null,
+        ip: extractIp(this.config.proxy.server),
+        reason,
+        cardsOnIp,
+        rotatedAt: new Date().toISOString()
+      });
+      logger.info("proxy rotated (no-api mode: browser restart)", {
+        reason,
+        server: this.config.proxy.server
+      });
+      return;
+    }
 
     let newProxy: ProxyCredentials | undefined;
     try {

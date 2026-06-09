@@ -11,6 +11,8 @@ dist/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/stat-gov-session.json
+data/debug/
 
 # Runtime export artifacts
 exports/*
@@ -32,5 +34,6 @@ Thumbs.db
 
 # Local config override — use config.example.json as starting point
 config.json
+config.feeder.json
 ".qwen/"  
 .qwen/  

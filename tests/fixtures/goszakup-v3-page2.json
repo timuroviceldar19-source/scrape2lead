@@ -1,0 +1,39 @@
+{
+  "total": 3,
+  "limit": 50,
+  "next_page": "",
+  "items": [
+    {
+      "id": 415502,
+      "number_anno": "415502-1",
+      "name_ru": "Стройматериалы",
+      "name_kz": null,
+      "customer_name_ru": "ТОО \"ALAU\"",
+      "customer_name_kz": null,
+      "org_name_ru": "ТОО \"ALAU\"",
+      "org_name_kz": null,
+      "org_bin": "061040006408",
+      "total_sum": 25000,
+      "ref_buy_status_id": 220,
+      "start_date": "2026-02-01 00:00:00",
+      "end_date": "2026-03-01 00:00:00",
+      "ref_trade_methods_id": 7
+    },
+    {
+      "id": 415503,
+      "number_anno": "415503-1",
+      "name_ru": "Завершённая закупка",
+      "name_kz": null,
+      "customer_name_ru": "ТОО \"ALAU\"",
+      "customer_name_kz": null,
+      "org_name_ru": "ТОО \"ALAU\"",
+      "org_name_kz": null,
+      "org_bin": "061040006408",
+      "total_sum": 8000,
+      "ref_buy_status_id": 240,
+      "start_date": "2019-01-01 00:00:00",
+      "end_date": "2019-06-01 00:00:00",
+      "ref_trade_methods_id": 7
+    }
+  ]
+}

@@ -408,7 +408,16 @@ export class PostgresStorage implements IStorage {
         JSON.stringify(lead.social_links),
         JSON.stringify(lead.messenger_links),
         lead.parsed_at,
-        lead.incomplete
+        lead.incomplete,
+        lead.bin ?? null,
+        lead.registration_date ?? null,
+        lead.oked ?? null,
+        lead.oked_name ?? null,
+        lead.director ?? null,
+        lead.founder ?? null,
+        lead.legal_status ?? null,
+        lead.company_age_years ?? null,
+        lead.legal_form ?? null
       ])
     );
   }
@@ -694,7 +703,16 @@ export class PostgresStorage implements IStorage {
       social_links: normaliseJsonArray(row["social_links"]),
       messenger_links: normaliseJsonArray(row["messenger_links"]),
       parsed_at: toIso(row["parsed_at"]),
-      incomplete: Boolean(row["incomplete"])
+      incomplete: Boolean(row["incomplete"]),
+      bin: row["bin"] == null ? undefined : String(row["bin"]),
+      registration_date: row["registration_date"] == null ? undefined : String(row["registration_date"]),
+      oked: row["oked"] == null ? undefined : String(row["oked"]),
+      oked_name: row["oked_name"] == null ? undefined : String(row["oked_name"]),
+      director: row["director"] == null ? undefined : String(row["director"]),
+      founder: row["founder"] == null ? undefined : String(row["founder"]),
+      legal_status: row["legal_status"] == null ? undefined : String(row["legal_status"]) as "active" | "inactive" | "liquidated" | "reorganizing",
+      company_age_years: row["company_age_years"] == null ? undefined : Number(row["company_age_years"]),
+      legal_form: row["legal_form"] == null ? undefined : String(row["legal_form"])
     };
   }
 }

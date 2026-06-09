@@ -9,7 +9,8 @@ import type {
   RawContacts,
   RawDetailDiagnostics,
   RuntimeConfig,
-  ISourceAdapter
+  ISourceAdapter,
+  SearchQuery
 } from "../types.js";
 import type { IStorage } from "../storage/interface.js";
 import { exportLeads } from "../export/exporter.js";
@@ -139,55 +140,119 @@ export class JobManager {
 
     try {
       const adapter = this.registry.resolve(this.config.source);
-      const jobInput = {
+      const categories = resolveCategories(this.config);
+      if (categories.length === 0) {
+        throw new Error("No categories configured: provide `category` or `categories`");
+      }
+      logger.info("job starting", {
         source: this.config.source,
         city: this.config.geo,
-        category: this.config.category
-      };
-      const resumable = await this.storage.findResumableParseJob(jobInput);
-      const jobId = resumable?.id ?? await this.storage.createParseJob(jobInput);
-      if (resumable) {
-        await this.storage.setParseJobStatus(jobId, "running");
-        logger.info("job resumed", {
-          jobId,
-          source: jobInput.source,
-          geo: jobInput.city,
-          category: jobInput.category,
-          openTasks: await this.storage.countOpenTasks(jobId)
-        });
-      } else {
-        logger.info("job started", { jobId, ...jobInput });
+        categories,
+        limit: this.config.limit
+      });
+
+      // Run one parse job per category. Each job is independently resumable
+      // (keyed on (source, city, category)) and the upsert dedupes leads by
+      // (source, external_id) — a shop that matches several niches is stored
+      // once. The `category` column reflects the *last* match; see the
+      // `shop_categories` JSON column for the full match set.
+      const jobResults: Array<{ jobId: string; status: string; diagnostics: ReturnType<typeof createEnrichmentDiagnostics> }> = [];
+      for (const [index, category] of categories.entries()) {
+        const query: SearchQuery = {
+          ...this.config,
+          category
+        };
+        const jobInput = {
+          source: this.config.source,
+          city: this.config.geo,
+          category
+        };
+        const resumable = await this.storage.findResumableParseJob(jobInput);
+        const jobId = resumable?.id ?? await this.storage.createParseJob(jobInput);
+        if (resumable) {
+          await this.storage.setParseJobStatus(jobId, "running");
+          logger.info("job resumed", {
+            jobId,
+            source: jobInput.source,
+            geo: jobInput.city,
+            category: jobInput.category,
+            categoryIndex: index,
+            categoryCount: categories.length,
+            openTasks: await this.storage.countOpenTasks(jobId)
+          });
+        } else {
+          logger.info("job started", { jobId, ...jobInput, categoryIndex: index, categoryCount: categories.length });
+        }
+
+        const cards = await this.discoverCards(jobId, adapter, query);
+        await this.storage.updateParseJobTotalFound(jobId, cards.length);
+        logger.info("cards discovered", { jobId, category, count: cards.length });
+
+        const prioritizedCards = prioritizeSparseCards(cards);
+        const cardMap = new Map<string, RawCompanyCard>();
+        for (const card of prioritizedCards) {
+          cardMap.set(card.externalId, card);
+          await this.storage.enqueueCompanyTask({
+            parseJobId: jobId,
+            source: adapter.source,
+            externalId: card.externalId
+          });
+        }
+
+        const concurrency = Math.max(1, this.config.concurrency);
+        const enrichmentDiagnostics = createEnrichmentDiagnostics();
+        const workers = Array.from({ length: concurrency }, (_, i) =>
+          this.runWorker(`worker-${i}-${randomUUID().slice(0, 6)}`, jobId, cardMap, adapter, enrichmentDiagnostics)
+        );
+        await Promise.all(workers);
+
+        const status = await this.storage.finalizeParseJob(jobId);
+        logger.info("enrichment diagnostics", { jobId, category, ...enrichmentDiagnostics });
+        jobResults.push({ jobId, status, diagnostics: enrichmentDiagnostics });
       }
 
-      const cards = await this.discoverCards(jobId, adapter);
-      await this.storage.updateParseJobTotalFound(jobId, cards.length);
-      logger.info("cards discovered", { jobId, count: cards.length });
-
-      const prioritizedCards = prioritizeSparseCards(cards);
-      const cardMap = new Map<string, RawCompanyCard>();
-      for (const card of prioritizedCards) {
-        cardMap.set(card.externalId, card);
-        await this.storage.enqueueCompanyTask({
-          parseJobId: jobId,
-          source: adapter.source,
-          externalId: card.externalId
-        });
-      }
-
-      const concurrency = Math.max(1, this.config.concurrency);
-      const enrichmentDiagnostics = createEnrichmentDiagnostics();
-      const workers = Array.from({ length: concurrency }, (_, i) =>
-        this.runWorker(`worker-${i}-${randomUUID().slice(0, 6)}`, jobId, cardMap, adapter, enrichmentDiagnostics)
+      const mergedDiagnostics = jobResults.reduce(
+        (acc, r) => mergeDiagnostics(acc, r.diagnostics),
+        createEnrichmentDiagnostics()
       );
-      await Promise.all(workers);
 
-      const status = await this.storage.finalizeParseJob(jobId);
-      logger.info("enrichment diagnostics", { jobId, ...enrichmentDiagnostics });
+      const allLeads = await this.storage.listLeads();
 
-      const leads = await this.storage.listLeads();
+      // Apply quality filters if configured
+      const leads = allLeads.filter((lead) => {
+        if (this.config.minRating !== undefined && (lead.rating ?? 0) < this.config.minRating) {
+          return false;
+        }
+        if (this.config.minReviewCount !== undefined && (lead.review_count ?? 0) < this.config.minReviewCount) {
+          return false;
+        }
+        return true;
+      });
+
+      if (leads.length < allLeads.length) {
+        logger.info("leads filtered by quality thresholds", {
+          total: allLeads.length,
+          exported: leads.length,
+          minRating: this.config.minRating,
+          minReviewCount: this.config.minReviewCount
+        });
+      }
+
       const exported = await exportLeads(leads, this.config.exportDir);
-      logger.info("job completed", { jobId, status, leads: leads.length, ...exported });
-      return { leads, ...exported, jobId, status, diagnostics: enrichmentDiagnostics };
+      logger.info("jobs completed", {
+        categories,
+        jobCount: jobResults.length,
+        leads: leads.length,
+        ...exported
+      });
+      const lastJob = jobResults[jobResults.length - 1];
+      return {
+        leads,
+        ...exported,
+        jobId: lastJob?.jobId ?? "",
+        status: lastJob?.status ?? "unknown",
+        diagnostics: mergedDiagnostics
+      };
     } finally {
       clearInterval(watchdogHandle);
     }
@@ -201,9 +266,9 @@ export class JobManager {
    * as `status: completed, leads: 0`. The rethrow aborts the job (CLI exits
    * non-zero); telemetry's `captcha_count` then reflects the block.
    */
-  private async discoverCards(jobId: string, adapter: ISourceAdapter): Promise<RawCompanyCard[]> {
+  private async discoverCards(jobId: string, adapter: ISourceAdapter, query: SearchQuery): Promise<RawCompanyCard[]> {
     try {
-      return await adapter.searchCompanies(this.config);
+      return await adapter.searchCompanies(query);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const errorType = classifyError(message);
@@ -623,6 +688,45 @@ function prioritizeSparseCards(cards: RawCompanyCard[]): RawCompanyCard[] {
     .map((card, index) => ({ card, index, score: sparseScore(card) }))
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .map((item) => item.card);
+}
+
+/**
+ * Resolve the effective category list. `categories` takes precedence over the
+ * legacy singular `category`; if both are missing, returns an empty array and
+ * the caller treats that as a configuration error.
+ */
+export function resolveCategories(config: RuntimeConfig): string[] {
+  if (config.categories && config.categories.length > 0) {
+    return config.categories.map((c) => c.trim()).filter(Boolean);
+  }
+  if (config.category && config.category.trim()) {
+    return [config.category.trim()];
+  }
+  return [];
+}
+
+/**
+ * Sum the numeric counters and OR the boolean `detailDegraded` flag across
+ * multiple parse jobs. Diagnostics are kept flat (no nested maps) so a single
+ * generic merge is enough.
+ */
+function mergeDiagnostics(
+  a: EnrichmentDiagnostics,
+  b: EnrichmentDiagnostics
+): EnrichmentDiagnostics {
+  const out: EnrichmentDiagnostics = { ...a };
+  for (const key of Object.keys(b) as Array<keyof EnrichmentDiagnostics>) {
+    const av = a[key];
+    const bv = b[key];
+    if (typeof av === "number" && typeof bv === "number") {
+      // Numeric fields: sum. Cast through unknown to satisfy the heterogeneous
+      // (number | boolean) union in the spread above.
+      (out[key] as unknown) = av + bv;
+    } else if (typeof av === "boolean" && typeof bv === "boolean") {
+      (out[key] as unknown) = av || bv;
+    }
+  }
+  return out;
 }
 
 function sparseScore(card: RawCompanyCard): number {

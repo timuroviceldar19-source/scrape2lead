@@ -60,7 +60,7 @@ export async function runAuditHealthGate(
 ): Promise<AuditHealthGateResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const renderWaitMs = options.renderWaitMs ?? DEFAULT_RENDER_WAIT_MS;
-  const url = buildSearchUrl(config.geo, config.category);
+  const url = buildSearchUrl(config.geo, config.category ?? "");
   const page = await browserSession.newPage();
   const capture = new ApiCapture();
   const responseStatuses: number[] = [];
@@ -192,7 +192,7 @@ async function buildHealthGateSnapshot(
     collectFirmAnchors(page).catch(() => [])
   ]);
   const apiCards = capture.values()
-    .flatMap((payload) => extractCardsFromPayload(payload, config.category, config.geo))
+    .flatMap((payload) => extractCardsFromPayload(payload, config.category ?? "", config.geo))
     .length;
   const domCards = selectFirmCardCandidates(anchors).length;
 

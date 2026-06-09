@@ -1,6 +1,12 @@
 import type Database from "better-sqlite3";
 
-const migrations = [
+interface Migration {
+  version: number;
+  sql?: string;
+  run?: (db: Database.Database) => void;
+}
+
+const migrations: Migration[] = [
   {
     version: 1,
     sql: `
@@ -203,8 +209,293 @@ const migrations = [
       DROP TABLE captcha_events;
       ALTER TABLE captcha_events_new RENAME TO captcha_events;
     `
+  },
+  {
+    version: 5,
+    sql: `
+      -- Add Kaspi-specific lead quality and metadata columns
+      ALTER TABLE leads ADD COLUMN rating REAL;
+      ALTER TABLE leads ADD COLUMN review_count INTEGER;
+      ALTER TABLE leads ADD COLUMN product_count INTEGER;
+      ALTER TABLE leads ADD COLUMN shop_categories TEXT;
+    `
+  },
+  {
+    version: 6,
+    sql: `
+      -- Add CRM-ready enrichment columns
+      ALTER TABLE leads ADD COLUMN lead_id TEXT;
+      ALTER TABLE leads ADD COLUMN source_search_city TEXT;
+      ALTER TABLE leads ADD COLUMN merchant_city_guess TEXT;
+      ALTER TABLE leads ADD COLUMN city_status TEXT;
+      ALTER TABLE leads ADD COLUMN address_raw TEXT;
+      ALTER TABLE leads ADD COLUMN address_clean TEXT;
+      ALTER TABLE leads ADD COLUMN phone_raw TEXT;
+      ALTER TABLE leads ADD COLUMN phone_normalized TEXT;
+      ALTER TABLE leads ADD COLUMN phone_status TEXT;
+      ALTER TABLE leads ADD COLUMN email_raw TEXT;
+      ALTER TABLE leads ADD COLUMN email_status TEXT;
+      ALTER TABLE leads ADD COLUMN kaspi_profile_url TEXT;
+      ALTER TABLE leads ADD COLUMN real_website TEXT;
+      ALTER TABLE leads ADD COLUMN messenger_flags TEXT;
+      ALTER TABLE leads ADD COLUMN lead_score INTEGER;
+      ALTER TABLE leads ADD COLUMN priority TEXT;
+      ALTER TABLE leads ADD COLUMN contactability TEXT;
+      ALTER TABLE leads ADD COLUMN crm_status TEXT;
+      ALTER TABLE leads ADD COLUMN next_action TEXT;
+      ALTER TABLE leads ADD COLUMN parser_note TEXT;
+    `
+  },
+  {
+    version: 7,
+    sql: `
+      -- Add enrichment tracking and stricter validation status columns
+      ALTER TABLE leads ADD COLUMN address_status TEXT;
+      ALTER TABLE leads ADD COLUMN website_status TEXT;
+      ALTER TABLE leads ADD COLUMN enrichment_source TEXT;
+      ALTER TABLE leads ADD COLUMN enrichment_url TEXT;
+      ALTER TABLE leads ADD COLUMN confidence_score REAL;
+      ALTER TABLE leads ADD COLUMN enrichment_status TEXT;
+      ALTER TABLE leads ADD COLUMN enrichment_attempted_at TEXT;
+      ALTER TABLE leads ADD COLUMN enrichment_error TEXT;
+    `
+  },
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE leads ADD COLUMN found_category TEXT;
+    `
+  },
+  {
+    version: 9,
+    run: (db: Database.Database) => {
+      const cols = db.prepare("PRAGMA table_info(leads)").all() as Array<{ name: string }>;
+      if (!cols.some(c => c.name === "found_name")) {
+        db.exec("ALTER TABLE leads ADD COLUMN found_name TEXT");
+      }
+    }
+  },
+  {
+    version: 10,
+    sql: `
+      ALTER TABLE leads ADD COLUMN bin TEXT;
+      ALTER TABLE leads ADD COLUMN registration_date TEXT;
+      ALTER TABLE leads ADD COLUMN oked TEXT;
+      ALTER TABLE leads ADD COLUMN oked_name TEXT;
+      ALTER TABLE leads ADD COLUMN director TEXT;
+      ALTER TABLE leads ADD COLUMN founder TEXT;
+      ALTER TABLE leads ADD COLUMN legal_status TEXT;
+      ALTER TABLE leads ADD COLUMN company_age_years INTEGER;
+      ALTER TABLE leads ADD COLUMN legal_form TEXT;
+    `
+  },
+  {
+    version: 11,
+    run: (db: Database.Database) => {
+      ensureStatGovDataTable(db);
+      ensureUnifiedTenderDataTable(db);
+    }
+  },
+  {
+    version: 12,
+    sql: `
+      CREATE TABLE IF NOT EXISTS kz_enrich_errors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bin TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_kz_enrich_errors_bin ON kz_enrich_errors(bin);
+    `
+  },
+  {
+    version: 13,
+    sql: `
+      CREATE TABLE IF NOT EXISTS goszakup_registry_data (
+        bin TEXT PRIMARY KEY,
+        participant_id TEXT,
+        name_ru TEXT,
+        name_kz TEXT,
+        rnn TEXT,
+        role TEXT,
+        residency TEXT,
+        phone TEXT,
+        email TEXT,
+        website TEXT,
+        registration_date TEXT,
+        last_update_date TEXT,
+        kopf TEXT,
+        ownership_form TEXT,
+        economic_sector TEXT,
+        director_name TEXT,
+        director_iin TEXT,
+        legal_address TEXT,
+        location_address TEXT,
+        registry_url TEXT,
+        updated_at TEXT NOT NULL,
+        raw_snapshot_path TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_goszakup_registry_participant ON goszakup_registry_data(participant_id);
+    `
   }
 ];
+
+function tableExists(db: Database.Database, tableName: string): boolean {
+  const row = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?"
+  ).get(tableName) as { name: string } | undefined;
+  return row !== undefined;
+}
+
+function getColumnNames(db: Database.Database, tableName: string): string[] {
+  if (!tableExists(db, tableName)) return [];
+  const cols = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return cols.map((col) => col.name);
+}
+
+function addColumnIfMissing(
+  db: Database.Database,
+  tableName: string,
+  columns: Set<string>,
+  name: string,
+  definition: string
+): void {
+  if (columns.has(name)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${name} ${definition}`);
+  columns.add(name);
+}
+
+function ensureStatGovDataTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS stat_gov_data (
+      bin TEXT PRIMARY KEY,
+      name TEXT,
+      registration_date TEXT,
+      oked TEXT,
+      oked_name TEXT,
+      address TEXT,
+      director TEXT,
+      legal_status TEXT,
+      krp_code TEXT,
+      krp_name TEXT,
+      kfs_code TEXT,
+      kfs_name TEXT,
+      sector_code TEXT,
+      sector_name TEXT,
+      updated_at TEXT,
+      raw_snapshot_path TEXT
+    )
+  `);
+
+  const columns = new Set(getColumnNames(db, "stat_gov_data"));
+  addColumnIfMissing(db, "stat_gov_data", columns, "name", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "registration_date", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "oked", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "oked_name", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "address", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "director", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "legal_status", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "krp_code", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "krp_name", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "kfs_code", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "kfs_name", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "sector_code", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "sector_name", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "updated_at", "TEXT");
+  addColumnIfMissing(db, "stat_gov_data", columns, "raw_snapshot_path", "TEXT");
+}
+
+function ensureUnifiedTenderDataTable(db: Database.Database): void {
+  if (!tableExists(db, "tender_data")) {
+    createUnifiedTenderDataTable(db, "tender_data");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tender_data_bin ON tender_data(bin)");
+    return;
+  }
+
+  const columns = getColumnNames(db, "tender_data");
+  const needsRebuild =
+    !columns.includes("source") ||
+    !columns.includes("tender_number") ||
+    !columns.includes("tender_name") ||
+    !columns.includes("parsed_at") ||
+    !hasUniqueTenderKey(db);
+
+  if (!needsRebuild) {
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tender_data_source_bin_number ON tender_data(source, bin, tender_number)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tender_data_bin ON tender_data(bin)");
+    return;
+  }
+
+  const oldTable = `tender_data_old_${Date.now()}`;
+  db.exec(`ALTER TABLE tender_data RENAME TO ${oldTable}`);
+  createUnifiedTenderDataTable(db, "tender_data");
+
+  const oldColumns = new Set(getColumnNames(db, oldTable));
+  const value = (name: string, fallback: string): string =>
+    oldColumns.has(name) ? name : fallback;
+
+  db.exec(`
+    INSERT OR IGNORE INTO tender_data (
+      source, bin, tender_number, tender_name, customer_name, budget_amount,
+      currency, start_date, end_date, status, method, url, parsed_at
+    )
+    SELECT
+      ${oldColumns.has("source") ? "COALESCE(source, 'zakup.sk.kz')" : "'zakup.sk.kz'"},
+      ${value("bin", "''")},
+      ${value("tender_number", "''")},
+      ${value("tender_name", "''")},
+      ${value("customer_name", "NULL")},
+      ${value("budget_amount", "NULL")},
+      COALESCE(${value("currency", "NULL")}, 'KZT'),
+      ${value("start_date", "NULL")},
+      ${value("end_date", "NULL")},
+      ${value("status", "NULL")},
+      ${value("method", "NULL")},
+      ${value("url", "NULL")},
+      COALESCE(${value("parsed_at", "NULL")}, datetime('now'))
+    FROM ${oldTable}
+    WHERE COALESCE(${value("bin", "''")}, '') != ''
+      AND COALESCE(${value("tender_number", "''")}, '') != ''
+      AND COALESCE(${value("tender_name", "''")}, '') != ''
+  `);
+
+  db.exec(`DROP TABLE ${oldTable}`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tender_data_bin ON tender_data(bin)");
+}
+
+function createUnifiedTenderDataTable(db: Database.Database, tableName: string): void {
+  db.exec(`
+    CREATE TABLE ${tableName} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL,
+      bin TEXT NOT NULL,
+      tender_number TEXT NOT NULL,
+      tender_name TEXT NOT NULL,
+      customer_name TEXT,
+      budget_amount TEXT,
+      currency TEXT DEFAULT 'KZT',
+      start_date TEXT,
+      end_date TEXT,
+      status TEXT,
+      method TEXT,
+      url TEXT,
+      parsed_at TEXT NOT NULL,
+      UNIQUE(source, bin, tender_number)
+    )
+  `);
+}
+
+function hasUniqueTenderKey(db: Database.Database): boolean {
+  const indexes = db.prepare("PRAGMA index_list(tender_data)").all() as Array<{ name: string; unique: number }>;
+  for (const index of indexes) {
+    if (!index.unique) continue;
+    const columns = db.prepare(`PRAGMA index_info(${index.name})`).all() as Array<{ name: string }>;
+    const names = columns.map((col) => col.name);
+    if (names.join(",") === "source,bin,tender_number") return true;
+  }
+  return false;
+}
 
 export function runMigrations(db: Database.Database): void {
   db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
@@ -220,7 +511,11 @@ export function runMigrations(db: Database.Database): void {
   try {
     for (const migration of pending) {
       db.transaction(() => {
-        db.exec(migration.sql);
+        if (migration.run) {
+          migration.run(db);
+        } else if (migration.sql) {
+          db.exec(migration.sql);
+        }
         db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)")
           .run(migration.version, new Date().toISOString());
       })();

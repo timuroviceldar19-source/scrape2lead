@@ -6,7 +6,8 @@ import type { RuntimeConfig } from "../types.js";
 const ConfigSchema = z.object({
   source: z.string().default("2gis"),
   geo: z.string().min(1),
-  category: z.string().min(1),
+  category: z.string().min(1).optional(),
+  categories: z.array(z.string().min(1)).min(1).optional(),
   limit: z.coerce.number().int().positive().default(100),
   databasePath: z.string().default("data/scrape2lead.db"),
   exportDir: z.string().default("exports"),
@@ -89,8 +90,21 @@ const ConfigSchema = z.object({
    * Base URL for 2GIS. Defaults to "https://2gis.ru".
    * Use "https://2gis.kz" for Kazakhstan targets.
    */
-  twoGisBaseUrl: z.string().url().optional()
-});
+  twoGisBaseUrl: z.string().url().optional(),
+  /**
+   * Base URL for Kaspi. Defaults to "https://kaspi.kz".
+   */
+  kaspiBaseUrl: z.string().url().optional(),
+  /**
+   * Optional lead quality filters. Leads not meeting these thresholds will be
+   * excluded from the final export (but may still be logged in the database).
+   */
+  minRating: z.coerce.number().min(0).optional(),
+  minReviewCount: z.coerce.number().int().min(0).optional()
+}).refine(
+  (data) => Boolean(data.category) || Boolean(data.categories?.length),
+  { message: "Either 'category' (string) or 'categories' (string[]) must be provided" }
+);
 
 export function loadConfig(configPath: string, overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
   const fileConfig = fs.existsSync(configPath)

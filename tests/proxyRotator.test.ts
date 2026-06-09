@@ -18,8 +18,11 @@ const baseConfig: RuntimeConfig = {
   concurrency: 1,
   headless: true,
   rawSnapshotDir: "raw_snapshots",
-  proxyApiUrl: "http://proxy-api.example.com/rotate"
+  proxyApiUrl: "http://proxy-api.example.com/rotate",
+  proxy: { server: "http://gw.dataimpulse.com:823", username: "u", password: "p" }
 };
+
+const noApiCfg: RuntimeConfig = { ...baseConfig, proxyApiUrl: undefined };
 
 function makeStorage() {
   return { saveProxyRotation: vi.fn() } as unknown as Storage;
@@ -59,13 +62,22 @@ describe("ProxyRotator", () => {
       expect(rotator.shouldRotate()).toBe(true);
     });
 
-    it("returns false when proxyApiUrl is absent", async () => {
-      const cfg = { ...baseConfig, proxyApiUrl: undefined };
+    it("returns true in no-api mode when rotateEveryN threshold is reached", async () => {
+      // No proxyApiUrl but a static `proxy` is configured. shouldRotate()
+      // should still fire so the rotator can restart the browser and pick
+      // up a fresh IP from a backconnect rotating gateway (dataimpulse).
+      const rotator = new ProxyRotator(noApiCfg, makeStorage(), makeSession());
+      await rotator.tick();
+      await rotator.tick();
+      await rotator.tick();
+      expect(rotator.shouldRotate()).toBe(true);
+    });
+
+    it("returns true at the threshold regardless of proxyApiUrl — shouldRotate is a timing predicate, rotate() decides if it can act", async () => {
+      const cfg: RuntimeConfig = { ...baseConfig, proxyApiUrl: undefined, proxy: undefined };
       const rotator = new ProxyRotator(cfg, makeStorage(), makeSession());
-      await rotator.tick();
-      await rotator.tick();
-      await rotator.tick();
-      expect(rotator.shouldRotate()).toBe(false);
+      for (let i = 0; i < 3; i++) await rotator.tick();
+      expect(rotator.shouldRotate()).toBe(true);
     });
   });
 
@@ -202,6 +214,53 @@ describe("ProxyRotator", () => {
       expect(session.restartWithProxy).toHaveBeenCalledWith(
         expect.objectContaining({ server: "http://10.0.0.1:3128" })
       );
+    });
+  });
+
+  describe("rotate() — no-api mode (backconnect rotating gateway)", () => {
+    // dataimpulse-style setup: no proxyApiUrl, only a static `proxy` pointing
+    // at a rotating port (e.g. gw.dataimpulse.com:823). A fresh IP is handed
+    // out per TCP connection, so a browser restart is enough to rotate.
+
+    it("restarts the browser with the existing proxy when threshold is reached", async () => {
+      const session = makeSession();
+      const storage = makeStorage();
+      const rotator = new ProxyRotator(noApiCfg, storage, session);
+      for (let i = 0; i < 3; i++) await rotator.tick();
+      expect(session.restartWithProxy).toHaveBeenCalledWith(baseConfig.proxy);
+    });
+
+    it("does not call fetch in no-api mode", async () => {
+      const fetchMock = jsonFetch({ server: "http://1.2.3.4:8080" });
+      vi.stubGlobal("fetch", fetchMock);
+      const session = makeSession();
+      const rotator = new ProxyRotator(noApiCfg, makeStorage(), session);
+      for (let i = 0; i < 3; i++) await rotator.tick();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("writes a proxy_history row with the existing server and reset cardsOnIp", async () => {
+      const session = makeSession();
+      const storage = makeStorage();
+      const rotator = new ProxyRotator(noApiCfg, storage, session);
+      for (let i = 0; i < 3; i++) await rotator.tick();
+      expect(storage.saveProxyRotation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          proxy: baseConfig.proxy!.server,
+          reason: "scheduled",
+          cardsOnIp: 3
+        })
+      );
+    });
+
+    it("is a no-op when neither proxyApiUrl nor proxy is configured", async () => {
+      const cfg: RuntimeConfig = { ...baseConfig, proxyApiUrl: undefined, proxy: undefined };
+      const session = makeSession();
+      const storage = makeStorage();
+      const rotator = new ProxyRotator(cfg, storage, session);
+      for (let i = 0; i < 3; i++) await rotator.tick();
+      expect(session.restartWithProxy).not.toHaveBeenCalled();
+      expect(storage.saveProxyRotation).not.toHaveBeenCalled();
     });
   });
 
