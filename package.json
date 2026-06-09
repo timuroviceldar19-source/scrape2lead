@@ -33,6 +33,7 @@
     "kz:zakup:smoke": "tsx scripts/zakup-smoke.ts",
     "kz:registry": "tsx scripts/goszakup-registry-collector.ts",
     "kz:export-unified": "tsx src/cli.ts kz export-unified",
+    "kz:feeder-top-a": "tsx scripts/kz-feeder-top-a.mts",
     "kz:harvest": "tsx scripts/harvest-registry-bins.ts"
   },
   "dependencies": {
