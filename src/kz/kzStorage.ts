@@ -98,7 +98,13 @@ export class KzStorage {
         r.email AS registry_email,
         r.website AS registry_website,
         r.participant_id,
-        r.role AS registry_role
+        r.role AS registry_role,
+        CASE
+          WHEN r.bin IS NOT NULL
+            AND (r.participant_id IS NOT NULL OR TRIM(COALESCE(r.phone, '')) != '')
+            AND (s.bin IS NULL OR TRIM(COALESCE(s.oked, '')) = '')
+          THEN 1 ELSE 0
+        END AS stat_missing
       FROM company_bins c
       LEFT JOIN stat_gov_data s ON s.bin = c.bin
       LEFT JOIN tender_data t ON t.bin = c.bin
@@ -124,7 +130,8 @@ export class KzStorage {
       registry_email: stringOrNull(row.registry_email),
       registry_website: stringOrNull(row.registry_website),
       participant_id: stringOrNull(row.participant_id),
-      registry_role: stringOrNull(row.registry_role)
+      registry_role: stringOrNull(row.registry_role),
+      stat_missing: Boolean(Number(row.stat_missing ?? 0))
     }));
   }
 

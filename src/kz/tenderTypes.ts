@@ -56,6 +56,7 @@ export interface CompanyCard extends StatGovRecord {
   registry_website?: string | null;
   participant_id?: string | null;
   registry_role?: string | null;
+  stat_missing: boolean;
 }
 
 export interface EnrichError {

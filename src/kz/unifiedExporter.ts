@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import ExcelJS from "exceljs";
+import { dedupeEnrichErrors, isStatGovMissingForCard } from "./enrichErrors.js";
 import { scoreCompanyCards } from "./kzLeadScore.js";
 import { KzStorage } from "./kzStorage.js";
 import { mergeLeadsWithKz, writeKzToLeads, type LeadKzMatch, type LeadKzMergeStats } from "./leadKzMerge.js";
@@ -25,6 +26,7 @@ export interface UnifiedExportResult {
 const LEAD_COLUMNS = [
   { header: "Приоритет KZ", key: "lead_priority", width: 14 },
   { header: "High volume", key: "high_volume", width: 14 },
+  { header: "Stat missing", key: "stat_missing", width: 14 },
   { header: "Match type", key: "match_type", width: 20 },
   { header: "Match score", key: "match_score", width: 12 },
   { header: "Компания (lead)", key: "company_name", width: 42 },
@@ -67,7 +69,7 @@ export async function exportUnifiedReport(options: UnifiedExportOptions = {}): P
 
     const leadBins = new Set(filteredMatches.map((m) => m.kz_bin).filter(Boolean) as string[]);
     const tenders = kzStorage.getTendersByBins(Array.from(leadBins));
-    const errors = kzStorage.getEnrichErrors();
+    const errors = dedupeEnrichErrors(kzStorage.getEnrichErrors(), Array.from(leadBins));
 
     const xlsxPath = options.outPath ?? defaultOutputPath();
     fs.mkdirSync(path.dirname(xlsxPath), { recursive: true });
@@ -102,6 +104,11 @@ function addLeadsSheet(workbook: ExcelJS.Workbook, matches: LeadKzMatch[]): void
   const rows = matches.map((m) => ({
     lead_priority: m.company_card?.lead_priority ?? "",
     high_volume: m.company_card?.high_volume ?? false,
+    stat_missing: isStatGovMissingForCard({
+      participant_id: m.registry?.participant_id,
+      registry_phone: m.registry?.phone,
+      oked: m.stat_gov?.oked
+    }),
     match_type: m.match_type,
     match_score: m.match_score > 0 ? m.match_score.toFixed(2) : "",
     company_name: m.company_name,
@@ -184,6 +191,11 @@ function addSummarySheet(
   const withTenders = matches.filter((m) => m.company_card && m.company_card.tender_count_total > 0).length;
   const priorityA = matches.filter((m) => m.company_card?.lead_priority === "A").length;
   const highVolume = matches.filter((m) => m.company_card?.high_volume).length;
+  const statMissing = matches.filter((m) => isStatGovMissingForCard({
+    participant_id: m.registry?.participant_id,
+    registry_phone: m.registry?.phone,
+    oked: m.stat_gov?.oked
+  })).length;
   const totalBudget = matches.reduce((sum, m) => sum + (m.company_card?.tender_budget_sum ?? 0), 0);
   const activeBudget = matches.reduce((sum, m) => sum + (m.company_card?.tender_active_budget_sum ?? 0), 0);
 
@@ -201,7 +213,8 @@ function addSummarySheet(
     { metric: "Сумма бюджетов", value: totalBudget },
     { metric: "Сумма активных бюджетов", value: activeBudget },
     { metric: "Приоритет A", value: priorityA },
-    { metric: "High volume", value: highVolume }
+    { metric: "High volume", value: highVolume },
+    { metric: "Stat missing (registry без stat)", value: statMissing }
   ]);
 
   sheet.addRow({});

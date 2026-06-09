@@ -24,7 +24,8 @@ const baseCompany = (bin: string, name: string): CompanyCard => ({
   tender_active_budget_sum: null,
   tender_budget_sum: null,
   tender_sources: "",
-  last_tender_end_date: null
+  last_tender_end_date: null,
+  stat_missing: false
 });
 
 const tender = (overrides: Partial<TenderRecord>): TenderRecord => ({

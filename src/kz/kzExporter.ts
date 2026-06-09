@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
+import { dedupeEnrichErrors } from "./enrichErrors.js";
 import { scoreCompanyCards, type ScoredCompanyCard } from "./kzLeadScore.js";
 import { KzStorage } from "./kzStorage.js";
 import type { EnrichError, TenderRecord } from "./tenderTypes.js";
@@ -41,6 +42,7 @@ const COMPANY_COLUMNS: Array<{ header: string; key: keyof ScoredCompanyCard; wid
   { header: "Сумма активных", key: "tender_active_budget_sum", width: 18 },
   { header: "Приоритет лида", key: "lead_priority", width: 14 },
   { header: "High volume", key: "high_volume", width: 14 },
+  { header: "Stat missing", key: "stat_missing", width: 14 },
   { header: "Источники закупок", key: "tender_sources", width: 24 },
   { header: "Последняя дата окончания", key: "last_tender_end_date", width: 24 },
   { header: "Обновлено", key: "updated_at", width: 24 }
@@ -70,7 +72,7 @@ export async function exportKzReport(options: KzExportOptions = {}): Promise<KzE
     const cardBins = cards.map((card) => card.bin);
     const binsForTenders = options.bins && options.bins.length > 0 ? options.bins : cardBins;
     const tenders = storage.getTendersByBins(binsForTenders);
-    const errors = filterErrors(storage.getEnrichErrors(), options.bins);
+    const errors = dedupeEnrichErrors(storage.getEnrichErrors(), options.bins);
     const xlsxPath = options.outPath ?? defaultOutputPath();
 
     fs.mkdirSync(path.dirname(xlsxPath), { recursive: true });
@@ -135,7 +137,8 @@ function addSummarySheet(workbook: ExcelJS.Workbook, cards: ScoredCompanyCard[],
     { metric: "Сумма бюджетов", value: cards.reduce((sum, card) => sum + (card.tender_budget_sum ?? 0), 0) },
     { metric: "Сумма активных бюджетов", value: cards.reduce((sum, card) => sum + (card.tender_active_budget_sum ?? 0), 0) },
     { metric: "Лидов приоритета A", value: cards.filter((card) => card.lead_priority === "A").length },
-    { metric: "High volume компаний", value: cards.filter((card) => card.high_volume).length }
+    { metric: "High volume компаний", value: cards.filter((card) => card.high_volume).length },
+    { metric: "Stat missing (registry без stat)", value: cards.filter((card) => card.stat_missing).length }
   ]);
 
   sheet.addRow({});
@@ -191,9 +194,7 @@ function countBy<T>(items: T[], getKey: (item: T) => string): Array<[string, num
 }
 
 function filterErrors(errors: EnrichError[], bins?: string[]): EnrichError[] {
-  if (!bins || bins.length === 0) return errors;
-  const allowed = new Set(bins);
-  return errors.filter((error) => allowed.has(error.bin));
+  return dedupeEnrichErrors(errors, bins);
 }
 
 function defaultOutputPath(): string {
