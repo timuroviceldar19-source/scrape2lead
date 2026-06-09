@@ -95,10 +95,20 @@ Leads sheet includes **2GIS phone/address** when matched by BIN or fuzzy name.
 
 ```bash
 cp config.feeder.example.json config.feeder.json   # local config, not committed
+cp config.feeder.astana.example.json config.feeder.astana.json   # optional 2nd city
+
+# Single city, 4 construction categories × 35 cards
 npm run kz:feeder-top-a -- bins-batch-100.csv
-# --skip-2gis  --config path  --out exports/foo.xlsx
+
+# Multi-city scrape (Almaty + Astana)
+npm run kz:feeder-top-a -- bins-batch-100.csv \
+  --config config.feeder.json \
+  --config config.feeder.astana.json
+
+# --skip-2gis  --out exports/foo.xlsx  --top-a-csv bins-top-a.csv
 ```
 
+Feeder runs: top-A extract → 2GIS scrape(s) → batch BIN backfill → enrich → merge → unified export.
 Uses `data/scrape2lead.db` by default (`KZ_DATABASE_PATH` to override).
 
 ---

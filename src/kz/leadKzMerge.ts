@@ -84,6 +84,48 @@ function parseLeadPhones(raw: string | null | undefined): string[] {
 }
 
 const FUZZY_THRESHOLD = 0.7;
+const BACKFILL_THRESHOLD = 0.65;
+
+function priorityRank(priority: string): number {
+  if (priority === "A") return 0;
+  if (priority === "B") return 1;
+  if (priority === "C") return 2;
+  return 3;
+}
+
+function sortCardsForBackfill(cards: ScoredCompanyCard[]): ScoredCompanyCard[] {
+  return [...cards].sort((a, b) => {
+    const byPriority = priorityRank(a.lead_priority) - priorityRank(b.lead_priority);
+    if (byPriority !== 0) return byPriority;
+    return (b.tender_active_budget_sum ?? 0) - (a.tender_active_budget_sum ?? 0);
+  });
+}
+
+function scopedStatEntries(
+  cardsByBin: Map<string, ScoredCompanyCard>,
+  statByBin: Map<string, StatGovRecord>
+): Array<[string, StatGovRecord]> {
+  if (cardsByBin.size === 0) return Array.from(statByBin.entries());
+  const rows: Array<[string, StatGovRecord]> = [];
+  for (const bin of cardsByBin.keys()) {
+    const stat = statByBin.get(bin);
+    if (stat) rows.push([bin, stat]);
+  }
+  return rows;
+}
+
+function scopedRegistryEntries(
+  cardsByBin: Map<string, ScoredCompanyCard>,
+  registryByBin: Map<string, GoszakupRegistryRecord>
+): Array<[string, GoszakupRegistryRecord]> {
+  if (cardsByBin.size === 0) return Array.from(registryByBin.entries());
+  const rows: Array<[string, GoszakupRegistryRecord]> = [];
+  for (const bin of cardsByBin.keys()) {
+    const registry = registryByBin.get(bin);
+    if (registry) rows.push([bin, registry]);
+  }
+  return rows;
+}
 
 export function mergeLeadsWithKz(
   db: Database.Database,
@@ -181,7 +223,7 @@ function matchLeadToKz(
   }
 
   let bestStat: { bin: string; score: number } | null = null;
-  for (const [bin, stat] of statByBin) {
+  for (const [bin, stat] of scopedStatEntries(cardsByBin, statByBin)) {
     const result = matchNames(stat.name, lead.company_name, FUZZY_THRESHOLD);
     if (result.matched && (!bestStat || result.score > bestStat.score)) {
       bestStat = { bin, score: result.score };
@@ -200,7 +242,7 @@ function matchLeadToKz(
   }
 
   let bestRegistry: { bin: string; score: number } | null = null;
-  for (const [bin, reg] of registryByBin) {
+  for (const [bin, reg] of scopedRegistryEntries(cardsByBin, registryByBin)) {
     const regName = reg.name_ru ?? reg.name_kz;
     if (!regName) continue;
     const result = matchNames(regName, lead.company_name, FUZZY_THRESHOLD);
@@ -221,6 +263,59 @@ function matchLeadToKz(
   }
 
   return base;
+}
+
+/** Fuzzy-match lead names to KZ company cards and write BIN when missing. */
+export function backfillLeadBins(
+  db: Database.Database,
+  cards: ScoredCompanyCard[],
+  threshold = BACKFILL_THRESHOLD
+): number {
+  const leads = db.prepare(`
+    SELECT source, external_id, company_name, bin
+    FROM leads
+    WHERE bin IS NULL OR TRIM(bin) = ''
+  `).all() as Array<{ source: string; external_id: string; company_name: string; bin: string | null }>;
+
+  const update = db.prepare(`
+    UPDATE leads SET bin = ? WHERE source = ? AND external_id = ?
+  `);
+
+  let updated = 0;
+  const rankedCards = sortCardsForBackfill(cards);
+  for (const lead of leads) {
+    let best: { bin: string; score: number } | null = null;
+    for (const card of rankedCards) {
+      const result = matchNames(card.name, lead.company_name, threshold);
+      if (result.matched && (!best || result.score > best.score)) {
+        best = { bin: card.bin, score: result.score };
+      }
+    }
+    if (best) {
+      update.run(best.bin, lead.source, lead.external_id);
+      console.log(`backfill bin: ${lead.company_name.slice(0, 40)} → ${best.bin} (${best.score.toFixed(2)})`);
+      updated++;
+    }
+  }
+  return updated;
+}
+
+/** Persist fuzzy/exact kz_bin matches onto leads.bin for downstream exports. */
+export function backfillBinsFromMatches(db: Database.Database, matches: LeadKzMatch[]): number {
+  const update = db.prepare(`
+    UPDATE leads
+    SET bin = ?
+    WHERE source = ? AND external_id = ?
+      AND (bin IS NULL OR TRIM(bin) = '')
+  `);
+
+  let updated = 0;
+  for (const match of matches) {
+    if (!match.kz_bin || match.match_type === "none" || match.bin) continue;
+    update.run(match.kz_bin, match.source, match.external_id);
+    updated++;
+  }
+  return updated;
 }
 
 export function writeKzToLeads(db: Database.Database, matches: LeadKzMatch[]): number {
