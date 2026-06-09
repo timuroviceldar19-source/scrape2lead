@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { exportUnifiedReport } from "../../src/kz/unifiedExporter.js";
+import { formatLeadPhone } from "../../src/kz/leadKzMerge.js";
+import { mergeLeadsWithKz } from "../../src/kz/leadKzMerge.js";
 import { KzStorage } from "../../src/kz/kzStorage.js";
 
 const TEST_DB_PATH = path.join("data", "test-unified-export.db");
@@ -17,9 +19,9 @@ describe("unifiedExporter", () => {
     const storage = new KzStorage({ db });
 
     db.prepare(`
-      INSERT INTO leads (source, external_id, company_name, bin, category, city, address, phones, social_links, messenger_links, parsed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("2gis", "123", "ТОО ALAU", "061040006408", "test", "Astana", "", "[]", "[]", "[]", "2026-01-01");
+      INSERT INTO leads (source, external_id, company_name, bin, category, city, address, phones, social_links, messenger_links, parsed_at, phone_normalized, address_clean, crm_status, lead_score)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("2gis", "123", "ТОО ALAU", "061040006408", "test", "Astana", "raw addr", '["+77071111111"]', "[]", "[]", "2026-01-01", "+77071234567", "ул. Абая 1", "Ready to call", 85);
     db.prepare(`
       INSERT INTO leads (source, external_id, company_name, bin, category, city, address, phones, social_links, messenger_links, parsed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -55,6 +57,14 @@ describe("unifiedExporter", () => {
     expect(result.mergeStats.with_tenders).toBe(1);
 
     expect(fs.existsSync(TEST_XLSX_PATH)).toBe(true);
+
+    const db = new Database(TEST_DB_PATH);
+    const storage = new KzStorage({ db });
+    const { matches } = mergeLeadsWithKz(db, storage.getCompanyCards());
+    storage.close();
+    db.close();
+
+    expect(formatLeadPhone(matches[0])).toBe("+77071234567");
   });
 
   it("filters by priority when specified", async () => {

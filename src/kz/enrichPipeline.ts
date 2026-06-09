@@ -5,7 +5,8 @@ import { collectStatGovForBins, type StatGovCollectStats } from "./statGovCollec
 import { collectTendersForBins, type TenderCollectStats } from "./tendersPipeline.js";
 
 export interface KzEnrichOptions {
-  csvFile: string;
+  csvFile?: string;
+  bins?: string[];
   databasePath?: string;
   skipStat?: boolean;
   skipTenders?: boolean;
@@ -31,7 +32,7 @@ export interface KzEnrichResult {
 }
 
 export async function runKzEnrich(options: KzEnrichOptions): Promise<KzEnrichResult> {
-  const bins = readBinsFromCsv(options.csvFile);
+  const bins = resolveEnrichBins(options);
   let stat: StatGovCollectStats | null = null;
   let registry: RegistryCollectStats | null = null;
   let tenders: TenderCollectStats | null = null;
@@ -102,4 +103,14 @@ export function formatKzEnrichResult(result: KzEnrichResult): string {
     `errors_total=${result.errorsCount}`,
     "Run npm run kz:export to generate report."
   ].join("\n");
+}
+
+function resolveEnrichBins(options: KzEnrichOptions): string[] {
+  if (options.bins && options.bins.length > 0) {
+    return options.bins;
+  }
+  if (options.csvFile) {
+    return readBinsFromCsv(options.csvFile);
+  }
+  throw new Error("KzEnrichOptions requires csvFile or bins");
 }

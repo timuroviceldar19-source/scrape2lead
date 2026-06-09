@@ -4,7 +4,20 @@ import type { CompanyCard, StatGovRecord } from "./tenderTypes.js";
 import type { GoszakupRegistryRecord } from "./registryTypes.js";
 import type { ScoredCompanyCard } from "./kzLeadScore.js";
 
-export interface LeadKzMatch {
+export interface LeadContactFields {
+  address?: string | null;
+  address_clean?: string | null;
+  address_raw?: string | null;
+  phones?: string | null;
+  phone_normalized?: string | null;
+  phone_raw?: string | null;
+  crm_status?: string | null;
+  lead_score?: number | null;
+  registration_date?: string | null;
+  company_age_years?: number | null;
+}
+
+export interface LeadKzMatch extends LeadContactFields {
   source: string;
   external_id: string;
   company_name: string;
@@ -27,11 +40,47 @@ export interface LeadKzMergeStats {
   with_tenders: number;
 }
 
-interface LeadRow {
+interface LeadRow extends LeadContactFields {
   source: string;
   external_id: string;
   company_name: string;
   bin: string | null;
+}
+
+const LEAD_SELECT = `
+  SELECT
+    source, external_id, company_name, bin,
+    address, address_clean, address_raw,
+    phones, phone_normalized, phone_raw,
+    crm_status, lead_score, registration_date, company_age_years
+  FROM leads
+`;
+
+export function formatLeadPhone(lead: LeadContactFields): string {
+  const normalized = lead.phone_normalized?.trim();
+  if (normalized) return normalized;
+
+  const fromJson = parseLeadPhones(lead.phones);
+  if (fromJson.length > 0) return fromJson.join(", ");
+
+  return lead.phone_raw?.trim() ?? "";
+}
+
+export function formatLeadAddress(lead: LeadContactFields): string {
+  return lead.address_clean?.trim() || lead.address?.trim() || lead.address_raw?.trim() || "";
+}
+
+function parseLeadPhones(raw: string | null | undefined): string[] {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.map(String).map((value) => value.trim()).filter(Boolean);
+    }
+  } catch {
+    // fall through
+  }
+  return [];
 }
 
 const FUZZY_THRESHOLD = 0.7;
@@ -40,7 +89,7 @@ export function mergeLeadsWithKz(
   db: Database.Database,
   companyCards: ScoredCompanyCard[]
 ): { matches: LeadKzMatch[]; stats: LeadKzMergeStats } {
-  const leads = db.prepare("SELECT source, external_id, company_name, bin FROM leads").all() as LeadRow[];
+  const leads = db.prepare(LEAD_SELECT).all() as LeadRow[];
 
   const cardsByBin = new Map<string, ScoredCompanyCard>();
   for (const card of companyCards) {
@@ -101,7 +150,17 @@ function matchLeadToKz(
     match_score: 0,
     stat_gov: null,
     registry: null,
-    company_card: null
+    company_card: null,
+    address: lead.address,
+    address_clean: lead.address_clean,
+    address_raw: lead.address_raw,
+    phones: lead.phones,
+    phone_normalized: lead.phone_normalized,
+    phone_raw: lead.phone_raw,
+    crm_status: lead.crm_status,
+    lead_score: lead.lead_score,
+    registration_date: lead.registration_date,
+    company_age_years: lead.company_age_years
   };
 
   if (lead.bin) {

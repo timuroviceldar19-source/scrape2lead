@@ -3,9 +3,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import ExcelJS from "exceljs";
 import { dedupeEnrichErrors, isStatGovMissingForCard } from "./enrichErrors.js";
+import { enrichMissingLeadBins } from "./enrichMissing.js";
 import { scoreCompanyCards } from "./kzLeadScore.js";
 import { KzStorage } from "./kzStorage.js";
-import { mergeLeadsWithKz, writeKzToLeads, type LeadKzMatch, type LeadKzMergeStats } from "./leadKzMerge.js";
+import { formatLeadAddress, formatLeadPhone, mergeLeadsWithKz, type LeadKzMatch, type LeadKzMergeStats } from "./leadKzMerge.js";
 import type { EnrichError, TenderRecord } from "./tenderTypes.js";
 
 export interface UnifiedExportOptions {
@@ -13,6 +14,7 @@ export interface UnifiedExportOptions {
   outPath?: string;
   priority?: string;
   bins?: string[];
+  enrichMissing?: boolean;
 }
 
 export interface UnifiedExportResult {
@@ -56,6 +58,17 @@ const LEAD_COLUMNS = [
 
 export async function exportUnifiedReport(options: UnifiedExportOptions = {}): Promise<UnifiedExportResult> {
   const dbPath = options.databasePath ?? "data/scrape2lead.db";
+
+  if (options.enrichMissing) {
+    const enrich = await enrichMissingLeadBins({
+      databasePath: dbPath,
+      cardBins: options.bins
+    });
+    console.log(
+      `enrich-missing done: lead_bins=${enrich.leadBins} missing=${enrich.missingBins.length} enriched=${enrich.enrichedBins} merge=${enrich.mergeStatMatched} writeKz=${enrich.writeKzToLeads}`
+    );
+  }
+
   const db = new Database(dbPath);
   const kzStorage = new KzStorage({ db });
 
@@ -118,20 +131,20 @@ function addLeadsSheet(workbook: ExcelJS.Workbook, matches: LeadKzMatch[]): void
     tender_count_active: m.company_card?.tender_count_active ?? 0,
     tender_budget_sum: m.company_card?.tender_budget_sum ?? null,
     tender_active_budget_sum: m.company_card?.tender_active_budget_sum ?? null,
-    phone: "",
+    phone: formatLeadPhone(m),
     registry_phone: m.registry?.phone ?? "",
     registry_email: m.registry?.email ?? "",
     registry_website: m.registry?.website ?? "",
-    address: "",
+    address: formatLeadAddress(m),
     stat_address: m.stat_gov?.address ?? "",
     director: m.stat_gov?.director ?? m.registry?.director_name ?? "",
     oked: m.stat_gov?.oked ?? "",
     oked_name: m.stat_gov?.oked_name ?? "",
-    registration_date: m.stat_gov?.registration_date ?? m.registry?.registration_date ?? "",
+    registration_date: m.stat_gov?.registration_date ?? m.registry?.registration_date ?? m.registration_date ?? "",
     legal_status: m.stat_gov?.legal_status ?? "",
-    company_age_years: "",
-    crm_status: "",
-    lead_score: "",
+    company_age_years: m.company_age_years ?? "",
+    crm_status: m.crm_status ?? "",
+    lead_score: m.lead_score ?? "",
     source: m.source,
     external_id: m.external_id
   }));
@@ -196,6 +209,7 @@ function addSummarySheet(
     registry_phone: m.registry?.phone,
     oked: m.stat_gov?.oked
   })).length;
+  const withPhone = matches.filter((m) => formatLeadPhone(m).length > 0).length;
   const totalBudget = matches.reduce((sum, m) => sum + (m.company_card?.tender_budget_sum ?? 0), 0);
   const activeBudget = matches.reduce((sum, m) => sum + (m.company_card?.tender_active_budget_sum ?? 0), 0);
 
@@ -214,7 +228,9 @@ function addSummarySheet(
     { metric: "Сумма активных бюджетов", value: activeBudget },
     { metric: "Приоритет A", value: priorityA },
     { metric: "High volume", value: highVolume },
-    { metric: "Stat missing (registry без stat)", value: statMissing }
+    { metric: "Stat missing (registry без stat)", value: statMissing },
+    { metric: "Лидов с телефоном (2GIS)", value: withPhone },
+    { metric: "% лидов с телефоном (2GIS)", value: matches.length > 0 ? pct(withPhone, matches.length) : "0%" }
   ]);
 
   sheet.addRow({});

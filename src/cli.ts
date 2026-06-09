@@ -116,11 +116,13 @@ kz
   .option("--out <path>", "output XLSX path")
   .option("--priority <priority>", "filter by lead priority (A, B, C)")
   .option("--bins <csvFile>", "optional CSV file with BIN values")
-  .action(async (options: { out?: string; priority?: string; bins?: string }) => {
+  .option("--enrich-missing", "enrich KZ data for lead BINs missing stat/registry/tenders")
+  .action(async (options: { out?: string; priority?: string; bins?: string; enrichMissing?: boolean }) => {
     const result = await exportUnifiedReport({
       outPath: options.out,
       priority: options.priority,
-      bins: options.bins ? readBinsFromCsv(options.bins) : undefined
+      bins: options.bins ? readBinsFromCsv(options.bins) : undefined,
+      enrichMissing: options.enrichMissing
     });
     console.log(`kz export-unified: ${result.xlsxPath}`);
     console.log(`leads=${result.leads} tenders=${result.tenders} errors=${result.errors}`);
