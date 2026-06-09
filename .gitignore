@@ -34,5 +34,6 @@ Thumbs.db
 
 # Local config override — use config.example.json as starting point
 config.json
+config.feeder.json
 ".qwen/"  
 .qwen/  

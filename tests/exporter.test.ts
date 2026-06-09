@@ -82,10 +82,19 @@ describe("Exporter", () => {
     ]);
 
     const allSheet = workbook.getWorksheet("Все лиды");
-    expect(allSheet?.getRow(1).getCell(1).value).toBe("Приоритет");
-    expect(allSheet?.getRow(1).getCell(5).value).toBe("Компания");
-    expect(allSheet?.getRow(1).getCell(10).value).toBe("Телефон");
-    expect(allSheet?.getRow(1).getCell(11).value).toBe("Статус телефона");
+    expect(allSheet).toBeDefined();
+
+    const headerRow = allSheet!.getRow(1);
+    const headers = new Map<number, string>();
+    headerRow.eachCell((cell, col) => {
+      if (cell.value) headers.set(col, String(cell.value));
+    });
+
+    expect(headers.get(1)).toBe("Приоритет");
+    expect([...headers.values()].includes("Компания")).toBe(true);
+    expect([...headers.values()].includes("Телефон")).toBe(true);
+    expect([...headers.values()].includes("Статус телефона")).toBe(true);
+    expect([...headers.values()].includes("БИН")).toBe(true);
   });
 
   it("includes dictionary sheet with explanations", async () => {

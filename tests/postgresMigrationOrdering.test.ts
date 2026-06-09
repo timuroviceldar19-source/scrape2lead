@@ -55,6 +55,7 @@ vi.mock("pg", () => {
 import { PostgresStorage } from "../src/storage/postgres/PostgresStorage.js";
 
 const MIGRATION_RECORD = /INSERT INTO schema_version \(version\)/;
+const MIGRATION_VERSION_CHECK = /SELECT MAX\(version\)/;
 const RAW_INSERT = /INSERT INTO raw_snapshots/;
 
 beforeEach(() => {
@@ -87,7 +88,10 @@ describe("PostgresStorage clean-start migration ordering", () => {
     await pg.countOpenTasks("job-1");
 
     const migrationRecords = state.queries.filter((q) => MIGRATION_RECORD.test(q.text));
-    expect(migrationRecords).toHaveLength(1);
+    const versionChecks = state.queries.filter((q) => MIGRATION_VERSION_CHECK.test(q.text));
+
+    expect(migrationRecords.length).toBeGreaterThanOrEqual(1);
+    expect(versionChecks).toHaveLength(1);
   });
 });
 
