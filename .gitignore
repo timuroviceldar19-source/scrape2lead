@@ -11,8 +11,21 @@ dist/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/*.bak
+data/*.bak.*
+data/*.db.*
+data/*.xlsx
 data/stat-gov-session.json
 data/debug/
+
+# Local screenshots and scratch assets
+Assets/
+
+# Generated BIN batches and run artifacts
+bins-*.csv
+bins-batch-meta.json
+vitest-out.txt
+lint-out.txt
 
 # Runtime export artifacts
 exports/*
@@ -35,5 +48,7 @@ Thumbs.db
 # Local config override — use config.example.json as starting point
 config.json
 config.feeder.json
+config.feeder.astana.json
+config.feeder.astana.lite.json
 ".qwen/"  
 .qwen/  

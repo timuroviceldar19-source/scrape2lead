@@ -34,7 +34,12 @@
     "kz:registry": "tsx scripts/goszakup-registry-collector.ts",
     "kz:export-unified": "tsx src/cli.ts kz export-unified",
     "kz:feeder-top-a": "tsx scripts/kz-feeder-top-a.mts",
-    "kz:harvest": "tsx scripts/harvest-registry-bins.ts"
+    "kz:astana-modem-smoke": "tsx scripts/kz-astana-modem-smoke.mts",
+    "kz:astana-scrape": "tsx scripts/kz-direct-scrape.mts config.feeder.astana.json",
+    "kz:export-sales-top-a": "tsx scripts/kz-export-sales-top-a.mts",
+    "kz:targeted-2gis-top-a": "tsx scripts/kz-targeted-2gis-top-a.mts",
+    "kz:harvest": "tsx scripts/harvest-registry-bins.ts",
+    "kz:autopilot": "tsx scripts/kz-autopilot.mts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",

@@ -14,6 +14,7 @@ export interface StatGovCollectOptions {
   headless?: boolean;
   cacheTtlDays?: number;
   forceRefresh?: boolean;
+  onProgress?: (index: number, total: number, bin: string) => void;
 }
 
 export interface StatGovCollectStats {
@@ -42,7 +43,10 @@ export async function collectStatGovForBins(
   let page: Page | null = null;
 
   try {
+    let index = 0;
     for (const bin of bins) {
+      index++;
+      options.onProgress?.(index, bins.length, bin);
       if (!isValidBin(bin)) {
         console.warn(`stat.gov: skip invalid BIN ${bin}`);
         stats.skipped++;

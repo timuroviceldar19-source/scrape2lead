@@ -14,6 +14,7 @@ export interface TendersPipelineOptions {
   goszakupActiveOnly?: boolean;
   goszakupMaxPages?: number;
   zakupMaxRetries?: number;
+  onProgress?: (stage: "goszakup-api" | "goszakup-html", index: number, total: number, bin: string) => void;
 }
 
 export interface TenderCollectStats {
@@ -84,7 +85,10 @@ export async function collectTendersForBins(
       if (!isGoszakupAvailable()) {
         console.warn("goszakup.gov.kz: source skipped for batch, GOSZAKUP_TOKEN is not set");
       } else {
+        let apiIndex = 0;
         for (const bin of validBins) {
+          apiIndex++;
+          options.onProgress?.("goszakup-api", apiIndex, validBins.length, bin);
           try {
             const result = await fetchGoszakupTenders(bin, {
               activeOnly: options.goszakupActiveOnly,
@@ -117,7 +121,8 @@ export async function collectTendersForBins(
         const htmlResult = await collectGoszakupHtmlForBins(validBins, {
           headless: options.headless,
           delayMs: options.delayMs,
-          maxPages: Number(process.env.GOSZAKUP_HTML_MAX_PAGES ?? 50)
+          maxPages: options.goszakupMaxPages ?? Number(process.env.GOSZAKUP_HTML_MAX_PAGES ?? 50),
+          onProgress: (index, total, bin) => options.onProgress?.("goszakup-html", index, total, bin)
         });
         storage.upsertTenders(htmlResult.tenders);
         stats.goszakupHtmlCount = htmlResult.announces.length;

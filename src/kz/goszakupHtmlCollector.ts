@@ -19,6 +19,7 @@ export interface GoszakupHtmlOptions {
   delayMs?: number;
   maxPages?: number;
   pageLoadTimeoutMs?: number;
+  onProgress?: (index: number, total: number, bin: string) => void;
 }
 
 export interface GoszakupHtmlResult {
@@ -58,7 +59,10 @@ export async function collectGoszakupHtmlForBins(
   };
 
   try {
+    let index = 0;
     for (const bin of bins) {
+      index++;
+      options.onProgress?.(index, bins.length, bin);
       if (!isValidBin(bin)) {
         console.warn(`goszakup html: skip invalid BIN ${bin}`);
         continue;

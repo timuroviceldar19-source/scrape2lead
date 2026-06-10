@@ -338,6 +338,29 @@ const migrations: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_goszakup_registry_participant ON goszakup_registry_data(participant_id);
     `
+  },
+  {
+    version: 14,
+    sql: `
+      CREATE TABLE IF NOT EXISTS outreach_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        stats_json TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS outreach_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER NOT NULL REFERENCES outreach_runs(id),
+        bin TEXT NOT NULL,
+        tender_number TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('winner', 'prospect')),
+        created_at TEXT NOT NULL,
+        UNIQUE(bin, tender_number, kind)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_outreach_items_kind_bin ON outreach_items(kind, bin);
+    `
   }
 ];
 
