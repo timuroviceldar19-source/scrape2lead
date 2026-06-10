@@ -84,7 +84,23 @@ function parseLeadPhones(raw: string | null | undefined): string[] {
 }
 
 const FUZZY_THRESHOLD = 0.7;
-const BACKFILL_THRESHOLD = 0.65;
+const BACKFILL_THRESHOLD = 0.75;
+
+interface BackfillLeadRow {
+  source: string;
+  external_id: string;
+  company_name: string;
+  bin: string | null;
+}
+
+interface BackfillCandidate {
+  source: string;
+  external_id: string;
+  company_name: string;
+  bin: string;
+  score: number;
+  cardPriority: number;
+}
 
 function priorityRank(priority: string): number {
   if (priority === "A") return 0;
@@ -265,6 +281,94 @@ function matchLeadToKz(
   return base;
 }
 
+/** Drop fuzzy BIN assignments that no longer meet the backfill threshold within the batch. */
+export function scrubInvalidLeadBins(
+  db: Database.Database,
+  cards: ScoredCompanyCard[],
+  threshold = BACKFILL_THRESHOLD
+): number {
+  if (cards.length === 0) return 0;
+
+  const cardsByBin = new Map(cards.map((card) => [card.bin, card]));
+  const batchBins = new Set(cards.map((card) => card.bin));
+  const leads = db.prepare(`
+    SELECT source, external_id, company_name, bin
+    FROM leads
+    WHERE bin IS NOT NULL AND TRIM(bin) != ''
+  `).all() as BackfillLeadRow[];
+
+  const clear = db.prepare(`
+    UPDATE leads SET bin = NULL WHERE source = ? AND external_id = ?
+  `);
+
+  let cleared = 0;
+  for (const lead of leads) {
+    const bin = lead.bin?.trim();
+    if (!bin || !batchBins.has(bin)) continue;
+
+    const card = cardsByBin.get(bin);
+    if (!card) continue;
+
+    const result = matchNames(card.name, lead.company_name, threshold);
+    if (!result.matched) {
+      clear.run(lead.source, lead.external_id);
+      cleared++;
+    }
+  }
+  return cleared;
+}
+
+/** When several leads share one batch BIN, keep only the strongest name match. */
+export function dedupeLeadBinsByBin(
+  db: Database.Database,
+  cards: ScoredCompanyCard[],
+  threshold = BACKFILL_THRESHOLD
+): number {
+  if (cards.length === 0) return 0;
+
+  const cardsByBin = new Map(cards.map((card) => [card.bin, card]));
+  const batchBins = new Set(cards.map((card) => card.bin));
+  const leads = db.prepare(`
+    SELECT source, external_id, company_name, bin
+    FROM leads
+    WHERE bin IS NOT NULL AND TRIM(bin) != ''
+  `).all() as BackfillLeadRow[];
+
+  const grouped = new Map<string, BackfillLeadRow[]>();
+  for (const lead of leads) {
+    const bin = lead.bin?.trim();
+    if (!bin || !batchBins.has(bin)) continue;
+    const list = grouped.get(bin) ?? [];
+    list.push(lead);
+    grouped.set(bin, list);
+  }
+
+  const clear = db.prepare(`
+    UPDATE leads SET bin = NULL WHERE source = ? AND external_id = ?
+  `);
+
+  let cleared = 0;
+  for (const [bin, binLeads] of grouped.entries()) {
+    if (binLeads.length <= 1) continue;
+    const card = cardsByBin.get(bin);
+    if (!card) continue;
+
+    const ranked = binLeads
+      .map((lead) => ({
+        lead,
+        score: matchNames(card.name, lead.company_name, threshold).score
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    for (const entry of ranked.slice(1)) {
+      clear.run(entry.lead.source, entry.lead.external_id);
+      cleared++;
+    }
+  }
+
+  return cleared;
+}
+
 /** Fuzzy-match lead names to KZ company cards and write BIN when missing. */
 export function backfillLeadBins(
   db: Database.Database,
@@ -275,28 +379,55 @@ export function backfillLeadBins(
     SELECT source, external_id, company_name, bin
     FROM leads
     WHERE bin IS NULL OR TRIM(bin) = ''
-  `).all() as Array<{ source: string; external_id: string; company_name: string; bin: string | null }>;
+  `).all() as BackfillLeadRow[];
 
   const update = db.prepare(`
     UPDATE leads SET bin = ? WHERE source = ? AND external_id = ?
   `);
 
-  let updated = 0;
   const rankedCards = sortCardsForBackfill(cards);
+  const cardPriority = new Map(rankedCards.map((card, index) => [card.bin, index]));
+  const candidates: BackfillCandidate[] = [];
+
   for (const lead of leads) {
-    let best: { bin: string; score: number } | null = null;
     for (const card of rankedCards) {
       const result = matchNames(card.name, lead.company_name, threshold);
-      if (result.matched && (!best || result.score > best.score)) {
-        best = { bin: card.bin, score: result.score };
+      if (result.matched) {
+        candidates.push({
+          source: lead.source,
+          external_id: lead.external_id,
+          company_name: lead.company_name,
+          bin: card.bin,
+          score: result.score,
+          cardPriority: cardPriority.get(card.bin) ?? 999
+        });
       }
     }
-    if (best) {
-      update.run(best.bin, lead.source, lead.external_id);
-      console.log(`backfill bin: ${lead.company_name.slice(0, 40)} → ${best.bin} (${best.score.toFixed(2)})`);
-      updated++;
-    }
   }
+
+  candidates.sort((a, b) =>
+    b.score - a.score
+    || a.cardPriority - b.cardPriority
+    || a.company_name.localeCompare(b.company_name)
+  );
+
+  const assignedLeads = new Set<string>();
+  const assignedBins = new Set<string>();
+  let updated = 0;
+
+  for (const candidate of candidates) {
+    const leadKey = `${candidate.source}:${candidate.external_id}`;
+    if (assignedLeads.has(leadKey) || assignedBins.has(candidate.bin)) continue;
+
+    update.run(candidate.bin, candidate.source, candidate.external_id);
+    assignedLeads.add(leadKey);
+    assignedBins.add(candidate.bin);
+    console.log(
+      `backfill bin: ${candidate.company_name.slice(0, 40)} → ${candidate.bin} (${candidate.score.toFixed(2)})`
+    );
+    updated++;
+  }
+
   return updated;
 }
 

@@ -8,6 +8,7 @@ import { scoreCompanyCards } from "./kzLeadScore.js";
 import { KzStorage } from "./kzStorage.js";
 import { formatLeadAddress, formatLeadPhone, mergeLeadsWithKz, type LeadKzMatch, type LeadKzMergeStats } from "./leadKzMerge.js";
 import type { EnrichError, TenderRecord } from "./tenderTypes.js";
+import type { ScoredCompanyCard } from "./kzLeadScore.js";
 
 export interface UnifiedExportOptions {
   databasePath?: string;
@@ -20,6 +21,7 @@ export interface UnifiedExportOptions {
 export interface UnifiedExportResult {
   xlsxPath: string;
   leads: number;
+  kzOnly: number;
   tenders: number;
   errors: number;
   mergeStats: LeadKzMergeStats;
@@ -56,6 +58,34 @@ const LEAD_COLUMNS = [
   { header: "Внешний ID", key: "external_id", width: 20 }
 ];
 
+const KZ_ONLY_COLUMNS = [
+  { header: "Приоритет KZ", key: "lead_priority", width: 14 },
+  { header: "High volume", key: "high_volume", width: 14 },
+  { header: "Stat missing", key: "stat_missing", width: 14 },
+  { header: "БИН", key: "bin", width: 16 },
+  { header: "Компания (KZ)", key: "name", width: 46 },
+  { header: "Всего закупок", key: "tender_count_total", width: 16 },
+  { header: "Активные закупки", key: "tender_count_active", width: 18 },
+  { header: "Сумма закупок", key: "tender_budget_sum", width: 18 },
+  { header: "Сумма активных", key: "tender_active_budget_sum", width: 18 },
+  { header: "Телефон (registry)", key: "registry_phone", width: 22 },
+  { header: "Email (registry)", key: "registry_email", width: 28 },
+  { header: "Сайт (registry)", key: "registry_website", width: 28 },
+  { header: "Адрес (stat)", key: "address", width: 46 },
+  { header: "Директор", key: "director", width: 32 },
+  { header: "ОКЭД", key: "oked", width: 12 },
+  { header: "ОКЭД название", key: "oked_name", width: 46 },
+  { header: "Дата регистрации", key: "registration_date", width: 18 },
+  { header: "Статус юрлица", key: "legal_status", width: 18 },
+  { header: "№ участника goszakup", key: "participant_id", width: 22 },
+  { header: "2GIS match", key: "has_2gis", width: 12 },
+  { header: "2GIS компании", key: "gis_company_names", width: 42 },
+  { header: "Match type", key: "match_type", width: 20 },
+  { header: "Match score", key: "match_score", width: 12 },
+  { header: "Телефон (2GIS)", key: "gis_phone", width: 22 },
+  { header: "Адрес (2GIS)", key: "gis_address", width: 46 }
+];
+
 export async function exportUnifiedReport(options: UnifiedExportOptions = {}): Promise<UnifiedExportResult> {
   const dbPath = options.databasePath ?? "data/scrape2lead.db";
 
@@ -80,7 +110,12 @@ export async function exportUnifiedReport(options: UnifiedExportOptions = {}): P
       ? matches.filter((m) => m.company_card?.lead_priority === options.priority)
       : matches;
 
+    const kzOnlyCards = selectKzOnlyCards(cards, options.priority, options.bins);
+    const matchesByKzBin = groupMatchesByKzBin(matches);
+
     const leadBins = new Set(filteredMatches.map((m) => m.kz_bin).filter(Boolean) as string[]);
+    for (const card of kzOnlyCards) leadBins.add(card.bin);
+
     const tenders = kzStorage.getTendersByBins(Array.from(leadBins));
     const errors = dedupeEnrichErrors(kzStorage.getEnrichErrors(), Array.from(leadBins));
 
@@ -91,9 +126,12 @@ export async function exportUnifiedReport(options: UnifiedExportOptions = {}): P
     workbook.creator = "Scrape2Lead";
     workbook.created = new Date();
 
+    if (kzOnlyCards.length > 0) {
+      addKzOnlySheet(workbook, kzOnlyCards, matchesByKzBin);
+    }
     addLeadsSheet(workbook, filteredMatches);
-    addTendersSheet(workbook, tenders, filteredMatches);
-    addSummarySheet(workbook, filteredMatches, tenders, stats);
+    addTendersSheet(workbook, tenders, filteredMatches, kzOnlyCards);
+    addSummarySheet(workbook, filteredMatches, tenders, stats, kzOnlyCards, matchesByKzBin);
     addErrorsSheet(workbook, errors);
 
     await workbook.xlsx.writeFile(xlsxPath);
@@ -101,12 +139,98 @@ export async function exportUnifiedReport(options: UnifiedExportOptions = {}): P
     return {
       xlsxPath,
       leads: filteredMatches.length,
+      kzOnly: kzOnlyCards.length,
       tenders: tenders.length,
       errors: errors.length,
       mergeStats: stats
     };
   } finally {
     kzStorage.close();
+  }
+}
+
+export function selectKzOnlyCards(
+  cards: ScoredCompanyCard[],
+  priority?: string,
+  bins?: string[]
+): ScoredCompanyCard[] {
+  let selected = cards;
+  if (bins?.length) {
+    const binSet = new Set(bins);
+    selected = selected.filter((card) => binSet.has(card.bin));
+  }
+  if (priority) {
+    selected = selected.filter((card) => card.lead_priority === priority);
+  }
+  return [...selected].sort(
+    (a, b) => (b.tender_active_budget_sum ?? 0) - (a.tender_active_budget_sum ?? 0)
+  );
+}
+
+export function groupMatchesByKzBin(matches: LeadKzMatch[]): Map<string, LeadKzMatch[]> {
+  const grouped = new Map<string, LeadKzMatch[]>();
+  for (const match of matches) {
+    if (!match.kz_bin || match.match_type === "none") continue;
+    const list = grouped.get(match.kz_bin) ?? [];
+    list.push(match);
+    grouped.set(match.kz_bin, list);
+  }
+  return grouped;
+}
+
+function addKzOnlySheet(
+  workbook: ExcelJS.Workbook,
+  cards: ScoredCompanyCard[],
+  matchesByKzBin: Map<string, LeadKzMatch[]>
+): void {
+  const sheet = workbook.addWorksheet("KZ-only");
+  sheet.columns = KZ_ONLY_COLUMNS;
+
+  const rows = cards.map((card) => {
+    const gisMatches = matchesByKzBin.get(card.bin) ?? [];
+    const best = gisMatches.reduce<LeadKzMatch | null>(
+      (current, candidate) => (!current || candidate.match_score > current.match_score ? candidate : current),
+      null
+    );
+    const gisNames = [...new Set(gisMatches.map((m) => m.company_name))];
+    const gisPhone = gisMatches.map((m) => formatLeadPhone(m)).filter(Boolean).join("; ");
+    const gisAddress = gisMatches.map((m) => formatLeadAddress(m)).filter(Boolean).join("; ");
+
+    return {
+      lead_priority: card.lead_priority,
+      high_volume: card.high_volume,
+      stat_missing: card.stat_missing,
+      bin: card.bin,
+      name: card.name,
+      tender_count_total: card.tender_count_total,
+      tender_count_active: card.tender_count_active,
+      tender_budget_sum: card.tender_budget_sum,
+      tender_active_budget_sum: card.tender_active_budget_sum,
+      registry_phone: card.registry_phone ?? "",
+      registry_email: card.registry_email ?? "",
+      registry_website: card.registry_website ?? "",
+      address: card.address ?? "",
+      director: card.director ?? "",
+      oked: card.oked ?? "",
+      oked_name: card.oked_name ?? "",
+      registration_date: card.registration_date ?? "",
+      legal_status: card.legal_status ?? "",
+      participant_id: card.participant_id ?? "",
+      has_2gis: gisMatches.length > 0,
+      gis_company_names: gisNames.join("; "),
+      match_type: best?.match_type ?? "",
+      match_score: best && best.match_score > 0 ? best.match_score.toFixed(2) : "",
+      gis_phone: gisPhone,
+      gis_address: gisAddress
+    };
+  });
+
+  sheet.addRows(rows);
+  styleSheet(sheet);
+
+  for (const key of ["tender_budget_sum", "tender_active_budget_sum"] as const) {
+    const col = KZ_ONLY_COLUMNS.findIndex((c) => c.key === key) + 1;
+    if (col > 0) sheet.getColumn(col).numFmt = "#,##0.00";
   }
 }
 
@@ -158,9 +282,17 @@ function addLeadsSheet(workbook: ExcelJS.Workbook, matches: LeadKzMatch[]): void
   }
 }
 
-function addTendersSheet(workbook: ExcelJS.Workbook, tenders: TenderRecord[], matches: LeadKzMatch[]): void {
+function addTendersSheet(
+  workbook: ExcelJS.Workbook,
+  tenders: TenderRecord[],
+  matches: LeadKzMatch[],
+  kzOnlyCards: ScoredCompanyCard[] = []
+): void {
   const sheet = workbook.addWorksheet("Tenders");
   const companyNames = new Map(matches.map((m) => [m.kz_bin, m.company_name]));
+  for (const card of kzOnlyCards) {
+    if (!companyNames.has(card.bin)) companyNames.set(card.bin, card.name);
+  }
 
   sheet.columns = [
     { header: "Источник", key: "source", width: 18 },
@@ -193,7 +325,9 @@ function addSummarySheet(
   workbook: ExcelJS.Workbook,
   matches: LeadKzMatch[],
   tenders: TenderRecord[],
-  mergeStats: LeadKzMergeStats
+  mergeStats: LeadKzMergeStats,
+  kzOnlyCards: ScoredCompanyCard[] = [],
+  matchesByKzBin: Map<string, LeadKzMatch[]> = new Map()
 ): void {
   const sheet = workbook.addWorksheet("Summary");
   sheet.columns = [
@@ -210,11 +344,15 @@ function addSummarySheet(
     oked: m.stat_gov?.oked
   })).length;
   const withPhone = matches.filter((m) => formatLeadPhone(m).length > 0).length;
+  const kzWith2gis = kzOnlyCards.filter((card) => (matchesByKzBin.get(card.bin)?.length ?? 0) > 0).length;
   const totalBudget = matches.reduce((sum, m) => sum + (m.company_card?.tender_budget_sum ?? 0), 0);
   const activeBudget = matches.reduce((sum, m) => sum + (m.company_card?.tender_active_budget_sum ?? 0), 0);
 
   sheet.addRows([
-    { metric: "Лидов всего", value: matches.length },
+    { metric: "KZ-only компаний (лист KZ-only)", value: kzOnlyCards.length },
+    { metric: "KZ-only с 2GIS match", value: kzWith2gis },
+    { metric: "% KZ-only с 2GIS", value: kzOnlyCards.length > 0 ? pct(kzWith2gis, kzOnlyCards.length) : "0%" },
+    { metric: "Лидов всего (лист Leads)", value: matches.length },
     { metric: "Лидов с БИН", value: mergeStats.with_bin },
     { metric: "% лидов с БИН", value: matches.length > 0 ? pct(mergeStats.with_bin, matches.length) : "0%" },
     { metric: "Совпало по БИН (exact)", value: mergeStats.matched_exact },

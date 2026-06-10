@@ -15,7 +15,9 @@ import {
 import {
   backfillBinsFromMatches,
   backfillLeadBins,
+  dedupeLeadBinsByBin,
   mergeLeadsWithKz,
+  scrubInvalidLeadBins,
   writeKzToLeads
 } from "../src/kz/leadKzMerge.js";
 import { mergeStatGovData } from "./merge-stat-gov-data.js";
@@ -81,6 +83,12 @@ async function main(): Promise<void> {
   try {
     const batchCards = scoreCompanyCards(storage.getCompanyCards(readBinsFromCsv(BATCH_CSV)));
 
+    const scrubbed = scrubInvalidLeadBins(db, batchCards);
+    console.log(`scrubbed invalid lead BINs (batch): ${scrubbed}`);
+
+    const deduped = dedupeLeadBinsByBin(db, batchCards);
+    console.log(`deduped shared lead BINs (batch): ${deduped}`);
+
     const backfilled = backfillLeadBins(db, batchCards);
     console.log(`backfilled lead BINs (batch fuzzy): ${backfilled}`);
 
@@ -116,7 +124,7 @@ async function main(): Promise<void> {
     bins: readBinsFromCsv(BATCH_CSV)
   });
   console.log(`unified export: ${unified.xlsxPath}`);
-  console.log(`leads=${unified.leads} tenders=${unified.tenders} errors=${unified.errors}`);
+  console.log(`leads=${unified.leads} kz_only=${unified.kzOnly} tenders=${unified.tenders} errors=${unified.errors}`);
   console.log(`merge stats: with_bin=${unified.mergeStats.with_bin} with_tenders=${unified.mergeStats.with_tenders}`);
 }
 

@@ -125,7 +125,7 @@ kz
       enrichMissing: options.enrichMissing
     });
     console.log(`kz export-unified: ${result.xlsxPath}`);
-    console.log(`leads=${result.leads} tenders=${result.tenders} errors=${result.errors}`);
+    console.log(`leads=${result.leads} kz_only=${result.kzOnly} tenders=${result.tenders} errors=${result.errors}`);
     console.log(`merge: total=${result.mergeStats.total_leads} with_bin=${result.mergeStats.with_bin} exact=${result.mergeStats.matched_exact} fuzzy_stat=${result.mergeStats.matched_fuzzy_stat} fuzzy_reg=${result.mergeStats.matched_fuzzy_registry} unmatched=${result.mergeStats.unmatched} with_tenders=${result.mergeStats.with_tenders}`);
   });
 
