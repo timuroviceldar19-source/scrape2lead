@@ -151,9 +151,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: S
   // Operator UI: static files served from public/operator/. Exposed before the
   // auth gate so the operator can open the dashboard, paste a token, and
   // start calling the API. The static handler is path-traversal-safe and
-  // reads only from the operator folder.
-  if (req.method === "GET" && isOperatorRequest(url)) {
-    serveOperatorStatic(res, state, req.url);
+  // reads only from the operator folder. HEAD is supported alongside GET so
+  // monitoring tools, link rel=preload, and HTTP probes get the same
+  // response headers (CSP, security headers, Cache-Control, Content-Length,
+  // Content-Type) without a body.
+  if ((req.method === "GET" || req.method === "HEAD") && isOperatorRequest(url)) {
+    serveOperatorStatic(res, state, req.method ?? "GET", req.url);
     return;
   }
 
@@ -663,7 +666,12 @@ function isOperatorRequest(url: URL): boolean {
     || url.pathname.startsWith("/operator/");
 }
 
-function serveOperatorStatic(res: ServerResponse, state: ServerState, rawUrl: string | undefined): void {
+function serveOperatorStatic(
+  res: ServerResponse,
+  state: ServerState,
+  method: string,
+  rawUrl: string | undefined
+): void {
   const operatorDir = path.resolve(state.cwd, "public", "operator");
   // The URL parser normalizes `..` segments away, which is great for routing
   // but means encoded `..` (e.g. `%2e%2e`) and double-encoded variants can
@@ -739,6 +747,12 @@ function serveOperatorStatic(res: ServerResponse, state: ServerState, rawUrl: st
     "X-Frame-Options": "DENY",
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
   });
+  // HEAD shares the same headers as GET (Content-Length still reports the
+  // would-be body size, per RFC 9110 §9.3.2) but must not include a body.
+  if (method === "HEAD") {
+    res.end();
+    return;
+  }
   const stream = fs.createReadStream(filePath);
   stream.on("error", (err) => handleStaticStreamError(res, state, err));
   stream.pipe(res);
@@ -775,7 +789,7 @@ function sendJson(res: ServerResponse, status: number, payload: unknown, _state?
 function applyCors(req: IncomingMessage, res: ServerResponse, state: ServerState): void {
   const origin = state.env.SCRAPE2LEAD_CORS_ORIGIN ?? "*";
   res.setHeader("Access-Control-Allow-Origin", origin);
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-API-Token");
   res.setHeader("Access-Control-Max-Age", "86400");
   void req;

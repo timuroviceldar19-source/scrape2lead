@@ -222,3 +222,5 @@ curl "http://127.0.0.1:8787/api/v1/artifacts?legacy=1"
 Когда задан `SCRAPE2LEAD_API_TOKEN`, страница `/operator` остаётся публичной (как `OPTIONS`), а UI отправляет токен через `Authorization: Bearer <token>` на `/api/v1/*` и `/health`.
 
 Статические ответы `/operator` отдаются с консервативными security-заголовками: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Content-Security-Policy: default-src 'self'; …; frame-ancestors 'none'` и `Cache-Control: no-cache`. Это defense-in-depth для публичной страницы с bearer-токеном в `localStorage`: UI полностью inline-free, CSP строгий, не разрешает inline/внешние скрипты и embedding через iframe.
+
+`HEAD` для `/operator` static возвращает те же заголовки, что и `GET`, без тела (Content-Length всё равно указывает размер ресурса); нужно для HTTP-проб, мониторинга и `<link rel="preload">`. В `Access-Control-Allow-Methods` добавлен `HEAD`.
