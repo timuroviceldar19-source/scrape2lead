@@ -361,6 +361,54 @@ const migrations: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_outreach_items_kind_bin ON outreach_items(kind, bin);
     `
+  },
+  {
+    version: 15,
+    sql: `
+      CREATE TABLE IF NOT EXISTS api_jobs (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        command TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        pid INTEGER,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        exit_code INTEGER,
+        signal TEXT,
+        error TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_api_jobs_status_created
+        ON api_jobs (status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS api_job_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL REFERENCES api_jobs(id) ON DELETE CASCADE,
+        stream TEXT NOT NULL,
+        line TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_api_job_logs_job_id
+        ON api_job_logs (job_id, id ASC);
+
+      CREATE TABLE IF NOT EXISTS api_job_artifacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL REFERENCES api_jobs(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_api_job_artifacts_job_id
+        ON api_job_artifacts (job_id);
+    `
   }
 ];
 
