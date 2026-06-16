@@ -8,6 +8,7 @@ import Database from "better-sqlite3";
 import {
   buildJobInvocation,
   createApiServer,
+  handleStaticStreamError,
   safeListen,
   validateRemoteBind,
   type ApiServer,
@@ -590,6 +591,207 @@ describe("scrape2lead API server — safeListen", () => {
     expect(info.port).toBeGreaterThan(0);
     server.close();
     jobStore.close();
+  });
+});
+
+describe("scrape2lead API server — operator UI static serving", () => {
+  function seedOperatorFolder(cwd: string, files: Record<string, string> = {}): void {
+    const dir = path.join(cwd, "public", "operator");
+    fs.mkdirSync(dir, { recursive: true });
+    const defaults: Record<string, string> = {
+      "index.html": "<!doctype html><html><body>operator</body></html>",
+      "operator.js": "window.S2L={};\n",
+      "operator.css": "body{color:#000;}\n"
+    };
+    const all = Object.assign({}, defaults, files);
+    for (const [name, content] of Object.entries(all)) {
+      fs.writeFileSync(path.join(dir, name), content, "utf8");
+    }
+  }
+
+  it("serves /operator and /operator/ as index.html without auth", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd, apiToken: "secret" });
+
+    const root = await fetch(`${app.url}/operator`);
+    expect(root.status).toBe(200);
+    expect(root.headers.get("content-type")).toMatch(/^text\/html/);
+    const rootBody = await root.text();
+    expect(rootBody).toContain("operator");
+
+    const trailing = await fetch(`${app.url}/operator/`);
+    expect(trailing.status).toBe(200);
+    expect(trailing.headers.get("content-type")).toMatch(/^text\/html/);
+  });
+
+  it("serves sibling static assets (js, css) with correct content types", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd });
+
+    const js = await fetch(`${app.url}/operator/operator.js`);
+    expect(js.status).toBe(200);
+    expect(js.headers.get("content-type")).toMatch(/^application\/javascript/);
+    const jsBody = await js.text();
+    expect(jsBody).toContain("S2L");
+
+    const css = await fetch(`${app.url}/operator/operator.css`);
+    expect(css.status).toBe(200);
+    expect(css.headers.get("content-type")).toMatch(/^text\/css/);
+    const cssBody = await css.text();
+    expect(cssBody).toContain("color");
+  });
+
+  it("rejects path traversal attempts in /operator/* paths", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    // Drop a file at the project root and inside public/ outside the operator folder
+    fs.writeFileSync(path.join(cwd, "secret.txt"), "TOP_SECRET", "utf8");
+    fs.mkdirSync(path.join(cwd, "public"), { recursive: true });
+    fs.writeFileSync(path.join(cwd, "public", "secret.txt"), "PUBLIC_SECRET", "utf8");
+    const app = await makeApp({ cwd });
+
+    // Class A: Node's HTTP layer (and the URL parser) normalize `..` segments
+    // and decoded `%2e%2e` between path separators. The result is either a
+    // non-operator path (which 404s via the default handler) or a normalized
+    // operator path that doesn't exist (which 404s via the static handler).
+    // Either way, the secret files are never exposed.
+    const direct = await fetch(`${app.url}/operator/../public/secret.txt`);
+    expect(direct.status).toBe(404);
+
+    const encoded = await fetch(`${app.url}/operator/%2e%2e/public/secret.txt`);
+    expect(encoded.status).toBe(404);
+
+    const dotdotNested = await fetch(`${app.url}/operator/foo/%2e%2e/bar`);
+    expect(dotdotNested.status).toBe(404);
+
+    const singleDot = await fetch(`${app.url}/operator/foo/.%2e/bar`);
+    expect(singleDot.status).toBe(404);
+
+    // Class B: encoded variants where the URL parser / Node HTTP layer keeps
+    // the encoded form (no slashes between the encoded `..` segments, or
+    // encoded separators that aren't decoded to a real path separator). The
+    // raw-URL safety check in serveOperatorStatic rejects these with 400
+    // before any fs resolution. The decoded segment either contains path
+    // separators or a Windows drive letter.
+    const encodedAll = await fetch(`${app.url}/operator/%2e%2e%2fpublic%2fsecret.txt`);
+    expect(encodedAll.status).toBe(400);
+
+    const encodedSlashInName = await fetch(`${app.url}/operator/foo%2Fbar`);
+    expect(encodedSlashInName.status).toBe(400);
+
+    const encodedBackslash = await fetch(`${app.url}/operator/foo%5Cbar`);
+    expect(encodedBackslash.status).toBe(400);
+
+    const drive = await fetch(`${app.url}/operator/C%3A%5Csecret.txt`);
+    expect(drive.status).toBe(400);
+
+    // Forbid files are still on disk and untouched.
+    expect(fs.readFileSync(path.join(cwd, "secret.txt"), "utf8")).toBe("TOP_SECRET");
+    expect(fs.readFileSync(path.join(cwd, "public", "secret.txt"), "utf8")).toBe("PUBLIC_SECRET");
+  });
+
+  it("returns 404 when the operator folder is missing or has no index.html", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    const app = await makeApp({ cwd });
+
+    const root = await fetch(`${app.url}/operator`);
+    expect(root.status).toBe(404);
+  });
+
+  it("does not block /api/v1 routes after the operator route is added", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd });
+
+    const list = await fetch(`${app.url}/api/v1/jobs?limit=5&offset=0`);
+    expect(list.status).toBe(200);
+    const listBody = await list.json() as { jobs: unknown[]; total: number };
+    expect(Array.isArray(listBody.jobs)).toBe(true);
+    expect(listBody.total).toBe(0);
+
+    const create = await fetch(`${app.url}/api/v1/jobs/kz-enrich`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bins: ["960440000716"] })
+    });
+    expect(create.status).toBe(202);
+    const { job } = await create.json() as { job: { id: string; status: string } };
+    expect(job.id).toBeTruthy();
+    await waitForStatus(app, job.id, "completed");
+  });
+
+  it("serves the operator UI even when an API token is configured", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd, apiToken: "secret" });
+
+    // /operator must NOT require the token — that's the whole point of a
+    // browser-based UI where the operator types the token into a form.
+    const noAuth = await fetch(`${app.url}/operator`);
+    expect(noAuth.status).toBe(200);
+    expect(noAuth.headers.get("content-type")).toMatch(/^text\/html/);
+
+    // /health, on the other hand, IS still auth-gated.
+    const healthNoAuth = await fetch(`${app.url}/health`);
+    expect(healthNoAuth.status).toBe(401);
+    const healthWithAuth = await fetch(`${app.url}/health`, { headers: { Authorization: "Bearer secret" } });
+    expect(healthWithAuth.status).toBe(200);
+  });
+});
+
+describe("scrape2lead API server — handleStaticStreamError", () => {
+  // Minimal stand-in for http.ServerResponse — we only need to verify
+  // which of {writeHead, end, destroy} the error handler calls. No real
+  // socket or fs involved, so the test isn't brittle.
+  function makeMockResponse(initialHeadersSent: boolean) {
+    const calls = { writeHead: [] as Array<{ status: number; headers: Record<string, unknown> }>, end: [] as string[], destroyed: 0 };
+    const res = {
+      headersSent: initialHeadersSent,
+      writeHead(status: number, headers: Record<string, unknown>): void {
+        calls.writeHead.push({ status, headers });
+        this.headersSent = true;
+      },
+      end(body?: string): void {
+        calls.end.push(body ?? "");
+      },
+      destroy(): void {
+        calls.destroyed += 1;
+      }
+    };
+    return { res: res as unknown as import("node:http").ServerResponse, calls };
+  }
+
+  function makeMockState(): Parameters<typeof handleStaticStreamError>[1] {
+    return {} as Parameters<typeof handleStaticStreamError>[1];
+  }
+
+  it("sends JSON 500 with the error message when headers have not been sent", () => {
+    const { res, calls } = makeMockResponse(false);
+    const err = new Error("disk gone");
+
+    handleStaticStreamError(res, makeMockState(), err);
+
+    expect(calls.writeHead).toHaveLength(1);
+    expect(calls.writeHead[0]?.status).toBe(500);
+    expect(calls.writeHead[0]?.headers["Content-Type"]).toBe("application/json; charset=utf-8");
+    expect(calls.end).toHaveLength(1);
+    const body = JSON.parse(calls.end[0] ?? "{}") as { error: string; message: string };
+    expect(body.error).toBe("static_read_error");
+    expect(body.message).toBe("disk gone");
+    expect(calls.destroyed).toBe(0);
+  });
+
+  it("destroys the response without writing when headers were already sent", () => {
+    const { res, calls } = makeMockResponse(true);
+    const err = new Error("truncated mid-stream");
+
+    handleStaticStreamError(res, makeMockState(), err);
+
+    expect(calls.writeHead).toHaveLength(0);
+    expect(calls.end).toHaveLength(0);
+    expect(calls.destroyed).toBe(1);
   });
 });
 

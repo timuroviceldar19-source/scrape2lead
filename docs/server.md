@@ -214,3 +214,9 @@ curl "http://127.0.0.1:8787/api/v1/artifacts?legacy=1"
 ## Совместимость
 
 Все endpoints доступны и по `/api/...` (legacy) для обратной совместимости. Новые клиенты должны использовать `/api/v1/...`.
+
+## Operator UI
+
+Минимальная встроенная dashboard-страница для оператора: `http://127.0.0.1:8787/operator`. Отдаёт статические файлы из `public/operator/` (`index.html`, `operator.js`, `operator.css`). UI использует только существующие `/api/v1` и `/health` endpoints и не добавляет backend-логики. Пошаговый операторский гайд — [docs/operator-api-runbook.md](./operator-api-runbook.md).
+
+Когда задан `SCRAPE2LEAD_API_TOKEN`, страница `/operator` остаётся публичной (как `OPTIONS`), а UI отправляет токен через `Authorization: Bearer <token>` на `/api/v1/*` и `/health`.
