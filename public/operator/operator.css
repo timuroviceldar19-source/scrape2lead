@@ -242,11 +242,20 @@ textarea { resize: vertical; font-family: var(--mono); }
 
 #jobs-table tbody tr { cursor: pointer; }
 #jobs-table tbody tr:hover { background: var(--panel-2); }
+#jobs-table tbody tr:focus,
+#jobs-table tbody tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--panel-2);
+}
 #jobs-table tbody tr.selected { background: #1f2a3a; }
 #jobs-table tbody tr.jobs-empty,
-#jobs-table tbody tr.jobs-empty:hover {
+#jobs-table tbody tr.jobs-empty:hover,
+#jobs-table tbody tr.jobs-empty:focus,
+#jobs-table tbody tr.jobs-empty:focus-visible {
   cursor: default;
   background: transparent;
+  outline: none;
 }
 #jobs-table td.mono { font-family: var(--mono); }
 
