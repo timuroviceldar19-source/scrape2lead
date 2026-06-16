@@ -795,7 +795,9 @@ describe("scrape2lead API server — operator UI static serving", () => {
         "x-content-type-options",
         "x-frame-options",
         "referrer-policy",
-        "cache-control"
+        "cache-control",
+        "etag",
+        "last-modified"
       ] as const;
       for (const name of headerNames) {
         const a = getRes.headers.get(name);
@@ -889,7 +891,9 @@ describe("scrape2lead API server — operator UI static serving", () => {
         "x-frame-options",
         "x-content-type-options",
         "referrer-policy",
-        "cache-control"
+        "cache-control",
+        "etag",
+        "last-modified"
       ]) {
         expect(res.headers.get(h)).toBeNull();
       }
@@ -899,6 +903,116 @@ describe("scrape2lead API server — operator UI static serving", () => {
         expect(body.error).toBe("not_found");
       }
     }
+  });
+
+  it("sets ETag and Last-Modified on /operator static 200 responses", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd });
+
+    const expectations: Array<{ url: string; relPath: string }> = [
+      { url: `${app.url}/operator`, relPath: "public/operator/index.html" },
+      { url: `${app.url}/operator/operator.js`, relPath: "public/operator/operator.js" },
+      { url: `${app.url}/operator/operator.css`, relPath: "public/operator/operator.css" }
+    ];
+
+    for (const { url, relPath } of expectations) {
+      const stat = fs.statSync(path.join(cwd, relPath));
+      const expectedEtag = `"${stat.size}-${Math.trunc(stat.mtimeMs)}"`;
+
+      const first = await fetch(url);
+      expect(first.status).toBe(200);
+      expect(first.headers.get("etag")).toBe(expectedEtag);
+      expect(Number.isNaN(Date.parse(first.headers.get("last-modified") ?? ""))).toBe(false);
+
+      const second = await fetch(url);
+      expect(second.status).toBe(200);
+      expect(second.headers.get("etag")).toBe(expectedEtag);
+      expect(second.headers.get("last-modified")).toBe(first.headers.get("last-modified"));
+    }
+  });
+
+  it("returns 304 with static headers and no body on GET with matching If-None-Match", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd });
+
+    const url = `${app.url}/operator/operator.js`;
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    const etag = first.headers.get("etag");
+    expect(etag).not.toBeNull();
+
+    const notModified = await fetch(url, { headers: { "If-None-Match": etag ?? "" } });
+    expect(notModified.status).toBe(304);
+    expect(await notModified.text()).toBe("");
+
+    for (const h of [
+      "etag",
+      "last-modified",
+      "cache-control",
+      "content-security-policy",
+      "x-content-type-options",
+      "x-frame-options",
+      "referrer-policy"
+    ]) {
+      expect(notModified.headers.get(h)).toBe(first.headers.get(h));
+    }
+
+    // 304 must not advertise a body length. Node strips Content-Length on
+    // chunked/empty responses; we allow either "0" or null, but not the
+    // actual file size.
+    const cl = notModified.headers.get("content-length");
+    expect([null, "0"]).toContain(cl);
+  });
+
+  it("returns 304 on HEAD with matching If-None-Match and no body", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd });
+
+    const url = `${app.url}/operator/operator.css`;
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    const etag = first.headers.get("etag");
+    expect(etag).not.toBeNull();
+
+    const notModified = await fetch(url, { method: "HEAD", headers: { "If-None-Match": etag ?? "" } });
+    expect(notModified.status).toBe(304);
+    expect(await notModified.text()).toBe("");
+
+    expect(notModified.headers.get("etag")).toBe(etag);
+    expect(notModified.headers.get("last-modified")).toBe(first.headers.get("last-modified"));
+    for (const h of [
+      "cache-control",
+      "content-security-policy",
+      "x-content-type-options",
+      "x-frame-options",
+      "referrer-policy"
+    ]) {
+      expect(notModified.headers.get(h)).not.toBeNull();
+    }
+  });
+
+  it("returns 200 with body when If-None-Match does not match", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    const realDir = path.resolve(process.cwd(), "public", "operator");
+    const tempDir = path.join(cwd, "public", "operator");
+    fs.mkdirSync(tempDir, { recursive: true });
+    for (const name of fs.readdirSync(realDir)) {
+      fs.copyFileSync(path.join(realDir, name), path.join(tempDir, name));
+    }
+    const app = await makeApp({ cwd });
+
+    const res = await fetch(`${app.url}/operator`, {
+      headers: { "If-None-Match": '"definitely-not-the-etag"' }
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Scrape2Lead Operator");
+    expect(res.headers.get("etag")).not.toBeNull();
+    expect(res.headers.get("last-modified")).not.toBeNull();
   });
 });
 

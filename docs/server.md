@@ -224,3 +224,5 @@ curl "http://127.0.0.1:8787/api/v1/artifacts?legacy=1"
 Статические ответы `/operator` отдаются с консервативными security-заголовками: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Content-Security-Policy: default-src 'self'; …; frame-ancestors 'none'` и `Cache-Control: no-cache`. Это defense-in-depth для публичной страницы с bearer-токеном в `localStorage`: UI полностью inline-free, CSP строгий, не разрешает inline/внешние скрипты и embedding через iframe.
 
 `HEAD` для `/operator` static возвращает те же заголовки, что и `GET`, без тела (Content-Length всё равно указывает размер ресурса); нужно для HTTP-проб, мониторинга и `<link rel="preload">`. В `Access-Control-Allow-Methods` добавлен `HEAD`.
+
+Static `/operator` ответы также несут `ETag` и `Last-Modified`; совпадающий `If-None-Match` на `GET`/`HEAD` возвращает `304 Not Modified` без тела и с теми же security-заголовками (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Cache-Control). `If-Modified-Since` не поддерживается.
