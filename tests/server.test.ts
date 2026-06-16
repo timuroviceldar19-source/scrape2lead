@@ -1014,6 +1014,128 @@ describe("scrape2lead API server — operator UI static serving", () => {
     expect(res.headers.get("etag")).not.toBeNull();
     expect(res.headers.get("last-modified")).not.toBeNull();
   });
+
+  it("serves the real checked-in /operator index.html with the kz-export submit form", async () => {
+    // The dashboard exposes a small "Export KZ report" card that POSTs to
+    // /api/v1/jobs/kz-export. This test guards the static contract so the
+    // form does not regress to a non-functional state (e.g. after a card
+    // rename) without the build breaking. We do not run JS — we just assert
+    // the served HTML/JS contain the expected control ids and submit
+    // handler marker. No jsdom dependency is introduced.
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-export-"));
+    const realDir = path.resolve(process.cwd(), "public", "operator");
+    const tempDir = path.join(cwd, "public", "operator");
+    fs.mkdirSync(tempDir, { recursive: true });
+    for (const name of fs.readdirSync(realDir)) {
+      fs.copyFileSync(path.join(realDir, name), path.join(tempDir, name));
+    }
+    const app = await makeApp({ cwd });
+
+    const htmlRes = await fetch(`${app.url}/operator`);
+    expect(htmlRes.status).toBe(200);
+    const html = await htmlRes.text();
+
+    // Export card scaffolding.
+    expect(html).toMatch(/id="card-export"/);
+    expect(html).toMatch(/id="export-form"/);
+    expect(html).toMatch(/<h2>Export KZ report<\/h2>/);
+
+    // Form controls: optional BIN textarea, optional filename input, submit button.
+    expect(html).toMatch(/id="export-bins"/);
+    expect(html).toMatch(/id="export-filename"/);
+    expect(html).toMatch(/placeholder="kz-report\.xlsx"/);
+    expect(html).toMatch(/data-action="submit-export"/);
+    expect(html).toMatch(/>Export report</);
+
+    // The export BIN textarea must be OPTIONAL — empty BINs export all DB
+    // companies, so the helper text must be present in the served HTML.
+    expect(html).toMatch(/Leave empty to export all companies/);
+
+    // operator.js must contain the export submit handler marker. We do not
+    // run the script, just verify the source served by /operator wires up
+    // the form.
+    const jsRes = await fetch(`${app.url}/operator/operator.js`);
+    expect(jsRes.status).toBe(200);
+    const js = await jsRes.text();
+    expect(js).toMatch(/submitExportJob/);
+    expect(js).toMatch(/exportForm\.addEventListener\("submit", submitExportJob\)/);
+    expect(js).toMatch(/\/jobs\/kz-export/);
+  });
+});
+
+describe("scrape2lead API server — kz-export job contract", () => {
+  it("starts kz-export jobs with an empty body (export all) and custom out", async () => {
+    const app = await makeApp();
+    const response = await fetch(`${app.url}/api/v1/jobs/kz-export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format: "xlsx", out: "exports/test-report.xlsx" })
+    });
+    expect(response.status).toBe(202);
+    const body = await response.json() as {
+      job: { id: string; type: string; status: string; args: string[] };
+    };
+    expect(body.job.type).toBe("kz-export");
+
+    const job = await waitForStatus(app, body.job.id, "completed");
+    expect(job.status).toBe("completed");
+    expect(job.exit_code).toBe(0);
+
+    // CLI invocation must include the kz export subcommand, the format flag,
+    // the custom out, and MUST NOT include --bins when no bins are provided.
+    expect(body.job.args).toContain("export");
+    expect(body.job.args).toContain("--format");
+    expect(body.job.args).toContain("xlsx");
+    expect(body.job.args).toContain("--out");
+    expect(body.job.args).toContain("exports/test-report.xlsx");
+    expect(body.job.args).not.toContain("--bins");
+  });
+
+  it("starts kz-export jobs with explicit inline BINs and materializes them into a CSV", async () => {
+    const app = await makeApp();
+    const response = await fetch(`${app.url}/api/v1/jobs/kz-export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format: "xlsx", bins: ["960440000716", "061040006408"] })
+    });
+    expect(response.status).toBe(202);
+    const body = await response.json() as {
+      job: { id: string; type: string; args: string[] };
+    };
+    expect(body.job.type).toBe("kz-export");
+
+    const job = await waitForStatus(app, body.job.id, "completed");
+    expect(job.status).toBe("completed");
+    expect(job.exit_code).toBe(0);
+
+    // --bins should point to a real CSV written under data/server-jobs.
+    const binsIdx = body.job.args.indexOf("--bins");
+    expect(binsIdx).toBeGreaterThan(-1);
+    const csvPath = body.job.args[binsIdx + 1];
+    expect(typeof csvPath).toBe("string");
+    expect(csvPath).toMatch(/data[\\/]server-jobs[\\/].+-export-bins\.csv$/);
+    expect(fs.readFileSync(csvPath, "utf8")).toBe(
+      "bin\n960440000716\n061040006408\n"
+    );
+  });
+
+  it("builds the kz-export CLI invocation from whitelisted fields only", () => {
+    // Pure builder test: confirms the field set the UI relies on is honored
+    // and that the format defaults to xlsx when the UI omits it. Use a temp
+    // cwd because inline bins are materialized to data/server-jobs/bins.csv.
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-kz-export-invoke-"));
+    const invocation = buildJobInvocation(
+      "kz-export",
+      { bins: ["061040006408"] },
+      "job-x",
+      cwd
+    );
+
+    expect(invocation.args).toContain("export");
+    expect(invocation.args).toContain("--format");
+    expect(invocation.args).toContain("xlsx");
+    expect(invocation.args).toContain("--bins");
+  });
 });
 
 describe("scrape2lead API server — handleStaticStreamError", () => {

@@ -51,6 +51,9 @@
   var delayMs = el("delayMs");
   var goszakupMaxPages = el("goszakupMaxPages");
   var cancelBtn = el("btn-cancel");
+  var exportForm = el("export-form");
+  var exportBinsInput = el("export-bins");
+  var exportFilenameInput = el("export-filename");
 
   // --- helpers ---
   function tokenHeader() {
@@ -130,6 +133,39 @@
           return json;
         });
       });
+  }
+
+  function parseBinsTextarea(value) {
+    var raw = (value == null ? "" : String(value));
+    var lines = raw.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+    var bins = [];
+    var bad = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (/^\d{12}$/.test(line)) bins.push(line);
+      else bad.push(line);
+    }
+    return { bins: bins, bad: bad };
+  }
+
+  function normalizeExportFilename(raw) {
+    if (raw === undefined || raw === null) return "";
+    var name = String(raw).trim();
+    if (name === "") return "";
+    if (name.indexOf("\0") !== -1) {
+      throw new Error("Filename must not contain NUL bytes.");
+    }
+    if (name.indexOf("/") !== -1 || name.indexOf("\\") !== -1) {
+      throw new Error("Filename must not contain slashes or backslashes.");
+    }
+    if (/^\w:/.test(name)) {
+      throw new Error("Filename must not contain a drive letter.");
+    }
+    if (name === ".." || name.indexOf("..") !== -1) {
+      throw new Error("Filename must not contain '..'.");
+    }
+    if (!/\.xlsx$/i.test(name)) name = name + ".xlsx";
+    return "exports/" + name;
   }
 
   // --- actions ---
@@ -251,13 +287,9 @@
 
   function submitJob(ev) {
     ev.preventDefault();
-    var lines = binsInput.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
-    var bins = [];
-    var bad = [];
-    for (var i = 0; i < lines.length; i++) {
-      if (/^\d{12}$/.test(lines[i])) bins.push(lines[i]);
-      else bad.push(lines[i]);
-    }
+    var parsed = parseBinsTextarea(binsInput.value);
+    var bins = parsed.bins;
+    var bad = parsed.bad;
     if (bins.length === 0) {
       showAlert("Provide at least one valid 12-digit BIN.");
       binsInput.focus();
@@ -280,6 +312,37 @@
         .then(function (resp) {
           state.selectedJobId = resp.job.id;
           binsInput.value = "";
+          showAlert("Submitted job " + shortId(resp.job.id));
+          return loadJobs().then(function () { return loadDetail(resp.job.id); });
+        });
+    });
+  }
+
+  function submitExportJob(ev) {
+    ev.preventDefault();
+    var parsed = parseBinsTextarea(exportBinsInput.value);
+    if (parsed.bad.length > 0) {
+      showAlert("Invalid BIN(s) (must be 12 digits): " + parsed.bad.slice(0, 3).join(", "));
+      exportBinsInput.focus();
+      return Promise.resolve();
+    }
+    var out;
+    try {
+      out = normalizeExportFilename(exportFilenameInput.value);
+    } catch (err) {
+      showAlert("Error: " + (err && err.message ? err.message : String(err)));
+      exportFilenameInput.focus();
+      return Promise.resolve();
+    }
+    var body = { format: "xlsx" };
+    if (parsed.bins.length > 0) body.bins = parsed.bins;
+    if (out) body.out = out;
+    return withBusy(function () {
+      return api("/jobs/kz-export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then(function (resp) {
+          state.selectedJobId = resp.job.id;
+          exportBinsInput.value = "";
+          exportFilenameInput.value = "";
           showAlert("Submitted job " + shortId(resp.job.id));
           return loadJobs().then(function () { return loadDetail(resp.job.id); });
         });
@@ -578,6 +641,7 @@
     });
 
     submitForm.addEventListener("submit", submitJob);
+    exportForm.addEventListener("submit", submitExportJob);
 
     // Delegated click handler for data-action buttons
     document.addEventListener("click", function (ev) {

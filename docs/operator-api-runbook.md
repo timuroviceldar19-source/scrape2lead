@@ -52,6 +52,7 @@ http://127.0.0.1:8787/operator
 
 - Страница `/operator` отдаётся публично (без `Authorization` и `X-API-Token` в запросе) даже когда задан `SCRAPE2LEAD_API_TOKEN` — токен вводится в поле «API token» в top bar, после чего UI подставляет `Authorization: Bearer <token>` в каждый запрос к `/api/v1/*` и `/health`.
 - Дашборд покрывает те же операторские действия, что разделы 1-7 ниже: submit `kz-enrich` с BIN-ами и расширенными флагами, очередь и список jobs с фильтром по статусу, детали job и просмотр логов, отмена queued/running, список и скачивание артефактов, smoke-check здоровья.
+- Дашборд умеет submit `kz-export` после enrich: задаёшь опциональный список BIN-ов и опциональное имя файла (всегда под `exports/<filename>.xlsx`); пустой BIN-list экспортирует все компании, которые сейчас есть в БД, а готовый xlsx появляется в per-job / global artifacts и скачивается по `GET /api/v1/artifacts/:id`.
 - API-примеры ниже (`Invoke-RestMethod` / `curl`) оставлены для headless / scripted / server-to-server / CI сценариев, где браузер не подходит.
 
 Когда браузер недоступен или нужно автоматизировать — переходи к разделу 1.

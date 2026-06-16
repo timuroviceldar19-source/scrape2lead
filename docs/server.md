@@ -219,6 +219,8 @@ curl "http://127.0.0.1:8787/api/v1/artifacts?legacy=1"
 
 Минимальная встроенная dashboard-страница для оператора: `http://127.0.0.1:8787/operator`. Отдаёт статические файлы из `public/operator/` (`index.html`, `operator.js`, `operator.css`). UI использует только существующие `/api/v1` и `/health` endpoints и не добавляет backend-логики. Пошаговый операторский гайд — [docs/operator-api-runbook.md](./operator-api-runbook.md).
 
+Дашборд умеет submit `kz-enrich` job-ов (BIN-ы + расширенные флаги) и `kz-export` job-ов (опциональные BIN-ы и опциональное имя файла под `exports/<filename>.xlsx`); сгенерированный report-артефакт появляется в per-job и global artifact списках и скачивается по `GET /api/v1/artifacts/:id`.
+
 Когда задан `SCRAPE2LEAD_API_TOKEN`, страница `/operator` остаётся публичной (как `OPTIONS`), а UI отправляет токен через `Authorization: Bearer <token>` на `/api/v1/*` и `/health`.
 
 Статические ответы `/operator` отдаются с консервативными security-заголовками: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Content-Security-Policy: default-src 'self'; …; frame-ancestors 'none'` и `Cache-Control: no-cache`. Это defense-in-depth для публичной страницы с bearer-токеном в `localStorage`: UI полностью inline-free, CSP строгий, не разрешает inline/внешние скрипты и embedding через iframe.
