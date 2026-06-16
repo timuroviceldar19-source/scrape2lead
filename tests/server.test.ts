@@ -765,6 +765,49 @@ describe("scrape2lead API server — operator UI static serving", () => {
     }
   });
 
+  it("supports HEAD on /operator static with the same headers as GET and an empty body", async () => {
+    // HEAD is useful for HTTP probes, monitoring, and link rel=preload. The
+    // contract is: same status, same headers (including CSP / Cache-Control /
+    // Content-Length), no body. We compare HEAD against GET per target so the
+    // test does not lock in the full CSP string and stays robust to future
+    // header tweaks.
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd });
+
+    const targets = [
+      `${app.url}/operator`,
+      `${app.url}/operator/operator.js`,
+      `${app.url}/operator/operator.css`
+    ];
+    for (const url of targets) {
+      const getRes = await fetch(url);
+      const headRes = await fetch(url, { method: "HEAD" });
+
+      expect(getRes.status).toBe(200);
+      expect(headRes.status).toBe(200);
+
+      // Headers that must match exactly between GET and HEAD.
+      const headerNames = [
+        "content-type",
+        "content-length",
+        "content-security-policy",
+        "x-content-type-options",
+        "x-frame-options",
+        "referrer-policy",
+        "cache-control"
+      ] as const;
+      for (const name of headerNames) {
+        const a = getRes.headers.get(name);
+        const b = headRes.headers.get(name);
+        expect({ name, get: a, head: b }).toEqual({ name, get: a, head: a });
+      }
+
+      // Body must be empty on HEAD.
+      expect(await headRes.text()).toBe("");
+    }
+  });
+
   it("serves the real checked-in /operator index.html with operator-root-relative asset paths", async () => {
     // The previous version of public/operator/index.html used path-relative
     // href/src for the CSS/JS assets, which 404'd when the page was served
