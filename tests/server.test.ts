@@ -764,6 +764,51 @@ describe("scrape2lead API server — operator UI static serving", () => {
       expect(csp).toMatch(/frame-ancestors 'none'/);
     }
   });
+
+  it("serves the real checked-in /operator index.html with operator-root-relative asset paths", async () => {
+    // The previous version of public/operator/index.html used path-relative
+    // href/src for the CSS/JS assets, which 404'd when the page was served
+    // at /operator (no trailing slash) because the browser resolved them to
+    // /operator.css and /operator.js at the root. The static handler only
+    // serves /operator/*, so the page rendered unstyled and non-functional.
+    // The fix is to use operator-root-relative URLs. This test copies the
+    // real checked-in files into a temp cwd and verifies the contract end to
+    // end: the HTML references the right paths, the assets are reachable,
+    // and the old wrong paths are 404.
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-real-"));
+    const realDir = path.resolve(process.cwd(), "public", "operator");
+    const tempDir = path.join(cwd, "public", "operator");
+    fs.mkdirSync(tempDir, { recursive: true });
+    for (const name of fs.readdirSync(realDir)) {
+      fs.copyFileSync(path.join(realDir, name), path.join(tempDir, name));
+    }
+    const app = await makeApp({ cwd });
+
+    // 1. /operator HTML references the assets via operator-root-relative paths.
+    const htmlRes = await fetch(`${app.url}/operator`);
+    expect(htmlRes.status).toBe(200);
+    const html = await htmlRes.text();
+    expect(html).toMatch(/href="\/operator\/operator\.css"/);
+    expect(html).toMatch(/src="\/operator\/operator\.js"/);
+    // And it does not regress to the old path-relative form.
+    expect(html).not.toMatch(/href="operator\.css"/);
+    expect(html).not.toMatch(/src="operator\.js"/);
+
+    // 2. The referenced assets are actually reachable.
+    const cssRes = await fetch(`${app.url}/operator/operator.css`);
+    expect(cssRes.status).toBe(200);
+    expect(cssRes.headers.get("content-type")).toMatch(/^text\/css/);
+    const jsRes = await fetch(`${app.url}/operator/operator.js`);
+    expect(jsRes.status).toBe(200);
+    expect(jsRes.headers.get("content-type")).toMatch(/^application\/javascript/);
+
+    // 3. The old wrong root-level paths are 404, so the page no longer
+    //    depends on them. This guards against a future regression.
+    const wrongCss = await fetch(`${app.url}/operator.css`);
+    expect(wrongCss.status).toBe(404);
+    const wrongJs = await fetch(`${app.url}/operator.js`);
+    expect(wrongJs.status).toBe(404);
+  });
 });
 
 describe("scrape2lead API server — handleStaticStreamError", () => {
