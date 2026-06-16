@@ -42,6 +42,22 @@ $H    = @{ "Content-Type" = "application/json" }
 
 ---
 
+## 0.5. Web dashboard (рекомендовано)
+
+Для ручной работы в браузере есть встроенный дашборд. Открой:
+
+```text
+http://127.0.0.1:8787/operator
+```
+
+- Страница `/operator` отдаётся публично (без `Authorization` и `X-API-Token` в запросе) даже когда задан `SCRAPE2LEAD_API_TOKEN` — токен вводится в поле «API token» в top bar, после чего UI подставляет `Authorization: Bearer <token>` в каждый запрос к `/api/v1/*` и `/health`.
+- Дашборд покрывает те же операторские действия, что разделы 1-7 ниже: submit `kz-enrich` с BIN-ами и расширенными флагами, очередь и список jobs с фильтром по статусу, детали job и просмотр логов, отмена queued/running, список и скачивание артефактов, smoke-check здоровья.
+- API-примеры ниже (`Invoke-RestMethod` / `curl`) оставлены для headless / scripted / server-to-server / CI сценариев, где браузер не подходит.
+
+Когда браузер недоступен или нужно автоматизировать — переходи к разделу 1.
+
+---
+
 ## 1. Поставить kz-enrich job
 
 Через массив `bins` — сервер сам создаст временный CSV в `data/server-jobs/`:
@@ -326,4 +342,5 @@ Invoke-RestMethod -Uri "$BASE/jobs/$id/artifacts" -Headers $H
 
 - Перед массовыми запусками — `docs/kz-batch-runbook.md`.
 - Полная карта эндпоинтов и безопасность — `docs/server.md`.
+- Web-дашборд для оператора: [docs/server.md#operator-ui](./server.md#operator-ui).
 - Спецификация Scrape2Lead — `docs/TZ_v2.md`.
