@@ -56,6 +56,27 @@
       </form>
     </section>
 
+    <section class="card" id="card-export">
+      <h2>Export KZ report</h2>
+      <form id="export-form" autocomplete="off">
+        <label class="field">
+          <span>BINs (optional, one per line, 12 digits)</span>
+          <textarea id="export-bins" rows="6" spellcheck="false"
+                    placeholder="061040006408&#10;960440000716"></textarea>
+          <span class="help">Leave empty to export all companies currently in the DB.</span>
+        </label>
+        <label class="field">
+          <span>Output filename (optional)</span>
+          <input id="export-filename" type="text" spellcheck="false"
+                 placeholder="kz-report.xlsx" />
+          <span class="help">Filename only — the report is always written under <code>exports/</code>.</span>
+        </label>
+        <div class="row">
+          <button type="submit" data-action="submit-export">Export report</button>
+        </div>
+      </form>
+    </section>
+
     <section class="card" id="card-jobs">
       <h2>Jobs</h2>
       <div class="row toolbar">

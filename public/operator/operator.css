@@ -115,6 +115,7 @@ textarea { resize: vertical; font-family: var(--mono); }
   grid-template-columns: 320px 1fr 1fr;
   grid-template-areas:
     "submit jobs detail"
+    "export jobs detail"
     "artifacts jobs detail";
   gap: 10px;
   padding: 10px;
@@ -122,6 +123,7 @@ textarea { resize: vertical; font-family: var(--mono); }
 }
 
 #card-submit    { grid-area: submit; }
+#card-export    { grid-area: export; }
 #card-jobs      { grid-area: jobs; }
 #card-detail    { grid-area: detail; }
 #card-artifacts { grid-area: artifacts; }
@@ -131,6 +133,7 @@ textarea { resize: vertical; font-family: var(--mono); }
     grid-template-columns: 1fr;
     grid-template-areas:
       "submit"
+      "export"
       "jobs"
       "detail"
       "artifacts";
@@ -210,6 +213,9 @@ textarea { resize: vertical; font-family: var(--mono); }
 .mono { font-family: var(--mono); font-size: 12px; }
 
 .muted { color: var(--muted); font-size: 11px; }
+
+.help { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.help code { font-family: var(--mono); font-size: 11px; }
 
 .hidden { display: none !important; }
 
