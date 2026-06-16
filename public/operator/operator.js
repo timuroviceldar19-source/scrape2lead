@@ -171,6 +171,13 @@
     });
   }
 
+  function selectJob(jobId) {
+    if (!jobId) return Promise.resolve();
+    state.selectedJobId = jobId;
+    renderJobs();
+    return loadDetail(jobId);
+  }
+
   function loadDetail(jobId) {
     if (!jobId) return Promise.resolve();
     return withBusy(function () {
@@ -349,6 +356,9 @@
       var tr = document.createElement("tr");
       if (job.id === state.selectedJobId) tr.classList.add("selected");
       tr.dataset.jobId = job.id;
+      tr.tabIndex = 0;
+      tr.setAttribute("role", "button");
+      tr.setAttribute("aria-label", "Open job " + shortId(job.id));
 
       var idCell = document.createElement("td");
       idCell.className = "mono";
@@ -525,16 +535,46 @@
     healthBtn.addEventListener("click", checkHealth);
     el("btn-health").dataset.action = "health";
 
-    jobsStatus.addEventListener("change", function () { state.jobsFilter.status = jobsStatus.value; });
+    jobsStatus.addEventListener("change", function () {
+      state.jobsFilter.status = jobsStatus.value;
+      loadJobs();
+    });
     jobsLimit.addEventListener("change", function () {
       var v = parseInt(jobsLimit.value, 10);
       state.jobsFilter.limit = isFinite(v) && v >= 1 ? Math.min(v, 200) : 20;
       jobsLimit.value = String(state.jobsFilter.limit);
+      loadJobs();
     });
     jobsOffset.addEventListener("change", function () {
       var v = parseInt(jobsOffset.value, 10);
       state.jobsFilter.offset = isFinite(v) && v >= 0 ? v : 0;
       jobsOffset.value = String(state.jobsFilter.offset);
+      loadJobs();
+    });
+
+    // Delegated click handler for job rows: the entire row opens the job
+    // (data-job-id), but the open button inside the row keeps its own
+    // data-action="open-job" path so we skip when a button is the target.
+    jobsBody.addEventListener("click", function (ev) {
+      var target = ev.target;
+      if (!target) return;
+      if (target.closest && target.closest("button[data-action]")) return;
+      var tr = target.closest && target.closest("tr");
+      if (!tr || !tr.dataset || !tr.dataset.jobId) return;
+      if (tr.classList.contains("jobs-empty")) return;
+      selectJob(tr.dataset.jobId);
+    });
+
+    // Keyboard support: Enter or Space on a focused row opens the job.
+    jobsBody.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      var target = ev.target;
+      if (!target || !target.closest) return;
+      var tr = target.closest("tr");
+      if (!tr || !tr.dataset || !tr.dataset.jobId) return;
+      if (tr.classList.contains("jobs-empty")) return;
+      ev.preventDefault();
+      selectJob(tr.dataset.jobId);
     });
 
     submitForm.addEventListener("submit", submitJob);
@@ -553,9 +593,7 @@
       if (action === "refresh-perjob") return loadPerJobArtifacts();
       if (action === "cancel") return cancelJob();
       if (action === "open-job") {
-        state.selectedJobId = target.dataset.id;
-        renderJobs();
-        return loadDetail(state.selectedJobId);
+        return selectJob(target.dataset.id);
       }
       if (action === "download") {
         var id = parseInt(target.dataset.id, 10);
