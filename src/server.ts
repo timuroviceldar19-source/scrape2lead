@@ -156,7 +156,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: S
   // response headers (CSP, security headers, Cache-Control, Content-Length,
   // Content-Type) without a body.
   if ((req.method === "GET" || req.method === "HEAD") && isOperatorRequest(url)) {
-    serveOperatorStatic(res, state, req.method ?? "GET", req.url);
+    serveOperatorStatic(res, state, req.method ?? "GET", req.headers["if-none-match"], req.url);
     return;
   }
 
@@ -670,6 +670,7 @@ function serveOperatorStatic(
   res: ServerResponse,
   state: ServerState,
   method: string,
+  ifNoneMatch: string | string[] | undefined,
   rawUrl: string | undefined
 ): void {
   const operatorDir = path.resolve(state.cwd, "public", "operator");
@@ -738,15 +739,37 @@ function serveOperatorStatic(
     return;
   }
 
-  res.writeHead(200, {
+  // Strong validator built from size + mtime. Math.trunc on mtimeMs keeps
+  // the ETag integer-only so two requests against an unchanged file produce
+  // byte-identical tags.
+  const etag = `"${stat.size}-${Math.trunc(stat.mtimeMs)}"`;
+  const lastModified = stat.mtime.toUTCString();
+
+  const baseHeaders: Record<string, string | number> = {
     "Content-Type": contentTypeFor(filePath),
-    "Content-Length": stat.size,
     "Cache-Control": "no-cache",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
-  });
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    "ETag": etag,
+    "Last-Modified": lastModified
+  };
+
+  // If-None-Match: list of candidate tags. Treat as a match when any item
+  // equals our current ETag. No wildcard `*` (we never need it for a
+  // single-file static UI and it adds ambiguity for a 404 path we don't
+  // want to cache anyway).
+  if (ifNoneMatch !== undefined) {
+    const candidates = Array.isArray(ifNoneMatch) ? ifNoneMatch : [ifNoneMatch];
+    if (candidates.some((c) => c === etag)) {
+      res.writeHead(304, baseHeaders);
+      res.end();
+      return;
+    }
+  }
+
+  res.writeHead(200, { ...baseHeaders, "Content-Length": stat.size });
   // HEAD shares the same headers as GET (Content-Length still reports the
   // would-be body size, per RFC 9110 §9.3.2) but must not include a body.
   if (method === "HEAD") {
