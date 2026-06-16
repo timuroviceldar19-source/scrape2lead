@@ -146,12 +146,22 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: S
     return;
   }
 
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+
+  // Operator UI: static files served from public/operator/. Exposed before the
+  // auth gate so the operator can open the dashboard, paste a token, and
+  // start calling the API. The static handler is path-traversal-safe and
+  // reads only from the operator folder.
+  if (req.method === "GET" && isOperatorRequest(url)) {
+    serveOperatorStatic(res, state, req.url);
+    return;
+  }
+
   if (!isAuthorized(req, state)) {
     sendJson(res, 401, { error: "unauthorized" });
     return;
   }
 
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   const segments = url.pathname.split("/").filter(Boolean);
 
   if (req.method === "GET" && url.pathname === "/health") {
@@ -637,9 +647,115 @@ function contentTypeFor(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (ext === ".csv") return "text/csv; charset=utf-8";
-  if (ext === ".json") return "application/json; charset=utf-8";
+  if (ext === ".json" || ext === ".map") return "application/json; charset=utf-8";
+  if (ext === ".html" || ext === ".htm") return "text/html; charset=utf-8";
+  if (ext === ".js" || ext === ".mjs") return "application/javascript; charset=utf-8";
+  if (ext === ".css") return "text/css; charset=utf-8";
+  if (ext === ".svg") return "image/svg+xml";
+  if (ext === ".ico") return "image/x-icon";
   if (ext === ".txt" || ext === ".log") return "text/plain; charset=utf-8";
   return "application/octet-stream";
+}
+
+function isOperatorRequest(url: URL): boolean {
+  return url.pathname === "/operator"
+    || url.pathname === "/operator/"
+    || url.pathname.startsWith("/operator/");
+}
+
+function serveOperatorStatic(res: ServerResponse, state: ServerState, rawUrl: string | undefined): void {
+  const operatorDir = path.resolve(state.cwd, "public", "operator");
+  // The URL parser normalizes `..` segments away, which is great for routing
+  // but means encoded `..` (e.g. `%2e%2e`) and double-encoded variants can
+  // slip past it. We pull the raw request URL and apply path-traversal
+  // checks against the literal segments before any fs resolution.
+  const rawPath = (rawUrl ?? "/").split("?")[0]?.split("#")[0] ?? "/";
+  if (rawPath !== "/operator" && rawPath !== "/operator/" && !rawPath.startsWith("/operator/")) {
+    sendJson(res, 404, { error: "not_found" }, state);
+    return;
+  }
+  const tail = rawPath === "/operator" || rawPath === "/operator/"
+    ? ""
+    : rawPath.slice("/operator/".length);
+  const segments = tail.split("/").filter(Boolean);
+
+  for (const segment of segments) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      decoded = segment;
+    }
+    if (decoded === "." || decoded === "..") {
+      sendJson(res, 400, { error: "invalid_path" }, state);
+      return;
+    }
+    if (decoded.includes("/") || decoded.includes("\\") || decoded.includes("\0")) {
+      sendJson(res, 400, { error: "invalid_path" }, state);
+      return;
+    }
+    if (/^[A-Za-z]:/.test(decoded)) {
+      sendJson(res, 400, { error: "invalid_path" }, state);
+      return;
+    }
+  }
+
+  let filePath = segments.length === 0
+    ? path.join(operatorDir, "index.html")
+    : path.resolve(operatorDir, segments.join(path.sep));
+
+  if (filePath !== operatorDir && !filePath.startsWith(operatorDir + path.sep)) {
+    sendJson(res, 400, { error: "invalid_path" }, state);
+    return;
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    sendJson(res, 404, { error: "not_found" }, state);
+    return;
+  }
+  if (stat.isDirectory()) {
+    filePath = path.join(filePath, "index.html");
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
+      sendJson(res, 404, { error: "not_found" }, state);
+      return;
+    }
+  }
+  if (!stat.isFile()) {
+    sendJson(res, 404, { error: "not_found" }, state);
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": contentTypeFor(filePath),
+    "Content-Length": stat.size,
+    "Cache-Control": "no-cache"
+  });
+  const stream = fs.createReadStream(filePath);
+  stream.on("error", (err) => handleStaticStreamError(res, state, err));
+  stream.pipe(res);
+}
+
+/**
+ * Handle an error from a static-asset read stream. Exported for unit tests:
+ * if headers have not been flushed yet we send a JSON 500; if they have
+ * (the body was already partially written) we destroy the response so the
+ * client sees a truncated response and the connection is closed cleanly.
+ */
+export function handleStaticStreamError(
+  res: ServerResponse,
+  state: ServerState,
+  err: Error
+): void {
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
+  sendJson(res, 500, { error: "static_read_error", message: err.message }, state);
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown, _state?: ServerState): void {
