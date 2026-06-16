@@ -733,7 +733,10 @@ function serveOperatorStatic(res: ServerResponse, state: ServerState, rawUrl: st
   res.writeHead(200, {
     "Content-Type": contentTypeFor(filePath),
     "Content-Length": stat.size,
-    "Cache-Control": "no-cache"
+    "Cache-Control": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY"
   });
   const stream = fs.createReadStream(filePath);
   stream.on("error", (err) => handleStaticStreamError(res, state, err));

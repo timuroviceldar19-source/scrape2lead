@@ -739,6 +739,28 @@ describe("scrape2lead API server — operator UI static serving", () => {
     const healthWithAuth = await fetch(`${app.url}/health`, { headers: { Authorization: "Bearer secret" } });
     expect(healthWithAuth.status).toBe(200);
   });
+
+  it("sets conservative security headers on /operator static responses", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd });
+
+    // Headers should be set on the HTML entry point and on sibling static assets
+    // (JS, CSS) — the static handler applies the same headers to every file it
+    // serves, so a single configuration is enough to cover all of them.
+    const targets = [
+      `${app.url}/operator`,
+      `${app.url}/operator/operator.js`,
+      `${app.url}/operator/operator.css`
+    ];
+    for (const url of targets) {
+      const res = await fetch(url);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(res.headers.get("x-frame-options")).toBe("DENY");
+    }
+  });
 });
 
 describe("scrape2lead API server — handleStaticStreamError", () => {

@@ -50,6 +50,7 @@
   var forceRefresh = el("forceRefresh");
   var delayMs = el("delayMs");
   var goszakupMaxPages = el("goszakupMaxPages");
+  var cancelBtn = el("btn-cancel");
 
   // --- helpers ---
   function tokenHeader() {
@@ -81,10 +82,20 @@
   function setBusy(busy) {
     state.inFlight += busy ? 1 : -1;
     if (state.inFlight < 0) state.inFlight = 0;
+    applyButtonStates();
+  }
+
+  function applyButtonStates() {
+    var busy = state.inFlight > 0;
     var buttons = document.querySelectorAll("button[data-action]");
     for (var i = 0; i < buttons.length; i++) {
       // Health button has its own id, but uses data-action too. Disable all during in-flight.
-      buttons[i].disabled = state.inFlight > 0;
+      buttons[i].disabled = busy;
+    }
+    // Cancel is also disabled for terminal jobs, independent of in-flight state.
+    if (cancelBtn && state.job) {
+      var terminal = !(state.job.status === "queued" || state.job.status === "running");
+      cancelBtn.disabled = busy || terminal;
     }
   }
 
@@ -323,6 +334,16 @@
 
   function renderJobs() {
     while (jobsBody.firstChild) jobsBody.removeChild(jobsBody.firstChild);
+    if (state.jobs.length === 0) {
+      var emptyTr = document.createElement("tr");
+      emptyTr.className = "jobs-empty";
+      var emptyTd = document.createElement("td");
+      emptyTd.colSpan = 8;
+      emptyTd.className = "muted";
+      emptyTd.textContent = "No jobs match this filter.";
+      emptyTr.appendChild(emptyTd);
+      jobsBody.appendChild(emptyTr);
+    }
     for (var i = 0; i < state.jobs.length; i++) {
       var job = state.jobs[i];
       var tr = document.createElement("tr");
@@ -396,7 +417,7 @@
     el("d-id").textContent = job.id || "";
     el("d-type").textContent = job.type || "";
     var statusEl = el("d-status");
-    statusEl.className = "pill pill-" + (job.status || "unknown");
+    statusEl.className = "pill " + statusPillClass(job.status);
     statusEl.textContent = job.status || "?";
     el("d-exit").textContent = (job.exit_code === null || job.exit_code === undefined) ? "" : String(job.exit_code);
     el("d-signal").textContent = job.signal || "";
@@ -405,6 +426,7 @@
     el("d-started").textContent = fmtDate(job.started_at);
     el("d-finished").textContent = fmtDate(job.finished_at);
     el("d-error").textContent = job.error || "";
+    applyButtonStates();
   }
 
   function renderLogs() {
@@ -491,6 +513,9 @@
   // --- event wiring ---
   function wireEvents() {
     tokenInput.value = state.token;
+    tokenInput.addEventListener("input", function () {
+      state.token = tokenInput.value.trim();
+    });
     tokenInput.addEventListener("change", function () {
       state.token = tokenInput.value.trim();
       if (state.token) localStorage.setItem(TOKEN_KEY, state.token);
