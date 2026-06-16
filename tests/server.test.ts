@@ -852,6 +852,54 @@ describe("scrape2lead API server — operator UI static serving", () => {
     const wrongJs = await fetch(`${app.url}/operator.js`);
     expect(wrongJs.status).toBe(404);
   });
+
+  it("locks Cache-Control: no-cache and Content-Length on /operator static 200 responses", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd });
+
+    const expectations: Array<{ url: string; relPath: string }> = [
+      { url: `${app.url}/operator`, relPath: "public/operator/index.html" },
+      { url: `${app.url}/operator/operator.js`, relPath: "public/operator/operator.js" },
+      { url: `${app.url}/operator/operator.css`, relPath: "public/operator/operator.css" }
+    ];
+
+    for (const { url, relPath } of expectations) {
+      const res = await fetch(url);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("cache-control")).toBe("no-cache");
+      const expected = fs.statSync(path.join(cwd, relPath)).size;
+      expect(res.headers.get("content-length")).toBe(String(expected));
+    }
+  });
+
+  it("returns JSON 404 without static-only security headers when an /operator asset is missing", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-"));
+    seedOperatorFolder(cwd);
+    const app = await makeApp({ cwd });
+
+    for (const method of ["GET", "HEAD"] as const) {
+      const res = await fetch(`${app.url}/operator/missing.js`, { method });
+
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-type") ?? "").toMatch(/application\/json/);
+
+      for (const h of [
+        "content-security-policy",
+        "x-frame-options",
+        "x-content-type-options",
+        "referrer-policy",
+        "cache-control"
+      ]) {
+        expect(res.headers.get(h)).toBeNull();
+      }
+
+      if (method === "GET") {
+        const body = await res.json() as { error?: string };
+        expect(body.error).toBe("not_found");
+      }
+    }
+  });
 });
 
 describe("scrape2lead API server — handleStaticStreamError", () => {
