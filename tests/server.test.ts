@@ -759,6 +759,9 @@ describe("scrape2lead API server — operator UI static serving", () => {
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
       expect(res.headers.get("referrer-policy")).toBe("no-referrer");
       expect(res.headers.get("x-frame-options")).toBe("DENY");
+      const csp = res.headers.get("content-security-policy") ?? "";
+      expect(csp).toMatch(/script-src 'self'/);
+      expect(csp).toMatch(/frame-ancestors 'none'/);
     }
   });
 });

@@ -736,7 +736,8 @@ function serveOperatorStatic(res: ServerResponse, state: ServerState, rawUrl: st
     "Cache-Control": "no-cache",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
-    "X-Frame-Options": "DENY"
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
   });
   const stream = fs.createReadStream(filePath);
   stream.on("error", (err) => handleStaticStreamError(res, state, err));
