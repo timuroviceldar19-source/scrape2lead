@@ -261,3 +261,69 @@ function loadSeenPairs(db: Database.Database, kind: OutreachKind): Set<string> {
   const rows = db.prepare("SELECT bin, tender_number FROM outreach_items WHERE kind = ?").all(kind) as Array<{ bin: string; tender_number: string }>;
   return new Set(rows.map((row) => pairKey(row.bin, row.tender_number)));
 }
+
+/** Одна компания (БИН) — один контракт с максимальной суммой; топ-N по сумме. */
+export function pickUniqueWinnersByBin(winners: OutreachWinner[], limit: number): OutreachWinner[] {
+  const bestByBin = new Map<string, OutreachWinner>();
+  for (const winner of winners) {
+    const prev = bestByBin.get(winner.bin);
+    const amount = winner.amount ?? 0;
+    const prevAmount = prev?.amount ?? 0;
+    if (!prev || amount > prevAmount) bestByBin.set(winner.bin, winner);
+  }
+  return [...bestByBin.values()]
+    .sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0))
+    .slice(0, limit);
+}
+
+/** Последние контракты goszakup по БИНам — для первого поста в канале, если diff пуст. */
+export function loadRecentGoszakupWinners(
+  db: Database.Database,
+  bins: string[],
+  limit: number
+): OutreachWinner[] {
+  if (bins.length === 0) return [];
+
+  const placeholders = bins.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT bin, tender_number, tender_name, customer_name, budget_amount, start_date, status, url, parsed_at
+       FROM tender_data
+       WHERE source LIKE '%goszakup%' AND bin IN (${placeholders})
+         AND tender_name LIKE 'Договор%'
+       ORDER BY parsed_at DESC`
+    )
+    .all(...bins) as TenderRow[];
+
+  const storage = new KzStorage({ db });
+  const uniqueBins = [...new Set(rows.map((r) => r.bin))];
+  const cards = scoreCompanyCards(storage.getCompanyCards(uniqueBins));
+  const byBin = new Map(cards.map((c) => [c.bin, c]));
+
+  const winners: OutreachWinner[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = pairKey(row.bin, row.tender_number);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const card = byBin.get(row.bin);
+    winners.push({
+      bin: row.bin,
+      company_name: card?.name ?? row.bin,
+      director: card?.director ?? null,
+      phone: card?.registry_phone ?? null,
+      email: card?.registry_email ?? null,
+      gis_phone: "",
+      contract_number: row.tender_number,
+      contract_name: row.tender_name,
+      customer_name: row.customer_name,
+      amount: parseAmount(row.budget_amount),
+      amount_raw: row.budget_amount,
+      contract_date: row.start_date,
+      status: row.status,
+      url: row.url
+    });
+  }
+
+  return pickUniqueWinnersByBin(winners, limit);
+}
