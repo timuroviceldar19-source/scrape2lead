@@ -1016,8 +1016,6 @@ function buildKzAutopilotInvocation(input: Record<string, unknown>, cwd: string)
   pushBooleanFlag(args, "--progress", input.progress);
   pushPositiveIntFlag(args, "--max-pages", input.maxPages);
   pushBooleanFlag(args, "--baseline", input.baseline);
-  pushBooleanFlag(args, "--skip-channel", input.skipChannel);
-  pushStringFlag(args, "--channel-niche", input.channelNiche);
   return { command: invocation.command, args };
 }
 
