@@ -234,6 +234,37 @@ curl "http://127.0.0.1:8787/api/v1/artifacts?legacy=1"
 # → { "artifacts": [...], "source": "jobStore+exports" }
 ```
 
+### Outreach CRM status (SQLite only)
+
+Ledger для операторского pipeline. Требует SQLite job store. При Postgres backend — `501 outreach_sqlite_only`.
+
+#### `GET /api/v1/outreach/items`
+
+Список outreach-пар из `outreach_items` с CRM-статусом (`LEFT JOIN outreach_status`, default `new`).
+
+Query: `status`, `kind` (`winner`|`prospect`), `limit`, `offset`.
+
+```bash
+curl http://127.0.0.1:8787/api/v1/outreach/items
+curl "http://127.0.0.1:8787/api/v1/outreach/items?status=contacted&kind=winner&limit=20&offset=0"
+```
+
+Response item shape: `{ bin, tenderNumber, kind, status, note, createdAt, updatedAt }` plus top-level `total`.
+
+#### `PATCH /api/v1/outreach/items/:bin/:tenderNumber/:kind`
+
+Обновить CRM-статус и note. Пара должна существовать в `outreach_seen` и `outreach_items`.
+
+```bash
+curl -X PATCH http://127.0.0.1:8787/api/v1/outreach/items/061040006408/CT-100/winner \
+  -H "Content-Type: application/json" \
+  -d '{"status":"contacted","note":"called buyer"}'
+```
+
+Допустимые `status`: `new`, `contacted`, `interested`, `follow_up`, `closed`, `rejected`.
+
+Ошибки: `400 invalid_status` / `invalid_kind` / `invalid_note`, `404 outreach_not_found`.
+
 ## Безопасность команд
 
 Сервер не пропускает произвольные аргументы. Для каждого типа job есть whitelist builder: разрешены только известные флаги, значения валидируются (строки ≤500 символов, положительные целые для `--limit`/`--max-pages` и т.д.).
@@ -247,6 +278,8 @@ curl "http://127.0.0.1:8787/api/v1/artifacts?legacy=1"
 Минимальная встроенная dashboard-страница для оператора: `http://127.0.0.1:8787/operator`. Отдаёт статические файлы из `public/operator/` (`index.html`, `operator.js`, `operator.css`). UI использует только существующие `/api/v1` и `/health` endpoints и не добавляет backend-логики. Пошаговый операторский гайд — [docs/operator-api-runbook.md](./operator-api-runbook.md).
 
 Дашборд умеет submit `kz-enrich` job-ов (BIN-ы + расширенные флаги) и `kz-export` job-ов (опциональные BIN-ы и опциональное имя файла под `exports/<filename>.xlsx`); сгенерированный report-артефакт появляется в per-job и global artifact списках и скачивается по `GET /api/v1/artifacts/:id`.
+
+Карточка **Outreach status** читает `GET /api/v1/outreach/items` и сохраняет строки через `PATCH /api/v1/outreach/items/:bin/:tenderNumber/:kind` (статус + note). Не смешивается с таблицей Jobs.
 
 Когда задан `SCRAPE2LEAD_API_TOKEN`, страница `/operator` остаётся публичной (как `OPTIONS`), а UI отправляет токен через `Authorization: Bearer <token>` на `/api/v1/*` и `/health`.
 

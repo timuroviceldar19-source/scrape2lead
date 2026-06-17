@@ -77,6 +77,53 @@
       </form>
     </section>
 
+    <section class="card" id="card-outreach">
+      <h2>Outreach status</h2>
+      <div class="row toolbar">
+        <label class="field inline">
+          <span>Kind</span>
+          <select id="outreach-kind">
+            <option value="">(all)</option>
+            <option value="winner">winner</option>
+            <option value="prospect">prospect</option>
+          </select>
+        </label>
+        <label class="field inline">
+          <span>Status</span>
+          <select id="outreach-status">
+            <option value="">(all)</option>
+            <option value="new">new</option>
+            <option value="contacted">contacted</option>
+            <option value="interested">interested</option>
+            <option value="follow_up">follow_up</option>
+            <option value="closed">closed</option>
+            <option value="rejected">rejected</option>
+          </select>
+        </label>
+        <label class="field inline">
+          <span>Limit</span>
+          <input type="number" id="outreach-limit" min="1" max="200" value="20" />
+        </label>
+        <label class="field inline">
+          <span>Offset</span>
+          <input type="number" id="outreach-offset" min="0" value="0" />
+        </label>
+        <button data-action="refresh-outreach">Refresh</button>
+        <span id="outreach-total" class="muted">0 items</span>
+      </div>
+      <div class="table-wrap">
+        <table id="outreach-table">
+          <thead>
+            <tr>
+              <th>BIN</th><th>Tender</th><th>Kind</th><th>Status</th>
+              <th>Note</th><th>Created</th><th>Updated</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="outreach-body"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="card" id="card-jobs">
       <h2>Jobs</h2>
       <div class="row toolbar">

@@ -457,6 +457,23 @@ const migrations: Migration[] = [
         }
       }
     }
+  },
+  {
+    version: 17,
+    sql: `
+      CREATE TABLE IF NOT EXISTS outreach_status (
+        bin TEXT NOT NULL,
+        tender_number TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('winner', 'prospect')),
+        status TEXT NOT NULL CHECK (status IN ('new', 'contacted', 'interested', 'follow_up', 'closed', 'rejected')),
+        note TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (bin, tender_number, kind)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_outreach_status_kind_status
+        ON outreach_status (kind, status);
+    `
   }
 ];
 

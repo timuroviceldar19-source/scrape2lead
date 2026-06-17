@@ -199,6 +199,30 @@ Env: `KZ_OUTREACH_RUN_RETENTION_DAYS` — положительное целое 
 - Перед удалением run: `UPDATE outreach_items SET run_id = NULL WHERE run_id IN (...)` — audit-строки сохраняются.
 - **`outreach_seen` и `outreach_items` не удаляются** — sent-ledger и дедуп остаются; retention **не** откатывает уже «увиденные» пары.
 
+### CRM status ledger (`outreach_status`, migration v17)
+
+Отдельная таблица для операторского pipeline — **не** меняет дедуп autopilot и **не** трогает `outreach_seen`.
+
+| Поле | Смысл |
+|---|---|
+| `(bin, tender_number, kind)` | PK, тот же ключ, что в `outreach_items` / `outreach_seen` |
+| `status` | `new` (по умолчанию, если строки нет), `contacted`, `interested`, `follow_up`, `closed`, `rejected` |
+| `note` | свободный комментарий оператора |
+| `updated_at` | ISO timestamp последнего PATCH |
+
+Список для UI/API: `outreach_items` **LEFT JOIN** `outreach_status` — все audit-строки видны, статус без записи = `new`.
+
+Обновление: `PATCH /api/v1/outreach/items/:bin/:tenderNumber/:kind` с телом `{ "status": "...", "note": "..." }`. Пара должна существовать в `outreach_seen` **и** `outreach_items`; иначе `404 outreach_not_found`. `outreach_seen` **не** мутируется.
+
+### Operator workflow
+
+1. Запустить `kz:autopilot` (или дождаться weekly cron) — пары попадают в `outreach_seen` + `outreach_items`, Excel-дайджесты в `exports/`.
+2. Открыть `http://127.0.0.1:8787/operator` → карточка **Outreach status**.
+3. Отфильтровать по `kind` / `status`, выставить статус и note, **Save** на строке.
+4. Retention `outreach_runs` по-прежнему безопасен: CRM-статусы в `outreach_status` сохраняются независимо от prune run-ов.
+
+Autopilot diff/export **пока не** учитывает CRM-статус — это запланировано в follow-up PR (см. `docs/BACKLOG.md`).
+
 ### Параллельные запуски и lock
 
 `kz-autopilot` в начале создаёт **lock-файл** `data/autopilot.lock` через `O_CREAT|O_EXCL`. Внутри JSON: `{pid, host, startedAt, command}`. Второй запуск, пока первый держит lock, **завершается сразу с exit code 2** и сообщением `autopilot: lock busy: pid=…`. Запланировано две задачи в одно время — вторая просто отказывается стартовать, не дублирует Telegram и не плодит файлы.
