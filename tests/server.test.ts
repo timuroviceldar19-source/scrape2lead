@@ -9,6 +9,9 @@ import {
   buildJobInvocation,
   createApiServer,
   handleStaticStreamError,
+  npxCommand,
+  normalizeSpawnInvocation,
+  resolveCliInvocation,
   safeListen,
   validateRemoteBind,
   type ApiServer,
@@ -66,7 +69,7 @@ afterEach(async () => {
 
 async function makeApp(options: {
   cwd?: string;
-  runner?: FakeRunner;
+  runner?: SpawnRunner;
   apiToken?: string;
   maxConcurrentJobs?: number;
   maxLogLines?: number;
@@ -232,6 +235,7 @@ describe("scrape2lead API server", () => {
   });
 
   it("builds the autopilot command from whitelisted flags only", () => {
+    const cwd = process.cwd();
     const invocation = buildJobInvocation(
       "kz-autopilot",
       {
@@ -242,12 +246,13 @@ describe("scrape2lead API server", () => {
         shell: "rm -rf ."
       },
       "job-1",
-      process.cwd()
+      cwd
     );
 
+    expect(invocation.command).toBe(process.execPath);
     expect(invocation.args).toEqual([
-      "tsx",
-      "scripts/kz-autopilot.mts",
+      path.join(cwd, "node_modules", "tsx", "dist", "cli.mjs"),
+      path.join(cwd, "scripts", "kz-autopilot.mts"),
       "--batch-csv",
       "bins-batch.csv",
       "--dry-run",
@@ -1307,6 +1312,64 @@ describe("scrape2lead API server — kz-export job contract", () => {
     expect(invocation.args).toContain("--format");
     expect(invocation.args).toContain("xlsx");
     expect(invocation.args).toContain("--bins");
+  });
+});
+
+describe("scrape2lead API server — Windows-safe job spawn", () => {
+  it("npxCommand returns npx.cmd on Windows", () => {
+    if (process.platform !== "win32") return;
+    expect(npxCommand()).toBe("npx.cmd");
+  });
+
+  it("resolveCliInvocation uses process.execPath + local tsx in dev mode", () => {
+    const cwd = process.cwd();
+    const invocation = resolveCliInvocation(cwd, path.join(cwd, "src", "server.ts"));
+    expect(invocation.command).toBe(process.execPath);
+    expect(invocation.args[0]).toMatch(/tsx[\\/]dist[\\/]cli\.mjs$/);
+    expect(invocation.args[1]).toBe(path.join(cwd, "src", "cli.ts"));
+    expect(invocation.command).not.toMatch(/npx/i);
+  });
+
+  it("resolveCliInvocation uses process.execPath + dist cli when server runs from dist", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-spawn-dist-"));
+    const distCli = path.join(cwd, "dist", "src", "cli.js");
+    fs.mkdirSync(path.dirname(distCli), { recursive: true });
+    fs.writeFileSync(distCli, "export {};\n", "utf8");
+
+    const invocation = resolveCliInvocation(cwd, path.join(cwd, "dist", "src", "server.js"));
+    expect(invocation.command).toBe(process.execPath);
+    expect(invocation.args).toEqual([distCli]);
+  });
+
+  it("normalizeSpawnInvocation rejects missing cwd", () => {
+    expect(() => normalizeSpawnInvocation(process.execPath, ["--version"], path.join(os.tmpdir(), "missing-cwd-dir")))
+      .toThrow(/spawn cwd does not exist/);
+  });
+
+  it("records spawn command and cwd in job logs when spawn fails synchronously", async () => {
+    const runner = {
+      start() {
+        const error = Object.assign(new Error("spawn EINVAL"), { code: "EINVAL" });
+        throw error;
+      }
+    } satisfies SpawnRunner;
+    const app = await makeApp({ runner });
+    const response = await fetch(`${app.url}/api/v1/jobs/kz-enrich`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bins: ["960440000716"], skipStat: true, delayMs: 0 })
+    });
+    expect(response.status).toBe(202);
+    const body = await response.json() as { job: { id: string } };
+    const job = await waitForStatus(app, body.job.id, "failed");
+    expect(job.error).toMatch(/spawn EINVAL/i);
+
+    const logsResponse = await fetch(`${app.url}/api/v1/jobs/${body.job.id}/logs`);
+    const logsBody = await logsResponse.json() as { logs: Array<{ stream: string; line: string }> };
+    const lines = logsBody.logs.map((entry) => entry.line).join("\n");
+    expect(lines).toMatch(/Spawn error: spawn EINVAL/);
+    expect(lines).toMatch(/Spawn command:/);
+    expect(lines).toMatch(/Spawn cwd:/);
   });
 });
 
