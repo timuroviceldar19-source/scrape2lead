@@ -74,7 +74,7 @@ URL: https://www.lusha.com/
 - Хороший benchmark для credit-based pricing.
 - Массовый self-serve продукт для небольших команд.
 
-Урок: freemium/demo export Scrape2Lead должен быстро показывать ценность, но маскировать контакты до оплаты.
+Урок: Scrape2Lead должен быстро показывать ценность через короткий бесплатный sample (например, 3 строки), но полные контакты отдавать только в платном пакете.
 
 ### LeadIQ
 
@@ -178,7 +178,7 @@ URL: https://ted.europa.eu/en/
 2. Saved searches / watchlists по нишам, БИНам, заказчикам, CPV/ОКЭД.
 3. Alerts: новые победители, новые активные лоты, крупные бюджеты, повторные заказчики.
 4. Scored lead cards: почему это A/B/C, какой next action, какой message.
-5. Freemium: демо-выгрузка с masked contacts и 10-15 горячими сигналами.
+5. Trial-выгрузка с masked contacts и 10-15 горячими сигналами как proof-of-value.
 6. Compliance page: источники, legal basis, opt-out, ограничения по персональным данным.
 7. API/export layer: XLSX, CSV, webhook, Telegram, CRM.
 
