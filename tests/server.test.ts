@@ -243,6 +243,8 @@ describe("scrape2lead API server", () => {
         dryRun: true,
         skipEnrich: true,
         maxPages: 5,
+        skipChannel: true,
+        channelNiche: "construction",
         shell: "rm -rf ."
       },
       "job-1",
@@ -260,6 +262,8 @@ describe("scrape2lead API server", () => {
       "--max-pages",
       "5"
     ]);
+    expect(invocation.args).not.toContain("--skip-channel");
+    expect(invocation.args).not.toContain("--channel-niche");
   });
 
   it("kz-export without out writes to SCRAPE2LEAD_EXPORT_DIR and registers a downloadable artifact", async () => {
