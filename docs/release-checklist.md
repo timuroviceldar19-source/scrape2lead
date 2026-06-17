@@ -61,6 +61,16 @@ kill $SERVER_PID
 сравниваться в мониторинге/тестах как статика. Если задан
 `SCRAPE2LEAD_API_TOKEN`, `/health` ожидаемо отдаёт `401` — это тоже OK.
 
+## 6. Миграции БД (если в релизе есть schema PR)
+
+Если в релиз попал PR с миграцией (`src/storage/migrations/`), перед merge в
+`main` и перед деплоем:
+
+1. Проверь, что в `README.md` changelog есть deploy note с номером миграции и
+   именем таблицы/изменения (пример v1.8.0: migration v16 `outreach_seen`).
+2. На staging/проде прогони миграцию до первого запуска затронутых команд
+   (`kz:autopilot`, server, operator jobs).
+
 ## Что дальше
 
 - Перед merge в `main` — PR из `develop` с пройденными шагами 1–4 (хотя бы

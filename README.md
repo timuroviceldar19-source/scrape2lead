@@ -245,9 +245,23 @@ exports/        XLSX/CSV (runtime, gitignored)
 
 ## Changelog
 
-### v1.7.0 — current (`develop`)
+### v1.8.0 — current (`develop`)
 
-Latest release train (post-merge `c3a495d`):
+Latest release train (post-merge `5fa4e16`):
+
+- **Autopilot hardening**
+  - Lock file + clear exit codes + per-run summary JSON + zero-output Telegram alert (PR #25).
+  - `/health` last-autopilot-run status and `api_jobs` retention on startup (PR #27).
+  - per-BIN enrich retry fallback with budget/deadline (PR #28).
+  - Outreach run retention ledger — migration v16 `outreach_seen`, `kz:autopilot:retention` (PR #29).
+- **Server**
+  - Dropped dead `skipChannel`/`channelNiche` from kz-autopilot API (PR #26).
+- **Deploy**
+  - Run DB migration v16 (`outreach_seen`) before first v1.8.0 autopilot on an existing database.
+
+See `docs/BACKLOG.md` for candidate next increments.
+
+### v1.7.0
 
 - **Operator / release readiness**
   - Documented release environment variables and health-response shape.
@@ -263,7 +277,7 @@ Latest release train (post-merge `c3a495d`):
   - `docs/foreign-market-research.md` — expansion research template.
   - `docs/kz-batch-runbook.md` — batch 50–100 BIN, autopilot, scheduler.
 
-See `docs/BACKLOG.md` for candidate next increments and `docs/ARCHIVE_AUDIT.md` for the legacy-script / prompt archive audit.
+See `docs/ARCHIVE_AUDIT.md` for the legacy-script / prompt archive audit.
 
 ---
 
