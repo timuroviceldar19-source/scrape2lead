@@ -14,7 +14,7 @@
 | **Autopilot** | еженедельный дифф «новые победители + новые активные закупки» → файлы + Telegram |
 | **Feeder (v1.7)** | 2GIS/Kaspi-скрейп как источник телефонов и имён для BIN-backfill |
 
-Spec: [`docs/TZ_v2.md`](docs/TZ_v2.md) · Batch ops: [`docs/kz-batch-runbook.md`](docs/kz-batch-runbook.md) · Sales kit: [`docs/sales-kit.md`](docs/sales-kit.md)
+Spec: [`docs/TZ_v2.md`](docs/TZ_v2.md) · [Как работает конвейер](docs/pipeline-overview.md) · Batch ops: [`docs/kz-batch-runbook.md`](docs/kz-batch-runbook.md) · Sales kit: [`docs/sales-kit.md`](docs/sales-kit.md)
 
 ---
 
