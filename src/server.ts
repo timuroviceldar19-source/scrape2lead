@@ -121,8 +121,18 @@ export function createApiServer(options: ApiServerOptions = {}): ApiServer {
 
   // Recover any jobs that were running when the previous process died, then
   // drain the queue so queued jobs can start if slots are available.
+  // Retention pruning runs immediately after `resetRunningJobs()` so a fresh
+  // boot never starts work on jobs that are about to be deleted.
+  const retentionDays = parseRetentionDays(env.SCRAPE2LEAD_JOB_RETENTION_DAYS);
   void Promise.resolve()
     .then(() => jobStore.resetRunningJobs())
+    .then(async () => {
+      if (retentionDays === null) return;
+      const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+      const cutoffIso = new Date(cutoffMs).toISOString();
+      const pruned = await jobStore.pruneTerminalJobsBefore(cutoffIso);
+      console.log(`Pruned ${pruned} terminal API jobs older than ${retentionDays} days`);
+    })
     .then(() => drainQueue(state))
     .catch((error) => {
       console.error("Failed to initialize job queue:", error);
@@ -169,12 +179,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: S
   const segments = url.pathname.split("/").filter(Boolean);
 
   if (req.method === "GET" && url.pathname === "/health") {
-    sendJson(res, 200, {
-      ok: true,
-      service: "scrape2lead-api",
-      time: new Date().toISOString(),
-      uptimeSeconds: Math.floor(process.uptime())
-    });
+    await handleHealth(res, state);
     return;
   }
 
@@ -193,6 +198,53 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: S
   }
 
   sendJson(res, 404, { error: "not_found" });
+}
+
+interface LastAutopilotRun {
+  id: string;
+  status: ApiJobStatus;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  exitCode: number | null;
+  error: string | null;
+  artifacts: string[];
+}
+
+async function handleHealth(res: ServerResponse, state: ServerState): Promise<void> {
+  const payload: {
+    ok: boolean;
+    service: string;
+    time: string;
+    uptimeSeconds: number;
+    lastAutopilotRun: LastAutopilotRun | null;
+    jobStore: { ok: true } | { ok: false; error: string };
+  } = {
+    ok: true,
+    service: "scrape2lead-api",
+    time: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    lastAutopilotRun: null,
+    jobStore: { ok: true }
+  };
+  try {
+    const latest = await state.jobStore.getLatestJobByType("kz-autopilot");
+    if (latest) {
+      payload.lastAutopilotRun = {
+        id: latest.id,
+        status: latest.status,
+        createdAt: latest.created_at,
+        startedAt: latest.started_at,
+        finishedAt: latest.finished_at,
+        exitCode: latest.exit_code,
+        error: latest.error,
+        artifacts: latest.artifacts
+      };
+    }
+  } catch (error) {
+    payload.jobStore = { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  sendJson(res, 200, payload, state);
 }
 
 async function handleJobsRoute(
@@ -861,6 +913,20 @@ function parsePositiveIntEnv(value: string | undefined): number | undefined {
   return parsed;
 }
 
+/**
+ * Parse `SCRAPE2LEAD_JOB_RETENTION_DAYS` into a positive integer (>= 1) or
+ * `null` when retention is disabled. Disabled covers: unset env, empty
+ * string, `0`, non-numeric input, negative numbers, and floats.
+ */
+function parseRetentionDays(value: string | undefined): number | null {
+  if (value === undefined || value === null) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1) return null;
+  return parsed;
+}
+
 function parseBoolEnv(value: string | undefined): boolean {
   if (value === undefined) return false;
   const normalized = value.toLowerCase().trim();
@@ -1016,8 +1082,9 @@ function buildKzAutopilotInvocation(input: Record<string, unknown>, cwd: string)
   pushBooleanFlag(args, "--progress", input.progress);
   pushPositiveIntFlag(args, "--max-pages", input.maxPages);
   pushBooleanFlag(args, "--baseline", input.baseline);
-  pushBooleanFlag(args, "--skip-channel", input.skipChannel);
-  pushStringFlag(args, "--channel-niche", input.channelNiche);
+  pushNonNegativeIntFlag(args, "--enrich-retries", input.enrichRetries);
+  pushPositiveIntFlag(args, "--enrich-retry-base-ms", input.enrichRetryBaseMs);
+  pushPositiveIntFlag(args, "--enrich-deadline-ms", input.enrichDeadlineMs);
   return { command: invocation.command, args };
 }
 

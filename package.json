@@ -13,14 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "audit:2gis:nsk-autoservice": "tsx scripts/auditRegression.ts",
-    "audit:regression": "tsx scripts/auditRegression.ts",
-    "validate:kz:proxy": "tsx src/cli.ts --source 2gis --geo Астана --category Автосервисы --limit 10 --config config.kz.json",
-    "mvp:astana:small": "tsx scripts/mvp-astana-small.ts",
-    "mvp:astana": "tsx scripts/autoserviceRadarMvp.ts --config config.kz.json",
     "sales:buyer-template": "tsx scripts/generateBuyerOutreachTemplate.ts",
     "sales:sprint-workbook": "tsx scripts/generateSalesSprintWorkbook.ts",
-    "api:2gis:smoke": "tsx scripts/test2gisPlacesApi.ts",
     "operator:intake": "tsx scripts/operatorIntake.ts",
     "kz:login": "tsx scripts/stat-gov-login.ts",
     "kz:enrich": "tsx scripts/kz-enrich.ts",
@@ -41,7 +35,8 @@
     "kz:export-sales-top-a": "tsx scripts/kz-export-sales-top-a.mts",
     "kz:targeted-2gis-top-a": "tsx scripts/kz-targeted-2gis-top-a.mts",
     "kz:harvest": "tsx scripts/harvest-registry-bins.ts",
-    "kz:autopilot": "tsx scripts/kz-autopilot.mts"
+    "kz:autopilot": "tsx scripts/kz-autopilot.mts",
+    "kz:autopilot:retention": "tsx scripts/kz-autopilot-retention.mts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",

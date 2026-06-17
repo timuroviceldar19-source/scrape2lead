@@ -79,10 +79,23 @@ export interface JobStoreOptions {
   sqliteDb?: Database.Database;
 }
 
+/** Terminal statuses that are eligible for retention pruning. */
+export const TERMINAL_API_JOB_STATUSES: ReadonlyArray<Exclude<ApiJobStatus, "queued" | "running">> = [
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted"
+];
+
 export interface IJobStore {
   createJob(input: CreateApiJobInput): Promise<void>;
   getJob(id: string): Promise<ApiJob | null>;
   listJobs(filter: ListApiJobsFilter): Promise<ListApiJobsResult>;
+  /**
+   * Return the most recently created job of the given type, regardless of
+   * status. Used by `/health` to expose the last `kz-autopilot` run.
+   */
+  getLatestJobByType(type: ApiJobType): Promise<ApiJob | null>;
   claimNextQueuedJob(): Promise<ApiJob | null>;
   setJobPid(id: string, pid: number): Promise<boolean>;
   finishJob(
@@ -94,6 +107,16 @@ export interface IJobStore {
   ): Promise<boolean>;
   cancelJob(id: string): Promise<boolean>;
   resetRunningJobs(): Promise<number>;
+  /**
+   * Delete api_jobs rows whose `created_at` is strictly less than
+   * `cutoffIso` AND whose status is terminal
+   * (`completed`/`failed`/`cancelled`/`interrupted`). Queued and running
+   * jobs are preserved regardless of age. Returns the number of deleted
+   * rows. Related `api_job_logs` and `api_job_artifacts` rows are removed
+   * by the FK `ON DELETE CASCADE` clauses. Files under `exports/` are not
+   * touched.
+   */
+  pruneTerminalJobsBefore(cutoffIso: string): Promise<number>;
   appendLog(jobId: string, stream: ApiJobLog["stream"], line: string): Promise<void>;
   getLogs(jobId: string): Promise<ApiJobLog[]>;
   saveArtifacts(jobId: string, artifacts: Array<Omit<ApiJobArtifact, "id" | "job_id" | "created_at">>): Promise<void>;
@@ -184,6 +207,28 @@ export class SqliteJobStore implements IJobStore {
       jobs: rows.map((row) => hydrateJob(row, parseArtifactNames(row.artifact_names))),
       total: countRow.n
     };
+  }
+
+  async getLatestJobByType(type: ApiJobType): Promise<ApiJob | null> {
+    const row = this.db.prepare(`
+      SELECT * FROM api_jobs
+      WHERE type = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `).get(type) as ApiJobRow | undefined;
+    if (!row) return null;
+    const artifacts = (this.db.prepare("SELECT name FROM api_job_artifacts WHERE job_id = ?").all(row.id) as Array<{ name: string }>)
+      .map((a) => a.name);
+    return hydrateJob(row, artifacts);
+  }
+
+  async pruneTerminalJobsBefore(cutoffIso: string): Promise<number> {
+    const result = this.db.prepare(`
+      DELETE FROM api_jobs
+      WHERE created_at < ?
+        AND status IN ('completed', 'failed', 'cancelled', 'interrupted')
+    `).run(cutoffIso);
+    return result.changes;
   }
 
   async claimNextQueuedJob(): Promise<ApiJob | null> {

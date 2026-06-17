@@ -35,6 +35,7 @@ npm run server
 | `SCRAPE2LEAD_CORS_ORIGIN` | CORS origin, default `*` |
 | `SCRAPE2LEAD_EXPORT_DIR` | Директория артефактов, default `exports` |
 | `SCRAPE2LEAD_ARTIFACT_LEGACY_FALLBACK` | `1`/`true`/`yes` — включает legacy fallback на файлы в `exports/` для `/api/v1/artifacts` (по умолчанию выключен) |
+| `SCRAPE2LEAD_JOB_RETENTION_DAYS` | Положительное целое — при старте сервера удаляет terminal jobs (completed / failed / cancelled / interrupted) старше N дней. Очередь (queued / running) не трогает. Пусто / `0` / невалидное значение = retention отключён (по умолчанию). |
 
 ## Auth и bind
 
@@ -57,6 +58,15 @@ npm run server
 
 При старте сервера все `running` jobs помечаются `interrupted`, после чего очередь продолжает работу с queued jobs.
 
+## Retention для api_jobs
+
+По умолчанию JobStore хранит историю всех jobs неограниченно. Если задан `SCRAPE2LEAD_JOB_RETENTION_DAYS=N` (целое >= 1), то сразу после `resetRunningJobs()` сервер удаляет записи `api_jobs`, у которых `created_at < now() - N days` и статус входит в `terminal` (`completed` / `failed` / `cancelled` / `interrupted`). Связанные строки в `api_job_logs` и `api_job_artifacts` удаляются `ON DELETE CASCADE`. Файлы под `SCRAPE2LEAD_EXPORT_DIR` retention не трогает.
+
+- `queued` / `running` jobs **никогда** не удаляются, даже если они старые (если `running` повис — он превращается в `interrupted` через `resetRunningJobs()` и попадёт под retention только со следующего старта).
+- `N` валидируется как целое `>= 1`. Пусто, `0`, дробные и невалидные значения = retention выключен (без warning).
+- В логи пишется строка вида `Pruned 17 terminal API jobs older than 30 days` сразу после prune, перед `drainQueue`.
+- Pruning выполняется **один раз** на старте сервера, никакого cron-цикла на бэкенде нет. Если нужно почистить DB при работающем сервере — запуск `kz:autopilot` или `npm run server` сам сделает prune на следующем старте.
+
 ## Endpoints
 
 Все маршруты доступны как в пространстве `/api/v1`, так и в legacy `/api`. Примеры ниже используют `/api/v1`.
@@ -65,14 +75,29 @@ npm run server
 
 Проверка процесса. Возвращает фиксированные идентификаторы (`ok`, `service`) и динамические поля `time` (ISO-8601, текущий момент на сервере) и `uptimeSeconds` (целое число секунд с момента старта процесса). `time` и `uptimeSeconds` меняются от запроса к запросу и не должны сравниваться в тестах/мониторинге как статика — для smoke-check достаточно `ok === true` и `service === "scrape2lead-api"`.
 
+Помимо этого, response содержит блок `lastAutopilotRun` (последний job с `type = "kz-autopilot"`, любой статус — последний по `created_at`) и `jobStore` (статус чтения из JobStore). Если в JobStore нет ни одного autopilot job, `lastAutopilotRun: null`. Если чтение из JobStore падает, `/health` остаётся `200 ok: true`, но `jobStore: { ok: false, error: "..." }` сигнализирует оператору/мониторингу, что блок `lastAutopilotRun` лучше не использовать.
+
 ```json
 {
   "ok": true,
   "service": "scrape2lead-api",
   "time": "2026-06-17T13:57:23.944Z",
-  "uptimeSeconds": 13
+  "uptimeSeconds": 13,
+  "lastAutopilotRun": {
+    "id": "5c6c…",
+    "status": "completed",
+    "createdAt": "2026-06-15T08:00:00.000Z",
+    "startedAt": "2026-06-15T08:00:00.123Z",
+    "finishedAt": "2026-06-15T08:00:42.456Z",
+    "exitCode": 0,
+    "error": null,
+    "artifacts": ["autopilot-2026-06-15.json", "digest-winners-2026-06-15.xlsx"]
+  },
+  "jobStore": { "ok": true }
 }
 ```
+
+`lastAutopilotRun.artifacts` — список **имён** артефактов (как и в остальных API ответах), не полные пути и не объекты с `id`/`size`/`mtime`. Для скачивания используется `GET /api/v1/jobs/<jobId>/artifacts` или `GET /api/v1/artifacts` с фильтром.
 
 ### `POST /api/v1/jobs/scrape`
 
@@ -118,7 +143,7 @@ curl -X POST http://127.0.0.1:8787/api/v1/jobs/kz-autopilot \
   -d "{\"skipEnrich\":true,\"dryRun\":true,\"maxPages\":5}"
 ```
 
-Разрешённые поля: `batchCsv`, `topACsv`, `outDir`, `dryRun`, `since`, `skipEnrich`, `progress`, `maxPages`, `baseline`, `skipChannel`, `channelNiche`.
+Разрешённые поля: `batchCsv`, `topACsv`, `outDir`, `dryRun`, `since`, `skipEnrich`, `progress`, `maxPages`, `baseline`.
 
 ### Jobs
 

@@ -6,7 +6,7 @@ Stage 1 consolidates `zakup.sk.kz` and `goszakup.gov.kz` into one tender pipelin
 npm run kz:tenders -- bins.csv
 ```
 
-`scripts/zakup-collector.ts` is deprecated and delegates to the same pipeline for `zakup.sk.kz` only.
+`scripts/archive/zakup-collector.ts` is deprecated and delegates to the same pipeline for `zakup.sk.kz` only.
 
 ## Sources
 

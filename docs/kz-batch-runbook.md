@@ -147,9 +147,15 @@ npm run kz:autopilot -- --progress --max-pages 5
 
 # Посмотреть без записи в БД и без Telegram
 npm run kz:autopilot -- --dry-run --skip-enrich
+
+# Отключить per-BIN fallback retry (например, dry-run smoke)
+npm run kz:autopilot -- --enrich-retries 0
+
+# Задать бюджет времени на enrich (оставшиеся BIN-ы пропускаются)
+npm run kz:autopilot -- --enrich-deadline-ms 1800000
 ```
 
-Флаги: `--batch-csv` (default `bins-batch.csv`), `--top-a-csv` (default `bins-top-a.csv`), `--out-dir` (default `exports`), `--since <ISO|dd.mm.yyyy>`, `--dry-run`, `--skip-enrich`, `--progress` (по-БИНовый лог этапов enrich: `enrich [stat.gov] 7/40 BIN=... elapsed=4m12s` + полная сводка), `--max-pages <n>` (лимит страниц goszakup на БИН; приоритет над env `GOSZAKUP_HTML_MAX_PAGES`, default 50), `--baseline` (принудительно зафиксировать весь текущий дифф в `outreach_items` без экспорта).
+Флаги: `--batch-csv` (default `bins-batch.csv`), `--top-a-csv` (default `bins-top-a.csv`), `--out-dir` (default `exports`), `--since <ISO|dd.mm.yyyy>`, `--dry-run`, `--skip-enrich`, `--progress` (по-БИНовый лог этапов enrich: `enrich [stat.gov] 7/40 BIN=... elapsed=4m12s` + полная сводка), `--max-pages <n>` (лимит страниц goszakup на БИН; приоритет над env `GOSZAKUP_HTML_MAX_PAGES`, default 50), `--baseline` (принудительно зафиксировать весь текущий дифф в `outreach_items` без экспорта), `--enrich-retries <n>` (default `1`, `0` отключает per-BIN fallback), `--enrich-retry-base-ms <ms>` (default `2000`, экспоненциальный backoff), `--enrich-deadline-ms <ms>` (default отключён; если истёк, оставшиеся BIN-ы не гоняются и попадают в `enrichFailedBins`).
 
 **Важно:** если первый боевой запуск делался с `--since`, история до этой даты осталась незафиксированной — следующий обычный запуск вывалит её всю в дайджест. Лечится одним запуском `npm run kz:autopilot -- --skip-enrich --baseline`.
 
@@ -158,10 +164,124 @@ npm run kz:autopilot -- --dry-run --skip-enrich
 Артефакты:
 - `exports/digest-winners-<дата>.xlsx` — свежие победители (контракты supplier-side) с контактами. Продукт для факторинга/банков (сегмент 2).
 - `exports/outreach-queue-<дата>.xlsx` — Top-A компании с новыми активными закупками + готовые WhatsApp-сообщения и `wa.me`-ссылки (сегмент 1).
+- `exports/autopilot-<дата>.json` — машинно-читаемая сводка запуска (см. ниже).
 
-Telegram: задать `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` в `.env` — бот пришлёт сводку, черновик письма для факторинга и оба файла. Без env — просто warning в консоли.
+Telegram: задать `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` в `.env` — бот пришлёт сводку, черновик письма для факторинга и оба файла. Без env — просто warning в консоли. При `zeroOutput` (см. ниже) сообщение приходит с префиксом `⚠️` — это алерт, а не «всё ок».
 
-Дедуп: пары (БИН, номер тендера) пишутся в `outreach_items`, второй раз в дайджест не попадают.
+### Fallback retry для enrich
+
+Autopilot сначала пытается обогатить весь batch одним вызовом `runKzEnrich`. Если batch падает с **retriable** ошибкой (timeout, navigation, network), autopilot переходит в режим **per-bin fallback**: каждый BIN обогащается отдельно через `core/withRetry` с экспоненциальным backoff. Успешные BIN-ы пишутся в БД как обычно, неуспешные фиксируются в `enrichFailedBins` и summary/warnings.
+
+Non-retryable ошибки (`session not found`, `invalid token`, невалидные опции) сразу прокидываются наверх — по ним retry бесполезен. enrich failure остаётся **non-fatal**: autopilot продолжает дифф на данных из БД и не меняет exit code.
+
+Дедуп: пары (БИН, номер тендера) пишутся в `outreach_seen` (sent-ledger) и дублируются в `outreach_items` как audit-строка с `run_id` текущего запуска. Второй раз в дайджест не попадают — даже если старые `outreach_runs` удалены retention-скриптом.
+
+### Retention для `outreach_runs`
+
+Периодический prune старых завершённых запусков — отдельная команда, **не** часть `kz:autopilot`:
+
+```bash
+# Dry-run (по умолчанию): показать eligible runs, ничего не удалять
+npm run kz:autopilot:retention
+
+# Применить удаление
+npm run kz:autopilot:retention -- --apply
+
+# Переопределить N дней (иначе берётся из env)
+npm run kz:autopilot:retention -- --days 90 --apply
+```
+
+Env: `KZ_OUTREACH_RUN_RETENTION_DAYS` — положительное целое (дней). Пусто / `0` / невалидное = retention отключён (скрипт завершится с exit 1 и подсказкой).
+
+Правила:
+- Удаляются только строки `outreach_runs` с `finished_at IS NOT NULL` и `started_at` старше cutoff.
+- Незавершённые runs (`finished_at IS NULL`) **никогда** не удаляются, даже если старые.
+- Перед удалением run: `UPDATE outreach_items SET run_id = NULL WHERE run_id IN (...)` — audit-строки сохраняются.
+- **`outreach_seen` и `outreach_items` не удаляются** — sent-ledger и дедуп остаются; retention **не** откатывает уже «увиденные» пары.
+
+### Параллельные запуски и lock
+
+`kz-autopilot` в начале создаёт **lock-файл** `data/autopilot.lock` через `O_CREAT|O_EXCL`. Внутри JSON: `{pid, host, startedAt, command}`. Второй запуск, пока первый держит lock, **завершается сразу с exit code 2** и сообщением `autopilot: lock busy: pid=…`. Запланировано две задачи в одно время — вторая просто отказывается стартовать, не дублирует Telegram и не плодит файлы.
+
+Stale lock: если в lock-файле PID из этого же хоста, но процесс мёртв (`process.kill(pid, 0)` → ESRCH), autopilot удалит lock и попробует acquire ещё раз. Lock с другого хоста **не трогается** — чтобы не сбить соседнюю машину при шаре NFS. Если scheduler оставил lock после падения и PID уже переиспользован другим процессом — увы, детектировать нельзя; ручной фикс — удалить `data/autopilot.lock`.
+
+Переопределить путь: `KZ_AUTOPILOT_LOCK_PATH=/path/to/lock` (например, на Windows-сервере с двумя `scrapе2lead` инсталляциями).
+
+### Exit codes
+
+| Code | Смысл | Что делать |
+|---|---|---|
+| 0 | OK (включая baseline/dry-run и zeroOutput) | ничего |
+| 1 | Необработанная ошибка (catch-all) | смотреть stderr + summary JSON |
+| 2 | Lock занят другим запуском | в логах второго процесса `lock busy: pid=…`; основной запуск в порядке |
+| 3 | DB / diff / register error | проверить `data/scrape2lead.db`, миграции, диск |
+| 4 | Ошибка записи XLSX-экспорта | проверить `out-dir` (по умолчанию `exports/`), права на запись, диск |
+| 5 | Нет БИНов / невалидные аргументы | проверить `--batch-csv` / `--top-a-csv` и их содержимое |
+
+`process.exitCode` используется вместо `process.exit()` — `main().catch` оставляет код 0/1/2/3/4/5 нетронутым, перезаписывает только если был 0.
+
+### Summary JSON
+
+Каждый запуск пишет `exports/autopilot-YYYY-MM-DD.json` со всеми полями, которые пригодятся мониторингу:
+
+```json
+{
+  "startedAt": "2026-06-17T08:00:00.000Z",
+  "finishedAt": "2026-06-17T08:00:12.345Z",
+  "elapsedMs": 12345,
+  "dryRun": false,
+  "baseline": false,
+  "enrichSkipped": false,
+  "bins": 40,
+  "winners": 7,
+  "prospects": 12,
+  "registered": 19,
+  "exportedFiles": ["exports/digest-winners-2026-06-17.xlsx", "exports/outreach-queue-2026-06-17.xlsx"],
+  "warnings": ["stat.gov: 3 БИНов не обновились (проверь QR-сессию: npm run kz:login)"],
+  "zeroOutput": false,
+  "exitCode": 0,
+  "exitReason": "ok",
+  "lockHeldBy": null,
+  "enrichMode": "batch",
+  "enrichBatchError": null,
+  "enrichRetryAttempts": 0,
+  "enrichFailedBins": []
+}
+```
+
+Для lock-busy кейса `lockHeldBy` заполнен данными владельца, `exitReason: "lock busy"`, `exitCode: 2`. Файл всегда пишется в `finally` — даже если пайплайн упал.
+
+Поля enrich retry:
+- `enrichMode`: `"batch"` или `"per-bin"`.
+- `enrichBatchError`: сообщение ошибки, которая вызвала fallback; `null` при batch-успехе.
+- `enrichRetryAttempts`: суммарное число retry-попыток, потраченных в per-bin fallback.
+- `enrichFailedBins`: массив BIN, которые не удалось обогатить даже после retries (или были пропущены из-за дедлайна).
+
+### Zero-output
+
+`zeroOutput: true` ставится, когда `winners === 0 && prospects === 0 && warnings.length === 0`. Это не ошибка, но **сигнал «что-то не так»**: либо `--since` отрезал всё, либо BIN-ы не обновились, либо enrich не запустился. В Telegram-уведомлении (для non-dry-run) добавляется префикс `⚠️ Autopilot: 0 новых… — проверь enrich / --since / БИНы в CSV`.
+
+Enrich warning (например, протухшая QR-сессия stat.gov) даёт ненулевой `warnings`, поэтому `zeroOutput: false` — это уже не «нулевой» кейс, а «известная деградация». Проверь `npm run kz:login` и запуск руками.
+
+### Мониторинг последнего запуска через `/health`
+
+API-сервер (`npm run server`) отдаёт последний autopilot job в блоке `lastAutopilotRun` на `GET /health` (см. [docs/server.md](./server.md#get-health)). Это самый простой способ для оператора/мониторинга узнать, что autopilot действительно отработал, и в каком он статусе:
+
+```bash
+curl -s http://127.0.0.1:8787/health | jq '.lastAutopilotRun'
+# {
+#   "id": "5c6c…",
+#   "status": "completed",
+#   "createdAt": "2026-06-15T08:00:00.000Z",
+#   "finishedAt": "2026-06-15T08:00:42.456Z",
+#   "exitCode": 0,
+#   "artifacts": ["autopilot-2026-06-15.json", "digest-winners-2026-06-15.xlsx"]
+# }
+```
+
+`lastAutopilotRun: null` означает, что через API-сервер ещё ни разу не запускали `kz-autopilot` (либо retention вычистил старые записи). Если чтение JobStore падает, `jobStore: { ok: false, error: ... }` в том же response — `/health` остаётся `200 ok: true`, чтобы не ломать внешний мониторинг.
+
+Operator UI показывает весь `/health` JSON в health-tooltip; правок в UI не требуется.
 
 ### Еженедельный запуск (Windows Task Scheduler)
 

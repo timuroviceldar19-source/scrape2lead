@@ -202,6 +202,140 @@ describe("SqliteJobStore", () => {
     const logs = await second.getLogs("job-1");
     expect(logs[0]?.line).toBe("hello");
   });
+
+  it("getLatestJobByType returns the most recent job of that type", async () => {
+    const store = openSqlite(":memory:");
+    await store.createJob({ id: "scrape-1", type: "scrape", command: "node", args: [], request: {}, cwd: process.cwd() });
+    // Sleep >1ms so created_at is strictly greater for the autopilot jobs.
+    await new Promise((r) => setTimeout(r, 5));
+    await store.createJob({ id: "auto-1", type: "kz-autopilot", command: "node", args: [], request: {}, cwd: process.cwd() });
+    await new Promise((r) => setTimeout(r, 5));
+    await store.createJob({ id: "auto-2", type: "kz-autopilot", command: "node", args: [], request: {}, cwd: process.cwd() });
+    await new Promise((r) => setTimeout(r, 5));
+    await store.createJob({ id: "export-1", type: "kz-export", command: "node", args: [], request: {}, cwd: process.cwd() });
+
+    const latest = await store.getLatestJobByType("kz-autopilot");
+    expect(latest?.id).toBe("auto-2");
+
+    const latestScrape = await store.getLatestJobByType("scrape");
+    expect(latestScrape?.id).toBe("scrape-1");
+
+    const latestEnrich = await store.getLatestJobByType("kz-enrich");
+    expect(latestEnrich).toBeNull();
+  });
+
+  it("getLatestJobByType returns hydrated job with artifacts", async () => {
+    const store = openSqlite(":memory:");
+    await store.createJob({ id: "auto-1", type: "kz-autopilot", command: "node", args: ["--dry-run"], request: {}, cwd: process.cwd() });
+    await store.claimNextQueuedJob();
+    await store.saveArtifacts("auto-1", [
+      { name: "autopilot.json", path: "/tmp/autopilot.json", size: 12, mtime: new Date().toISOString() },
+      { name: "digest.xlsx", path: "/tmp/digest.xlsx", size: 3456, mtime: new Date().toISOString() }
+    ]);
+    await store.finishJob("auto-1", "completed", 0, null);
+
+    const latest = await store.getLatestJobByType("kz-autopilot");
+    expect(latest).not.toBeNull();
+    expect(latest?.status).toBe("completed");
+    expect(latest?.exit_code).toBe(0);
+    expect(latest?.artifacts).toEqual(["autopilot.json", "digest.xlsx"]);
+  });
+
+  it("pruneTerminalJobsBefore deletes only old terminal jobs and cascades logs/artifacts", async () => {
+    const db = new Database(":memory:");
+    const store = openSqlite(db);
+
+    // Old completed job — must be pruned.
+    await store.createJob({ id: "old-completed", type: "scrape", command: "node", args: [], request: {}, cwd: process.cwd() });
+    await store.claimNextQueuedJob();
+    await store.appendLog("old-completed", "stdout", "before");
+    await store.saveArtifacts("old-completed", [
+      { name: "old.csv", path: "/tmp/old.csv", size: 10, mtime: new Date().toISOString() }
+    ]);
+    await store.finishJob("old-completed", "completed", 0, null);
+    db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?").run("2024-01-01T00:00:00.000Z", "old-completed");
+
+    // Old failed job — must be pruned.
+    await store.createJob({ id: "old-failed", type: "scrape", command: "node", args: [], request: {}, cwd: process.cwd() });
+    await store.claimNextQueuedJob();
+    await store.appendLog("old-failed", "stderr", "boom");
+    await store.finishJob("old-failed", "failed", 1, null, "boom");
+    db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?").run("2024-01-02T00:00:00.000Z", "old-failed");
+
+    // Old cancelled job — must be pruned.
+    await store.createJob({ id: "old-cancelled", type: "kz-enrich", command: "node", args: [], request: {}, cwd: process.cwd() });
+    await store.cancelJob("old-cancelled");
+    db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?").run("2024-01-03T00:00:00.000Z", "old-cancelled");
+
+    // Old interrupted job — must be pruned.
+    await store.createJob({ id: "old-interrupted", type: "kz-export", command: "node", args: [], request: {}, cwd: process.cwd() });
+    await store.claimNextQueuedJob();
+    await store.resetRunningJobs();
+    db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?").run("2024-01-04T00:00:00.000Z", "old-interrupted");
+
+    // Recent completed job — must be preserved.
+    await store.createJob({ id: "recent-completed", type: "scrape", command: "node", args: [], request: {}, cwd: process.cwd() });
+    await store.claimNextQueuedJob();
+    await store.finishJob("recent-completed", "completed", 0, null);
+
+    const cutoff = "2025-01-01T00:00:00.000Z";
+    const pruned = await store.pruneTerminalJobsBefore(cutoff);
+    expect(pruned).toBe(4);
+
+    expect(await store.getJob("old-completed")).toBeNull();
+    expect(await store.getJob("old-failed")).toBeNull();
+    expect(await store.getJob("old-cancelled")).toBeNull();
+    expect(await store.getJob("old-interrupted")).toBeNull();
+    expect(await store.getJob("recent-completed")).not.toBeNull();
+
+    // FK ON DELETE CASCADE should have removed logs and artifacts.
+    expect(await store.getLogs("old-completed")).toEqual([]);
+    expect(await store.listArtifacts("old-completed")).toEqual([]);
+
+    const remaining = await store.listJobs({});
+    expect(remaining.total).toBe(1);
+    expect(remaining.jobs[0]?.id).toBe("recent-completed");
+  });
+
+  it("pruneTerminalJobsBefore preserves queued and running jobs even when old", async () => {
+    const db = new Database(":memory:");
+    const store = openSqlite(db);
+
+    // Old queued job (claim only one, leave the other queued).
+    await store.createJob({ id: "old-queued", type: "scrape", command: "node", args: [], request: {}, cwd: process.cwd() });
+    await store.createJob({ id: "old-queued-anchor", type: "scrape", command: "node", args: [], request: {}, cwd: process.cwd() });
+    await store.claimNextQueuedJob(); // old-queued now running
+    db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?").run("2024-01-01T00:00:00.000Z", "old-queued");
+    db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?").run("2024-01-01T00:00:00.000Z", "old-queued-anchor");
+
+    // Add a third queued job that is also old.
+    await store.createJob({ id: "old-queued-2", type: "scrape", command: "node", args: [], request: {}, cwd: process.cwd() });
+    db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?").run("2024-01-01T00:00:00.000Z", "old-queued-2");
+
+    const pruned = await store.pruneTerminalJobsBefore("2025-01-01T00:00:00.000Z");
+    expect(pruned).toBe(0);
+
+    const queued2 = await store.getJob("old-queued-2");
+    expect(queued2?.status).toBe("queued");
+
+    const running = await store.getJob("old-queued");
+    expect(running?.status).toBe("running");
+
+    const anchor = await store.getJob("old-queued-anchor");
+    expect(anchor?.status).toBe("queued");
+
+    const total = await store.listJobs({});
+    expect(total.total).toBe(3);
+  });
+
+  it("pruneTerminalJobsBefore returns 0 when there is nothing to prune", async () => {
+    const store = openSqlite(":memory:");
+    await store.createJob({ id: "job-1", type: "scrape", command: "node", args: [], request: {}, cwd: process.cwd() });
+    const pruned = await store.pruneTerminalJobsBefore("2020-01-01T00:00:00.000Z");
+    expect(pruned).toBe(0);
+    const total = await store.listJobs({});
+    expect(total.total).toBe(1);
+  });
 });
 
 describe("Postgres api_jobs migration contract", () => {

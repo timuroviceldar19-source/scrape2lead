@@ -136,6 +136,213 @@ describe("scrape2lead API server", () => {
     expect(body).toMatchObject({ ok: true, service: "scrape2lead-api" });
   });
 
+  it("returns lastAutopilotRun: null on /health when no autopilot job exists", async () => {
+    const app = await makeApp();
+    const response = await fetch(`${app.url}/health`);
+    const body = await response.json() as {
+      ok: boolean;
+      lastAutopilotRun: unknown;
+      jobStore: { ok: boolean };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.lastAutopilotRun).toBeNull();
+    expect(body.jobStore).toEqual({ ok: true });
+  });
+
+  it("exposes the latest autopilot job fields in /health", async () => {
+    const app = await makeApp();
+    // Create two autopilot jobs so we can verify "latest" ordering.
+    const first = await (await fetch(`${app.url}/api/v1/jobs/kz-autopilot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: true })
+    })).json() as { job: { id: string } };
+    await waitForStatus(app, first.job.id, "completed");
+
+    // Tiny gap so created_at of the second job is strictly greater.
+    await new Promise((r) => setTimeout(r, 5));
+
+    const second = await (await fetch(`${app.url}/api/v1/jobs/kz-autopilot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: true })
+    })).json() as { job: { id: string } };
+    await waitForStatus(app, second.job.id, "completed");
+
+    const health = await (await fetch(`${app.url}/health`)).json() as {
+      lastAutopilotRun: null | {
+        id: string;
+        status: string;
+        createdAt: string;
+        startedAt: string | null;
+        finishedAt: string | null;
+        exitCode: number | null;
+        error: string | null;
+        artifacts: string[];
+      };
+      jobStore: { ok: boolean };
+    };
+
+    expect(health.jobStore).toEqual({ ok: true });
+    expect(health.lastAutopilotRun).not.toBeNull();
+    expect(health.lastAutopilotRun?.id).toBe(second.job.id);
+    expect(health.lastAutopilotRun?.status).toBe("completed");
+    expect(health.lastAutopilotRun?.exitCode).toBe(0);
+    expect(typeof health.lastAutopilotRun?.createdAt).toBe("string");
+    expect(typeof health.lastAutopilotRun?.startedAt).toBe("string");
+    expect(typeof health.lastAutopilotRun?.finishedAt).toBe("string");
+    expect(health.lastAutopilotRun?.error).toBeNull();
+    expect(Array.isArray(health.lastAutopilotRun?.artifacts)).toBe(true);
+  });
+
+  it("ignores non-autopilot jobs when computing lastAutopilotRun", async () => {
+    const app = await makeApp();
+    // Create a non-autopilot job, then an autopilot job. The autopilot must win.
+    const enrich = await (await fetch(`${app.url}/api/v1/jobs/kz-enrich`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bins: ["960440000716"] })
+    })).json() as { job: { id: string } };
+    await waitForStatus(app, enrich.job.id, "completed");
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    const autopilot = await (await fetch(`${app.url}/api/v1/jobs/kz-autopilot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: true })
+    })).json() as { job: { id: string } };
+    await waitForStatus(app, autopilot.job.id, "completed");
+
+    const health = await (await fetch(`${app.url}/health`)).json() as {
+      lastAutopilotRun: { id: string };
+    };
+    expect(health.lastAutopilotRun.id).toBe(autopilot.job.id);
+  });
+
+  it("returns /health 200 ok:true with jobStore.ok=false when jobStore read fails", async () => {
+    const jobStore = new SqliteJobStore(new Database(":memory:"));
+    const original = jobStore.getLatestJobByType.bind(jobStore);
+    jobStore.getLatestJobByType = async () => {
+      throw new Error("boom");
+    };
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-healthfail-"));
+    const server = createApiServer({ cwd, jobStore });
+    apps.push({ server, url: "", cwd, jobStore });
+    const { port } = await safeListen(server, { port: 0, host: "127.0.0.1" });
+    const base = `http://127.0.0.1:${port}`;
+
+    const response = await fetch(`${base}/health`);
+    const body = await response.json() as {
+      ok: boolean;
+      lastAutopilotRun: unknown;
+      jobStore: { ok: boolean; error?: string };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.lastAutopilotRun).toBeNull();
+    expect(body.jobStore.ok).toBe(false);
+    expect(body.jobStore.error).toBe("boom");
+
+    // restore so the standard afterEach close() can still close cleanly
+    jobStore.getLatestJobByType = original;
+  });
+
+  it("prunes old terminal api_jobs on startup when SCRAPE2LEAD_JOB_RETENTION_DAYS is set", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-retention-"));
+    const dbPath = path.join(cwd, "jobs.db");
+    const db = new Database(dbPath);
+    const runner = new FakeRunner();
+    runner.autoExit = false;
+
+    // First app creates a terminal job and re-ages it. We use autoExit=false
+    // and drive the FakeProcess exit manually so the kz-enrich job reaches
+    // a terminal status without any other process interference.
+    const firstApp = await makeApp({ cwd, runner, sqliteDb: db });
+    const create = await fetch(`${firstApp.url}/api/v1/jobs/kz-enrich`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bins: ["960440000716"] })
+    });
+    const { job } = await create.json() as { job: { id: string } };
+    await waitForStatus(firstApp, job.id, "running");
+    runner.processes[0]?.emit("exit", 0, null);
+    await waitForStatus(firstApp, job.id, "completed");
+
+    // Add a queued job that must be preserved even when "old". The second
+    // app's drainQueue will claim it and (with autoExit=false) keep it in
+    // "running" so the assertion below is deterministic.
+    const queuedId = "preserved-queued";
+    await firstApp.jobStore.createJob({
+      id: queuedId,
+      type: "scrape",
+      command: "node",
+      args: [],
+      request: {},
+      cwd
+    });
+
+    db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?")
+      .run("2024-01-01T00:00:00.000Z", job.id);
+    db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?")
+      .run("2024-01-01T00:00:00.000Z", queuedId);
+
+    apps.splice(apps.indexOf(firstApp), 1);
+    await close(firstApp);
+
+    // Second app boots with retention=30 days; the completed job is well past
+    // the cutoff, the queued job is old but must be preserved.
+    const secondRunner = new FakeRunner();
+    secondRunner.autoExit = false;
+    const secondApp = await makeApp({
+      cwd,
+      runner: secondRunner,
+      sqliteDb: new Database(dbPath),
+      env: { SCRAPE2LEAD_JOB_RETENTION_DAYS: "30" }
+    });
+
+    // Pruned: old completed job is gone.
+    expect(await secondApp.jobStore.getJob(job.id)).toBeNull();
+    // Preserved: the queued job is still in the store. After the second
+    // app's drainQueue runs the status can be "running" (if the runner
+    // already claimed it) or "queued" (if the assertion runs before
+    // drainQueue has scheduled the claim). Both prove the row survived
+    // retention.
+    const preserved = await secondApp.jobStore.getJob(queuedId);
+    expect(preserved).not.toBeNull();
+    expect(["queued", "running"]).toContain(preserved?.status);
+  });
+
+  it("does not prune when SCRAPE2LEAD_JOB_RETENTION_DAYS is empty or invalid", async () => {
+    for (const value of ["", "0", "-1", "abc", "1.5"]) {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-noret-"));
+      const dbPath = path.join(cwd, "jobs.db");
+      const db = new Database(dbPath);
+      const firstApp = await makeApp({ cwd, sqliteDb: db });
+      const { job } = await (await fetch(`${firstApp.url}/api/v1/jobs/kz-enrich`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bins: ["960440000716"] })
+      })).json() as { job: { id: string } };
+      await waitForStatus(firstApp, job.id, "completed");
+      db.prepare("UPDATE api_jobs SET created_at = ? WHERE id = ?")
+        .run("2020-01-01T00:00:00.000Z", job.id);
+      apps.splice(apps.indexOf(firstApp), 1);
+      await close(firstApp);
+
+      const secondApp = await makeApp({
+        cwd,
+        sqliteDb: new Database(dbPath),
+        env: { SCRAPE2LEAD_JOB_RETENTION_DAYS: value }
+      });
+      const preserved = await secondApp.jobStore.getJob(job.id);
+      expect(preserved?.status).toBe("completed");
+    }
+  });
+
   it("accepts delayMs: 0 for kz-enrich and passes --delay-ms 0 to the child process", async () => {
     const runner = new FakeRunner();
     const app = await makeApp({ runner });
@@ -243,6 +450,11 @@ describe("scrape2lead API server", () => {
         dryRun: true,
         skipEnrich: true,
         maxPages: 5,
+        enrichRetries: 2,
+        enrichRetryBaseMs: 1000,
+        enrichDeadlineMs: 300000,
+        skipChannel: true,
+        channelNiche: "construction",
         shell: "rm -rf ."
       },
       "job-1",
@@ -258,8 +470,16 @@ describe("scrape2lead API server", () => {
       "--dry-run",
       "--skip-enrich",
       "--max-pages",
-      "5"
+      "5",
+      "--enrich-retries",
+      "2",
+      "--enrich-retry-base-ms",
+      "1000",
+      "--enrich-deadline-ms",
+      "300000"
     ]);
+    expect(invocation.args).not.toContain("--skip-channel");
+    expect(invocation.args).not.toContain("--channel-niche");
   });
 
   it("kz-export without out writes to SCRAPE2LEAD_EXPORT_DIR and registers a downloadable artifact", async () => {

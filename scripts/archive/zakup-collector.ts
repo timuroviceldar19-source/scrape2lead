@@ -1,6 +1,6 @@
 // DEPRECATED: use scripts/tenders-collector.ts or npm run kz:tenders.
-import { readBinsFromCsv } from "../src/kz/csv.js";
-import { collectTendersForBins } from "../src/kz/tendersPipeline.js";
+import { readBinsFromCsv } from "../../src/kz/csv.js";
+import { collectTendersForBins } from "../../src/kz/tendersPipeline.js";
 
 async function main(): Promise<void> {
   const csvFile = process.argv[2];

@@ -1,11 +1,11 @@
 import type { Page, Response } from "playwright";
-import { ApiCapture } from "../src/adapters/2gis/apiCapture.js";
-import { buildSearchUrl, classifyWall } from "../src/adapters/2gis/TwoGisAdapter.js";
-import { selectFirmCardCandidates, type FirmCardAnchor } from "../src/adapters/2gis/discoveryFallback.js";
-import { extractCardsFromPayload } from "../src/adapters/2gis/mapper.js";
-import { classifySoftBlock, type SoftBlockEvidence } from "../src/adapters/2gis/softBlock.js";
-import type { BrowserSessionManager } from "../src/browser/browserSessionManager.js";
-import type { RuntimeConfig } from "../src/types.js";
+import { ApiCapture } from "../../src/adapters/2gis/apiCapture.js";
+import { buildSearchUrl, classifyWall } from "../../src/adapters/2gis/TwoGisAdapter.js";
+import { selectFirmCardCandidates, type FirmCardAnchor } from "../../src/adapters/2gis/discoveryFallback.js";
+import { extractCardsFromPayload } from "../../src/adapters/2gis/mapper.js";
+import { classifySoftBlock, type SoftBlockEvidence } from "../../src/adapters/2gis/softBlock.js";
+import type { BrowserSessionManager } from "../../src/browser/browserSessionManager.js";
+import type { RuntimeConfig } from "../../src/types.js";
 
 export const ENVIRONMENT_BLOCKED_EXIT_CODE = 2;
 

@@ -1,5 +1,5 @@
-import { readBinsFromCsv } from "../src/kz/csv.js";
-import { collectStatGovForBins } from "../src/kz/statGovCollector.js";
+import { readBinsFromCsv } from "../../src/kz/csv.js";
+import { collectStatGovForBins } from "../../src/kz/statGovCollector.js";
 
 async function main(): Promise<void> {
   const csvFile = process.argv[2];

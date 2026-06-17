@@ -98,15 +98,20 @@ export function registerOutreachItems(
   runId: number,
   items: Array<{ bin: string; tender_number: string; kind: OutreachKind }>
 ): number {
-  const stmt = db.prepare(`
+  const insertItem = db.prepare(`
     INSERT OR IGNORE INTO outreach_items (run_id, bin, tender_number, kind, created_at)
     VALUES (?, ?, ?, ?, ?)
+  `);
+  const insertSeen = db.prepare(`
+    INSERT OR IGNORE INTO outreach_seen (bin, tender_number, kind, first_seen_at)
+    VALUES (?, ?, ?, ?)
   `);
   const now = new Date().toISOString();
   let inserted = 0;
   db.transaction(() => {
     for (const item of items) {
-      const result = stmt.run(runId, item.bin, item.tender_number, item.kind, now);
+      insertSeen.run(item.bin, item.tender_number, item.kind, now);
+      const result = insertItem.run(runId, item.bin, item.tender_number, item.kind, now);
       inserted += result.changes;
     }
   })();
@@ -258,7 +263,7 @@ function pairKey(bin: string, tenderNumber: string): string {
 }
 
 function loadSeenPairs(db: Database.Database, kind: OutreachKind): Set<string> {
-  const rows = db.prepare("SELECT bin, tender_number FROM outreach_items WHERE kind = ?").all(kind) as Array<{ bin: string; tender_number: string }>;
+  const rows = db.prepare("SELECT bin, tender_number FROM outreach_seen WHERE kind = ?").all(kind) as Array<{ bin: string; tender_number: string }>;
   return new Set(rows.map((row) => pairKey(row.bin, row.tender_number)));
 }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildSearchUrl, citySegment } from "../src/adapters/2gis/TwoGisAdapter.js";
-import { evaluateAuditMetrics, summarizeAuditMetrics, evaluateDetailEnvironment, classifyAuditRuntimeEnvironmentError } from "../scripts/auditRegression.js";
+import { evaluateAuditMetrics, summarizeAuditMetrics, evaluateDetailEnvironment, classifyAuditRuntimeEnvironmentError } from "../scripts/archive/auditRegression.js";
 import type { Lead } from "../src/types.js";
 
 describe("2GIS Host Configuration", () => {
