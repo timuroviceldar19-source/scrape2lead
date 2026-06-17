@@ -145,6 +145,84 @@ describe("KZ v16 outreach retention ledger", () => {
   });
 });
 
+describe("KZ v17 outreach_status ledger", () => {
+  it("creates outreach_status with valid status values", () => {
+    const db = new Database(":memory:");
+    runMigrations(db);
+
+    expect(columns(db, "outreach_status")).toEqual(
+      expect.arrayContaining(["bin", "tender_number", "kind", "status", "note", "updated_at"])
+    );
+
+    db.prepare(`
+      INSERT INTO outreach_status (bin, tender_number, kind, status, note, updated_at)
+      VALUES ('061040006408', 'CT-100', 'winner', 'contacted', 'note', '2026-06-17T00:00:00.000Z')
+    `).run();
+
+    const row = db.prepare("SELECT status FROM outreach_status WHERE bin = '061040006408'").get() as { status: string };
+    expect(row.status).toBe("contacted");
+
+    db.close();
+  });
+
+  it("rejects invalid outreach_status values", () => {
+    const db = new Database(":memory:");
+    runMigrations(db);
+
+    expect(() => {
+      db.prepare(`
+        INSERT INTO outreach_status (bin, tender_number, kind, status, note, updated_at)
+        VALUES ('061040006408', 'CT-100', 'winner', 'bogus', NULL, '2026-06-17T00:00:00.000Z')
+      `).run();
+    }).toThrow();
+
+    db.close();
+  });
+
+  it("leaves existing outreach tables unchanged", () => {
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_version (version, applied_at) VALUES (16, '2026-06-17T00:00:00.000Z');
+
+      CREATE TABLE outreach_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        stats_json TEXT
+      );
+      CREATE TABLE outreach_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER REFERENCES outreach_runs(id),
+        bin TEXT NOT NULL,
+        tender_number TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('winner', 'prospect')),
+        created_at TEXT NOT NULL,
+        UNIQUE(bin, tender_number, kind)
+      );
+      CREATE TABLE outreach_seen (
+        bin TEXT NOT NULL,
+        tender_number TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('winner', 'prospect')),
+        first_seen_at TEXT NOT NULL,
+        PRIMARY KEY (bin, tender_number, kind)
+      );
+      INSERT INTO outreach_seen (bin, tender_number, kind, first_seen_at)
+      VALUES ('061040006408', 'CT-100', 'winner', '2026-06-01T10:00:00.000Z');
+      INSERT INTO outreach_items (run_id, bin, tender_number, kind, created_at)
+      VALUES (NULL, '061040006408', 'CT-100', 'winner', '2026-06-01T10:00:00.000Z');
+    `);
+
+    runMigrations(db);
+
+    expect((db.prepare("SELECT COUNT(*) AS count FROM outreach_seen").get() as { count: number }).count).toBe(1);
+    expect((db.prepare("SELECT COUNT(*) AS count FROM outreach_items").get() as { count: number }).count).toBe(1);
+    expect(columns(db, "outreach_runs")).toEqual(expect.arrayContaining(["id", "started_at", "finished_at", "stats_json"]));
+
+    db.close();
+  });
+});
+
 function columns(db: Database.Database, tableName: string): string[] {
   return (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((col) => col.name);
 }

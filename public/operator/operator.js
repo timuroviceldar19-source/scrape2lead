@@ -16,6 +16,9 @@
     artifactsSource: "",
     perJobArtifacts: [],
     health: { status: "unknown", detail: null },
+    outreach: [],
+    outreachTotal: 0,
+    outreachFilter: { kind: "", status: "", limit: 20, offset: 0 },
     inFlight: 0
   };
 
@@ -54,6 +57,14 @@
   var exportForm = el("export-form");
   var exportBinsInput = el("export-bins");
   var exportFilenameInput = el("export-filename");
+  var outreachBody = el("outreach-body");
+  var outreachTotalEl = el("outreach-total");
+  var outreachKind = el("outreach-kind");
+  var outreachStatus = el("outreach-status");
+  var outreachLimit = el("outreach-limit");
+  var outreachOffset = el("outreach-offset");
+
+  var OUTREACH_STATUSES = ["new", "contacted", "interested", "follow_up", "closed", "rejected"];
 
   // --- helpers ---
   function tokenHeader() {
@@ -274,6 +285,50 @@
     });
   }
 
+  function loadOutreach() {
+    var filter = state.outreachFilter;
+    var qs = [];
+    if (filter.kind) qs.push("kind=" + encodeURIComponent(filter.kind));
+    if (filter.status) qs.push("status=" + encodeURIComponent(filter.status));
+    qs.push("limit=" + encodeURIComponent(String(filter.limit)));
+    qs.push("offset=" + encodeURIComponent(String(filter.offset)));
+    return withBusy(function () {
+      return api("/outreach/items?" + qs.join("&")).then(function (body) {
+        state.outreach = body.items || [];
+        state.outreachTotal = body.total || 0;
+        renderOutreach();
+      });
+    });
+  }
+
+  function saveOutreachItem(bin, tenderNumber, kind) {
+    var rowKey = bin + "::" + tenderNumber + "::" + kind;
+    var statusEl = document.querySelector('[data-outreach-status="' + rowKey + '"]');
+    var noteEl = document.querySelector('[data-outreach-note="' + rowKey + '"]');
+    if (!statusEl) return Promise.resolve();
+    var status = statusEl.value;
+    var note = noteEl ? noteEl.value : "";
+    var path = "/outreach/items/" + encodeURIComponent(bin) + "/" + encodeURIComponent(tenderNumber) + "/" + encodeURIComponent(kind);
+    return withBusy(function () {
+      return api(path, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: status, note: note })
+      }).then(function (body) {
+        var item = body.item;
+        for (var i = 0; i < state.outreach.length; i++) {
+          var row = state.outreach[i];
+          if (row.bin === bin && row.tenderNumber === tenderNumber && row.kind === kind) {
+            state.outreach[i] = item;
+            break;
+          }
+        }
+        renderOutreach();
+        showAlert("Saved outreach status for " + tenderNumber);
+      });
+    });
+  }
+
   function loadPerJobArtifacts() {
     if (!state.selectedJobId) return Promise.resolve();
     return withBusy(function () {
@@ -478,6 +533,90 @@
     jobsTotalEl.textContent = shown + " shown / " + total + " total";
   }
 
+  function outreachRowKey(item) {
+    return item.bin + "::" + item.tenderNumber + "::" + item.kind;
+  }
+
+  function renderOutreach() {
+    while (outreachBody.firstChild) outreachBody.removeChild(outreachBody.firstChild);
+    if (state.outreach.length === 0) {
+      var emptyTr = document.createElement("tr");
+      emptyTr.className = "outreach-empty";
+      var emptyTd = document.createElement("td");
+      emptyTd.colSpan = 8;
+      emptyTd.className = "muted";
+      emptyTd.textContent = "No outreach items match this filter.";
+      emptyTr.appendChild(emptyTd);
+      outreachBody.appendChild(emptyTr);
+    }
+    for (var i = 0; i < state.outreach.length; i++) {
+      var item = state.outreach[i];
+      var rowKey = outreachRowKey(item);
+      var tr = document.createElement("tr");
+
+      var binCell = document.createElement("td");
+      binCell.className = "mono";
+      binCell.textContent = item.bin;
+
+      var tenderCell = document.createElement("td");
+      tenderCell.className = "mono";
+      tenderCell.textContent = item.tenderNumber;
+
+      var kindCell = document.createElement("td");
+      kindCell.textContent = item.kind;
+
+      var statusCell = document.createElement("td");
+      var statusSelect = document.createElement("select");
+      statusSelect.dataset.outreachStatus = rowKey;
+      for (var s = 0; s < OUTREACH_STATUSES.length; s++) {
+        var opt = document.createElement("option");
+        opt.value = OUTREACH_STATUSES[s];
+        opt.textContent = OUTREACH_STATUSES[s];
+        if (item.status === OUTREACH_STATUSES[s]) opt.selected = true;
+        statusSelect.appendChild(opt);
+      }
+      statusCell.appendChild(statusSelect);
+
+      var noteCell = document.createElement("td");
+      var noteInput = document.createElement("input");
+      noteInput.type = "text";
+      noteInput.className = "outreach-note";
+      noteInput.dataset.outreachNote = rowKey;
+      noteInput.value = item.note || "";
+      noteCell.appendChild(noteInput);
+
+      var createdCell = document.createElement("td");
+      createdCell.className = "mono";
+      createdCell.textContent = fmtDate(item.createdAt);
+
+      var updatedCell = document.createElement("td");
+      updatedCell.className = "mono";
+      updatedCell.textContent = fmtDate(item.updatedAt);
+
+      var actionCell = document.createElement("td");
+      var saveBtn = document.createElement("button");
+      saveBtn.dataset.action = "save-outreach";
+      saveBtn.dataset.bin = item.bin;
+      saveBtn.dataset.tender = item.tenderNumber;
+      saveBtn.dataset.kind = item.kind;
+      saveBtn.textContent = "Save";
+      actionCell.appendChild(saveBtn);
+
+      tr.appendChild(binCell);
+      tr.appendChild(tenderCell);
+      tr.appendChild(kindCell);
+      tr.appendChild(statusCell);
+      tr.appendChild(noteCell);
+      tr.appendChild(createdCell);
+      tr.appendChild(updatedCell);
+      tr.appendChild(actionCell);
+      outreachBody.appendChild(tr);
+    }
+    var shownOut = state.outreach.length;
+    var totalOut = state.outreachTotal;
+    outreachTotalEl.textContent = shownOut + " shown / " + totalOut + " total";
+  }
+
   function renderDetail() {
     var job = state.job;
     if (!job) {
@@ -615,6 +754,27 @@
       loadJobs();
     });
 
+    outreachKind.addEventListener("change", function () {
+      state.outreachFilter.kind = outreachKind.value;
+      loadOutreach();
+    });
+    outreachStatus.addEventListener("change", function () {
+      state.outreachFilter.status = outreachStatus.value;
+      loadOutreach();
+    });
+    outreachLimit.addEventListener("change", function () {
+      var v = parseInt(outreachLimit.value, 10);
+      state.outreachFilter.limit = isFinite(v) && v >= 1 ? Math.min(v, 200) : 20;
+      outreachLimit.value = String(state.outreachFilter.limit);
+      loadOutreach();
+    });
+    outreachOffset.addEventListener("change", function () {
+      var v = parseInt(outreachOffset.value, 10);
+      state.outreachFilter.offset = isFinite(v) && v >= 0 ? v : 0;
+      outreachOffset.value = String(state.outreachFilter.offset);
+      loadOutreach();
+    });
+
     // Delegated click handler for job rows: the entire row opens the job
     // (data-job-id), but the open button inside the row keeps its own
     // data-action="open-job" path so we skip when a button is the target.
@@ -654,6 +814,7 @@
       if (action === "refresh-detail") return loadDetail(state.selectedJobId);
       if (action === "refresh-logs") return loadLogs();
       if (action === "refresh-artifacts") return loadArtifacts();
+      if (action === "refresh-outreach") return loadOutreach();
       if (action === "refresh-perjob") return loadPerJobArtifacts();
       if (action === "cancel") return cancelJob();
       if (action === "open-job") {
@@ -669,6 +830,9 @@
         var name = target.dataset.name;
         return downloadArtifact({ id: id, name: name });
       }
+      if (action === "save-outreach") {
+        return saveOutreachItem(target.dataset.bin, target.dataset.tender, target.dataset.kind);
+      }
       return undefined;
     });
   }
@@ -677,7 +841,7 @@
   function init() {
     renderHealth();
     wireEvents();
-    loadJobs().then(loadArtifacts);
+    loadJobs().then(loadArtifacts).then(loadOutreach);
   }
 
   if (document.readyState === "loading") {

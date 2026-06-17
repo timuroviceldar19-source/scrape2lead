@@ -19,6 +19,7 @@ import {
   type SpawnedProcess
 } from "../src/server.js";
 import { SqliteJobStore, type IJobStore } from "../src/storage/apiJobStore.js";
+import { runMigrations } from "../src/storage/migrations.js";
 
 class FakeProcess extends EventEmitter implements SpawnedProcess {
   pid = 12345;
@@ -983,6 +984,145 @@ describe("scrape2lead API server — safeListen", () => {
   });
 });
 
+function seedOutreachPair(
+  db: Database.Database,
+  bin: string,
+  tenderNumber: string,
+  kind: "winner" | "prospect",
+  createdAt: string
+): void {
+  runMigrations(db);
+  db.prepare(`
+    INSERT INTO outreach_seen (bin, tender_number, kind, first_seen_at)
+    VALUES (?, ?, ?, ?)
+  `).run(bin, tenderNumber, kind, createdAt);
+  db.prepare(`
+    INSERT INTO outreach_items (run_id, bin, tender_number, kind, created_at)
+    VALUES (NULL, ?, ?, ?, ?)
+  `).run(bin, tenderNumber, kind, createdAt);
+}
+
+function seedKzOutreachDatabase(
+  kzDbPath: string,
+  bin: string,
+  tenderNumber: string,
+  kind: "winner" | "prospect",
+  createdAt: string
+): void {
+  const db = new Database(kzDbPath);
+  seedOutreachPair(db, bin, tenderNumber, kind, createdAt);
+  db.close();
+}
+
+describe("scrape2lead API server — outreach status", () => {
+  it("GET list requires auth when API token is set", async () => {
+    const kzDir = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-kz-"));
+    const kzDb = path.join(kzDir, "kz.db");
+    seedKzOutreachDatabase(kzDb, "061040006408", "CT-100", "winner", "2026-06-01T10:00:00.000Z");
+    const app = await makeApp({ apiToken: "secret", env: { KZ_DATABASE_PATH: kzDb } });
+
+    const unauthorized = await fetch(`${app.url}/api/v1/outreach/items`);
+    expect(unauthorized.status).toBe(401);
+
+    const authorized = await fetch(`${app.url}/api/v1/outreach/items`, {
+      headers: { Authorization: "Bearer secret" }
+    });
+    expect(authorized.status).toBe(200);
+    const body = await authorized.json() as { items: Array<{ status: string }>; total: number };
+    expect(body.total).toBe(1);
+    expect(body.items[0]?.status).toBe("new");
+  });
+
+  it("PATCH validates status, kind, and body", async () => {
+    const kzDir = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-kz-"));
+    const kzDb = path.join(kzDir, "kz.db");
+    seedKzOutreachDatabase(kzDb, "061040006408", "CT-100", "winner", "2026-06-01T10:00:00.000Z");
+    const app = await makeApp({ env: { KZ_DATABASE_PATH: kzDb } });
+    const base = `${app.url}/api/v1/outreach/items/061040006408/CT-100`;
+
+    const badStatus = await fetch(`${base}/winner`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "bogus" })
+    });
+    expect(badStatus.status).toBe(400);
+
+    const badKind = await fetch(`${base}/invalid-kind`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "contacted" })
+    });
+    expect(badKind.status).toBe(400);
+
+    const badNote = await fetch(`${base}/winner`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "contacted", note: 123 })
+    });
+    expect(badNote.status).toBe(400);
+
+    const ok = await fetch(`${base}/winner`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "contacted", note: "called" })
+    });
+    expect(ok.status).toBe(200);
+    const body = await ok.json() as { item: { status: string; note: string } };
+    expect(body.item.status).toBe("contacted");
+    expect(body.item.note).toBe("called");
+  });
+
+  it("jobs and artifacts endpoints still work alongside outreach routes", async () => {
+    const kzDir = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-kz-"));
+    const kzDb = path.join(kzDir, "kz.db");
+    seedKzOutreachDatabase(kzDb, "061040006408", "CT-100", "winner", "2026-06-01T10:00:00.000Z");
+    const app = await makeApp({ env: { KZ_DATABASE_PATH: kzDb } });
+
+    const jobs = await fetch(`${app.url}/api/v1/jobs`);
+    expect(jobs.status).toBe(200);
+    const jobsBody = await jobs.json() as { jobs: unknown[] };
+    expect(Array.isArray(jobsBody.jobs)).toBe(true);
+
+    const artifacts = await fetch(`${app.url}/api/v1/artifacts`);
+    expect(artifacts.status).toBe(200);
+    const artifactsBody = await artifacts.json() as { artifacts: unknown[] };
+    expect(Array.isArray(artifactsBody.artifacts)).toBe(true);
+
+    const outreach = await fetch(`${app.url}/api/v1/outreach/items`);
+    expect(outreach.status).toBe(200);
+  });
+
+  it("reads outreach from KZ database path independent of job store database", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-kz-split-"));
+    const jobDb = path.join(cwd, "job.db");
+    const kzDb = path.join(cwd, "kz.db");
+
+    seedKzOutreachDatabase(kzDb, "061040006408", "CT-200", "prospect", "2026-06-02T10:00:00.000Z");
+
+    const jobSqlite = new Database(jobDb);
+    runMigrations(jobSqlite);
+
+    const app = await makeApp({
+      cwd,
+      sqliteDb: jobSqlite,
+      env: {
+        SCRAPE2LEAD_DATABASE_PATH: jobDb,
+        KZ_DATABASE_PATH: kzDb
+      }
+    });
+
+    const res = await fetch(`${app.url}/api/v1/outreach/items`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { items: Array<{ bin: string; tenderNumber: string }>; total: number };
+    expect(body.total).toBe(1);
+    expect(body.items[0]?.bin).toBe("061040006408");
+    expect(body.items[0]?.tenderNumber).toBe("CT-200");
+
+    const jobRow = jobSqlite.prepare("SELECT COUNT(*) AS n FROM api_jobs").get() as { n: number };
+    expect(jobRow.n).toBe(0);
+  });
+});
+
 describe("scrape2lead API server — operator UI static serving", () => {
   function seedOperatorFolder(cwd: string, files: Record<string, string> = {}): void {
     const dir = path.join(cwd, "public", "operator");
@@ -1449,6 +1589,34 @@ describe("scrape2lead API server — operator UI static serving", () => {
     expect(js).toMatch(/submitExportJob/);
     expect(js).toMatch(/exportForm\.addEventListener\("submit", submitExportJob\)/);
     expect(js).toMatch(/\/jobs\/kz-export/);
+  });
+
+  it("serves the real checked-in /operator index.html with the Outreach status card", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-ui-outreach-"));
+    const realDir = path.resolve(process.cwd(), "public", "operator");
+    const tempDir = path.join(cwd, "public", "operator");
+    fs.mkdirSync(tempDir, { recursive: true });
+    for (const name of fs.readdirSync(realDir)) {
+      fs.copyFileSync(path.join(realDir, name), path.join(tempDir, name));
+    }
+    const app = await makeApp({ cwd });
+
+    const htmlRes = await fetch(`${app.url}/operator`);
+    expect(htmlRes.status).toBe(200);
+    const html = await htmlRes.text();
+
+    expect(html).toMatch(/id="card-outreach"/);
+    expect(html).toMatch(/<h2>Outreach status<\/h2>/);
+    expect(html).toMatch(/id="outreach-body"/);
+    expect(html).toMatch(/data-action="refresh-outreach"/);
+
+    const jsRes = await fetch(`${app.url}/operator/operator.js`);
+    expect(jsRes.status).toBe(200);
+    const js = await jsRes.text();
+    expect(js).toMatch(/loadOutreach/);
+    expect(js).toMatch(/saveOutreachItem/);
+    expect(js).toMatch(/save-outreach/);
+    expect(js).toMatch(/\/outreach\/items/);
   });
 });
 

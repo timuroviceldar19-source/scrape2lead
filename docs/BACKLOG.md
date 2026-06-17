@@ -56,21 +56,23 @@ This file captures post-release candidates after `v1.8.0`. It is meant to be upd
 
 ---
 
-## 4. Sales pipeline automation / CRM glue ⭐ recommended
+## 4. Sales pipeline automation / CRM glue — PR #1 ✅ started
 
 **Goal:** close the loop between `kz:autopilot` output and sales execution.
 
-**Why now:** sales kit exists, but tracking is manual Excel files. Autopilot output is stable; next value is operator workflow, not more outreach DB tables.
+**Shipped in PR #1 (outreach status in operator):**
+- SQLite migration v17: `outreach_status` ledger (`new` / `contacted` / `interested` / `follow_up` / `closed` / `rejected`).
+- `GET/PATCH /api/v1/outreach/items` + Operator UI card for status/note updates.
+- `outreach_seen`, `outreach_items`, `outreach_runs` unchanged; retention invariants preserved.
 
-**Scope:**
-- Track outreach status per (BIN, tender) in operator UI / lightweight CRM export — **not** a new Postgres outreach schema as the first step.
-- Add `kz:autopilot --digest-only` and `--outreach-only` modes.
-- Generate follow-up reminders based on last contact date.
-- Optional: webhook / CSV export to a CRM.
+**Still future:**
+- `kz:autopilot --digest-only` and `--outreach-only` modes.
+- Follow-up reminders based on last contact date.
+- CRM webhook / CSV export.
+- Next autopilot run respecting prior outreach status in diff/export.
 
-**Acceptance:**
-- Operator can mark a winner as "contacted / interested / closed" in `/operator`.
-- Next autopilot run respects prior outreach status.
+**Acceptance (PR #1):**
+- Operator can mark a winner as "contacted / interested / closed" in `/operator`. ✅
 
 ---
 

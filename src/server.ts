@@ -5,6 +5,7 @@ import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import {
   createJobStore,
   SqliteJobStore,
@@ -16,6 +17,15 @@ import {
   type IJobStore,
   type JobStoreOptions
 } from "./storage/apiJobStore.js";
+import { runMigrations } from "./storage/migrations.js";
+import {
+  isOutreachCrmStatus,
+  isOutreachKind,
+  listOutreachStatuses,
+  OutreachStatusNotFoundError,
+  setOutreachStatus,
+  type OutreachCrmStatus
+} from "./kz/outreachStatus.js";
 
 type JobStatus = ApiJobStatus;
 type JobType = ApiJobType;
@@ -195,6 +205,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: S
       await handleArtifactsRoute(req, res, state, segments.slice(baseIndex));
       return;
     }
+    if (segments[baseIndex] === "outreach") {
+      await handleOutreachRoute(req, res, state, segments.slice(baseIndex));
+      return;
+    }
   }
 
   sendJson(res, 404, { error: "not_found" });
@@ -370,6 +384,108 @@ async function handleJobsRoute(
   }
 
   sendJson(res, 404, { error: "not_found" }, state);
+}
+
+function resolveKzDatabasePath(state: ServerState): string {
+  return state.env.KZ_DATABASE_PATH
+    ?? state.env.SCRAPE2LEAD_DATABASE_PATH
+    ?? path.join(state.cwd, "data", "scrape2lead.db");
+}
+
+function openKzDatabase(state: ServerState): Database.Database {
+  const dbPath = resolveKzDatabasePath(state);
+  if (dbPath !== ":memory:") {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  }
+  const db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  runMigrations(db);
+  return db;
+}
+
+async function handleOutreachRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  state: ServerState,
+  segments: string[]
+): Promise<void> {
+  const db = openKzDatabase(state);
+  try {
+  if (req.method === "GET" && segments.length === 2 && segments[0] === "outreach" && segments[1] === "items") {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const statusRaw = url.searchParams.get("status");
+    const kindRaw = url.searchParams.get("kind");
+    if (statusRaw && !isOutreachCrmStatus(statusRaw)) {
+      sendJson(res, 400, { error: "invalid_status" }, state);
+      return;
+    }
+    if (kindRaw && !isOutreachKind(kindRaw)) {
+      sendJson(res, 400, { error: "invalid_kind" }, state);
+      return;
+    }
+    const result = listOutreachStatuses(db, {
+      status: statusRaw as OutreachCrmStatus | undefined,
+      kind: kindRaw && isOutreachKind(kindRaw) ? kindRaw : undefined,
+      limit: parsePositiveInt(url.searchParams.get("limit")),
+      offset: parseNonNegativeInt(url.searchParams.get("offset"))
+    });
+    sendJson(res, 200, { items: result.items, total: result.total }, state);
+    return;
+  }
+
+  if (req.method === "PATCH" && segments.length === 5 && segments[0] === "outreach" && segments[1] === "items") {
+    const bin = decodeURIComponent(segments[2] ?? "");
+    const tenderNumber = decodeURIComponent(segments[3] ?? "");
+    const kindRaw = decodeURIComponent(segments[4] ?? "");
+    if (!isOutreachKind(kindRaw)) {
+      sendJson(res, 400, { error: "invalid_kind" }, state);
+      return;
+    }
+    const body = asRecord(await readJsonBody(req));
+    const statusRaw = body.status;
+    if (typeof statusRaw !== "string" || !isOutreachCrmStatus(statusRaw)) {
+      sendJson(res, 400, { error: "invalid_status" }, state);
+      return;
+    }
+    let note: string | null | undefined;
+    if (body.note !== undefined && body.note !== null) {
+      if (typeof body.note !== "string") {
+        sendJson(res, 400, { error: "invalid_note" }, state);
+        return;
+      }
+      if (body.note.length > 2000) {
+        sendJson(res, 400, { error: "invalid_note", message: "Note must be 2000 characters or shorter." }, state);
+        return;
+      }
+      note = body.note;
+    } else if (body.note === null) {
+      note = null;
+    }
+
+    try {
+      const item = setOutreachStatus(db, {
+        bin,
+        tenderNumber,
+        kind: kindRaw,
+        status: statusRaw,
+        note
+      });
+      sendJson(res, 200, { item }, state);
+    } catch (error) {
+      if (error instanceof OutreachStatusNotFoundError) {
+        sendJson(res, 404, { error: "outreach_not_found", message: error.message }, state);
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
+  sendJson(res, 404, { error: "not_found" }, state);
+  } finally {
+    db.close();
+  }
 }
 
 async function handleArtifactsRoute(
@@ -870,7 +986,7 @@ function sendJson(res: ServerResponse, status: number, payload: unknown, _state?
 function applyCors(req: IncomingMessage, res: ServerResponse, state: ServerState): void {
   const origin = state.env.SCRAPE2LEAD_CORS_ORIGIN ?? "*";
   res.setHeader("Access-Control-Allow-Origin", origin);
-  res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,PATCH,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-API-Token");
   res.setHeader("Access-Control-Max-Age", "86400");
   void req;
