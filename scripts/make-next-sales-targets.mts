@@ -44,7 +44,7 @@ const segments: SegmentRow[] = [
     segment: "Поставщики стройматериалов и дорожно-строительной техники",
     buyerLogic: "Победитель строительного/ремонтного тендера быстро закупает материалы, технику, расходники и услуги. В локальной базе уже есть контакты из 2GIS.",
     bestOffer: "Список компаний с активными/новыми строительными контрактами: сумма, заказчик, город, директор, телефон.",
-    firstDataSlice: "Top-30 строительных подрядчиков Астана/Алматы из `kz-top-a-sales.xlsx` + ссылка на демо в канале.",
+    firstDataSlice: "Top-30 строительных подрядчиков Астана/Алматы из `kz-top-a-sample-3.xlsx` (короткий sample на 3 строки как proof-of-data).",
     channel: "WhatsApp сначала, затем звонок через день.",
     priceTest: "50k KZT разово; если покупают, weekly city/category digest 100-150k KZT/month.",
     risk: "Малые поставщики покупают только если видят конкретных подрядчиков под свой товар; нужна узкая категория."
@@ -146,7 +146,7 @@ const accounts: AccountRow[] = [
     buyerRole: "sales director / owner",
     whyFit: "Уже есть в локальном `prospects-segment1.xlsx`; продает дорожно-строительную технику в Астане.",
     firstPitch: "30 строительных/дорожных подрядчиков с активными контрактами и телефонами.",
-    nextStep: "WhatsApp: ссылка на канал с демо, затем звонок.",
+    nextStep: "WhatsApp: отправить sample-файл, затем звонок.",
     source: "exports/prospects-segment1.xlsx",
     status: "new"
   },
@@ -182,7 +182,7 @@ const accounts: AccountRow[] = [
     buyerRole: "owner / sales",
     whyFit: "Локальный поставщик стройматериалов в Астане с телефоном/WhatsApp.",
     firstPitch: "Дадим строительных подрядчиков с подтвержденным бюджетом и сроком работ.",
-    nextStep: "WhatsApp + ссылка на демо в канале.",
+    nextStep: "WhatsApp + sample-файл, затем звонок.",
     source: "exports/prospects-segment1.xlsx",
     status: "new"
   },
@@ -242,7 +242,7 @@ const accounts: AccountRow[] = [
     buyerRole: "owner / sales",
     whyFit: "Локальная компания по архитектурно-строительному проектированию; подрядчикам с контрактами могут нужны документы/узаконение/проектные услуги.",
     firstPitch: "Список строительных подрядчиков с новыми/активными контрактами.",
-    nextStep: "WhatsApp: предложить демо в канале t.me/ai_leads_kz.",
+    nextStep: "WhatsApp: прислать 3-строчный sample `kz-top-a-sample-3.xlsx` как proof-of-data, затем звонок.",
     source: "exports/prospects-segment1.xlsx",
     status: "new"
   }
@@ -255,7 +255,7 @@ const messages = [
   },
   {
     use: "Construction suppliers",
-    copy: "Здравствуйте! У нас есть список строительных компаний, которые прямо сейчас исполняют госконтракты: суммы, заказчики, телефоны, директора. Демо Excel (~50 строк, маскировка) — в канале t.me/ai_leads_kz. Полный список — 50 000 ₸. Интересно?"
+    copy: "Здравствуйте! У нас есть список строительных компаний, которые прямо сейчас исполняют госконтракты: суммы, заказчики, телефоны, директора. Могу прислать 3 строки бесплатно как proof-of-data, полный список — 50 000 ₸. Интересно?"
   },
   {
     use: "Leasing / equipment",

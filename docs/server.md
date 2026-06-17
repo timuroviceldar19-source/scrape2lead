@@ -63,12 +63,14 @@ npm run server
 
 ### `GET /health`
 
-Проверка процесса:
+Проверка процесса. Возвращает фиксированные идентификаторы (`ok`, `service`) и динамические поля `time` (ISO-8601, текущий момент на сервере) и `uptimeSeconds` (целое число секунд с момента старта процесса). `time` и `uptimeSeconds` меняются от запроса к запросу и не должны сравниваться в тестах/мониторинге как статика — для smoke-check достаточно `ok === true` и `service === "scrape2lead-api"`.
 
 ```json
 {
   "ok": true,
-  "service": "scrape2lead-api"
+  "service": "scrape2lead-api",
+  "time": "2026-06-17T13:57:23.944Z",
+  "uptimeSeconds": 13
 }
 ```
 

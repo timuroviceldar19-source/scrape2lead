@@ -75,7 +75,7 @@ npm run kz:enrich -- bins.csv --force-refresh
 
 **Pagination:** Follow `next_page` until empty string. Max pages controlled by `GOSZAKUP_MAX_PAGES` (default 20).
 
-**Active filter:** `GOSZAKUP_ACTIVE_ONLY=1` keeps only tenders with `ref_buy_status_id` in the active set (default: 210, 220). Override with `GOSZAKUP_ACTIVE_STATUS_IDS=210,220`.
+**Active filter:** the active-only behaviour is a per-run **CLI / API flag**, not an env var. Pass `--goszakup-active-only` to `kz enrich` (CLI) or `goszakupActiveOnly: true` in the `POST /api/v1/jobs/kz-enrich` body (server). When set, only tenders whose `ref_buy_status_id` belongs to the active set are kept. The active set itself is controlled by `GOSZAKUP_ACTIVE_STATUS_IDS=210,220` (comma-separated, default `210,220`).
 
 **HTTP retry:** 429 and 5xx errors retry with exponential backoff (max 3 attempts). 401/403 records an enrich error and stops.
 
