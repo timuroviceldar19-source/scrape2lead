@@ -133,6 +133,37 @@ export class PostgresJobStore implements IJobStore {
     });
   }
 
+  async getLatestJobByType(type: ApiJob["type"]): Promise<ApiJob | null> {
+    return this.withClient(async (client) => {
+      const jobResult = await client.query<ApiJobRow>(
+        `SELECT * FROM api_jobs
+         WHERE type = $1
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+        [type]
+      );
+      if (jobResult.rows.length === 0) return null;
+      const job = jobResult.rows[0];
+      const artifactResult = await client.query<{ name: string }>(
+        "SELECT name FROM api_job_artifacts WHERE job_id = $1",
+        [job.id]
+      );
+      return hydrateJob(job, artifactResult.rows.map((r) => r.name));
+    });
+  }
+
+  async pruneTerminalJobsBefore(cutoffIso: string): Promise<number> {
+    const result = await this.withClient((client) =>
+      client.query(
+        `DELETE FROM api_jobs
+         WHERE created_at < $1::timestamptz
+           AND status IN ('completed', 'failed', 'cancelled', 'interrupted')`,
+        [cutoffIso]
+      )
+    );
+    return result.rowCount ?? 0;
+  }
+
   async claimNextQueuedJob(): Promise<ApiJob | null> {
     const now = new Date().toISOString();
     return this.withClient(async (client) => {
