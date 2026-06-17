@@ -71,6 +71,7 @@ async function makeApp(options: {
   maxConcurrentJobs?: number;
   maxLogLines?: number;
   sqliteDb?: Database.Database;
+  env?: NodeJS.ProcessEnv;
 } = {}): Promise<App> {
   const cwd = options.cwd ?? fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-api-"));
   const runner = options.runner ?? new FakeRunner();
@@ -82,7 +83,8 @@ async function makeApp(options: {
     jobStore,
     apiToken: options.apiToken,
     maxConcurrentJobs: options.maxConcurrentJobs,
-    maxLogLines: options.maxLogLines
+    maxLogLines: options.maxLogLines,
+    env: options.env
   });
   const address = await new Promise<{ port: number }>((resolve, reject) => {
     server.listen(0, "127.0.0.1", () => {
@@ -131,6 +133,28 @@ describe("scrape2lead API server", () => {
     expect(body).toMatchObject({ ok: true, service: "scrape2lead-api" });
   });
 
+  it("accepts delayMs: 0 for kz-enrich and passes --delay-ms 0 to the child process", async () => {
+    const runner = new FakeRunner();
+    const app = await makeApp({ runner });
+    const response = await fetch(`${app.url}/api/v1/jobs/kz-enrich`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bins: ["960440000716"], delayMs: 0 })
+    });
+    const body = await response.json() as { job: { id: string; args: string[] } };
+
+    expect(response.status).toBe(202);
+    const delayIdx = body.job.args.indexOf("--delay-ms");
+    expect(delayIdx).toBeGreaterThanOrEqual(0);
+    expect(body.job.args[delayIdx + 1]).toBe("0");
+
+    await waitForStatus(app, body.job.id, "completed");
+    const spawnArgs = runner.calls[0]?.args ?? [];
+    const spawnDelayIdx = spawnArgs.indexOf("--delay-ms");
+    expect(spawnDelayIdx).toBeGreaterThanOrEqual(0);
+    expect(spawnArgs[spawnDelayIdx + 1]).toBe("0");
+  });
+
   it("starts kz-enrich jobs and materializes inline BINs into a CSV", async () => {
     const app = await makeApp();
     const response = await fetch(`${app.url}/api/jobs/kz-enrich`, {
@@ -165,6 +189,48 @@ describe("scrape2lead API server", () => {
     expect(authorized.status).toBe(200);
   });
 
+  it("builds kz-export with default out under SCRAPE2LEAD_EXPORT_DIR", () => {
+    const cwd = path.join(os.tmpdir(), "scrape2lead-build");
+    const exportDir = path.join(cwd, "custom-exports");
+    const jobId = "job-export-1";
+    const invocation = buildJobInvocation("kz-export", {}, jobId, cwd, {
+      SCRAPE2LEAD_EXPORT_DIR: exportDir
+    });
+    const outIdx = invocation.args.indexOf("--out");
+    expect(outIdx).toBeGreaterThanOrEqual(0);
+    expect(invocation.args[outIdx + 1]).toBe(path.join(exportDir, `kz-${jobId}.xlsx`));
+  });
+
+  it("builds kz-export with explicit out resolved under SCRAPE2LEAD_EXPORT_DIR", () => {
+    const cwd = path.join(os.tmpdir(), "scrape2lead-build-explicit");
+    const exportDir = path.join(cwd, "custom-exports");
+    const invocation = buildJobInvocation(
+      "kz-export",
+      { out: "custom.xlsx" },
+      "job-export-2",
+      cwd,
+      { SCRAPE2LEAD_EXPORT_DIR: exportDir }
+    );
+    const outIdx = invocation.args.indexOf("--out");
+    expect(outIdx).toBeGreaterThanOrEqual(0);
+    expect(invocation.args[outIdx + 1]).toBe(path.join(exportDir, "custom.xlsx"));
+  });
+
+  it("builds kz-export with exports/ prefix resolved to SCRAPE2LEAD_EXPORT_DIR basename", () => {
+    const cwd = path.join(os.tmpdir(), "scrape2lead-build-prefix");
+    const exportDir = path.join(cwd, "custom-exports");
+    const invocation = buildJobInvocation(
+      "kz-export",
+      { out: "exports/custom-name.xlsx" },
+      "job-export-3",
+      cwd,
+      { SCRAPE2LEAD_EXPORT_DIR: exportDir }
+    );
+    const outIdx = invocation.args.indexOf("--out");
+    expect(outIdx).toBeGreaterThanOrEqual(0);
+    expect(invocation.args[outIdx + 1]).toBe(path.join(exportDir, "custom-name.xlsx"));
+  });
+
   it("builds the autopilot command from whitelisted flags only", () => {
     const invocation = buildJobInvocation(
       "kz-autopilot",
@@ -189,6 +255,104 @@ describe("scrape2lead API server", () => {
       "--max-pages",
       "5"
     ]);
+  });
+
+  it("kz-export without out writes to SCRAPE2LEAD_EXPORT_DIR and registers a downloadable artifact", async () => {
+    const exportDir = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-export-"));
+    const runner = new FakeRunner();
+    runner.autoExit = false;
+    const originalStart = runner.start.bind(runner);
+    runner.start = (command, args, options) => {
+      const proc = originalStart(command, args, options) as import("node:child_process").ChildProcessWithoutNullStreams;
+      const outIdx = args.indexOf("--out");
+      const outPath = outIdx >= 0 ? args[outIdx + 1] : undefined;
+      queueMicrotask(() => {
+        setTimeout(() => {
+          if (outPath) {
+            fs.mkdirSync(path.dirname(outPath), { recursive: true });
+            fs.writeFileSync(outPath, "fake-xlsx", "utf8");
+          }
+          (proc.stdout as NodeJS.WriteStream | null)?.write("ok\n");
+          (proc.stdout as NodeJS.WriteStream | null)?.end();
+          (proc.stderr as NodeJS.WriteStream | null)?.end();
+          proc.emit("exit", 0, null);
+        }, 50);
+      });
+      return proc;
+    };
+    const app = await makeApp({ runner, env: { SCRAPE2LEAD_EXPORT_DIR: exportDir } });
+
+    const response = await fetch(`${app.url}/api/v1/jobs/kz-export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(response.status).toBe(202);
+    const { job } = await response.json() as { job: { id: string; args: string[] } };
+    const outIdx = job.args.indexOf("--out");
+    expect(outIdx).toBeGreaterThanOrEqual(0);
+    expect(job.args[outIdx + 1]).toBe(path.join(exportDir, `kz-${job.id}.xlsx`));
+
+    await waitForStatus(app, job.id, "completed");
+
+    const list = await (await fetch(`${app.url}/api/v1/jobs/${job.id}/artifacts`)).json() as {
+      artifacts: Array<{ id: number; name: string }>;
+    };
+    expect(list.artifacts).toHaveLength(1);
+    expect(list.artifacts[0]?.name).toBe(`kz-${job.id}.xlsx`);
+
+    const download = await fetch(`${app.url}/api/v1/artifacts/${list.artifacts[0]?.id}`);
+    expect(download.status).toBe(200);
+    expect(await download.text()).toBe("fake-xlsx");
+  });
+
+  it("kz-export with exports/ out registers artifact in SCRAPE2LEAD_EXPORT_DIR and downloads via API", async () => {
+    const exportDir = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-export-prefix-"));
+    const runner = new FakeRunner();
+    runner.autoExit = false;
+    const originalStart = runner.start.bind(runner);
+    runner.start = (command, args, options) => {
+      const proc = originalStart(command, args, options) as import("node:child_process").ChildProcessWithoutNullStreams;
+      const outIdx = args.indexOf("--out");
+      const outPath = outIdx >= 0 ? args[outIdx + 1] : undefined;
+      queueMicrotask(() => {
+        setTimeout(() => {
+          if (outPath) {
+            fs.mkdirSync(path.dirname(outPath), { recursive: true });
+            fs.writeFileSync(outPath, "fake-prefix-xlsx", "utf8");
+          }
+          (proc.stdout as NodeJS.WriteStream | null)?.write("ok\n");
+          (proc.stdout as NodeJS.WriteStream | null)?.end();
+          (proc.stderr as NodeJS.WriteStream | null)?.end();
+          proc.emit("exit", 0, null);
+        }, 50);
+      });
+      return proc;
+    };
+    const app = await makeApp({ runner, env: { SCRAPE2LEAD_EXPORT_DIR: exportDir } });
+
+    const response = await fetch(`${app.url}/api/v1/jobs/kz-export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ out: "exports/custom-name.xlsx" })
+    });
+    expect(response.status).toBe(202);
+    const { job } = await response.json() as { job: { id: string; args: string[] } };
+    const outIdx = job.args.indexOf("--out");
+    expect(outIdx).toBeGreaterThanOrEqual(0);
+    expect(job.args[outIdx + 1]).toBe(path.join(exportDir, "custom-name.xlsx"));
+
+    await waitForStatus(app, job.id, "completed");
+
+    const list = await (await fetch(`${app.url}/api/v1/jobs/${job.id}/artifacts`)).json() as {
+      artifacts: Array<{ id: number; name: string }>;
+    };
+    expect(list.artifacts).toHaveLength(1);
+    expect(list.artifacts[0]?.name).toBe("custom-name.xlsx");
+
+    const download = await fetch(`${app.url}/api/v1/artifacts/${list.artifacts[0]?.id}`);
+    expect(download.status).toBe(200);
+    expect(await download.text()).toBe("fake-prefix-xlsx");
   });
 
   it("exposes /api/v1 routes and keeps /api compatibility aliases", async () => {
@@ -1065,7 +1229,8 @@ describe("scrape2lead API server — operator UI static serving", () => {
 
 describe("scrape2lead API server — kz-export job contract", () => {
   it("starts kz-export jobs with an empty body (export all) and custom out", async () => {
-    const app = await makeApp();
+    const exportDir = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-export-"));
+    const app = await makeApp({ env: { SCRAPE2LEAD_EXPORT_DIR: exportDir } });
     const response = await fetch(`${app.url}/api/v1/jobs/kz-export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1082,12 +1247,19 @@ describe("scrape2lead API server — kz-export job contract", () => {
     expect(job.exit_code).toBe(0);
 
     // CLI invocation must include the kz export subcommand, the format flag,
-    // the custom out, and MUST NOT include --bins when no bins are provided.
+    // the custom out (resolved under SCRAPE2LEAD_EXPORT_DIR), and MUST NOT
+    // include --bins when no bins are provided.
     expect(body.job.args).toContain("export");
     expect(body.job.args).toContain("--format");
     expect(body.job.args).toContain("xlsx");
     expect(body.job.args).toContain("--out");
-    expect(body.job.args).toContain("exports/test-report.xlsx");
+    const outIdx = body.job.args.indexOf("--out");
+    expect(outIdx).toBeGreaterThan(-1);
+    const outValue = body.job.args[outIdx + 1];
+    expect(outValue).toBe(path.join(exportDir, "test-report.xlsx"));
+    expect(path.basename(outValue)).toBe("test-report.xlsx");
+    // Guard: the literal UI-supplied prefix must be rewritten, not passed through.
+    expect(body.job.args).not.toContain("exports/test-report.xlsx");
     expect(body.job.args).not.toContain("--bins");
   });
 

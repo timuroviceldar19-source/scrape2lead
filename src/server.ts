@@ -382,7 +382,7 @@ async function handleArtifactsRoute(
 
 async function startJob(type: JobType, body: unknown, state: ServerState): Promise<ApiJob> {
   const id = randomUUID();
-  const invocation = buildJobInvocation(type, body, id, state.cwd);
+  const invocation = buildJobInvocation(type, body, id, state.cwd, state.env);
   await state.jobStore.createJob({
     id,
     type,
@@ -557,8 +557,12 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   }
 }
 
+function resolveExportDir(cwd: string, env: NodeJS.ProcessEnv): string {
+  return path.resolve(cwd, env.SCRAPE2LEAD_EXPORT_DIR ?? "exports");
+}
+
 function getExportDir(state: ServerState): string {
-  return path.resolve(state.cwd, state.env.SCRAPE2LEAD_EXPORT_DIR ?? "exports");
+  return resolveExportDir(state.cwd, state.env);
 }
 
 function listExportDirArtifacts(
@@ -909,7 +913,8 @@ export function buildJobInvocation(
   type: JobType,
   body: unknown,
   jobId: string,
-  cwd: string
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env
 ): { command: string; args: string[] } {
   const input = asRecord(body);
   switch (type) {
@@ -918,7 +923,7 @@ export function buildJobInvocation(
     case "kz-enrich":
       return buildKzEnrichInvocation(input, jobId, cwd);
     case "kz-export":
-      return buildKzExportInvocation(input, jobId, cwd);
+      return buildKzExportInvocation(input, jobId, cwd, env);
     case "kz-autopilot":
       return buildKzAutopilotInvocation(input, cwd);
   }
@@ -955,23 +960,44 @@ function buildKzEnrichInvocation(
   pushBooleanFlag(args, "--registry-only", input.registryOnly);
   pushBooleanFlag(args, "--force-refresh", input.forceRefresh);
   pushBooleanFlag(args, "--goszakup-active-only", input.goszakupActiveOnly);
-  pushPositiveIntFlag(args, "--delay-ms", input.delayMs);
+  pushNonNegativeIntFlag(args, "--delay-ms", input.delayMs);
   pushPositiveIntFlag(args, "--goszakup-max-pages", input.goszakupMaxPages);
   pushPositiveIntFlag(args, "--zakup-max-retries", input.zakupMaxRetries);
 
   return { command: invocation.command, args };
 }
 
+function resolveKzExportOutPath(explicitOut: string, cwd: string, env: NodeJS.ProcessEnv): string {
+  const exportDir = path.resolve(resolveExportDir(cwd, env));
+  const basename = path.basename(explicitOut);
+  if (!isSafeArtifactName(basename)) {
+    throw new HttpError(400, "invalid_out", "Export `out` must resolve to a safe filename.");
+  }
+  if (path.isAbsolute(explicitOut)) {
+    const absolute = path.resolve(explicitOut);
+    if (!absolute.startsWith(`${exportDir}${path.sep}`)) {
+      throw new HttpError(400, "invalid_out", "Export `out` must be inside SCRAPE2LEAD_EXPORT_DIR.");
+    }
+    return absolute;
+  }
+  return path.join(exportDir, basename);
+}
+
 function buildKzExportInvocation(
   input: Record<string, unknown>,
   jobId: string,
-  cwd: string
+  cwd: string,
+  env: NodeJS.ProcessEnv
 ): { command: string; args: string[] } {
   const invocation = cliInvocation(cwd);
   const args = [...invocation.args, "kz", "export"];
   const csvFile = hasBinsInput(input) ? resolveCsvInput(input, jobId, cwd, "export") : undefined;
   pushStringFlag(args, "--bins", csvFile);
-  pushStringFlag(args, "--out", input.out);
+  const explicitOut = optionalString(input.out);
+  const outPath = explicitOut
+    ? resolveKzExportOutPath(explicitOut, cwd, env)
+    : path.join(resolveExportDir(cwd, env), `kz-${jobId}.xlsx`);
+  pushStringFlag(args, "--out", outPath);
   pushStringFlag(args, "--format", input.format ?? "xlsx");
   return { command: invocation.command, args };
 }
@@ -1049,6 +1075,15 @@ function pushPositiveIntFlag(args: string[], flag: string, value: unknown): void
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new HttpError(400, "invalid_number", `${flag} must be an integer >= 1.`);
+  }
+  args.push(flag, String(parsed));
+}
+
+function pushNonNegativeIntFlag(args: string[], flag: string, value: unknown): void {
+  if (value === undefined || value === null || value === "") return;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new HttpError(400, "invalid_number", `${flag} must be an integer >= 0.`);
   }
   args.push(flag, String(parsed));
 }
