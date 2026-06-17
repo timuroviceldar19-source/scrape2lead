@@ -1,82 +1,40 @@
 # Backlog — candidate next increments
 
-This file captures post-release candidates after `v1.7.0`. It is meant to be updated when a block is picked or discarded.
+This file captures post-release candidates after `v1.8.0`. It is meant to be updated when a block is picked or discarded.
 
 ## Current recommendation
 
-**Pick "Archive cleanup & dead-code removal" first.** It is pure technical debt, has no product risk, and makes every subsequent increment faster to build and review.
+**Pick "Sales pipeline automation / CRM glue" next.** Autopilot and archive cleanup are done in v1.8.0; the main gap is closing the loop between weekly digest output and sales execution (still manual Excel tracking).
 
 ---
 
-## 1. Archive cleanup & dead-code removal ⭐ recommended
+## 1. Archive cleanup & dead-code removal ✅ done (v1.8.0)
 
 **Goal:** remove or isolate legacy 2GIS/Kaspi MVP scripts and old prompt files so the active `operator/release flow` is obvious.
 
-**Why now:**
-- `docs/prompts/` contains 8 stage prompts that all describe work already merged (`qwen-stage1` through `gpt-stage5`). They still look like instructions.
-- `scripts/` has ~30 files that are not referenced by `package.json` or current runbooks; many are early 2GIS/Kaspi experiments, seed scaffolding, or one-off MVPs.
-- Cleaning this up reduces confusion for the next coder/operator and shrinks the lint/test surface.
-
-**Scope (safe, no behavior change):**
-1. Move `docs/prompts/*.md` into `docs/prompts/archive/` and add a top-level `docs/prompts/README.md` explaining the archive.
-2. Move clearly dead scripts into `scripts/archive/`:
-   - Old 2GIS MVP: `autoserviceRadarMvp.ts`, `mvp-astana-small.ts`, `generateMvpMock.ts`, `generateRealSample50.ts`, `generateFinalSalesPack.ts`
-   - 2GIS experiments: `enrich-2gis-*.ts`, `import-2gis-browser.ts`, `2gis-browser-*.js`, `test2gisPlacesApi.ts`, `check-2gis-stats.ts`
-   - Old adapter debugging: `test-kaspi-urls.ts`, `debug-kaspi-api.ts`
-   - Seed/DB scaffolding: `seed-smoke.ts`, `checkSchema.ts`, `check-seed.ts`, `check-write-result.ts`, `fix-seed-lead-id.ts`, `read-crm-example.ts`, `rescoreLeads.ts`, `exportNow.ts`
-   - Already-deprecated: `zakup-collector.ts`
-   - Unused thin wrappers: `stat-gov-collector.ts`
-   - One-off analyses: `analyze-top-a-gap.mts`, `check-bin-collisions.mts`
-3. Remove or deprecate corresponding `package.json` scripts:
-   - `audit:2gis:nsk-autoservice`, `audit:regression`, `validate:kz:proxy`, `api:2gis:smoke`, `mvp:astana`, `mvp:astana:small`.
-4. Keep but label as **sales helpers** (used by `docs/sales-kit.md`):
-   - `make-prospects-list.mts`, `make-next-sales-targets.mts`, `make-factoring-targets.mts`, `make-sales-sample.mts`, `generateBuyerOutreachTemplate.ts`, `generateSalesSprintWorkbook.ts`.
-
-**Acceptance:**
-- `npm run lint` and `npm test` still pass.
-- Active commands listed in `README.md` still work.
-- `git status` shows moved files (preserved history).
+**Outcome:**
+- `docs/prompts/` archived under `docs/prompts/archive/` with a top-level README.
+- Dead scripts moved to `scripts/archive/`; deprecated `package.json` scripts removed.
+- Sales helpers kept and labeled: `make-prospects-list.mts`, `make-next-sales-targets.mts`, `make-factoring-targets.mts`, `make-sales-sample.mts`, `generateBuyerOutreachTemplate.ts`, `generateSalesSprintWorkbook.ts`.
+- See `docs/ARCHIVE_AUDIT.md` for the audit trail.
 
 ---
 
-## 2. Autopilot hardening
+## 2. Autopilot hardening ✅ done (v1.8.0)
 
 **Goal:** make `npm run kz:autopilot` production-stable for weekly unattended runs.
 
-**Why now:** autopilot is the main recurring revenue path (digest-winners + outreach-queue + Telegram).
+**Shipped in v1.8.0 (PRs #25–#29):**
 
-**PR #1 (merged):** lock + exit codes + summary JSON + zero-output alert.
-- `data/autopilot.lock` (O_EXCL) с stale-detection по `process.kill(pid, 0)`.
-- Exit codes: `0` ok, `2` lock busy, `3` DB error, `4` export error, `5` no bins.
-- `exports/autopilot-YYYY-MM-DD.json` со всеми полями run + `lockHeldBy` для lock-busy.
-- Telegram при `winners === 0 && prospects === 0 && warnings.length === 0` отправляет префикс `⚠️`.
-- See `docs/kz-batch-runbook.md` § «Параллельные запуски и lock», «Exit codes», «Summary JSON», «Zero-output».
+| PR | Scope |
+|----|-------|
+| **#25** | Autopilot lock (`data/autopilot.lock`, O_EXCL + stale PID detection), clear exit codes (`0` ok, `2` lock busy, `3` DB, `4` export, `5` no bins), summary JSON (`exports/autopilot-YYYY-MM-DD.json`), zero-output Telegram alert (`⚠️` when winners/prospects/warnings all empty). |
+| **#26** | fix(server): drop dead `skipChannel`/`channelNiche` from kz-autopilot API. |
+| **#27** | `/health` last-autopilot-run block, `api_jobs` retention (`SCRAPE2LEAD_JOB_RETENTION_DAYS`), JobStore prune on startup. |
+| **#28** | per-BIN enrich retry fallback via `core/withRetry` adapter (budget/deadline). |
+| **#29** | outreach run retention ledger — migration v16 (`outreach_seen`), decoupled dedup, `npm run kz:autopilot:retention` (`KZ_OUTREACH_RUN_RETENTION_DAYS`). |
 
-**PR #2 (next):** per-BIN retry поверх пайплайна, retention policy для `outreach_runs`, `/health` endpoint с last-run, связка с `api_jobs` для server-side мониторинга.
-- `core/withRetry` уже есть; нужен адаптер под `runKzEnrich` с budget/deadline.
-- Retention: периодический prune `outreach_runs` старше N дней (через отдельный `kz:autopilot:retention`).
-- `/health` уже знает про `api_jobs` (`src/server.ts`) — добавить блок `lastAutopilotRun`.
-- Touches: `api_jobs` schema (миграция), `src/server.ts` (`/health`), `src/storage/apiJobStore.ts`. **Не** трогает `scripts/kz-autopilot.mts` продуктовую логику.
-
-**PR #2 (split):**
-- ✅ **`/health` last-run + JobStore retention (PR #2a, done):**
-  - `IJobStore`: `getLatestJobByType`, `pruneTerminalJobsBefore` (SQLite + Postgres).
-  - `GET /health` отдаёт `lastAutopilotRun` (id/status/createdAt/startedAt/finishedAt/exitCode/error/artifacts) и `jobStore: { ok, error? }` — `/health` остаётся 200 даже при ошибке чтения JobStore.
-  - `SCRAPE2LEAD_JOB_RETENTION_DAYS` (env, default disabled): однократный prune terminal jobs старше N дней на старте, сразу после `resetRunningJobs()`. Логирует `Pruned N terminal API jobs older than X days`. Не трогает `queued`/`running` и не удаляет файлы в `exports/`.
-  - Docs: `docs/server.md` (§ «Retention для api_jobs» + описание `lastAutopilotRun` в `/health`), `docs/kz-batch-runbook.md` (мониторинг через `/health`).
-  - Миграция не нужна: текущая `api_jobs` уже содержит `id`/`type`/`status`/`created_at`/`started_at`/`finished_at`/`exit_code`/`error`, а `api_job_logs` и `api_job_artifacts` связаны `ON DELETE CASCADE`.
-- ✅ **per-BIN retry поверх `runKzEnrich` (PR #2b, done):**
-  - Адаптер `core/withRetry` под enrich с budget/deadline.
-- ✅ **`outreach_runs` retention + decoupled dedup ledger (PR #2c, done):**
-  - Миграция v16: таблица `outreach_seen` (sent-ledger), `outreach_items.run_id` nullable.
-  - Дедуп читает `outreach_seen`; регистрация пишет в обе таблицы.
-  - `npm run kz:autopilot:retention` — dry-run по умолчанию, `--apply` для prune; env `KZ_OUTREACH_RUN_RETENTION_DAYS`.
-  - Retention удаляет только старые завершённые `outreach_runs`; ledger и audit-строки сохраняются.
-
-**Acceptance (после PR #2a):**
-- `/health` показывает последний autopilot job (status/exitCode/artifacts) либо `null`, если ещё не запускался.
-- При заданном `SCRAPE2LEAD_JOB_RETENTION_DAYS` старые terminal jobs удаляются на старте, queued/running — никогда.
-- `npm test` и `npm run lint` зелёные, миграция БД не нужна.
+**Docs:** `docs/kz-batch-runbook.md` (lock, exit codes, summary JSON, zero-output, retention), `docs/server.md` (`/health`, job retention).
 
 ---
 
@@ -98,14 +56,14 @@ This file captures post-release candidates after `v1.7.0`. It is meant to be upd
 
 ---
 
-## 4. Sales pipeline automation / CRM glue
+## 4. Sales pipeline automation / CRM glue ⭐ recommended
 
 **Goal:** close the loop between `kz:autopilot` output and sales execution.
 
-**Why now:** sales kit exists, but tracking is manual Excel files.
+**Why now:** sales kit exists, but tracking is manual Excel files. Autopilot output is stable; next value is operator workflow, not more outreach DB tables.
 
 **Scope:**
-- Store outreach status per (BIN, tender) in DB instead of spreadsheets.
+- Track outreach status per (BIN, tender) in operator UI / lightweight CRM export — **not** a new Postgres outreach schema as the first step.
 - Add `kz:autopilot --digest-only` and `--outreach-only` modes.
 - Generate follow-up reminders based on last contact date.
 - Optional: webhook / CSV export to a CRM.
@@ -139,3 +97,5 @@ This file captures post-release candidates after `v1.7.0`. It is meant to be upd
 |------|----------|-----------|
 | 2026-06-17 | Archive cleanup recommended as next block | Pure tech debt, no product risk, unblocks all other increments. |
 | 2026-06-17 | Autopilot hardening split into PR #1 (lock/exit/summary) and PR #2 (retry/retention/health) | PR #1 не трогает api_jobs/server/migrations — быстрый и безопасный. PR #2 требует миграцию и UI-блок в /health. |
+| 2026-06-17 | v1.8.0 shipped archive cleanup + autopilot hardening (#25–#29) | Lock/exit/summary, health retention, enrich retry, outreach_seen ledger. |
+| 2026-06-17 | Sales pipeline / CRM glue recommended next | Autopilot stable; manual Excel tracking is the bottleneck. Defer Postgres outreach tables. |
