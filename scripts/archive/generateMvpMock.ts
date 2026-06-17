@@ -2,7 +2,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
-import { logger } from "../src/logger.js";
+import { logger } from "../../src/logger.js";
 
 interface MvpLead {
   company_name: string;

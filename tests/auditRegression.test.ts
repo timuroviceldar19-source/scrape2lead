@@ -3,14 +3,14 @@ import {
   classifyHealthGateError,
   classifyHealthGateSnapshot,
   type HealthGateSnapshot
-} from "../scripts/auditHealthGate.js";
+} from "../scripts/archive/auditHealthGate.js";
 import {
   classifyAuditRuntimeEnvironmentError,
   evaluateAuditMetrics,
   evaluateDetailEnvironment,
   type AuditDiagnosticsSummary,
   type AuditMetrics
-} from "../scripts/auditRegression.js";
+} from "../scripts/archive/auditRegression.js";
 
 function snapshot(overrides: Partial<HealthGateSnapshot>): HealthGateSnapshot {
   return {

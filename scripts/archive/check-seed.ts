@@ -1,4 +1,4 @@
-import { Storage } from "../src/storage/storage.js";
+import { Storage } from "../../src/storage/storage.js";
 
 const storage = new Storage("data/scrape2lead.db");
 const rows = storage.db.prepare(`

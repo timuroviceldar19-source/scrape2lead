@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
-import { calculateConfidenceScore, applyChannelBoost } from "../src/enrichment/scoring.js";
-import { runMigrations } from "../src/storage/migrations.js";
+import { calculateConfidenceScore, applyChannelBoost } from "../../src/enrichment/scoring.js";
+import { runMigrations } from "../../src/storage/migrations.js";
 
 const db = new Database("data/scrape2lead-kaspi.db");
 runMigrations(db);

@@ -1,13 +1,13 @@
 import "dotenv/config";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { AdapterRegistry } from "../src/adapters/registry.js";
-import { TwoGisAdapter } from "../src/adapters/2gis/TwoGisAdapter.js";
-import { BrowserSessionManager } from "../src/browser/browserSessionManager.js";
-import { loadConfig } from "../src/config/config.js";
-import { JobManager } from "../src/core/jobManager.js";
-import { Storage } from "../src/storage/storage.js";
-import type { Lead, RuntimeConfig } from "../src/types.js";
+import { AdapterRegistry } from "../../src/adapters/registry.js";
+import { TwoGisAdapter } from "../../src/adapters/2gis/TwoGisAdapter.js";
+import { BrowserSessionManager } from "../../src/browser/browserSessionManager.js";
+import { loadConfig } from "../../src/config/config.js";
+import { JobManager } from "../../src/core/jobManager.js";
+import { Storage } from "../../src/storage/storage.js";
+import type { Lead, RuntimeConfig } from "../../src/types.js";
 import {
   ENVIRONMENT_BLOCKED_EXIT_CODE,
   runAuditHealthGate,

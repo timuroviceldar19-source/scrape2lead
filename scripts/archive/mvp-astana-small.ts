@@ -2,15 +2,15 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
-import { AdapterRegistry } from "../src/adapters/registry.js";
-import { TwoGisAdapter } from "../src/adapters/2gis/index.js";
-import { BrowserSessionManager } from "../src/browser/browserSessionManager.js";
-import { loadConfig } from "../src/config/config.js";
-import { JobManager } from "../src/core/jobManager.js";
-import { logger } from "../src/logger.js";
-import { ProxyRotator } from "../src/proxy/proxyRotator.js";
-import { Storage } from "../src/storage/storage.js";
-import type { Lead, RuntimeConfig } from "../src/types.js";
+import { AdapterRegistry } from "../../src/adapters/registry.js";
+import { TwoGisAdapter } from "../../src/adapters/2gis/index.js";
+import { BrowserSessionManager } from "../../src/browser/browserSessionManager.js";
+import { loadConfig } from "../../src/config/config.js";
+import { JobManager } from "../../src/core/jobManager.js";
+import { logger } from "../../src/logger.js";
+import { ProxyRotator } from "../../src/proxy/proxyRotator.js";
+import { Storage } from "../../src/storage/storage.js";
+import type { Lead, RuntimeConfig } from "../../src/types.js";
 
 interface MvpLead {
   company_name: string;
