@@ -448,7 +448,7 @@ npm run kz:export -- --format xlsx --out exports/kz-report.xlsx
 | Contract | `ITenderSourceAdapter`, `IStatGovAdapter` |
 | E2E (manual) | login → 1 БИН → export (не в CI без секретов) |
 
-Целевой порог: ≥ 90% unit/integration pass; E2E — чеклист в `docs/manual-verification-playbook.md`.
+Целевой порог: ≥ 90% unit/integration pass; E2E — чеклист в `docs/kz-batch-runbook.md`.
 
 ---
 
