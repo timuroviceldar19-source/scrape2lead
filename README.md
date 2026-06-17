@@ -1,16 +1,46 @@
 # Scrape2Lead — KZ Company Intelligence
 
-TypeScript CLI for enriching **Kazakhstan companies by BIN**: stat.gov.kz legal data, goszakup registry contacts, and public procurement contracts — with optional **2GIS/Kaspi feeder** for phone/address leads.
+![Node](https://img.shields.io/badge/Node.js-%E2%89%A520-339933?logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)
+![Playwright](https://img.shields.io/badge/Playwright-Chromium-2EAD33?logo=playwright&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-better--sqlite3-003B57?logo=sqlite&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-vitest-6E9F18?logo=vitest&logoColor=white)
 
-**Product focus (v2):** CSV of BINs → enrich → scored XLSX for sales and tender monitoring.
+**Sales intelligence по госзакупкам Казахстана.** CSV с БИНами на входе — скоринговые Excel-отчёты и еженедельный аутрич-дайджест на выходе: юрданные stat.gov.kz, контакты из реестра goszakup, контракты поставщиков, телефоны из 2GIS.
 
-**Legacy layer (v1.7):** 2GIS/Kaspi scrape adapters, enrichment, proxy rotation — still in the repo as a feeder, not the primary acceptance path.
+| | |
+|---|---|
+| **Продукт (v2)** | БИНы → enrich → scored XLSX для продаж и мониторинга тендеров |
+| **Autopilot** | еженедельный дифф «новые победители + новые активные закупки» → файлы + Telegram |
+| **Feeder (v1.7)** | 2GIS/Kaspi-скрейп как источник телефонов и имён для BIN-backfill |
 
-Spec: [`docs/TZ_v2.md`](docs/TZ_v2.md) · Batch ops: [`docs/kz-batch-runbook.md`](docs/kz-batch-runbook.md)
+Spec: [`docs/TZ_v2.md`](docs/TZ_v2.md) · [Как работает конвейер](docs/pipeline-overview.md) · Batch ops: [`docs/kz-batch-runbook.md`](docs/kz-batch-runbook.md) · Sales kit: [`docs/sales-kit.md`](docs/sales-kit.md)
 
 ---
 
-## Quick start (KZ)
+## Пайплайн
+
+```mermaid
+flowchart LR
+  CSV[bins.csv] --> Enrich[kz enrich]
+  Enrich --> Stat[stat.gov.kz]
+  Enrich --> Reg[goszakup registry]
+  Enrich --> Contracts[goszakup contracts]
+  GIS[2GIS feeder] --> DB[(SQLite)]
+  Stat --> DB
+  Reg --> DB
+  Contracts --> DB
+  DB --> Score[A/B/C scoring]
+  Score --> XLSX[scored XLSX]
+  Score --> Auto[kz:autopilot]
+  Auto --> Winners[digest-winners.xlsx]
+  Auto --> Queue[outreach-queue.xlsx]
+  Auto --> TG[Telegram]
+```
+
+---
+
+## Quick start
 
 ```bash
 npm install
@@ -18,7 +48,7 @@ npx playwright install chromium
 cp .env.example .env
 ```
 
-Prepare `bins.csv` (one 12-digit BIN per line, header `bin` optional):
+`bins.csv` — по одному 12-значному БИНу на строку (заголовок `bin` опционален):
 
 ```text
 bin
@@ -27,12 +57,12 @@ bin
 ```
 
 ```bash
-npm run kz:login                              # stat.gov QR session (operator step)
+npm run kz:login                              # сессия stat.gov (QR или ЭЦП)
 npm run dev -- kz enrich bins.csv             # stat + registry + tenders
 npm run kz:export -- --bins bins.csv          # XLSX: Companies, Tenders, Summary, Errors
 ```
 
-Harvest TOO BINs from goszakup public registry:
+Собрать БИНы ТОО из публичного реестра goszakup:
 
 ```bash
 npm run kz:harvest -- 50 bins-batch-50.csv
@@ -40,39 +70,65 @@ npm run kz:harvest -- 50 bins-batch-50.csv
 
 ---
 
-## Data sources
+## Outreach Autopilot
 
-| Source | Role | Auth |
-|--------|------|------|
-| **stat.gov.kz** | Primary: name, OKED, director, address, registration | QR via egov mobile (`kz:login`) |
-| **goszakup registry** | Phone, email, website, participant ID | Public HTML (no token) |
-| **goszakup HTML** | Supplier **contracts** by BIN | Public site (Playwright) |
-| **goszakup API** | Tenders by BIN | `GOSZAKUP_TOKEN` (optional) |
-| **zakup.sk.kz** | Samruk-Kazyna lots by company name | Public (conservative filter) |
-| **2GIS / Kaspi** | Feeder: contacts + company names → BIN backfill | Public scrape |
+Одна команда раз в неделю: инкрементальный enrich → дифф «что нового с прошлого запуска» → два продающих артефакта → Telegram.
 
-Without `GOSZAKUP_TOKEN`, contracts still load via **goszakup HTML**; API tenders are skipped.
+```bash
+# Первый запуск — baseline: фиксирует текущее состояние, ничего не экспортирует
+npm run kz:autopilot
+
+# Еженедельный запуск с прогрессом и лимитом страниц goszakup
+npm run kz:autopilot -- --progress --max-pages 5
+
+# Дифф без браузера (для планировщика)
+npm run kz:autopilot -- --skip-enrich
+```
+
+| Артефакт | Что внутри | Для кого |
+|----------|-----------|----------|
+| `exports/digest-winners-<дата>.xlsx` | Свежие победители закупок: контракт, сумма, заказчик, телефон/email директора | Факторинг, банки, гарантии |
+| `exports/outreach-queue-<дата>.xlsx` | Top-A компании с новыми активными закупками + готовые WhatsApp-сообщения и `wa.me`-ссылки | Поставщики стройматериалов и услуг |
+
+Дедуп через `outreach_items`: пара (БИН, номер тендера) попадает в дайджест один раз. Telegram-бот (опционально, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`) присылает сводку, черновик письма и оба файла.
+
+Флаги: `--since <дата>` · `--dry-run` · `--skip-enrich` · `--progress` · `--max-pages <n>` · `--baseline` — подробности в [runbook, §6](docs/kz-batch-runbook.md).
 
 ---
 
-## KZ commands
+## Источники данных
 
-| Command | Description |
-|---------|-------------|
-| `npm run kz:login` | Save stat.gov session to `data/stat-gov-session.json` |
-| `npm run kz:enrich -- bins.csv` | Full enrich pipeline (same as `dev -- kz enrich`) |
-| `npm run kz:registry -- bins.csv` | goszakup public registry only |
-| `npm run kz:export -- --bins bins.csv` | KZ XLSX with lead scoring columns |
-| `npm run kz:export-top-a` | Sales slice: priority **A** from scored batch export |
-| `npm run kz:merge` | Write stat.gov fields back into `leads` table |
-| `npm run kz:export-unified` | Unified XLSX: 2GIS leads + KZ + scoring |
+| Источник | Роль | Auth |
+|----------|------|------|
+| **stat.gov.kz** | Primary: имя, ОКЭД, директор, адрес, регистрация | QR/ЭЦП-сессия (`kz:login`) |
+| **goszakup registry** | Телефон, email, сайт, participant ID | Публичный HTML |
+| **goszakup HTML** | **Контракты** поставщика по БИН | Публичный сайт (Playwright) |
+| **goszakup API** | Тендеры по БИН | `GOSZAKUP_TOKEN` (опционально) |
+| **zakup.sk.kz** | Лоты Самрук-Казына по имени | Публичный (консервативный фильтр) |
+| **2GIS / Kaspi** | Feeder: контакты + имена → BIN backfill | Публичный скрейп |
+
+Без `GOSZAKUP_TOKEN` контракты всё равно собираются через goszakup HTML; API-тендеры пропускаются.
+
+---
+
+## Команды
+
+| Команда | Описание |
+|---------|----------|
+| `npm run kz:login` | Сессия stat.gov → `data/stat-gov-session.json` |
+| `npm run kz:enrich -- bins.csv` | Полный enrich-пайплайн |
+| `npm run kz:autopilot` | **Еженедельный аутрич-дайджест** (см. выше) |
+| `npm run kz:registry -- bins.csv` | Только публичный реестр goszakup |
+| `npm run kz:export -- --bins bins.csv` | KZ XLSX со скорингом |
+| `npm run kz:export-sales-top-a` | Sales-срез: Top-A с контактами в один лист |
+| `npm run kz:export-unified` | Unified XLSX: 2GIS-лиды + KZ + скоринг |
 | `npm run kz:feeder-top-a -- bins.csv` | Top-A feeder: 2GIS → backfill BIN → enrich → unified |
-| `npm run kz:audit -- bins.csv` | Quality audit workbook (zakup heuristics) |
-| `npm run kz:harvest -- N out.csv` | Harvest TOO BINs from goszakup registry |
+| `npm run kz:audit -- bins.csv` | Аудит качества (эвристики zakup) |
+| `npm run kz:harvest -- N out.csv` | Сбор БИНов ТОО из реестра goszakup |
 
-CLI equivalents: `npm run dev -- kz login|enrich|export|merge|export-unified …`
+CLI-эквиваленты: `npm run dev -- kz login|enrich|export|merge|export-unified …`
 
-### Enrich flags (partial reruns)
+### Частичные перезапуски enrich
 
 ```bash
 npm run dev -- kz enrich bins.csv --skip-stat
@@ -86,32 +142,33 @@ npm run dev -- kz enrich bins.csv --force-refresh --delay-ms 2000
 ```bash
 npm run dev -- kz merge
 npm run dev -- kz export-unified --priority A --out exports/unified.xlsx
-npm run dev -- kz export-unified --enrich-missing --priority A   # auto-enrich lead BINs first
+npm run dev -- kz export-unified --enrich-missing --priority A
 ```
 
-Leads sheet includes **2GIS phone/address** when matched by BIN or fuzzy name.
-
-### Top-A feeder (2GIS → sales file)
+### Top-A feeder (2GIS → sales-файл)
 
 ```bash
-cp config.feeder.example.json config.feeder.json   # local config, not committed
-npm run kz:feeder-top-a -- bins-batch-100.csv
-# --skip-2gis  --config path  --out exports/foo.xlsx
+cp config.feeder.example.json config.feeder.json
+cp config.feeder.astana.example.json config.feeder.astana.json
+
+npm run kz:feeder-top-a -- bins-batch-100.csv \
+  --config config.feeder.json \
+  --config config.feeder.astana.json
 ```
 
-Uses `data/scrape2lead.db` by default (`KZ_DATABASE_PATH` to override).
+Feeder: top-A extract → 2GIS scrape → batch BIN backfill → enrich → merge → unified export. БД по умолчанию `data/scrape2lead.db` (`KZ_DATABASE_PATH` для переопределения).
 
 ---
 
-## Exports
+## Скоринг
 
-| File | Contents |
-|------|----------|
-| KZ export (`kz:export`) | Companies + Tenders + Summary + Errors; scoring columns (`Приоритет лида`, `High volume`, `Stat missing`) |
-| Unified export | **Leads** (2GIS contacts + KZ match) + Tenders + Summary + Errors |
-| Top-A slice (`kz:export-top-a`) | Priority A companies sorted by active contract budget |
+Приоритет считается по активным закупкам компании (`src/kz/kzLeadScore.ts`):
 
-Runtime output: `exports/` (gitignored).
+| Приоритет | Критерий (любой) |
+|-----------|------------------|
+| **A** | ≥10 активных · бюджет активных ≥ 50 млн ₸ · ≥5 активных и ≥10 млн ₸ |
+| **B** | ≥3 активных · бюджет ≥ 1 млн ₸ · ≥20 закупок всего |
+| **C** | Есть закупки, но ниже порогов B |
 
 ---
 
@@ -119,82 +176,79 @@ Runtime output: `exports/` (gitignored).
 
 ```bash
 npm run build
-npm test
-npm run lint
-npm run dev -- --help
-npm run dev -- kz --help
+npm test          # вся сюита
+npm run lint      # tsc --noEmit
+npx vitest run tests/kz
 ```
 
-KZ tests: `npx vitest run tests/kz`
-
-Requirements: Node.js ≥ 20, npm ≥ 9, Playwright Chromium.
+Требования: Node.js ≥ 20, npm ≥ 9, Playwright Chromium.
 
 ---
 
-## Environment variables
+## Переменные окружения
 
-Copy `.env.example` → `.env`.
+Скопируй `.env.example` → `.env`.
 
-| Variable | Description |
-|----------|-------------|
-| `GOSZAKUP_TOKEN` | Bearer token for goszakup OWS API (optional) |
-| `STAT_GOV_SESSION_PATH` | stat.gov session file (default: `data/stat-gov-session.json`) |
-| `STAT_GOV_CACHE_TTL_DAYS` | stat.gov cache TTL (default: 7) |
-| `KZ_ENRICH_DELAY_MS` | Pause between BINs (default: 2000) |
-| `GOSZAKUP_REGISTRY_CACHE_TTL_DAYS` | Registry cache TTL (default: 7) |
-| `KZ_DATABASE_PATH` | SQLite path for KZ/feeder (default: `data/scrape2lead.db`) |
-| `STORAGE_BACKEND` | `sqlite` (default) or `postgres` |
-| `POSTGRES_CONNECTION_STRING` | Required when `STORAGE_BACKEND=postgres` |
-| `PROXY_*` | Optional proxy rotation for 2GIS/Kaspi scrape |
+| Переменная | Описание |
+|-----------|----------|
+| `GOSZAKUP_TOKEN` | Bearer-токен goszakup OWS API (опционально) |
+| `GOSZAKUP_HTML_MAX_PAGES` | Лимит страниц goszakup HTML на БИН (default: 50; CLI `--max-pages` приоритетнее) |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Уведомления автопилота (опционально) |
+| `STAT_GOV_SESSION_PATH` | Файл сессии stat.gov (default: `data/stat-gov-session.json`) |
+| `STAT_GOV_CACHE_TTL_DAYS` | TTL кэша stat.gov (default: 7) |
+| `GOSZAKUP_REGISTRY_CACHE_TTL_DAYS` | TTL кэша реестра (default: 7) |
+| `KZ_ENRICH_DELAY_MS` | Пауза между БИНами (default: 2000) |
+| `KZ_DATABASE_PATH` | SQLite для KZ/feeder (default: `data/scrape2lead.db`) |
+| `STORAGE_BACKEND` | `sqlite` (default) или `postgres` |
+| `POSTGRES_CONNECTION_STRING` | Обязательна при `STORAGE_BACKEND=postgres` |
+| `PROXY_*` | Ротация прокси для 2GIS/Kaspi |
 
-Session files and tokens stay in `data/` / `.env` — never commit them.
+Сессии и токены живут в `data/` и `.env` — в git не попадают.
 
 ---
 
 ## Legacy: 2GIS / Kaspi scrape (v1.7)
 
-Platform core: adapter contract, JobManager, normalizer, proxy rotator, telemetry, SQLite/Postgres storage.
+Ядро платформы: адаптеры источников, JobManager, нормализатор, ротация прокси, телеметрия, SQLite/Postgres.
 
 ```bash
 cp config.example.json config.json
 npm run dev -- --config config.json --geo "Алматы" --category "Автосервисы" --limit 25
-```
 
-Fixture mode (no network):
-
-```bash
+# Fixture-режим (без сети)
 npm run dev -- --fixture tests/fixtures/2gis-response.json \
                --geo astana --category autoservice --limit 10
 ```
 
-2GIS remains useful as a **feeder** (phones + names) merged with KZ data via `kz:merge` and `kz:export-unified`. See [`docs/prompts/gpt-stage5-2gis-leads.md`](docs/prompts/gpt-stage5-2gis-leads.md).
+2GIS остаётся полезен как **feeder** (телефоны + имена), мерджится с KZ-данными через `kz:merge` и `kz:export-unified`.
 
 ---
 
-## Project layout
+## Структура проекта
 
 ```
 src/
-  kz/           stat.gov, goszakup, zakup collectors, scoring, unified export
-  adapters/     2GIS, Kaspi source adapters
-  enrichment/   contact enrichment and lead scoring (legacy)
-  storage/      SQLite migrations + Postgres backend
-  export/       CSV/XLSX helpers
-  core/         JobManager, rate limiter, telemetry
-  cli.ts        Main CLI + `kz` subcommands
-scripts/        Collectors, feeder, harvest, smoke tests
-docs/           TZ v2, runbooks, stage prompts
-data/           SQLite DBs, sessions (runtime, gitignored)
-exports/        XLSX/CSV output (runtime, gitignored)
+  kz/           коллекторы stat.gov/goszakup/zakup, скоринг, экспортёры, autopilot-модули
+  adapters/     адаптеры 2GIS, Kaspi
+  enrichment/   обогащение контактов и lead scoring (legacy)
+  storage/      миграции SQLite + Postgres backend
+  export/       CSV/XLSX-хелперы
+  core/         JobManager, rate limiter, телеметрия
+  cli.ts        CLI + `kz` сабкоманды
+scripts/        коллекторы, feeder, harvest, autopilot, smoke-тесты
+docs/           TZ v2, runbooks, sales kit, шаблоны сообщений
+data/           SQLite, сессии (runtime, gitignored)
+exports/        XLSX/CSV (runtime, gitignored)
 ```
 
 ---
 
-## Documentation map
+## Документация
 
-| Doc | Purpose |
-|-----|---------|
-| [`docs/TZ_v2.md`](docs/TZ_v2.md) | Full spec: sources, schema, acceptance criteria |
-| [`docs/kz-batch-runbook.md`](docs/kz-batch-runbook.md) | 50–100 BIN batch, audit, quality gates |
-| [`docs/TENDERS.md`](docs/TENDERS.md) | goszakup HTML contracts vs announces |
-| `scrape2lead_tz_v1.7.md` | Original 2GIS platform spec (archived priority) |
+| Документ | Назначение |
+|----------|-----------|
+| [`docs/TZ_v2.md`](docs/TZ_v2.md) | Полная спека: источники, схема, критерии приёмки |
+| [`docs/kz-batch-runbook.md`](docs/kz-batch-runbook.md) | Batch 50–100 БИН, аудит, autopilot, планировщик |
+| [`docs/sales-kit.md`](docs/sales-kit.md) | Скрипты продаж, сегменты, цены |
+| [`docs/whatsapp-messages.md`](docs/whatsapp-messages.md) | Готовые сообщения для аутрича |
+| [`docs/TENDERS.md`](docs/TENDERS.md) | goszakup HTML: контракты vs объявления |

@@ -19,6 +19,34 @@ function readConfigArg(argv: string[]): string | undefined {
   return undefined;
 }
 
+/**
+ * Mirrors `parseDelayMsOption` in src/cli.ts. Kept in the test file so importing
+ * the test does not pull in the CLI's top-level `program.parse(process.argv)` call.
+ */
+function parseDelayMsOption(value: string | undefined, fallback = 2000): number {
+  if (value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  return fallback;
+}
+
+describe("parseDelayMsOption (CLI --delay-ms parser)", () => {
+  it("preserves zero", () => {
+    expect(parseDelayMsOption("0")).toBe(0);
+  });
+
+  it("falls back for invalid or empty values", () => {
+    expect(parseDelayMsOption(undefined)).toBe(2000);
+    expect(parseDelayMsOption("")).toBe(2000);
+    expect(parseDelayMsOption("abc")).toBe(2000);
+    expect(parseDelayMsOption("-1")).toBe(2000);
+  });
+
+  it("accepts positive integers", () => {
+    expect(parseDelayMsOption("500")).toBe(500);
+  });
+});
+
 describe("readConfigArg (CLI argv parser for --config / -c)", () => {
   it("returns the path after --config", () => {
     expect(readConfigArg(["node", "cli.ts", "--config", "a.json"])).toBe("a.json");

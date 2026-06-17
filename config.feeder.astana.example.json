@@ -1,0 +1,20 @@
+{
+  "source": "2gis",
+  "geo": "Астана",
+  "categories": [
+    "Строительные компании",
+    "Строительные материалы",
+    "Проектирование зданий"
+  ],
+  "limit": 35,
+  "databasePath": "data/scrape2lead.db",
+  "exportDir": "exports",
+  "delayRangeMs": [3000, 6000],
+  "rotateEveryN": 50,
+  "maxRetries": 3,
+  "concurrency": 1,
+  "headless": true,
+  "rawSnapshotDir": "raw_snapshots",
+  "twoGisBaseUrl": "https://2gis.kz",
+  "storageBackend": "sqlite"
+}

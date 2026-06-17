@@ -22,6 +22,13 @@ import { exportKzReport } from "./kz/kzExporter.js";
 import { exportUnifiedReport } from "./kz/unifiedExporter.js";
 import { mergeStatGovData } from "../scripts/merge-stat-gov-data.js";
 
+function parseDelayMsOption(value: string | undefined, fallback = 2000): number {
+  if (value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  return fallback;
+}
+
 const program = new Command();
 
 program
@@ -83,7 +90,7 @@ kz
       skipGoszakupRegistry: Boolean(options.skipGoszakupRegistry),
       skipGoszakupHtml: Boolean(options.skipGoszakupHtml),
       registryOnly: Boolean(options.registryOnly),
-      delayMs: Number(options.delayMs) || 2000,
+      delayMs: parseDelayMsOption(options.delayMs),
       forceRefresh: Boolean(options.forceRefresh),
       goszakupActiveOnly: Boolean(options.goszakupActiveOnly),
       goszakupMaxPages: Number(options.goszakupMaxPages) || 20,
@@ -125,7 +132,7 @@ kz
       enrichMissing: options.enrichMissing
     });
     console.log(`kz export-unified: ${result.xlsxPath}`);
-    console.log(`leads=${result.leads} tenders=${result.tenders} errors=${result.errors}`);
+    console.log(`leads=${result.leads} kz_only=${result.kzOnly} tenders=${result.tenders} errors=${result.errors}`);
     console.log(`merge: total=${result.mergeStats.total_leads} with_bin=${result.mergeStats.with_bin} exact=${result.mergeStats.matched_exact} fuzzy_stat=${result.mergeStats.matched_fuzzy_stat} fuzzy_reg=${result.mergeStats.matched_fuzzy_registry} unmatched=${result.mergeStats.unmatched} with_tenders=${result.mergeStats.with_tenders}`);
   });
 
@@ -153,7 +160,7 @@ kz
     const bins = readBinsFromCsv(csvFile);
     const { collectGoszakupRegistryForBins } = await import("./kz/goszakupRegistryCollector.js");
     const stats = await collectGoszakupRegistryForBins(bins, {
-      delayMs: Number(options.delayMs) || 2000,
+      delayMs: parseDelayMsOption(options.delayMs),
       forceRefresh: Boolean(options.forceRefresh),
       headless: Boolean(options.headless)
     });

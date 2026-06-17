@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { exportUnifiedReport } from "../../src/kz/unifiedExporter.js";
+import { exportUnifiedReport, groupMatchesByKzBin, selectKzOnlyCards } from "../../src/kz/unifiedExporter.js";
 import { formatLeadPhone } from "../../src/kz/leadKzMerge.js";
 import { mergeLeadsWithKz } from "../../src/kz/leadKzMerge.js";
 import { scoreCompanyCards } from "../../src/kz/kzLeadScore.js";
@@ -32,7 +32,7 @@ describe("unifiedExporter", () => {
     db.prepare("INSERT INTO stat_gov_data (bin, name, registration_date, oked, oked_name, address, director, legal_status, krp_code, krp_name, kfs_code, kfs_name, sector_code, sector_name, updated_at, raw_snapshot_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run("990940012345", "ТОО BETA", "2015-03-20", "62010", "Software", "Astana", "Petrov", "active", null, null, null, "ТОО", null, null, "2026-01-01", null);
 
     db.prepare("INSERT INTO tender_data (source, bin, tender_number, tender_name, customer_name, budget_amount, currency, start_date, end_date, status, method, url, parsed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run("goszakup.gov.kz", "061040006408", "T-001", "Test tender 1", "Customer A", "1000000", "KZT", "2026-01-01", "2026-12-31", "Опубликована", "auction", null, "2026-01-01");
-    db.prepare("INSERT INTO tender_data (source, bin, tender_number, tender_name, customer_name, budget_amount, currency, start_date, end_date, status, method, url, parsed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run("goszakup.gov.kz", "061040006408", "T-002", "Test tender 2", "Customer B", "2000000", "KZT", "2026-02-01", "2026-11-30", "Исполнен", "contest", null, "2026-02-01");
+    db.prepare("INSERT INTO tender_data (source, bin, tender_number, tender_name, customer_name, budget_amount, currency, start_date, end_date, status, method, url, parsed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run("goszakup.gov.kz", "990940012345", "T-003", "Beta tender", "Customer C", "500000", "KZT", "2026-03-01", "2026-10-31", "Опубликована", "contest", null, "2026-03-01");
 
     storage.close();
   });
@@ -55,7 +55,7 @@ describe("unifiedExporter", () => {
     expect(result.mergeStats.matched_exact).toBe(1);
     expect(result.mergeStats.matched_fuzzy_stat).toBe(1);
     expect(result.mergeStats.unmatched).toBe(0);
-    expect(result.mergeStats.with_tenders).toBe(1);
+    expect(result.mergeStats.with_tenders).toBe(2);
 
     expect(fs.existsSync(TEST_XLSX_PATH)).toBe(true);
 
@@ -76,5 +76,93 @@ describe("unifiedExporter", () => {
     });
 
     expect(result.leads).toBeGreaterThanOrEqual(0);
+  });
+
+  it("adds KZ-only sheet for batch bins", async () => {
+    const result = await exportUnifiedReport({
+      databasePath: TEST_DB_PATH,
+      outPath: TEST_XLSX_PATH,
+      bins: ["061040006408", "990940012345"]
+    });
+
+    expect(result.kzOnly).toBe(2);
+
+    const ExcelJS = (await import("exceljs")).default;
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(TEST_XLSX_PATH);
+    const kzOnly = workbook.getWorksheet("KZ-only");
+    expect(kzOnly).toBeDefined();
+    expect(kzOnly?.rowCount).toBe(3);
+    expect(kzOnly?.getRow(2).getCell(4).value).toBe("061040006408");
+  });
+
+  it("selectKzOnlyCards filters by priority", () => {
+    const cards = scoreCompanyCards([
+      {
+        bin: "1",
+        name: "A-co",
+        registration_date: null,
+        oked: null,
+        oked_name: null,
+        address: null,
+        director: null,
+        legal_status: "active",
+        krp_code: null,
+        krp_name: null,
+        kfs_code: null,
+        kfs_name: null,
+        sector_code: null,
+        sector_name: null,
+        tender_count_total: 100,
+        tender_count_active: 20,
+        tender_budget_sum: 100,
+        tender_active_budget_sum: 100,
+        tender_sources: "goszakup.gov.kz",
+        last_tender_end_date: null,
+        stat_missing: false
+      },
+      {
+        bin: "2",
+        name: "B-co",
+        registration_date: null,
+        oked: null,
+        oked_name: null,
+        address: null,
+        director: null,
+        legal_status: "active",
+        krp_code: null,
+        krp_name: null,
+        kfs_code: null,
+        kfs_name: null,
+        sector_code: null,
+        sector_name: null,
+        tender_count_total: 1,
+        tender_count_active: 0,
+        tender_budget_sum: 0,
+        tender_active_budget_sum: 0,
+        tender_sources: "goszakup.gov.kz",
+        last_tender_end_date: null,
+        stat_missing: false
+      }
+    ]);
+
+    const selected = selectKzOnlyCards(cards, "A", ["1", "2"]);
+    expect(selected).toHaveLength(1);
+    expect(selected[0].bin).toBe("1");
+  });
+
+  it("groupMatchesByKzBin groups matched leads by kz bin", () => {
+    const grouped = groupMatchesByKzBin([
+      {
+        source: "2gis",
+        external_id: "1",
+        company_name: "A",
+        bin: "061040006408",
+        kz_bin: "061040006408",
+        match_type: "exact_bin",
+        match_score: 1
+      } as never
+    ]);
+    expect(grouped.get("061040006408")).toHaveLength(1);
   });
 });

@@ -187,7 +187,7 @@ async function main() {
     console.log("\nUsage:");
     console.log("  npm run operator:intake -- --parse-text \"raw text or file.txt\"");
     console.log("  npm run operator:intake -- --append '{\"company_name\": \"...\", \"phone\": \"...\", \"source_url\": \"...\"}'");
-    console.log("\nSee docs/operator-intake.md for detailed instructions.");
+    console.log("\nOperator intake: npm run operator:intake -- --help");
   }
 }
 

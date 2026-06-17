@@ -338,6 +338,77 @@ const migrations: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_goszakup_registry_participant ON goszakup_registry_data(participant_id);
     `
+  },
+  {
+    version: 14,
+    sql: `
+      CREATE TABLE IF NOT EXISTS outreach_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        stats_json TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS outreach_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER NOT NULL REFERENCES outreach_runs(id),
+        bin TEXT NOT NULL,
+        tender_number TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('winner', 'prospect')),
+        created_at TEXT NOT NULL,
+        UNIQUE(bin, tender_number, kind)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_outreach_items_kind_bin ON outreach_items(kind, bin);
+    `
+  },
+  {
+    version: 15,
+    sql: `
+      CREATE TABLE IF NOT EXISTS api_jobs (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        command TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        pid INTEGER,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        exit_code INTEGER,
+        signal TEXT,
+        error TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_api_jobs_status_created
+        ON api_jobs (status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS api_job_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL REFERENCES api_jobs(id) ON DELETE CASCADE,
+        stream TEXT NOT NULL,
+        line TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_api_job_logs_job_id
+        ON api_job_logs (job_id, id ASC);
+
+      CREATE TABLE IF NOT EXISTS api_job_artifacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL REFERENCES api_jobs(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_api_job_artifacts_job_id
+        ON api_job_artifacts (job_id);
+    `
   }
 ];
 

@@ -12,6 +12,7 @@ export interface RegistryCollectOptions {
   debugDir?: string;
   forceRefresh?: boolean;
   cacheTtlDays?: number;
+  onProgress?: (index: number, total: number, bin: string) => void;
 }
 
 export interface RegistryCollectStats {
@@ -41,7 +42,10 @@ export async function collectGoszakupRegistryForBins(
   let page: Page | null = null;
 
   try {
+    let index = 0;
     for (const bin of bins) {
+      index++;
+      options.onProgress?.(index, bins.length, bin);
       if (!isValidBin(bin)) {
         console.warn(`registry: skip invalid BIN ${bin}`);
         stats.skipped++;

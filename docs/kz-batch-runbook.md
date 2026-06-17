@@ -131,7 +131,64 @@ BIN | company | tenders | manual_ok | comment
 
 ---
 
-## 6. Чеклист после batch
+## 6. Outreach Autopilot (еженедельный дифф)
+
+Одна команда: инкрементальный enrich (skip zakup) → дифф «что нового с прошлого запуска» → два XLSX → уведомление в Telegram.
+
+```bash
+# Первый запуск — baseline: фиксирует текущее состояние, ничего не экспортирует
+npm run kz:autopilot
+
+# Либо сразу с точкой отсчёта (экспортирует контракты/закупки с даты)
+npm run kz:autopilot -- --since 2026-06-01
+
+# Обычный еженедельный запуск (с прогрессом и лимитом страниц goszakup)
+npm run kz:autopilot -- --progress --max-pages 5
+
+# Посмотреть без записи в БД и без Telegram
+npm run kz:autopilot -- --dry-run --skip-enrich
+```
+
+Флаги: `--batch-csv` (default `bins-batch.csv`), `--top-a-csv` (default `bins-top-a.csv`), `--out-dir` (default `exports`), `--since <ISO|dd.mm.yyyy>`, `--dry-run`, `--skip-enrich`, `--progress` (по-БИНовый лог этапов enrich: `enrich [stat.gov] 7/40 BIN=... elapsed=4m12s` + полная сводка), `--max-pages <n>` (лимит страниц goszakup на БИН; приоритет над env `GOSZAKUP_HTML_MAX_PAGES`, default 50), `--baseline` (принудительно зафиксировать весь текущий дифф в `outreach_items` без экспорта).
+
+**Важно:** если первый боевой запуск делался с `--since`, история до этой даты осталась незафиксированной — следующий обычный запуск вывалит её всю в дайджест. Лечится одним запуском `npm run kz:autopilot -- --skip-enrich --baseline`.
+
+Без `--max-pages` полный enrich может идти часами: goszakup HTML обходит до 50 страниц × 3 списка на каждый БИН. Для еженедельного диффа достаточно `--max-pages 5` (250 свежих записей на список).
+
+Артефакты:
+- `exports/digest-winners-<дата>.xlsx` — свежие победители (контракты supplier-side) с контактами. Продукт для факторинга/банков (сегмент 2).
+- `exports/outreach-queue-<дата>.xlsx` — Top-A компании с новыми активными закупками + готовые WhatsApp-сообщения и `wa.me`-ссылки (сегмент 1).
+
+Telegram: задать `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` в `.env` — бот пришлёт сводку, черновик письма для факторинга и оба файла. Без env — просто warning в консоли.
+
+Дедуп: пары (БИН, номер тендера) пишутся в `outreach_items`, второй раз в дайджест не попадают.
+
+### Еженедельный запуск (Windows Task Scheduler)
+
+Enrich открывает **видимый** браузер (stat.gov работает с `headless: false`) — в неинтерактивной сессии планировщика он не взлетит. Поэтому два варианта:
+
+**Рекомендуется — разнести enrich и дифф:**
+
+```powershell
+# Дифф без браузера — можно запускать в любой сессии
+schtasks /Create /TN "kz-autopilot-diff" /SC WEEKLY /D MON /ST 08:00 `
+  /TR "cmd /c cd /d C:\Users\Madara\Desktop\Scrapper && npm run kz:autopilot -- --skip-enrich >> logs\autopilot.log 2>&1"
+```
+
+Enrich при этом запускай руками накануне (`npm run kz:enrich -- bins-top-a.csv` или `npm run kz:autopilot -- --progress --max-pages 5 --dry-run`), либо отдельной задачей с опцией **"Run only when user is logged on"**.
+
+**Либо одной задачей** — тогда обязательно "Run only when user is logged on":
+
+```powershell
+schtasks /Create /TN "kz-autopilot" /SC WEEKLY /D MON /ST 08:00 /IT `
+  /TR "cmd /c cd /d C:\Users\Madara\Desktop\Scrapper && npm run kz:autopilot -- --max-pages 5 >> logs\autopilot.log 2>&1"
+```
+
+Перед стартом убедись, что сессия stat.gov свежая (`npm run kz:login`) — иначе autopilot продолжит на данных из базы и добавит warning в Telegram.
+
+---
+
+## 7. Чеклист после batch
 
 - [ ] `kz enrich` завершился без критических ошибок
 - [ ] `kz:export` — XLSX для клиента/анализа

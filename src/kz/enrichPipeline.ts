@@ -21,6 +21,7 @@ export interface KzEnrichOptions {
   goszakupActiveOnly?: boolean;
   goszakupMaxPages?: number;
   zakupMaxRetries?: number;
+  onProgress?: (stage: string, index: number, total: number, bin: string) => void;
 }
 
 export interface KzEnrichResult {
@@ -45,7 +46,8 @@ export async function runKzEnrich(options: KzEnrichOptions): Promise<KzEnrichRes
     stat = await collectStatGovForBins(bins, {
       databasePath: options.databasePath,
       delayMs: options.delayMs,
-      forceRefresh: options.forceRefresh
+      forceRefresh: options.forceRefresh,
+      onProgress: (index, total, bin) => options.onProgress?.("stat.gov", index, total, bin)
     });
   }
 
@@ -53,7 +55,8 @@ export async function runKzEnrich(options: KzEnrichOptions): Promise<KzEnrichRes
     registry = await collectGoszakupRegistryForBins(bins, {
       databasePath: options.databasePath,
       delayMs: options.delayMs,
-      forceRefresh: options.registryForceRefresh ?? options.forceRefresh
+      forceRefresh: options.registryForceRefresh ?? options.forceRefresh,
+      onProgress: (index, total, bin) => options.onProgress?.("registry", index, total, bin)
     });
   }
 
@@ -65,7 +68,8 @@ export async function runKzEnrich(options: KzEnrichOptions): Promise<KzEnrichRes
       skipGoszakupHtml: options.skipGoszakupHtml,
       goszakupActiveOnly: options.goszakupActiveOnly,
       goszakupMaxPages: options.goszakupMaxPages,
-      zakupMaxRetries: options.zakupMaxRetries
+      zakupMaxRetries: options.zakupMaxRetries,
+      onProgress: (stage, index, total, bin) => options.onProgress?.(stage, index, total, bin)
     });
   }
 
