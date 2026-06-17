@@ -276,7 +276,7 @@ export function pickUniqueWinnersByBin(winners: OutreachWinner[], limit: number)
     .slice(0, limit);
 }
 
-/** Последние контракты goszakup по БИНам — для первого поста в канале, если diff пуст. */
+/** Последние контракты goszakup по БИНам — для fallback-дайджеста, если diff пуст. */
 export function loadRecentGoszakupWinners(
   db: Database.Database,
   bins: string[],
