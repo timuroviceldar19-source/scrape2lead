@@ -31,7 +31,9 @@ const WINNER_COLUMNS = [
   { header: "Заказчик", key: "customer_name", width: 40 },
   { header: "Сумма, ₸", key: "amount", width: 18 },
   { header: "Дата", key: "contract_date", width: 14 },
-  { header: "Статус", key: "status", width: 18 },
+  { header: "Статус контракта", key: "status", width: 18 },
+  { header: "CRM-статус", key: "crm_status", width: 16 },
+  { header: "CRM-заметка", key: "crm_note", width: 30 },
   { header: "Телефон", key: "phone", width: 22 },
   { header: "Email", key: "email", width: 28 },
   { header: "Телефон (2GIS)", key: "gis_phone", width: 22 },
@@ -55,8 +57,8 @@ const QUEUE_COLUMNS = [
   { header: "Сообщение: первое касание", key: "message_first_touch", width: 60 },
   { header: "Сообщение: фоллоу-ап", key: "message_followup", width: 60 },
   { header: "WhatsApp", key: "wa_link", width: 40 },
-  { header: "Статус", key: "status", width: 16 },
-  { header: "Заметка", key: "note", width: 30 }
+  { header: "CRM-статус", key: "crm_status", width: 16 },
+  { header: "CRM-заметка", key: "crm_note", width: 30 }
 ];
 
 export async function exportWinnersDigest(
@@ -77,6 +79,8 @@ export async function exportWinnersDigest(
     amount: winner.amount,
     contract_date: winner.contract_date ?? "",
     status: winner.status ?? "",
+    crm_status: winner.crm_status,
+    crm_note: winner.crm_note ?? "",
     phone: winner.phone ?? "",
     email: winner.email ?? "",
     gis_phone: winner.gis_phone,
@@ -128,8 +132,8 @@ export async function exportOutreachQueue(
       message_first_touch: firstTouch,
       message_followup: followUp,
       wa_link: buildWaLink(phone, firstTouch) ?? "",
-      status: "",
-      note: ""
+      crm_status: prospect.crm_status,
+      crm_note: prospect.crm_note ?? ""
     };
   });
 

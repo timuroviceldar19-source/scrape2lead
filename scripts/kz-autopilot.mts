@@ -44,6 +44,7 @@ interface AutopilotArgs {
   enrichRetries: number;
   enrichRetryBaseMs: number;
   enrichDeadlineMs: number | null;
+  includeClosed: boolean;
 }
 
 interface RunSummary {
@@ -67,6 +68,7 @@ interface RunSummary {
   enrichBatchError: string | null;
   enrichRetryAttempts: number;
   enrichFailedBins: string[];
+  includeClosed: boolean;
 }
 
 function exitReasonForCode(code: number): string {
@@ -101,7 +103,8 @@ function makeInitialSummary(startedAt: string, args: AutopilotArgs): RunSummary 
     enrichMode: null,
     enrichBatchError: null,
     enrichRetryAttempts: 0,
-    enrichFailedBins: []
+    enrichFailedBins: [],
+    includeClosed: args.includeClosed
   };
 }
 
@@ -172,7 +175,8 @@ function parseArgs(argv: string[]): AutopilotArgs {
     baseline: argv.includes("--baseline"),
     enrichRetries,
     enrichRetryBaseMs,
-    enrichDeadlineMs
+    enrichDeadlineMs,
+    includeClosed: argv.includes("--include-closed")
   };
 }
 
@@ -250,6 +254,7 @@ async function runPipeline(args: AutopilotArgs, summary: RunSummary, startedAtMs
   }
   console.log(
     `autopilot: ${bins.length} БИНов, dry-run=${args.dryRun}, since=${args.since ?? "-"}, `
+    + `include-closed=${args.includeClosed}, `
     + `max-pages=${args.maxPages ?? process.env.GOSZAKUP_HTML_MAX_PAGES ?? 50}`
   );
 
@@ -316,7 +321,11 @@ async function runPipeline(args: AutopilotArgs, summary: RunSummary, startedAtMs
 
     let diff;
     try {
-      diff = computeOutreachDiff(db, { bins, since: args.since ?? undefined });
+      diff = computeOutreachDiff(db, {
+        bins,
+        since: args.since ?? undefined,
+        includeClosed: args.includeClosed
+      });
     } catch (err) {
       process.exitCode = EXIT_DB_ERROR;
       throw err;

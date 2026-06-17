@@ -17,7 +17,9 @@ function winner(bin: string, amount: number, name: string): OutreachWinner {
     amount_raw: String(amount),
     contract_date: null,
     status: null,
-    url: null
+    url: null,
+    crm_status: "new",
+    crm_note: null
   };
 }
 

@@ -143,7 +143,7 @@ curl -X POST http://127.0.0.1:8787/api/v1/jobs/kz-autopilot \
   -d "{\"skipEnrich\":true,\"dryRun\":true,\"maxPages\":5}"
 ```
 
-Разрешённые поля: `batchCsv`, `topACsv`, `outDir`, `dryRun`, `since`, `skipEnrich`, `progress`, `maxPages`, `baseline`.
+Разрешённые поля: `batchCsv`, `topACsv`, `outDir`, `dryRun`, `since`, `skipEnrich`, `progress`, `maxPages`, `baseline`, `includeClosed`.
 
 ### Jobs
 

@@ -483,6 +483,17 @@ describe("scrape2lead API server", () => {
     expect(invocation.args).not.toContain("--channel-niche");
   });
 
+  it("builds kz-autopilot with --include-closed when includeClosed is true", () => {
+    const cwd = process.cwd();
+    const invocation = buildJobInvocation(
+      "kz-autopilot",
+      { includeClosed: true },
+      "job-include-closed",
+      cwd
+    );
+    expect(invocation.args).toContain("--include-closed");
+  });
+
   it("kz-export without out writes to SCRAPE2LEAD_EXPORT_DIR and registers a downloadable artifact", async () => {
     const exportDir = fs.mkdtempSync(path.join(os.tmpdir(), "scrape2lead-export-"));
     const runner = new FakeRunner();

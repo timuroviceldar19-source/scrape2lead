@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { KzStorage } from "./kzStorage.js";
 import { scoreCompanyCards, type ScoredCompanyCard } from "./kzLeadScore.js";
 import { formatLeadPhone, mergeLeadsWithKz, type LeadKzMatch } from "./leadKzMerge.js";
+import type { OutreachCrmStatus } from "./outreachStatus.js";
 import { groupMatchesByKzBin } from "./unifiedExporter.js";
 import { isActiveTenderStatus } from "./tenderTypes.js";
 
@@ -29,6 +30,8 @@ export interface OutreachWinner {
   contract_date: string | null;
   status: string | null;
   url: string | null;
+  crm_status: OutreachCrmStatus;
+  crm_note: string | null;
 }
 
 /** Top-A компания, у которой появились новые активные закупки. */
@@ -37,6 +40,8 @@ export interface OutreachProspect {
   new_active_tenders: ProspectTender[];
   gis_phone: string;
   gis_company_names: string;
+  crm_status: OutreachCrmStatus;
+  crm_note: string | null;
 }
 
 export interface ProspectTender {
@@ -46,6 +51,8 @@ export interface ProspectTender {
   amount: number | null;
   status: string | null;
   url: string | null;
+  crm_status: OutreachCrmStatus;
+  crm_note: string | null;
 }
 
 export interface OutreachDiff {
@@ -58,6 +65,13 @@ export interface OutreachDiffOptions {
   bins?: string[];
   /** Учитывать только записи с датой >= since (ISO или dd.mm.yyyy). */
   since?: string;
+  /** Включить БИНы с CRM-статусом closed/rejected (не отключает dedup по outreach_seen). */
+  includeClosed?: boolean;
+}
+
+export interface OutreachCrmFields {
+  crm_status: OutreachCrmStatus;
+  crm_note: string | null;
 }
 
 interface TenderRow {
@@ -121,9 +135,17 @@ export function registerOutreachItems(
 export function computeOutreachDiff(db: Database.Database, options: OutreachDiffOptions = {}): OutreachDiff {
   const sinceTime = options.since ? parseFlexibleDate(options.since)?.getTime() ?? null : null;
   const binFilter = options.bins && options.bins.length > 0 ? new Set(options.bins) : null;
+  const includeClosed = options.includeClosed === true;
 
   const seenWinner = loadSeenPairs(db, "winner");
   const seenProspect = loadSeenPairs(db, "prospect");
+  const pairCrm = loadOutreachPairCrmMap(db);
+  const suppressedBins = includeClosed ? new Set<string>() : loadClosedRejectedBins(db);
+
+  const isBinSuppressed = (bin: string): boolean => suppressedBins.has(bin);
+
+  const crmForPair = (bin: string, tenderNumber: string, kind: OutreachKind): OutreachCrmFields =>
+    pairCrm.get(crmPairKey(bin, tenderNumber, kind)) ?? { crm_status: "new", crm_note: null };
 
   // Победители: контракты supplier-side из goszakup HTML (tender_name начинается с "Договор").
   const contractRows = db.prepare(`
@@ -134,6 +156,7 @@ export function computeOutreachDiff(db: Database.Database, options: OutreachDiff
 
   const newContracts = contractRows.filter((row) => {
     if (binFilter && !binFilter.has(row.bin)) return false;
+    if (isBinSuppressed(row.bin)) return false;
     if (seenWinner.has(pairKey(row.bin, row.tender_number))) return false;
     if (sinceTime !== null && !dateAtOrAfter(row.start_date ?? row.parsed_at, sinceTime)) return false;
     return true;
@@ -148,6 +171,7 @@ export function computeOutreachDiff(db: Database.Database, options: OutreachDiff
 
   const prospectCandidates = new Map<string, { card: ScoredCompanyCard; tenders: ProspectTender[] }>();
   for (const card of aCards) {
+    if (isBinSuppressed(card.bin)) continue;
     const newActive = storage.getTendersByBin(card.bin).filter((tender) => {
       if (!isActiveTenderStatus(tender.status)) return false;
       if (seenProspect.has(pairKey(tender.bin, tender.tender_number))) return false;
@@ -157,14 +181,19 @@ export function computeOutreachDiff(db: Database.Database, options: OutreachDiff
     if (newActive.length === 0) continue;
     prospectCandidates.set(card.bin, {
       card,
-      tenders: newActive.map((tender) => ({
-        tender_number: tender.tender_number,
-        tender_name: tender.tender_name,
-        customer_name: tender.customer_name,
-        amount: parseAmount(tender.budget_amount),
-        status: tender.status,
-        url: tender.url
-      }))
+      tenders: newActive.map((tender) => {
+        const crm = crmForPair(tender.bin, tender.tender_number, "prospect");
+        return {
+          tender_number: tender.tender_number,
+          tender_name: tender.tender_name,
+          customer_name: tender.customer_name,
+          amount: parseAmount(tender.budget_amount),
+          status: tender.status,
+          url: tender.url,
+          crm_status: crm.crm_status,
+          crm_note: crm.crm_note
+        };
+      })
     });
   }
 
@@ -185,6 +214,7 @@ export function computeOutreachDiff(db: Database.Database, options: OutreachDiff
 
   const winners: OutreachWinner[] = newContracts.map((row) => {
     const card = cardsByBin.get(row.bin);
+    const crm = crmForPair(row.bin, row.tender_number, "winner");
     return {
       bin: row.bin,
       company_name: card?.name || row.bin,
@@ -199,17 +229,22 @@ export function computeOutreachDiff(db: Database.Database, options: OutreachDiff
       amount_raw: row.budget_amount,
       contract_date: row.start_date,
       status: row.status,
-      url: row.url
+      url: row.url,
+      crm_status: crm.crm_status,
+      crm_note: crm.crm_note
     };
   }).sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
 
   const prospects: OutreachProspect[] = [...prospectCandidates.values()].map(({ card, tenders }) => {
     const matches = matchesByBin.get(card.bin) ?? [];
+    const primaryCrm = pickPrimaryTenderCrm(tenders);
     return {
       card,
       new_active_tenders: tenders,
       gis_phone: gisPhoneFor(card.bin),
-      gis_company_names: [...new Set(matches.map((match) => match.company_name))].join("; ")
+      gis_company_names: [...new Set(matches.map((match) => match.company_name))].join("; "),
+      crm_status: primaryCrm.crm_status,
+      crm_note: primaryCrm.crm_note
     };
   }).sort((a, b) => (b.card.tender_active_budget_sum ?? 0) - (a.card.tender_active_budget_sum ?? 0));
 
@@ -260,6 +295,58 @@ function dateAtOrAfter(value: string | null, sinceTime: number): boolean {
 
 function pairKey(bin: string, tenderNumber: string): string {
   return `${bin}::${tenderNumber}`;
+}
+
+function crmPairKey(bin: string, tenderNumber: string, kind: OutreachKind): string {
+  return `${bin}::${tenderNumber}::${kind}`;
+}
+
+export function loadOutreachPairCrmMap(db: Database.Database): Map<string, OutreachCrmFields> {
+  const table = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'outreach_status'"
+  ).get() as { name: string } | undefined;
+  if (!table) return new Map();
+
+  const rows = db.prepare(`
+    SELECT bin, tender_number, kind, status, note
+    FROM outreach_status
+  `).all() as Array<{
+    bin: string;
+    tender_number: string;
+    kind: OutreachKind;
+    status: OutreachCrmStatus;
+    note: string | null;
+  }>;
+
+  const map = new Map<string, OutreachCrmFields>();
+  for (const row of rows) {
+    map.set(crmPairKey(row.bin, row.tender_number, row.kind), {
+      crm_status: row.status,
+      crm_note: row.note
+    });
+  }
+  return map;
+}
+
+export function loadClosedRejectedBins(db: Database.Database): Set<string> {
+  const table = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'outreach_status'"
+  ).get() as { name: string } | undefined;
+  if (!table) return new Set();
+
+  const rows = db.prepare(`
+    SELECT DISTINCT bin
+    FROM outreach_status
+    WHERE status IN ('closed', 'rejected')
+  `).all() as Array<{ bin: string }>;
+
+  return new Set(rows.map((row) => row.bin));
+}
+
+function pickPrimaryTenderCrm(tenders: ProspectTender[]): OutreachCrmFields {
+  if (tenders.length === 0) return { crm_status: "new", crm_note: null };
+  const primary = [...tenders].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0))[0];
+  return { crm_status: primary.crm_status, crm_note: primary.crm_note };
 }
 
 function loadSeenPairs(db: Database.Database, kind: OutreachKind): Set<string> {
@@ -326,7 +413,9 @@ export function loadRecentGoszakupWinners(
       amount_raw: row.budget_amount,
       contract_date: row.start_date,
       status: row.status,
-      url: row.url
+      url: row.url,
+      crm_status: "new",
+      crm_note: null
     });
   }
 

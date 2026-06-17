@@ -11,6 +11,7 @@ import {
   registerOutreachItems,
   startOutreachRun
 } from "../../src/kz/outreachDigest.js";
+import { runMigrations } from "../../src/storage/migrations.js";
 import {
   buildFirstTouchMessage,
   buildFollowUpMessage,
@@ -38,6 +39,27 @@ function setupDb(): { db: Database.Database; storage: KzStorage } {
   const db = new Database(":memory:");
   const storage = new KzStorage({ db });
   return { db, storage };
+}
+
+function setupDbWithMigrations(): { db: Database.Database; storage: KzStorage } {
+  const db = new Database(":memory:");
+  runMigrations(db);
+  const storage = new KzStorage({ db });
+  return { db, storage };
+}
+
+function seedCrmStatus(
+  db: Database.Database,
+  bin: string,
+  tenderNumber: string,
+  kind: "winner" | "prospect",
+  status: string,
+  note: string | null = null
+): void {
+  db.prepare(`
+    INSERT INTO outreach_status (bin, tender_number, kind, status, note, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(bin, tenderNumber, kind, status, note, new Date().toISOString());
 }
 
 function insertWinnerFixture(db: Database.Database): void {
@@ -149,6 +171,148 @@ describe("computeOutreachDiff", () => {
 
       const diff = computeOutreachDiff(db, { bins: ["061040006408"], since: "2026-06-01" });
       expect(diff.winners.map((w) => w.contract_number)).toEqual(["CT-NEW"]);
+    } finally {
+      storage.close();
+      db.close();
+    }
+  });
+
+  it("подавляет нового победителя, если у БИН есть closed/rejected CRM-статус", () => {
+    const { db, storage } = setupDbWithMigrations();
+    try {
+      db.prepare(STAT_INSERT).run("061040006408", 'ТОО "ALAU"', "Иванов И.И.");
+      db.prepare(TENDER_INSERT).run(
+        "goszakup.gov.kz", "061040006408", "CT-OLD",
+        "Договор CT-OLD", "Заказчик", "50000000",
+        "2026-06-01", "Действует", null, "2026-06-08T10:00:00.000Z"
+      );
+      db.prepare(TENDER_INSERT).run(
+        "goszakup.gov.kz", "061040006408", "CT-NEW",
+        "Договор CT-NEW", "Заказчик", "70000000",
+        "2026-06-05", "Действует", null, "2026-06-08T10:00:00.000Z"
+      );
+      db.prepare(`
+        INSERT INTO outreach_seen (bin, tender_number, kind, first_seen_at)
+        VALUES (?, ?, 'winner', ?)
+      `).run("061040006408", "CT-OLD", "2026-06-01T10:00:00.000Z");
+      seedCrmStatus(db, "061040006408", "CT-OLD", "winner", "closed", "not interested");
+
+      expect(computeOutreachDiff(db, { bins: ["061040006408"] }).winners).toHaveLength(0);
+      const withClosed = computeOutreachDiff(db, { bins: ["061040006408"], includeClosed: true });
+      expect(withClosed.winners.map((w) => w.contract_number)).toEqual(["CT-NEW"]);
+    } finally {
+      storage.close();
+      db.close();
+    }
+  });
+
+  it("не подавляет БИН с CRM new, contacted или без записи в outreach_status", () => {
+    const { db, storage } = setupDbWithMigrations();
+    try {
+      db.prepare(STAT_INSERT).run("061040006408", 'ТОО "ALAU"', "Иванов И.И.");
+      db.prepare(TENDER_INSERT).run(
+        "goszakup.gov.kz", "061040006408", "CT-OLD",
+        "Договор CT-OLD", "Заказчик", "50000000",
+        "2026-06-01", "Действует", null, "2026-06-08T10:00:00.000Z"
+      );
+      db.prepare(TENDER_INSERT).run(
+        "goszakup.gov.kz", "061040006408", "CT-NEW",
+        "Договор CT-NEW", "Заказчик", "70000000",
+        "2026-06-05", "Действует", null, "2026-06-08T10:00:00.000Z"
+      );
+      db.prepare(`
+        INSERT INTO outreach_seen (bin, tender_number, kind, first_seen_at)
+        VALUES (?, ?, 'winner', ?)
+      `).run("061040006408", "CT-OLD", "2026-06-01T10:00:00.000Z");
+
+      for (const status of ["new", "contacted"] as const) {
+        db.prepare("DELETE FROM outreach_status").run();
+        seedCrmStatus(db, "061040006408", "CT-OLD", "winner", status);
+        const diff = computeOutreachDiff(db, { bins: ["061040006408"] });
+        expect(diff.winners.map((w) => w.contract_number), status).toEqual(["CT-NEW"]);
+      }
+
+      db.prepare("DELETE FROM outreach_status").run();
+      const withoutCrm = computeOutreachDiff(db, { bins: ["061040006408"] });
+      expect(withoutCrm.winners.map((w) => w.contract_number)).toEqual(["CT-NEW"]);
+      expect(withoutCrm.winners[0].crm_status).toBe("new");
+      expect(withoutCrm.winners[0].crm_note).toBeNull();
+    } finally {
+      storage.close();
+      db.close();
+    }
+  });
+
+  it("подавляет нового победителя, если у БИН есть CRM-статус rejected", () => {
+    const { db, storage } = setupDbWithMigrations();
+    try {
+      db.prepare(STAT_INSERT).run("061040006408", 'ТОО "ALAU"', "Иванов И.И.");
+      db.prepare(TENDER_INSERT).run(
+        "goszakup.gov.kz", "061040006408", "CT-OLD",
+        "Договор CT-OLD", "Заказчик", "50000000",
+        "2026-06-01", "Действует", null, "2026-06-08T10:00:00.000Z"
+      );
+      db.prepare(TENDER_INSERT).run(
+        "goszakup.gov.kz", "061040006408", "CT-NEW",
+        "Договор CT-NEW", "Заказчик", "70000000",
+        "2026-06-05", "Действует", null, "2026-06-08T10:00:00.000Z"
+      );
+      db.prepare(`
+        INSERT INTO outreach_seen (bin, tender_number, kind, first_seen_at)
+        VALUES (?, ?, 'winner', ?)
+      `).run("061040006408", "CT-OLD", "2026-06-01T10:00:00.000Z");
+      seedCrmStatus(db, "061040006408", "CT-OLD", "winner", "rejected", "do not contact");
+
+      expect(computeOutreachDiff(db, { bins: ["061040006408"] }).winners).toHaveLength(0);
+      const withRejected = computeOutreachDiff(db, { bins: ["061040006408"], includeClosed: true });
+      expect(withRejected.winners.map((w) => w.contract_number)).toEqual(["CT-NEW"]);
+    } finally {
+      storage.close();
+      db.close();
+    }
+  });
+
+  it("подавляет проспект lead_priority A, если у БИН есть closed CRM-статус", () => {
+    const { db, storage } = setupDbWithMigrations();
+    try {
+      db.prepare(STAT_INSERT).run("061040006408", 'ТОО "ALAU"', "Иванов И.И.");
+      // Активный тендер, не winner (не начинается с "Договор"); бюджет 60M даёт lead_priority A.
+      db.prepare(TENDER_INSERT).run(
+        "goszakup.gov.kz", "061040006408", "P-100",
+        "Закупка стройматериалов P-100", "ГУ Заказчик", "60000000",
+        "2026-06-05", "PUBLISHED", null, "2026-06-08T10:00:00.000Z"
+      );
+      seedCrmStatus(db, "061040006408", "P-100", "prospect", "closed", "not interested");
+
+      expect(computeOutreachDiff(db, { bins: ["061040006408"] }).prospects).toHaveLength(0);
+      const withClosed = computeOutreachDiff(db, { bins: ["061040006408"], includeClosed: true });
+      expect(withClosed.prospects).toHaveLength(1);
+      expect(withClosed.prospects[0].card.bin).toBe("061040006408");
+      expect(withClosed.prospects[0].card.lead_priority).toBe("A");
+      expect(withClosed.prospects[0].new_active_tenders[0].tender_number).toBe("P-100");
+    } finally {
+      storage.close();
+      db.close();
+    }
+  });
+
+  it("подавляет проспект lead_priority A, если у БИН есть rejected CRM-статус", () => {
+    const { db, storage } = setupDbWithMigrations();
+    try {
+      db.prepare(STAT_INSERT).run("061040006408", 'ТОО "ALAU"', "Иванов И.И.");
+      db.prepare(TENDER_INSERT).run(
+        "goszakup.gov.kz", "061040006408", "P-200",
+        "Закупка стройматериалов P-200", "ГУ Заказчик", "60000000",
+        "2026-06-05", "PUBLISHED", null, "2026-06-08T10:00:00.000Z"
+      );
+      seedCrmStatus(db, "061040006408", "P-200", "prospect", "rejected", "do not contact");
+
+      expect(computeOutreachDiff(db, { bins: ["061040006408"] }).prospects).toHaveLength(0);
+      const withRejected = computeOutreachDiff(db, { bins: ["061040006408"], includeClosed: true });
+      expect(withRejected.prospects).toHaveLength(1);
+      expect(withRejected.prospects[0].card.bin).toBe("061040006408");
+      expect(withRejected.prospects[0].card.lead_priority).toBe("A");
+      expect(withRejected.prospects[0].new_active_tenders[0].tender_number).toBe("P-200");
     } finally {
       storage.close();
       db.close();
