@@ -174,7 +174,30 @@ Autopilot сначала пытается обогатить весь batch од
 
 Non-retryable ошибки (`session not found`, `invalid token`, невалидные опции) сразу прокидываются наверх — по ним retry бесполезен. enrich failure остаётся **non-fatal**: autopilot продолжает дифф на данных из БД и не меняет exit code.
 
-Дедуп: пары (БИН, номер тендера) пишутся в `outreach_items`, второй раз в дайджест не попадают.
+Дедуп: пары (БИН, номер тендера) пишутся в `outreach_seen` (sent-ledger) и дублируются в `outreach_items` как audit-строка с `run_id` текущего запуска. Второй раз в дайджест не попадают — даже если старые `outreach_runs` удалены retention-скриптом.
+
+### Retention для `outreach_runs`
+
+Периодический prune старых завершённых запусков — отдельная команда, **не** часть `kz:autopilot`:
+
+```bash
+# Dry-run (по умолчанию): показать eligible runs, ничего не удалять
+npm run kz:autopilot:retention
+
+# Применить удаление
+npm run kz:autopilot:retention -- --apply
+
+# Переопределить N дней (иначе берётся из env)
+npm run kz:autopilot:retention -- --days 90 --apply
+```
+
+Env: `KZ_OUTREACH_RUN_RETENTION_DAYS` — положительное целое (дней). Пусто / `0` / невалидное = retention отключён (скрипт завершится с exit 1 и подсказкой).
+
+Правила:
+- Удаляются только строки `outreach_runs` с `finished_at IS NOT NULL` и `started_at` старше cutoff.
+- Незавершённые runs (`finished_at IS NULL`) **никогда** не удаляются, даже если старые.
+- Перед удалением run: `UPDATE outreach_items SET run_id = NULL WHERE run_id IN (...)` — audit-строки сохраняются.
+- **`outreach_seen` и `outreach_items` не удаляются** — sent-ledger и дедуп остаются; retention **не** откатывает уже «увиденные» пары.
 
 ### Параллельные запуски и lock
 

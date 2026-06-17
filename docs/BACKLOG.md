@@ -67,9 +67,11 @@ This file captures post-release candidates after `v1.7.0`. It is meant to be upd
   - Миграция не нужна: текущая `api_jobs` уже содержит `id`/`type`/`status`/`created_at`/`started_at`/`finished_at`/`exit_code`/`error`, а `api_job_logs` и `api_job_artifacts` связаны `ON DELETE CASCADE`.
 - ✅ **per-BIN retry поверх `runKzEnrich` (PR #2b, done):**
   - Адаптер `core/withRetry` под enrich с budget/deadline.
-- ⏳ **`outreach_runs` retention (PR #2c, future):**
-  - Периодический prune `outreach_runs` старше N дней (отдельный `kz:autopilot:retention`).
-  - Пока остаётся в бэклоге: API-сервер сейчас чистит только `api_jobs`, `outreach_runs` живут своей жизнью.
+- ✅ **`outreach_runs` retention + decoupled dedup ledger (PR #2c, done):**
+  - Миграция v16: таблица `outreach_seen` (sent-ledger), `outreach_items.run_id` nullable.
+  - Дедуп читает `outreach_seen`; регистрация пишет в обе таблицы.
+  - `npm run kz:autopilot:retention` — dry-run по умолчанию, `--apply` для prune; env `KZ_OUTREACH_RUN_RETENTION_DAYS`.
+  - Retention удаляет только старые завершённые `outreach_runs`; ledger и audit-строки сохраняются.
 
 **Acceptance (после PR #2a):**
 - `/health` показывает последний autopilot job (status/exitCode/artifacts) либо `null`, если ещё не запускался.

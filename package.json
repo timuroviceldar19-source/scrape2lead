@@ -35,7 +35,8 @@
     "kz:export-sales-top-a": "tsx scripts/kz-export-sales-top-a.mts",
     "kz:targeted-2gis-top-a": "tsx scripts/kz-targeted-2gis-top-a.mts",
     "kz:harvest": "tsx scripts/harvest-registry-bins.ts",
-    "kz:autopilot": "tsx scripts/kz-autopilot.mts"
+    "kz:autopilot": "tsx scripts/kz-autopilot.mts",
+    "kz:autopilot:retention": "tsx scripts/kz-autopilot-retention.mts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",
