@@ -409,6 +409,54 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_api_job_artifacts_job_id
         ON api_job_artifacts (job_id);
     `
+  },
+  {
+    version: 16,
+    run: (db: Database.Database) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS outreach_seen (
+          bin TEXT NOT NULL,
+          tender_number TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('winner', 'prospect')),
+          first_seen_at TEXT NOT NULL,
+          PRIMARY KEY (bin, tender_number, kind)
+        );
+      `);
+
+      if (tableExists(db, "outreach_items")) {
+        db.exec(`
+          INSERT OR IGNORE INTO outreach_seen (bin, tender_number, kind, first_seen_at)
+          SELECT bin, tender_number, kind, MIN(created_at)
+          FROM outreach_items
+          GROUP BY bin, tender_number, kind;
+        `);
+
+        const runIdCol = (db.prepare("PRAGMA table_info(outreach_items)").all() as Array<{ name: string; notnull: number }>)
+          .find((col) => col.name === "run_id");
+        if (runIdCol?.notnull === 1) {
+          db.exec(`
+            CREATE TABLE outreach_items_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id INTEGER REFERENCES outreach_runs(id),
+              bin TEXT NOT NULL,
+              tender_number TEXT NOT NULL,
+              kind TEXT NOT NULL CHECK (kind IN ('winner', 'prospect')),
+              created_at TEXT NOT NULL,
+              UNIQUE(bin, tender_number, kind)
+            );
+
+            INSERT INTO outreach_items_new (id, run_id, bin, tender_number, kind, created_at)
+            SELECT id, run_id, bin, tender_number, kind, created_at
+            FROM outreach_items;
+
+            DROP TABLE outreach_items;
+            ALTER TABLE outreach_items_new RENAME TO outreach_items;
+
+            CREATE INDEX IF NOT EXISTS idx_outreach_items_kind_bin ON outreach_items(kind, bin);
+          `);
+        }
+      }
+    }
   }
 ];
 
