@@ -147,9 +147,15 @@ npm run kz:autopilot -- --progress --max-pages 5
 
 # Посмотреть без записи в БД и без Telegram
 npm run kz:autopilot -- --dry-run --skip-enrich
+
+# Отключить per-BIN fallback retry (например, dry-run smoke)
+npm run kz:autopilot -- --enrich-retries 0
+
+# Задать бюджет времени на enrich (оставшиеся BIN-ы пропускаются)
+npm run kz:autopilot -- --enrich-deadline-ms 1800000
 ```
 
-Флаги: `--batch-csv` (default `bins-batch.csv`), `--top-a-csv` (default `bins-top-a.csv`), `--out-dir` (default `exports`), `--since <ISO|dd.mm.yyyy>`, `--dry-run`, `--skip-enrich`, `--progress` (по-БИНовый лог этапов enrich: `enrich [stat.gov] 7/40 BIN=... elapsed=4m12s` + полная сводка), `--max-pages <n>` (лимит страниц goszakup на БИН; приоритет над env `GOSZAKUP_HTML_MAX_PAGES`, default 50), `--baseline` (принудительно зафиксировать весь текущий дифф в `outreach_items` без экспорта).
+Флаги: `--batch-csv` (default `bins-batch.csv`), `--top-a-csv` (default `bins-top-a.csv`), `--out-dir` (default `exports`), `--since <ISO|dd.mm.yyyy>`, `--dry-run`, `--skip-enrich`, `--progress` (по-БИНовый лог этапов enrich: `enrich [stat.gov] 7/40 BIN=... elapsed=4m12s` + полная сводка), `--max-pages <n>` (лимит страниц goszakup на БИН; приоритет над env `GOSZAKUP_HTML_MAX_PAGES`, default 50), `--baseline` (принудительно зафиксировать весь текущий дифф в `outreach_items` без экспорта), `--enrich-retries <n>` (default `1`, `0` отключает per-BIN fallback), `--enrich-retry-base-ms <ms>` (default `2000`, экспоненциальный backoff), `--enrich-deadline-ms <ms>` (default отключён; если истёк, оставшиеся BIN-ы не гоняются и попадают в `enrichFailedBins`).
 
 **Важно:** если первый боевой запуск делался с `--since`, история до этой даты осталась незафиксированной — следующий обычный запуск вывалит её всю в дайджест. Лечится одним запуском `npm run kz:autopilot -- --skip-enrich --baseline`.
 
@@ -161,6 +167,12 @@ npm run kz:autopilot -- --dry-run --skip-enrich
 - `exports/autopilot-<дата>.json` — машинно-читаемая сводка запуска (см. ниже).
 
 Telegram: задать `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` в `.env` — бот пришлёт сводку, черновик письма для факторинга и оба файла. Без env — просто warning в консоли. При `zeroOutput` (см. ниже) сообщение приходит с префиксом `⚠️` — это алерт, а не «всё ок».
+
+### Fallback retry для enrich
+
+Autopilot сначала пытается обогатить весь batch одним вызовом `runKzEnrich`. Если batch падает с **retriable** ошибкой (timeout, navigation, network), autopilot переходит в режим **per-bin fallback**: каждый BIN обогащается отдельно через `core/withRetry` с экспоненциальным backoff. Успешные BIN-ы пишутся в БД как обычно, неуспешные фиксируются в `enrichFailedBins` и summary/warnings.
+
+Non-retryable ошибки (`session not found`, `invalid token`, невалидные опции) сразу прокидываются наверх — по ним retry бесполезен. enrich failure остаётся **non-fatal**: autopilot продолжает дифф на данных из БД и не меняет exit code.
 
 Дедуп: пары (БИН, номер тендера) пишутся в `outreach_items`, второй раз в дайджест не попадают.
 
@@ -206,11 +218,21 @@ Stale lock: если в lock-файле PID из этого же хоста, н�
   "zeroOutput": false,
   "exitCode": 0,
   "exitReason": "ok",
-  "lockHeldBy": null
+  "lockHeldBy": null,
+  "enrichMode": "batch",
+  "enrichBatchError": null,
+  "enrichRetryAttempts": 0,
+  "enrichFailedBins": []
 }
 ```
 
 Для lock-busy кейса `lockHeldBy` заполнен данными владельца, `exitReason: "lock busy"`, `exitCode: 2`. Файл всегда пишется в `finally` — даже если пайплайн упал.
+
+Поля enrich retry:
+- `enrichMode`: `"batch"` или `"per-bin"`.
+- `enrichBatchError`: сообщение ошибки, которая вызвала fallback; `null` при batch-успехе.
+- `enrichRetryAttempts`: суммарное число retry-попыток, потраченных в per-bin fallback.
+- `enrichFailedBins`: массив BIN, которые не удалось обогатить даже после retries (или были пропущены из-за дедлайна).
 
 ### Zero-output
 

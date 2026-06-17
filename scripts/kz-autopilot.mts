@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { readBinsFromCsv } from "../src/kz/csv.js";
-import { formatKzEnrichResult, runKzEnrich } from "../src/kz/enrichPipeline.js";
+import { formatKzEnrichResult } from "../src/kz/enrichPipeline.js";
+import { runKzEnrichWithFallbackRetry } from "../src/kz/autopilotEnrichRetry.js";
 import { KzStorage } from "../src/kz/kzStorage.js";
 import {
   computeOutreachDiff,
@@ -40,6 +41,9 @@ interface AutopilotArgs {
   progress: boolean;
   maxPages: number | null;
   baseline: boolean;
+  enrichRetries: number;
+  enrichRetryBaseMs: number;
+  enrichDeadlineMs: number | null;
 }
 
 interface RunSummary {
@@ -59,6 +63,10 @@ interface RunSummary {
   exitCode: number;
   exitReason: string;
   lockHeldBy: { pid: number; host: string; startedAt: string; command: string } | null;
+  enrichMode: "batch" | "per-bin" | null;
+  enrichBatchError: string | null;
+  enrichRetryAttempts: number;
+  enrichFailedBins: string[];
 }
 
 function exitReasonForCode(code: number): string {
@@ -89,7 +97,11 @@ function makeInitialSummary(startedAt: string, args: AutopilotArgs): RunSummary 
     zeroOutput: false,
     exitCode: EXIT_OK,
     exitReason: "ok",
-    lockHeldBy: null
+    lockHeldBy: null,
+    enrichMode: null,
+    enrichBatchError: null,
+    enrichRetryAttempts: 0,
+    enrichFailedBins: []
   };
 }
 
@@ -129,6 +141,25 @@ function parseArgs(argv: string[]): AutopilotArgs {
   if (maxPages !== null && (!Number.isInteger(maxPages) || maxPages < 1)) {
     throw new Error(`--max-pages должен быть целым числом >= 1, получено: ${maxPagesRaw}`);
   }
+
+  const enrichRetriesRaw = readArg("--enrich-retries");
+  const enrichRetries = enrichRetriesRaw === null ? 1 : Number(enrichRetriesRaw);
+  if (!Number.isInteger(enrichRetries) || enrichRetries < 0) {
+    throw new Error(`--enrich-retries должен быть целым числом >= 0, получено: ${enrichRetriesRaw}`);
+  }
+
+  const enrichRetryBaseMsRaw = readArg("--enrich-retry-base-ms");
+  const enrichRetryBaseMs = enrichRetryBaseMsRaw === null ? 2000 : Number(enrichRetryBaseMsRaw);
+  if (!Number.isInteger(enrichRetryBaseMs) || enrichRetryBaseMs < 1) {
+    throw new Error(`--enrich-retry-base-ms должен быть целым числом >= 1, получено: ${enrichRetryBaseMsRaw}`);
+  }
+
+  const enrichDeadlineMsRaw = readArg("--enrich-deadline-ms");
+  const enrichDeadlineMs = enrichDeadlineMsRaw === null ? null : Number(enrichDeadlineMsRaw);
+  if (enrichDeadlineMs !== null && (!Number.isInteger(enrichDeadlineMs) || enrichDeadlineMs < 1)) {
+    throw new Error(`--enrich-deadline-ms должен быть целым числом >= 1, получено: ${enrichDeadlineMsRaw}`);
+  }
+
   return {
     batchCsv: readArg("--batch-csv") ?? "bins-batch.csv",
     topACsv: readArg("--top-a-csv") ?? "bins-top-a.csv",
@@ -138,7 +169,10 @@ function parseArgs(argv: string[]): AutopilotArgs {
     skipEnrich: argv.includes("--skip-enrich"),
     progress: argv.includes("--progress"),
     maxPages,
-    baseline: argv.includes("--baseline")
+    baseline: argv.includes("--baseline"),
+    enrichRetries,
+    enrichRetryBaseMs,
+    enrichDeadlineMs
   };
 }
 
@@ -228,24 +262,37 @@ async function runPipeline(args: AutopilotArgs, summary: RunSummary, startedAtMs
     );
     const enrichStartedAt = Date.now();
     try {
-      const enrich = await runKzEnrich({
+      const enrich = await runKzEnrichWithFallbackRetry({
         bins,
         databasePath: DB_PATH,
-        skipZakup: true,
         goszakupMaxPages: args.maxPages ?? undefined,
+        retries: args.enrichRetries,
+        baseDelayMs: args.enrichRetryBaseMs,
+        deadlineMs: args.enrichDeadlineMs ?? undefined,
         onProgress: args.progress
           ? (stage, index, total, bin) => {
               console.log(`enrich [${stage}] ${index}/${total} BIN=${bin} elapsed=${formatElapsed(Date.now() - enrichStartedAt)}`);
             }
           : undefined
       });
+      summary.enrichMode = enrich.enrichMode;
+      summary.enrichBatchError = enrich.enrichBatchError ?? null;
+      summary.enrichRetryAttempts = enrich.enrichRetryAttempts;
+      summary.enrichFailedBins = enrich.enrichFailedBins;
+      if (enrich.enrichMode === "per-bin") {
+        warnings.push(`enrich: batch failed (${enrich.enrichBatchError}), switched to per-bin fallback`);
+        if (enrich.enrichFailedBins.length > 0) {
+          warnings.push(`enrich: ${enrich.enrichFailedBins.length} BIN(s) failed in per-bin fallback: ${enrich.enrichFailedBins.join(", ")}`);
+        }
+      }
       if (args.progress) {
         console.log(formatKzEnrichResult(enrich));
       } else {
         console.log(
-          `enrich: stat=${enrich.stat ? `${enrich.stat.success}+${enrich.stat.cached}cached` : "skipped"} `
+          `enrich: mode=${enrich.enrichMode} stat=${enrich.stat ? `${enrich.stat.success}+${enrich.stat.cached}cached` : "skipped"} `
           + `registry=${enrich.registry ? `${enrich.registry.success}+${enrich.registry.cached}cached` : "skipped"} `
-          + `tenders=${enrich.tenders?.totalTenders ?? "-"}`
+          + `tenders=${enrich.tenders?.totalTenders ?? "-"} `
+          + `failedBins=${enrich.enrichFailedBins.length} retryAttempts=${enrich.enrichRetryAttempts}`
         );
       }
       if (enrich.stat && enrich.stat.failed > 0) {
