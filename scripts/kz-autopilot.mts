@@ -19,8 +19,16 @@ import {
   sendTelegramDocument,
   sendTelegramMessage
 } from "../src/kz/telegramNotify.js";
+import { acquireAutopilotLock, LockBusyError, type LockHandle } from "../src/kz/autopilotLock.js";
 
 const DB_PATH = process.env.KZ_DATABASE_PATH ?? "data/scrape2lead.db";
+const LOCK_PATH = process.env.KZ_AUTOPILOT_LOCK_PATH ?? "data/autopilot.lock";
+
+const EXIT_OK = 0;
+const EXIT_LOCK_BUSY = 2;
+const EXIT_DB_ERROR = 3;
+const EXIT_EXPORT_ERROR = 4;
+const EXIT_INVALID_INPUT = 5;
 
 interface AutopilotArgs {
   batchCsv: string;
@@ -32,6 +40,82 @@ interface AutopilotArgs {
   progress: boolean;
   maxPages: number | null;
   baseline: boolean;
+}
+
+interface RunSummary {
+  startedAt: string;
+  finishedAt: string;
+  elapsedMs: number;
+  dryRun: boolean;
+  baseline: boolean;
+  enrichSkipped: boolean;
+  bins: number;
+  winners: number;
+  prospects: number;
+  registered: number;
+  exportedFiles: string[];
+  warnings: string[];
+  zeroOutput: boolean;
+  exitCode: number;
+  exitReason: string;
+  lockHeldBy: { pid: number; host: string; startedAt: string; command: string } | null;
+}
+
+function exitReasonForCode(code: number): string {
+  switch (code) {
+    case EXIT_OK: return "ok";
+    case EXIT_LOCK_BUSY: return "lock busy";
+    case EXIT_DB_ERROR: return "db error";
+    case EXIT_EXPORT_ERROR: return "export error";
+    case EXIT_INVALID_INPUT: return "invalid input";
+    default: return "unhandled error";
+  }
+}
+
+function makeInitialSummary(startedAt: string, args: AutopilotArgs): RunSummary {
+  return {
+    startedAt,
+    finishedAt: startedAt,
+    elapsedMs: 0,
+    dryRun: args.dryRun,
+    baseline: false,
+    enrichSkipped: args.skipEnrich,
+    bins: 0,
+    winners: 0,
+    prospects: 0,
+    registered: 0,
+    exportedFiles: [],
+    warnings: [],
+    zeroOutput: false,
+    exitCode: EXIT_OK,
+    exitReason: "ok",
+    lockHeldBy: null
+  };
+}
+
+function finalizeSummary(summary: RunSummary, startedAtMs: number): void {
+  summary.finishedAt = new Date().toISOString();
+  summary.elapsedMs = Date.now() - startedAtMs;
+  if (process.exitCode !== undefined && process.exitCode !== summary.exitCode) {
+    summary.exitCode = process.exitCode;
+  }
+  if (summary.exitReason === "ok" && summary.exitCode !== EXIT_OK) {
+    summary.exitReason = exitReasonForCode(summary.exitCode);
+  }
+  summary.zeroOutput = summary.winners === 0 && summary.prospects === 0 && summary.warnings.length === 0;
+}
+
+function writeSummary(summary: RunSummary, outDir: string): void {
+  try {
+    fs.mkdirSync(outDir, { recursive: true });
+    const date = summary.startedAt.slice(0, 10);
+    const target = path.join(outDir, `autopilot-${date}.json`);
+    fs.writeFileSync(target, JSON.stringify(summary, null, 2), "utf8");
+    console.log(`summary: ${target}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`autopilot: не удалось записать summary JSON: ${message}`);
+  }
 }
 
 function parseArgs(argv: string[]): AutopilotArgs {
@@ -84,9 +168,50 @@ function datedPath(outDir: string, prefix: string): string {
 }
 
 async function main(): Promise<void> {
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
   const args = parseArgs(process.argv);
+  const summary = makeInitialSummary(startedAt, args);
+
+  let lock: LockHandle | null = null;
+  try {
+    lock = await acquireAutopilotLock({ lockPath: LOCK_PATH, command: "kz-autopilot" });
+  } catch (err) {
+    if (err instanceof LockBusyError) {
+      process.exitCode = EXIT_LOCK_BUSY;
+      summary.exitCode = EXIT_LOCK_BUSY;
+      summary.exitReason = "lock busy";
+      summary.lockHeldBy = err.contents;
+      console.error(err.message);
+      finalizeSummary(summary, startedAtMs);
+      writeSummary(summary, args.outDir);
+      return;
+    }
+    throw err;
+  }
+
+  try {
+    await runPipeline(args, summary, startedAtMs);
+  } catch (err) {
+    if (process.exitCode === 0) {
+      process.exitCode = 1;
+      summary.exitCode = 1;
+      summary.exitReason = "unhandled error";
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`autopilot: ${message}`);
+  } finally {
+    finalizeSummary(summary, startedAtMs);
+    writeSummary(summary, args.outDir);
+    if (lock) await lock.release();
+  }
+}
+
+async function runPipeline(args: AutopilotArgs, summary: RunSummary, startedAtMs: number): Promise<void> {
   const bins = collectBins(args);
+  summary.bins = bins.length;
   if (bins.length === 0) {
+    process.exitCode = EXIT_INVALID_INPUT;
     throw new Error(`Нет БИНов: проверь ${args.batchCsv} / ${args.topACsv}`);
   }
   console.log(
@@ -94,7 +219,7 @@ async function main(): Promise<void> {
     + `max-pages=${args.maxPages ?? process.env.GOSZAKUP_HTML_MAX_PAGES ?? 50}`
   );
 
-  const warnings: string[] = [];
+  const warnings = summary.warnings;
 
   if (!args.skipEnrich) {
     console.warn(
@@ -140,20 +265,33 @@ async function main(): Promise<void> {
   try {
     const lastRun = getLastCompletedRun(db);
     const baseline = args.baseline || (!lastRun && !args.since);
+    summary.baseline = baseline;
 
-    const diff = computeOutreachDiff(db, { bins, since: args.since ?? undefined });
+    let diff;
+    try {
+      diff = computeOutreachDiff(db, { bins, since: args.since ?? undefined });
+    } catch (err) {
+      process.exitCode = EXIT_DB_ERROR;
+      throw err;
+    }
     const items = diffToOutreachItems(diff);
+    summary.winners = diff.winners.length;
+    summary.prospects = diff.prospects.length;
     console.log(`diff: winners=${diff.winners.length} prospects=${diff.prospects.length}`);
 
     if (baseline) {
-      // Фиксируем текущее состояние как точку отсчёта: регистрируем без экспорта.
-      // Срабатывает на первом запуске без --since или принудительно через --baseline.
       if (!args.dryRun) {
-        const runId = startOutreachRun(db);
-        const registered = registerOutreachItems(db, runId, items);
-        finishOutreachRun(db, runId, { baseline: true, registered });
-        console.log(`baseline: зафиксировано ${registered} записей, экспорт не делаю.`);
-        console.log("Следующий запуск выдаст только новое.");
+        try {
+          const runId = startOutreachRun(db);
+          const registered = registerOutreachItems(db, runId, items);
+          finishOutreachRun(db, runId, { baseline: true, registered });
+          summary.registered = registered;
+          console.log(`baseline: зафиксировано ${registered} записей, экспорт не делаю.`);
+          console.log("Следующий запуск выдаст только новое.");
+        } catch (err) {
+          process.exitCode = EXIT_DB_ERROR;
+          throw err;
+        }
       } else {
         console.log("baseline + dry-run: ничего не записано.");
       }
@@ -162,42 +300,57 @@ async function main(): Promise<void> {
 
     const winnersPath = datedPath(args.outDir, "digest-winners");
     const queuePath = datedPath(args.outDir, "outreach-queue");
-    const exportedFiles: string[] = [];
+    const exportedFiles = summary.exportedFiles;
 
-    let winnersResult = null;
     if (diff.winners.length > 0) {
-      winnersResult = await exportWinnersDigest(diff.winners, winnersPath);
-      exportedFiles.push(winnersResult.xlsxPath);
-      console.log(`winners: ${winnersResult.winners} (${winnersResult.withPhone} с телефоном) → ${winnersResult.xlsxPath}`);
+      try {
+        const winnersResult = await exportWinnersDigest(diff.winners, winnersPath);
+        exportedFiles.push(winnersResult.xlsxPath);
+        console.log(`winners: ${winnersResult.winners} (${winnersResult.withPhone} с телефоном) → ${winnersResult.xlsxPath}`);
+      } catch (err) {
+        process.exitCode = EXIT_EXPORT_ERROR;
+        throw err;
+      }
     } else {
       console.log("winners: новых нет");
     }
 
-    let queueResult = null;
     if (diff.prospects.length > 0) {
-      queueResult = await exportOutreachQueue(diff.prospects, queuePath);
-      exportedFiles.push(queueResult.xlsxPath);
-      console.log(`queue: ${queueResult.companies} (${queueResult.withPhone} с телефоном) → ${queueResult.xlsxPath}`);
+      try {
+        const queueResult = await exportOutreachQueue(diff.prospects, queuePath);
+        exportedFiles.push(queueResult.xlsxPath);
+        console.log(`queue: ${queueResult.companies} (${queueResult.withPhone} с телефоном) → ${queueResult.xlsxPath}`);
+      } catch (err) {
+        process.exitCode = EXIT_EXPORT_ERROR;
+        throw err;
+      }
     } else {
       console.log("queue: новых проспектов нет");
     }
 
     if (!args.dryRun) {
-      const runId = startOutreachRun(db);
-      const registered = registerOutreachItems(db, runId, items);
-      finishOutreachRun(db, runId, {
-        winners: diff.winners.length,
-        prospects: diff.prospects.length,
-        registered,
-        warnings
-      });
-      console.log(`run #${runId}: зарегистрировано ${registered} записей`);
+      try {
+        const runId = startOutreachRun(db);
+        const registered = registerOutreachItems(db, runId, items);
+        finishOutreachRun(db, runId, {
+          winners: diff.winners.length,
+          prospects: diff.prospects.length,
+          registered,
+          warnings
+        });
+        summary.registered = registered;
+        console.log(`run #${runId}: зарегистрировано ${registered} записей`);
+      } catch (err) {
+        process.exitCode = EXIT_DB_ERROR;
+        throw err;
+      }
     } else {
       console.log("dry-run: outreach_items не записаны, файлы сгенерированы для просмотра.");
     }
 
     if (!args.dryRun) {
-      await notifyTelegram(diff.winners.length, diff.prospects.length, exportedFiles, warnings);
+      const isZeroOutput = diff.winners.length === 0 && diff.prospects.length === 0 && warnings.length === 0;
+      await notifyTelegram(diff.winners.length, diff.prospects.length, exportedFiles, warnings, isZeroOutput);
     }
   } finally {
     storage.close();
@@ -209,7 +362,8 @@ async function notifyTelegram(
   winners: number,
   prospects: number,
   files: string[],
-  warnings: string[]
+  warnings: string[],
+  isZeroOutput: boolean
 ): Promise<void> {
   const config = getTelegramConfigFromEnv();
   if (!config) {
@@ -217,10 +371,13 @@ async function notifyTelegram(
     return;
   }
   try {
+    const header = isZeroOutput
+      ? "⚠️ Autopilot: 0 новых победителей и 0 проспектов — проверь enrich / --since / БИНы в CSV."
+      : `Autopilot: ${winners} новых победителей, ${prospects} проспектов в очереди.`;
     const lines = [
-      `Autopilot: ${winners} новых победителей, ${prospects} проспектов в очереди.`,
-      ...(winners > 0 ? ["", "Черновик для факторинга:", buildFactoringMessage({ winnerCount: winners })] : []),
-      ...(warnings.length > 0 ? ["", `Warning: ${warnings.join("; ")}`] : [])
+      header,
+      ...(warnings.length > 0 ? ["", `Warning: ${warnings.join("; ")}`] : []),
+      ...(winners > 0 ? ["", "Черновик для факторинга:", buildFactoringMessage({ winnerCount: winners })] : [])
     ];
     await sendTelegramMessage(config, lines.join("\n"));
     for (const file of files) {
@@ -234,5 +391,7 @@ async function notifyTelegram(
 
 main().catch((error) => {
   console.error(error);
-  process.exit(1);
+  if (process.exitCode === 0 || process.exitCode === undefined) {
+    process.exitCode = 1;
+  }
 });

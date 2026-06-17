@@ -45,16 +45,22 @@ This file captures post-release candidates after `v1.7.0`. It is meant to be upd
 
 **Why now:** autopilot is the main recurring revenue path (digest-winners + outreach-queue + Telegram).
 
-**Scope:**
-- Robust error recovery: per-BIN retries, continue on transient failures, clear exit codes.
-- Scheduler integration: documented Windows Task Scheduler setup, lock-file to prevent overlapping runs.
-- Alerting: Telegram / operator UI notification when autopilot fails or produces zero winners.
-- Baseline management: explicit `--baseline` command, retention policy for old runs.
-- Monitoring: expose run metrics via `/health` or a simple status endpoint.
+**PR #1 (merged):** lock + exit codes + summary JSON + zero-output alert.
+- `data/autopilot.lock` (O_EXCL) с stale-detection по `process.kill(pid, 0)`.
+- Exit codes: `0` ok, `2` lock busy, `3` DB error, `4` export error, `5` no bins.
+- `exports/autopilot-YYYY-MM-DD.json` со всеми полями run + `lockHeldBy` для lock-busy.
+- Telegram при `winners === 0 && prospects === 0 && warnings.length === 0` отправляет префикс `⚠️`.
+- See `docs/kz-batch-runbook.md` § «Параллельные запуски и lock», «Exit codes», «Summary JSON», «Zero-output».
 
-**Acceptance:**
+**PR #2 (next):** per-BIN retry поверх пайплайна, retention policy для `outreach_runs`, `/health` endpoint с last-run, связка с `api_jobs` для server-side мониторинга.
+- `core/withRetry` уже есть; нужен адаптер под `runKzEnrich` с budget/deadline.
+- Retention: периодический prune `outreach_runs` старше N дней (через отдельный `kz:autopilot:retention`).
+- `/health` уже знает про `api_jobs` (`src/server.ts`) — добавить блок `lastAutopilotRun`.
+- Touches: `api_jobs` schema (миграция), `src/server.ts` (`/health`), `src/storage/apiJobStore.ts`. **Не** трогает `scripts/kz-autopilot.mts` продуктовую логику.
+
+**Acceptance (после PR #2):**
 - Autopilot can run weekly for 4 weeks without manual intervention.
-- Operator can see status of the last run in `/operator` UI.
+- Operator can see status of the last run in `/operator` UI and `/health`.
 
 ---
 
@@ -116,3 +122,4 @@ This file captures post-release candidates after `v1.7.0`. It is meant to be upd
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-06-17 | Archive cleanup recommended as next block | Pure tech debt, no product risk, unblocks all other increments. |
+| 2026-06-17 | Autopilot hardening split into PR #1 (lock/exit/summary) and PR #2 (retry/retention/health) | PR #1 не трогает api_jobs/server/migrations — быстрый и безопасный. PR #2 требует миграцию и UI-блок в /health. |
