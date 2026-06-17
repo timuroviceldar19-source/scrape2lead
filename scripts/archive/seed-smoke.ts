@@ -1,5 +1,5 @@
-import { Storage } from "../src/storage/storage.js";
-import { logger } from "../src/logger.js";
+import { Storage } from "../../src/storage/storage.js";
+import { logger } from "../../src/logger.js";
 
 async function main() {
   const dbPath = "data/scrape2lead.db";

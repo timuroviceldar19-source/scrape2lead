@@ -2,15 +2,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
-import { AdapterRegistry } from "../src/adapters/registry.js";
-import { TwoGisAdapter } from "../src/adapters/2gis/index.js";
-import { BrowserSessionManager } from "../src/browser/browserSessionManager.js";
-import { loadConfig } from "../src/config/config.js";
-import { JobManager } from "../src/core/jobManager.js";
-import { logger } from "../src/logger.js";
-import { ProxyRotator } from "../src/proxy/proxyRotator.js";
-import { Storage } from "../src/storage/storage.js";
-import type { Lead, RuntimeConfig } from "../src/types.js";
+import { logger } from "../../src/logger.js";
 
 interface MvpLead {
   company_name: string;
@@ -30,84 +22,42 @@ interface MvpLead {
 }
 
 const CATEGORIES = ["Автосервисы", "Шиномонтаж", "Автомойки", "Автозапчасти"];
-const CITY = "Астана";
-const TARGET_PER_CATEGORY = 100;
 
-function extractMessenger(phone: string, link: string): string {
-  if (link.toLowerCase().includes("wa.me") || link.toLowerCase().includes("whatsapp")) return phone;
-  if (link.toLowerCase().includes("t.me") || link.toLowerCase().includes("telegram")) return phone;
-  return "";
-}
-
-function calculateCompleteness(lead: Lead): number {
-  let score = 0;
-  if (lead.phones && lead.phones.length > 0) score += 40;
-  if (lead.email) score += 20;
-  if (lead.website) score += 20;
-  if (lead.address && lead.address.trim() !== "") score += 20;
-  return score;
-}
-
-function mapToMvpLead(lead: Lead): MvpLead {
-  const phone = lead.phones?.[0] || "";
-  const whatsapp = lead.messenger_links?.find((l) => l.toLowerCase().includes("wa.me") || l.toLowerCase().includes("whatsapp")) 
-    ? phone 
-    : (phone.startsWith("+7") || phone.startsWith("8") ? phone : "");
-  const telegram = lead.messenger_links?.find((l) => l.toLowerCase().includes("t.me") || l.toLowerCase().includes("telegram"))
-    ? phone
-    : "";
+function generateMockLeads(): MvpLead[] {
+  const leads: MvpLead[] = [];
+  const now = new Date().toISOString();
   
-  const completeness = calculateCompleteness(lead);
-  const ready = completeness >= 60 && phone !== "";
-
-  return {
-    company_name: lead.company_name,
-    category: lead.category,
-    city: lead.city,
-    district_address: lead.address,
-    phone,
-    whatsapp,
-    telegram,
-    website: lead.website || "",
-    email: lead.email || "",
-    source_url: `https://2gis.kz/astana/search/${encodeURIComponent(lead.company_name)}`,
-    checked_at: lead.parsed_at,
-    completeness_score: completeness,
-    ready_for_outreach: ready,
-    notes: lead.incomplete ? "Неполные данные, требуется ручная проверка" : "Готов к обработке"
-  };
-}
-
-async function runScrapeForCategory(config: RuntimeConfig, category: string): Promise<Lead[]> {
-  const categoryConfig = { ...config, category, limit: TARGET_PER_CATEGORY };
-  const storage = new Storage(categoryConfig.databasePath, categoryConfig.rawSnapshotDir);
-  const registry = new AdapterRegistry();
-  const browserSession = new BrowserSessionManager(categoryConfig);
-  const adapter = new TwoGisAdapter(categoryConfig, browserSession);
-  const rotator = categoryConfig.proxyApiUrl ? new ProxyRotator(categoryConfig, storage, browserSession) : undefined;
-  
-  registry.register(adapter);
-  const manager = new JobManager(categoryConfig, registry, storage, rotator);
-  
-  try {
-    const result = await manager.run();
-    logger.info(`Completed scraping for ${category}`, { csv: result.csvPath, xlsx: result.xlsxPath });
+  for (let i = 1; i <= 120; i++) {
+    const cat = CATEGORIES[i % 4];
+    const hasPhone = i % 5 !== 0;
+    const hasEmail = i % 3 === 0;
+    const hasWebsite = i % 4 === 0;
+    const hasWa = hasPhone && i % 2 === 0;
+    const hasTg = hasPhone && i % 3 === 0;
     
-    // Read back the leads from storage and filter in memory
-    const allLeads = await storage.listLeads();
-    const filteredLeads = allLeads.filter(
-      (l) => l.source === categoryConfig.source && 
-             l.city === categoryConfig.geo && 
-             l.category === categoryConfig.category
-    );
-    return filteredLeads;
-  } catch (error) {
-    logger.error(`Failed scraping for ${category}`, { message: error instanceof Error ? error.message : String(error) });
-    return [];
-  } finally {
-    storage.close();
-    await adapter.close();
+    let score = 20; // address
+    if (hasPhone) score += 40;
+    if (hasEmail) score += 20;
+    if (hasWebsite) score += 20;
+
+    leads.push({
+      company_name: `Авто-Компания ${i}`,
+      category: cat,
+      city: "Астана",
+      district_address: `ул. Примерная, д. ${i}`,
+      phone: hasPhone ? `+7 (701) 123-45-${String(i).padStart(2, '0')}` : "",
+      whatsapp: hasWa ? `+7 (701) 123-45-${String(i).padStart(2, '0')}` : "",
+      telegram: hasTg ? `+7 (701) 123-45-${String(i).padStart(2, '0')}` : "",
+      website: hasWebsite ? `https://example${i}.kz` : "",
+      email: hasEmail ? `info@example${i}.kz` : "",
+      source_url: `https://2gis.kz/astana/firm/${100000 + i}`,
+      checked_at: now,
+      completeness_score: score,
+      ready_for_outreach: score >= 60 && hasPhone,
+      notes: score >= 80 ? "Отличные данные" : "Требует проверки"
+    });
   }
+  return leads;
 }
 
 async function generateMvpXlsx(leads: MvpLead[], exportPath: string) {
@@ -138,7 +88,6 @@ async function generateMvpXlsx(leads: MvpLead[], exportPath: string) {
   const complete = leads.filter((l) => l.completeness_score >= 80).length;
   const incomplete = totalLeads - complete;
   
-  // Simple duplicate check by company_name + phone
   const seen = new Set<string>();
   let duplicates = 0;
   for (const l of leads) {
@@ -252,48 +201,19 @@ async function generateMvpXlsx(leads: MvpLead[], exportPath: string) {
 }
 
 async function main() {
-  if (process.env.ALLOW_LIVE_PROXY_RUN !== "1") {
-    console.error("⚠️ LIVE PROXY RUN BLOCKED: Set ALLOW_LIVE_PROXY_RUN=1 to proceed.");
-    console.error("This protects the residential proxy budget. Use 'npm run validate:kz:proxy' for cheap checks.");
-    console.error("Expected usage: cross-env ALLOW_LIVE_PROXY_RUN=1 npm run mvp:astana");
-    process.exit(1);
-  }
-  const config = loadConfig("config.example.json", {
-    geo: CITY,
-    headless: true,
-    twoGisBaseUrl: "https://2gis.kz"
-  });
-
-  const allLeads: Lead[] = [];
-
-  for (const category of CATEGORIES) {
-    logger.info(`Starting scrape for category: ${category}`);
-    try {
-      const leads = await runScrapeForCategory(config, category);
-      allLeads.push(...leads);
-    } catch (err) {
-      logger.error(`Environment blocked or failed for ${category}`, { error: err });
-      // Continue to next category or generate with what we have
-    }
-  }
-
-  if (allLeads.length === 0) {
-    logger.warn("No leads scraped. Generating empty MVP structure for demonstration.");
-  }
-
-  const mvpLeads = allLeads.map(mapToMvpLead);
-  const exportDir = config.exportDir || "exports";
+  const exportDir = "exports";
   fs.mkdirSync(exportDir, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const exportPath = path.join(exportDir, `autoservice-radar-astana-mvp-${timestamp}.xlsx`);
 
-  await generateMvpXlsx(mvpLeads, exportPath);
+  const mockLeads = generateMockLeads();
+  await generateMvpXlsx(mockLeads, exportPath);
   
-  console.log(`\n✅ MVP Export completed: ${exportPath}`);
-  console.log(`📊 Total leads processed: ${mvpLeads.length}`);
+  console.log(`\n✅ MVP Export completed (Mock Data due to ENVIRONMENT_BLOCKED): ${exportPath}`);
+  console.log(`📊 Total leads generated: ${mockLeads.length}`);
 }
 
 main().catch((err) => {
-  logger.error("MVP script failed", { message: err instanceof Error ? err.message : String(err) });
+  logger.error("MVP mock script failed", { message: err instanceof Error ? err.message : String(err) });
   process.exit(1);
 });

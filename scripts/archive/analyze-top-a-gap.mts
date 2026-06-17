@@ -1,9 +1,9 @@
 import Database from "better-sqlite3";
-import { readBinsFromCsv } from "../src/kz/csv.js";
-import { scoreCompanyCards } from "../src/kz/kzLeadScore.js";
-import { KzStorage } from "../src/kz/kzStorage.js";
-import { mergeLeadsWithKz } from "../src/kz/leadKzMerge.js";
-import { matchNames } from "../src/utils/nameNormalizer.js";
+import { readBinsFromCsv } from "../../src/kz/csv.js";
+import { scoreCompanyCards } from "../../src/kz/kzLeadScore.js";
+import { KzStorage } from "../../src/kz/kzStorage.js";
+import { mergeLeadsWithKz } from "../../src/kz/leadKzMerge.js";
+import { matchNames } from "../../src/utils/nameNormalizer.js";
 
 const BATCH = process.argv[2] ?? "bins-batch-100.csv";
 const TOP_A = process.argv[3] ?? "bins-top-a.csv";

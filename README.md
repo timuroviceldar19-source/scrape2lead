@@ -243,6 +243,30 @@ exports/        XLSX/CSV (runtime, gitignored)
 
 ---
 
+## Changelog
+
+### v1.7.0 — current (`develop`)
+
+Latest release train (post-merge `c3a495d`):
+
+- **Operator / release readiness**
+  - Documented release environment variables and health-response shape.
+  - Added `docs/release-checklist.md` — CI gate for `develop → main`.
+- **Server / operator UI**
+  - Fixed Windows job spawn (`EINVAL`) by running jobs via `node.exe` instead of `npx.cmd`.
+  - `/operator` dashboard can submit `kz-enrich`/`kz-export`, stream logs and download artifacts.
+- **Autopilot / sales helpers**
+  - Removed public Telegram freemium channel layer; digest stays private/operator-only.
+  - Added sales factoring buyer workbook (`scripts/make-factoring-targets.mts`).
+- **Docs**
+  - `docs/pipeline-overview.md` — end-to-end operator guide.
+  - `docs/foreign-market-research.md` — expansion research template.
+  - `docs/kz-batch-runbook.md` — batch 50–100 BIN, autopilot, scheduler.
+
+See `docs/BACKLOG.md` for candidate next increments and `docs/ARCHIVE_AUDIT.md` for the legacy-script / prompt archive audit.
+
+---
+
 ## Документация
 
 | Документ | Назначение |

@@ -1,9 +1,9 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
-import { Storage } from "../src/storage/storage.js";
-import { finalizeLead } from "../src/normalizer/normalize.js";
-import type { Lead } from "../src/types.js";
+import { Storage } from "../../src/storage/storage.js";
+import { finalizeLead } from "../../src/normalizer/normalize.js";
+import type { Lead } from "../../src/types.js";
 
 const DB_PATH = "data/scrape2lead-2gis.db";
 const INPUT_FILE = "2gis-contacts.json";
