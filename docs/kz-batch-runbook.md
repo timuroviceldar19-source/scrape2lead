@@ -158,10 +158,65 @@ npm run kz:autopilot -- --dry-run --skip-enrich
 Артефакты:
 - `exports/digest-winners-<дата>.xlsx` — свежие победители (контракты supplier-side) с контактами. Продукт для факторинга/банков (сегмент 2).
 - `exports/outreach-queue-<дата>.xlsx` — Top-A компании с новыми активными закупками + готовые WhatsApp-сообщения и `wa.me`-ссылки (сегмент 1).
+- `exports/autopilot-<дата>.json` — машинно-читаемая сводка запуска (см. ниже).
 
-Telegram: задать `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` в `.env` — бот пришлёт сводку, черновик письма для факторинга и оба файла. Без env — просто warning в консоли.
+Telegram: задать `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` в `.env` — бот пришлёт сводку, черновик письма для факторинга и оба файла. Без env — просто warning в консоли. При `zeroOutput` (см. ниже) сообщение приходит с префиксом `⚠️` — это алерт, а не «всё ок».
 
 Дедуп: пары (БИН, номер тендера) пишутся в `outreach_items`, второй раз в дайджест не попадают.
+
+### Параллельные запуски и lock
+
+`kz-autopilot` в начале создаёт **lock-файл** `data/autopilot.lock` через `O_CREAT|O_EXCL`. Внутри JSON: `{pid, host, startedAt, command}`. Второй запуск, пока первый держит lock, **завершается сразу с exit code 2** и сообщением `autopilot: lock busy: pid=…`. Запланировано две задачи в одно время — вторая просто отказывается стартовать, не дублирует Telegram и не плодит файлы.
+
+Stale lock: если в lock-файле PID из этого же хоста, но процесс мёртв (`process.kill(pid, 0)` → ESRCH), autopilot удалит lock и попробует acquire ещё раз. Lock с другого хоста **не трогается** — чтобы не сбить соседнюю машину при шаре NFS. Если scheduler оставил lock после падения и PID уже переиспользован другим процессом — увы, детектировать нельзя; ручной фикс — удалить `data/autopilot.lock`.
+
+Переопределить путь: `KZ_AUTOPILOT_LOCK_PATH=/path/to/lock` (например, на Windows-сервере с двумя `scrapе2lead` инсталляциями).
+
+### Exit codes
+
+| Code | Смысл | Что делать |
+|---|---|---|
+| 0 | OK (включая baseline/dry-run и zeroOutput) | ничего |
+| 1 | Необработанная ошибка (catch-all) | смотреть stderr + summary JSON |
+| 2 | Lock занят другим запуском | в логах второго процесса `lock busy: pid=…`; основной запуск в порядке |
+| 3 | DB / diff / register error | проверить `data/scrape2lead.db`, миграции, диск |
+| 4 | Ошибка записи XLSX-экспорта | проверить `out-dir` (по умолчанию `exports/`), права на запись, диск |
+| 5 | Нет БИНов / невалидные аргументы | проверить `--batch-csv` / `--top-a-csv` и их содержимое |
+
+`process.exitCode` используется вместо `process.exit()` — `main().catch` оставляет код 0/1/2/3/4/5 нетронутым, перезаписывает только если был 0.
+
+### Summary JSON
+
+Каждый запуск пишет `exports/autopilot-YYYY-MM-DD.json` со всеми полями, которые пригодятся мониторингу:
+
+```json
+{
+  "startedAt": "2026-06-17T08:00:00.000Z",
+  "finishedAt": "2026-06-17T08:00:12.345Z",
+  "elapsedMs": 12345,
+  "dryRun": false,
+  "baseline": false,
+  "enrichSkipped": false,
+  "bins": 40,
+  "winners": 7,
+  "prospects": 12,
+  "registered": 19,
+  "exportedFiles": ["exports/digest-winners-2026-06-17.xlsx", "exports/outreach-queue-2026-06-17.xlsx"],
+  "warnings": ["stat.gov: 3 БИНов не обновились (проверь QR-сессию: npm run kz:login)"],
+  "zeroOutput": false,
+  "exitCode": 0,
+  "exitReason": "ok",
+  "lockHeldBy": null
+}
+```
+
+Для lock-busy кейса `lockHeldBy` заполнен данными владельца, `exitReason: "lock busy"`, `exitCode: 2`. Файл всегда пишется в `finally` — даже если пайплайн упал.
+
+### Zero-output
+
+`zeroOutput: true` ставится, когда `winners === 0 && prospects === 0 && warnings.length === 0`. Это не ошибка, но **сигнал «что-то не так»**: либо `--since` отрезал всё, либо BIN-ы не обновились, либо enrich не запустился. В Telegram-уведомлении (для non-dry-run) добавляется префикс `⚠️ Autopilot: 0 новых… — проверь enrich / --since / БИНы в CSV`.
+
+Enrich warning (например, протухшая QR-сессия stat.gov) даёт ненулевой `warnings`, поэтому `zeroOutput: false` — это уже не «нулевой» кейс, а «известная деградация». Проверь `npm run kz:login` и запуск руками.
 
 ### Еженедельный запуск (Windows Task Scheduler)
 
