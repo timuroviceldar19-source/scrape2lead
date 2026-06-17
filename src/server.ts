@@ -1082,6 +1082,9 @@ function buildKzAutopilotInvocation(input: Record<string, unknown>, cwd: string)
   pushBooleanFlag(args, "--progress", input.progress);
   pushPositiveIntFlag(args, "--max-pages", input.maxPages);
   pushBooleanFlag(args, "--baseline", input.baseline);
+  pushNonNegativeIntFlag(args, "--enrich-retries", input.enrichRetries);
+  pushPositiveIntFlag(args, "--enrich-retry-base-ms", input.enrichRetryBaseMs);
+  pushPositiveIntFlag(args, "--enrich-deadline-ms", input.enrichDeadlineMs);
   return { command: invocation.command, args };
 }
 

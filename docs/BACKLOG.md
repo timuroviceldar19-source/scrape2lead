@@ -65,7 +65,7 @@ This file captures post-release candidates after `v1.7.0`. It is meant to be upd
   - `SCRAPE2LEAD_JOB_RETENTION_DAYS` (env, default disabled): однократный prune terminal jobs старше N дней на старте, сразу после `resetRunningJobs()`. Логирует `Pruned N terminal API jobs older than X days`. Не трогает `queued`/`running` и не удаляет файлы в `exports/`.
   - Docs: `docs/server.md` (§ «Retention для api_jobs» + описание `lastAutopilotRun` в `/health`), `docs/kz-batch-runbook.md` (мониторинг через `/health`).
   - Миграция не нужна: текущая `api_jobs` уже содержит `id`/`type`/`status`/`created_at`/`started_at`/`finished_at`/`exit_code`/`error`, а `api_job_logs` и `api_job_artifacts` связаны `ON DELETE CASCADE`.
-- ⏳ **per-BIN retry поверх `runKzEnrich` (PR #2b, future):**
+- ✅ **per-BIN retry поверх `runKzEnrich` (PR #2b, done):**
   - Адаптер `core/withRetry` под enrich с budget/deadline.
 - ⏳ **`outreach_runs` retention (PR #2c, future):**
   - Периодический prune `outreach_runs` старше N дней (отдельный `kz:autopilot:retention`).

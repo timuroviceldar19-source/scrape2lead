@@ -450,6 +450,9 @@ describe("scrape2lead API server", () => {
         dryRun: true,
         skipEnrich: true,
         maxPages: 5,
+        enrichRetries: 2,
+        enrichRetryBaseMs: 1000,
+        enrichDeadlineMs: 300000,
         skipChannel: true,
         channelNiche: "construction",
         shell: "rm -rf ."
@@ -467,7 +470,13 @@ describe("scrape2lead API server", () => {
       "--dry-run",
       "--skip-enrich",
       "--max-pages",
-      "5"
+      "5",
+      "--enrich-retries",
+      "2",
+      "--enrich-retry-base-ms",
+      "1000",
+      "--enrich-deadline-ms",
+      "300000"
     ]);
     expect(invocation.args).not.toContain("--skip-channel");
     expect(invocation.args).not.toContain("--channel-niche");
