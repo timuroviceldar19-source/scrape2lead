@@ -70,8 +70,9 @@ const MAX_LOG_TAIL_LINES = 20;
 
 const defaultSpawnRunner: SpawnRunner = {
   start(command, args, options) {
-    return spawn(command, args, {
-      cwd: options.cwd,
+    const normalized = normalizeSpawnInvocation(command, args, options.cwd);
+    return spawn(normalized.command, normalized.args, {
+      cwd: normalized.cwd,
       env: options.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"]
@@ -426,7 +427,7 @@ async function runClaimedJob(state: ServerState, job: ApiJob): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await state.jobStore.finishJob(job.id, "failed", null, null, `Spawn error: ${message}`);
-    await state.jobStore.appendLog(job.id, "system", `Spawn error: ${message}`);
+    await appendSpawnFailureLogs(state, job, message);
     return;
   }
 
@@ -445,6 +446,7 @@ async function runClaimedJob(state: ServerState, job: ApiJob): Promise<void> {
       await state.jobStore.finishJob(job.id, "failed", null, null, message);
     }
     await state.jobStore.appendLog(job.id, "system", `Process error: ${message}`);
+    await appendSpawnDiagnostics(state, job);
     await saveJobArtifacts(state, job.id);
     state.processes.delete(job.id);
     void drainQueue(state);
@@ -1003,7 +1005,7 @@ function buildKzExportInvocation(
 }
 
 function buildKzAutopilotInvocation(input: Record<string, unknown>, cwd: string): { command: string; args: string[] } {
-  const invocation = tsxScriptInvocation("scripts/kz-autopilot.mts");
+  const invocation = tsxScriptInvocation(cwd, "scripts/kz-autopilot.mts");
   const args = [...invocation.args];
   pushStringFlag(args, "--batch-csv", input.batchCsv);
   pushStringFlag(args, "--top-a-csv", input.topACsv);
@@ -1016,21 +1018,79 @@ function buildKzAutopilotInvocation(input: Record<string, unknown>, cwd: string)
   pushBooleanFlag(args, "--baseline", input.baseline);
   pushBooleanFlag(args, "--skip-channel", input.skipChannel);
   pushStringFlag(args, "--channel-niche", input.channelNiche);
-  void cwd;
   return { command: invocation.command, args };
 }
 
-function cliInvocation(cwd: string): { command: string; args: string[] } {
-  const runningFromDist = fileURLToPath(import.meta.url).includes(`${path.sep}dist${path.sep}`);
+export function resolveCliInvocation(
+  cwd: string,
+  serverModulePath: string = fileURLToPath(import.meta.url)
+): { command: string; args: string[] } {
   const distCli = path.join(cwd, "dist", "src", "cli.js");
-  if (runningFromDist && fs.existsSync(distCli)) {
+  if (isRunningFromDist(serverModulePath) && fs.existsSync(distCli)) {
     return { command: process.execPath, args: [distCli] };
+  }
+  return devCliInvocation(cwd);
+}
+
+function cliInvocation(cwd: string): { command: string; args: string[] } {
+  return resolveCliInvocation(cwd);
+}
+
+function devCliInvocation(cwd: string): { command: string; args: string[] } {
+  const tsxCli = localTsxCliPath(cwd);
+  if (fs.existsSync(tsxCli)) {
+    return { command: process.execPath, args: [tsxCli, path.join(cwd, "src", "cli.ts")] };
   }
   return { command: npxCommand(), args: ["tsx", "src/cli.ts"] };
 }
 
-function tsxScriptInvocation(scriptPath: string): { command: string; args: string[] } {
+export function tsxScriptInvocation(cwd: string, scriptPath: string): { command: string; args: string[] } {
+  const tsxCli = localTsxCliPath(cwd);
+  const script = path.isAbsolute(scriptPath) ? scriptPath : path.join(cwd, scriptPath);
+  if (fs.existsSync(tsxCli)) {
+    return { command: process.execPath, args: [tsxCli, script] };
+  }
   return { command: npxCommand(), args: ["tsx", scriptPath] };
+}
+
+function isRunningFromDist(serverModulePath: string): boolean {
+  return serverModulePath.replace(/\\/g, "/").includes("/dist/");
+}
+
+function localTsxCliPath(cwd: string): string {
+  return path.join(cwd, "node_modules", "tsx", "dist", "cli.mjs");
+}
+
+export function normalizeSpawnInvocation(
+  command: string,
+  args: string[],
+  cwd: string
+): { command: string; args: string[]; cwd: string } {
+  const normalizedCommand = String(command ?? "").trim();
+  if (!normalizedCommand) {
+    throw new Error("spawn command is empty");
+  }
+  const normalizedArgs = args
+    .filter((arg) => arg !== undefined && arg !== null)
+    .map((arg) => String(arg));
+  const normalizedCwd = path.resolve(cwd);
+  if (!fs.existsSync(normalizedCwd)) {
+    throw new Error(`spawn cwd does not exist: ${normalizedCwd}`);
+  }
+  return { command: normalizedCommand, args: normalizedArgs, cwd: normalizedCwd };
+}
+
+async function appendSpawnFailureLogs(state: ServerState, job: ApiJob, message: string): Promise<void> {
+  await state.jobStore.appendLog(job.id, "system", `Spawn error: ${message}`);
+  await appendSpawnDiagnostics(state, job);
+}
+
+async function appendSpawnDiagnostics(state: ServerState, job: ApiJob): Promise<void> {
+  await state.jobStore.appendLog(job.id, "system", `Spawn command: ${job.command}`);
+  await state.jobStore.appendLog(job.id, "system", `Spawn cwd: ${job.cwd}`);
+  if (job.args.length > 0) {
+    await state.jobStore.appendLog(job.id, "system", `Spawn args: ${job.args.join(" ")}`);
+  }
 }
 
 function resolveCsvInput(
@@ -1102,7 +1162,7 @@ function optionalString(value: unknown): string | undefined {
   return trimmed;
 }
 
-function npxCommand(): string {
+export function npxCommand(): string {
   return process.platform === "win32" ? "npx.cmd" : "npx";
 }
 
