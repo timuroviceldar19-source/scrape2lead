@@ -218,6 +218,26 @@ Stale lock: если в lock-файле PID из этого же хоста, н�
 
 Enrich warning (например, протухшая QR-сессия stat.gov) даёт ненулевой `warnings`, поэтому `zeroOutput: false` — это уже не «нулевой» кейс, а «известная деградация». Проверь `npm run kz:login` и запуск руками.
 
+### Мониторинг последнего запуска через `/health`
+
+API-сервер (`npm run server`) отдаёт последний autopilot job в блоке `lastAutopilotRun` на `GET /health` (см. [docs/server.md](./server.md#get-health)). Это самый простой способ для оператора/мониторинга узнать, что autopilot действительно отработал, и в каком он статусе:
+
+```bash
+curl -s http://127.0.0.1:8787/health | jq '.lastAutopilotRun'
+# {
+#   "id": "5c6c…",
+#   "status": "completed",
+#   "createdAt": "2026-06-15T08:00:00.000Z",
+#   "finishedAt": "2026-06-15T08:00:42.456Z",
+#   "exitCode": 0,
+#   "artifacts": ["autopilot-2026-06-15.json", "digest-winners-2026-06-15.xlsx"]
+# }
+```
+
+`lastAutopilotRun: null` означает, что через API-сервер ещё ни разу не запускали `kz-autopilot` (либо retention вычистил старые записи). Если чтение JobStore падает, `jobStore: { ok: false, error: ... }` в том же response — `/health` остаётся `200 ok: true`, чтобы не ломать внешний мониторинг.
+
+Operator UI показывает весь `/health` JSON в health-tooltip; правок в UI не требуется.
+
 ### Еженедельный запуск (Windows Task Scheduler)
 
 Enrich открывает **видимый** браузер (stat.gov работает с `headless: false`) — в неинтерактивной сессии планировщика он не взлетит. Поэтому два варианта:

@@ -58,9 +58,23 @@ This file captures post-release candidates after `v1.7.0`. It is meant to be upd
 - `/health` уже знает про `api_jobs` (`src/server.ts`) — добавить блок `lastAutopilotRun`.
 - Touches: `api_jobs` schema (миграция), `src/server.ts` (`/health`), `src/storage/apiJobStore.ts`. **Не** трогает `scripts/kz-autopilot.mts` продуктовую логику.
 
-**Acceptance (после PR #2):**
-- Autopilot can run weekly for 4 weeks without manual intervention.
-- Operator can see status of the last run in `/operator` UI and `/health`.
+**PR #2 (split):**
+- ✅ **`/health` last-run + JobStore retention (PR #2a, done):**
+  - `IJobStore`: `getLatestJobByType`, `pruneTerminalJobsBefore` (SQLite + Postgres).
+  - `GET /health` отдаёт `lastAutopilotRun` (id/status/createdAt/startedAt/finishedAt/exitCode/error/artifacts) и `jobStore: { ok, error? }` — `/health` остаётся 200 даже при ошибке чтения JobStore.
+  - `SCRAPE2LEAD_JOB_RETENTION_DAYS` (env, default disabled): однократный prune terminal jobs старше N дней на старте, сразу после `resetRunningJobs()`. Логирует `Pruned N terminal API jobs older than X days`. Не трогает `queued`/`running` и не удаляет файлы в `exports/`.
+  - Docs: `docs/server.md` (§ «Retention для api_jobs» + описание `lastAutopilotRun` в `/health`), `docs/kz-batch-runbook.md` (мониторинг через `/health`).
+  - Миграция не нужна: текущая `api_jobs` уже содержит `id`/`type`/`status`/`created_at`/`started_at`/`finished_at`/`exit_code`/`error`, а `api_job_logs` и `api_job_artifacts` связаны `ON DELETE CASCADE`.
+- ⏳ **per-BIN retry поверх `runKzEnrich` (PR #2b, future):**
+  - Адаптер `core/withRetry` под enrich с budget/deadline.
+- ⏳ **`outreach_runs` retention (PR #2c, future):**
+  - Периодический prune `outreach_runs` старше N дней (отдельный `kz:autopilot:retention`).
+  - Пока остаётся в бэклоге: API-сервер сейчас чистит только `api_jobs`, `outreach_runs` живут своей жизнью.
+
+**Acceptance (после PR #2a):**
+- `/health` показывает последний autopilot job (status/exitCode/artifacts) либо `null`, если ещё не запускался.
+- При заданном `SCRAPE2LEAD_JOB_RETENTION_DAYS` старые terminal jobs удаляются на старте, queued/running — никогда.
+- `npm test` и `npm run lint` зелёные, миграция БД не нужна.
 
 ---
 
