@@ -40,7 +40,8 @@
     "kz:export-gz-plans": "tsx scripts/kz-export-gz-plans.mts",
     "kz:export-lots-nstru": "tsx scripts/kz-export-goszakup-lots-by-nstru.mts",
     "kz:dedupe-gz-plans": "tsx scripts/dedupe-gz-plans-xlsx.mts",
-    "kz:bitrix-push-gz-plans": "tsx scripts/bitrix-push-gz-plans.mts"
+    "kz:bitrix-push-gz-plans": "tsx scripts/bitrix-push-gz-plans.mts",
+    "kz:monitor-gz-published": "tsx scripts/kz-monitor-gz-published.mts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",

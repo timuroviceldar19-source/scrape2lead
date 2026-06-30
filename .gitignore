@@ -17,6 +17,7 @@ data/*.bak.*
 data/*.db.*
 data/*.xlsx
 data/stat-gov-session.json
+data/gz-published-seen.json
 data/debug/
 
 # Local screenshots and scratch assets
