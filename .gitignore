@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.tools/
+
+# Build output
+dist/
+
+# Environment — copy .env.example and fill in values; never commit .env
+.env
+
+# Runtime database
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.bak
+data/*.bak.*
+data/*.db.*
+data/*.xlsx
+data/stat-gov-session.json
+data/debug/
+
+# Local screenshots and scratch assets
+Assets/
+
+# Generated BIN batches and run artifacts
+bins-*.csv
+bins-*.json
+bins-batch-meta.json
+vitest-out.txt
+lint-out.txt
+
+# Runtime export artifacts
+exports/*
+!exports/.gitkeep
+
+# Raw snapshots (fixtures are kept via tests/fixtures — not here)
+raw_snapshots/*
+!raw_snapshots/.gitkeep
+
+# Logs and temp files
+*.log
+logs/
+*.tmp
+*.cache
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Local config override — use config.example.json as starting point
+config.json
+config.feeder.json
+config.feeder.astana.json
+config.feeder.astana.lite.json
+".qwen/"  
+.qwen/  

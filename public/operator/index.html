@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scrape2Lead Operator</title>
+  <link rel="stylesheet" href="/operator/operator.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Scrape2Lead Operator</div>
+    <div class="topbar-controls">
+      <label class="token-field">
+        <span>API token</span>
+        <input id="token" type="password" autocomplete="off" spellcheck="false"
+               placeholder="(none — server is open)" />
+      </label>
+      <button id="btn-health" data-action="health">Check health</button>
+      <span id="health-pill" class="pill pill-unknown" title="Health status">?</span>
+    </div>
+  </header>
+
+  <div id="alert" class="alert hidden" role="status" aria-live="polite"></div>
+
+  <main class="layout">
+    <section class="card" id="card-submit">
+      <h2>Submit kz-enrich job</h2>
+      <form id="submit-form" autocomplete="off">
+        <label class="field">
+          <span>BINs (one per line, 12 digits)</span>
+          <textarea id="bins" rows="6" spellcheck="false"
+                    placeholder="061040006408&#10;960440000716"></textarea>
+        </label>
+        <details class="advanced">
+          <summary>Advanced</summary>
+          <div class="grid-2">
+            <label class="check"><input type="checkbox" id="skipStat" /> skipStat</label>
+            <label class="check"><input type="checkbox" id="skipTenders" /> skipTenders</label>
+            <label class="check"><input type="checkbox" id="skipZakup" /> skipZakup</label>
+            <label class="check"><input type="checkbox" id="skipGoszakupRegistry" /> skipGoszakupRegistry</label>
+            <label class="check"><input type="checkbox" id="registryOnly" /> registryOnly</label>
+            <label class="check"><input type="checkbox" id="forceRefresh" /> forceRefresh</label>
+            <label class="field">
+              <span>delayMs</span>
+              <input type="number" id="delayMs" min="0" step="100" />
+            </label>
+            <label class="field">
+              <span>goszakupMaxPages</span>
+              <input type="number" id="goszakupMaxPages" min="1" step="1" />
+            </label>
+          </div>
+        </details>
+        <div class="row">
+          <button type="submit" data-action="submit">Submit</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" id="card-export">
+      <h2>Export KZ report</h2>
+      <form id="export-form" autocomplete="off">
+        <label class="field">
+          <span>BINs (optional, one per line, 12 digits)</span>
+          <textarea id="export-bins" rows="6" spellcheck="false"
+                    placeholder="061040006408&#10;960440000716"></textarea>
+          <span class="help">Leave empty to export all companies currently in the DB.</span>
+        </label>
+        <label class="field">
+          <span>Output filename (optional)</span>
+          <input id="export-filename" type="text" spellcheck="false"
+                 placeholder="kz-report.xlsx" />
+          <span class="help">Filename only — the report is always written under <code>exports/</code>.</span>
+        </label>
+        <div class="row">
+          <button type="submit" data-action="submit-export">Export report</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" id="card-jobs">
+      <h2>Jobs</h2>
+      <div class="row toolbar">
+        <label class="field inline">
+          <span>Status</span>
+          <select id="jobs-status">
+            <option value="">(all)</option>
+            <option value="queued">queued</option>
+            <option value="running">running</option>
+            <option value="completed">completed</option>
+            <option value="failed">failed</option>
+            <option value="cancelled">cancelled</option>
+            <option value="interrupted">interrupted</option>
+          </select>
+        </label>
+        <label class="field inline">
+          <span>Limit</span>
+          <input type="number" id="jobs-limit" min="1" max="200" value="20" />
+        </label>
+        <label class="field inline">
+          <span>Offset</span>
+          <input type="number" id="jobs-offset" min="0" value="0" />
+        </label>
+        <button data-action="refresh-jobs">Refresh</button>
+        <span id="jobs-total" class="muted">0 jobs</span>
+      </div>
+      <div class="table-wrap">
+        <table id="jobs-table">
+          <thead>
+            <tr>
+              <th>id</th><th>type</th><th>status</th>
+              <th>created</th><th>started</th><th>finished</th>
+              <th>exit</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="jobs-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="card-detail">
+      <h2>Job detail</h2>
+      <div id="detail-empty" class="muted">Select a job to see its details.</div>
+      <div id="detail-body" class="hidden">
+        <dl class="kv">
+          <dt>id</dt><dd id="d-id" class="mono"></dd>
+          <dt>type</dt><dd id="d-type"></dd>
+          <dt>status</dt><dd><span id="d-status" class="pill"></span></dd>
+          <dt>exit_code</dt><dd id="d-exit" class="mono"></dd>
+          <dt>signal</dt><dd id="d-signal" class="mono"></dd>
+          <dt>pid</dt><dd id="d-pid" class="mono"></dd>
+          <dt>created_at</dt><dd id="d-created" class="mono"></dd>
+          <dt>started_at</dt><dd id="d-started" class="mono"></dd>
+          <dt>finished_at</dt><dd id="d-finished" class="mono"></dd>
+          <dt>error</dt><dd id="d-error" class="mono"></dd>
+        </dl>
+        <div class="row">
+          <button data-action="refresh-detail">Refresh</button>
+          <button id="btn-cancel" data-action="cancel" class="danger">Cancel job</button>
+        </div>
+
+        <h3>Logs</h3>
+        <div class="row toolbar">
+          <label class="field inline">
+            <span>limit</span>
+            <input type="number" id="logs-limit" min="1" max="2000" value="200" />
+          </label>
+          <label class="field inline">
+            <span>offset</span>
+            <input type="number" id="logs-offset" min="0" value="0" />
+          </label>
+          <button data-action="refresh-logs">Refresh logs</button>
+          <span id="logs-meta" class="muted"></span>
+        </div>
+        <pre id="logs" class="logs mono" tabindex="0"></pre>
+
+        <h3>Per-job artifacts</h3>
+        <div class="row">
+          <button data-action="refresh-perjob">Refresh</button>
+          <span id="perjob-meta" class="muted"></span>
+        </div>
+        <ul id="perjob-list" class="artifact-list"></ul>
+      </div>
+    </section>
+
+    <section class="card" id="card-artifacts">
+      <h2>Global artifacts</h2>
+      <div class="row">
+        <button data-action="refresh-artifacts">Refresh</button>
+        <span id="artifacts-meta" class="muted"></span>
+      </div>
+      <ul id="artifacts-list" class="artifact-list"></ul>
+    </section>
+  </main>
+
+  <script src="/operator/operator.js"></script>
+</body>
+</html>

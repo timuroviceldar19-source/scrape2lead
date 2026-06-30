@@ -1,0 +1,19 @@
+{
+  "keywords": [
+    "Доска специальная",
+    "Панель интерактивная",
+    "Панель жидкокристаллическая"
+  ],
+  "year": 2026,
+  "months": [6, 7, 8],
+  "statuses": ["Утвержден"],
+  "maxPages": 50,
+  "delayMs": 2000,
+  "skipRegistry": false,
+  "forceRegistryRefresh": false,
+  "headless": true,
+  "outPath": null,
+  "databasePath": "data/scrape2lead.db",
+  "debugDir": "data/debug",
+  "pageLoadTimeoutMs": 30000
+}

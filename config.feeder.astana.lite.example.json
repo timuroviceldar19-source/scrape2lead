@@ -1,0 +1,19 @@
+{
+  "source": "2gis",
+  "geo": "Астана",
+  "category": "Строительные компании",
+  "limit": 10,
+  "databasePath": "data/smoke-astana-modem.db",
+  "exportDir": "exports",
+  "delayRangeMs": [2000, 4000],
+  "rotateEveryN": 50,
+  "maxRetries": 2,
+  "concurrency": 1,
+  "headless": true,
+  "rawSnapshotDir": "raw_snapshots",
+  "twoGisBaseUrl": "https://2gis.kz",
+  "storageBackend": "sqlite",
+  "websiteCrawl": { "enabled": false },
+  "websiteDiscovery": { "enabled": false },
+  "directoryContactDiscovery": { "enabled": false }
+}

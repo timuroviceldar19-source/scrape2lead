@@ -1,0 +1,23 @@
+{
+  "data": {
+    "filters": [
+      {
+        "id": "allMerchants",
+        "rows": [
+          {
+            "id": ":allMerchants:12345",
+            "name": "Тестовый Стройматериалы",
+            "category": "Стройматериалы и товары для ремонта",
+            "categories": ["Стройматериалы", "Инструменты", "Сантехника"],
+            "count": 1200,
+            "rating": 4.8,
+            "reviews": 150,
+            "whatsapp": "https://wa.me/77771234567",
+            "hide": false,
+            "active": true
+          }
+        ]
+      }
+    ]
+  }
+}
