@@ -42,7 +42,10 @@
     "kz:dedupe-gz-plans": "tsx scripts/dedupe-gz-plans-xlsx.mts",
     "kz:bitrix-push-gz-plans": "tsx scripts/bitrix-push-gz-plans.mts",
     "kz:monitor-gz-published": "tsx scripts/kz-monitor-gz-published.mts",
-    "bitrix:delete-gz-leads-by-assignee": "tsx scripts/bitrix-delete-gz-leads-by-assignee.mts"
+    "bitrix:delete-gz-leads-by-assignee": "tsx scripts/bitrix-delete-gz-leads-by-assignee.mts",
+    "bitrix:import": "tsx scripts/bitrix-import.mts",
+    "bitrix:backfill-gz-origin": "tsx scripts/bitrix-backfill-gz-origin.mts",
+    "bitrix:gz-duplicate-hygiene": "tsx scripts/bitrix-gz-duplicate-hygiene.mts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",
