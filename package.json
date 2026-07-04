@@ -41,7 +41,8 @@
     "kz:export-lots-nstru": "tsx scripts/kz-export-goszakup-lots-by-nstru.mts",
     "kz:dedupe-gz-plans": "tsx scripts/dedupe-gz-plans-xlsx.mts",
     "kz:bitrix-push-gz-plans": "tsx scripts/bitrix-push-gz-plans.mts",
-    "kz:monitor-gz-published": "tsx scripts/kz-monitor-gz-published.mts"
+    "kz:monitor-gz-published": "tsx scripts/kz-monitor-gz-published.mts",
+    "bitrix:delete-gz-leads-by-assignee": "tsx scripts/bitrix-delete-gz-leads-by-assignee.mts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",
