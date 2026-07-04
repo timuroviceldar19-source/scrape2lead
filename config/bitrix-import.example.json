@@ -1,0 +1,41 @@
+{
+  "entity": "lead",
+  "originatorId": "xlsx-import-orders",
+  "originIdTemplate": "order:{orderId}",
+  "headerRow": 1,
+  "columns": [
+    { "key": "orderId", "header": "Номер заявки" },
+    { "key": "company", "header": "Компания" },
+    { "key": "bin", "header": "БИН" },
+    { "key": "contactName", "header": "Контакт" },
+    { "key": "phone", "header": "Телефон" },
+    { "key": "email", "header": "Email" },
+    { "key": "amount", "header": "Сумма" },
+    { "key": "comment", "header": "Комментарий" }
+  ],
+  "required": ["orderId", "company"],
+  "fields": {
+    "TITLE": { "template": "[{orderId}] {company}" },
+    "NAME": { "column": "contactName" },
+    "PHONE": { "column": "phone", "transform": "phone" },
+    "EMAIL": { "column": "email", "transform": "email" },
+    "OPPORTUNITY": { "column": "amount", "transform": "money" },
+    "CURRENCY_ID": { "value": "KZT" },
+    "COMMENTS": { "column": "comment" }
+  },
+  "duplicateChecks": [
+    { "reason": "same phone", "filter": { "PHONE": { "column": "phone", "transform": "phone" } } }
+  ],
+  "defaults": {
+    "sourceId": "WEB"
+  },
+  "company": {
+    "searchField": "UF_CRM_COMPANY_BIN",
+    "searchColumn": "bin",
+    "originIdTemplate": "company:{bin}",
+    "fields": {
+      "TITLE": { "column": "company" },
+      "UF_CRM_COMPANY_BIN": { "column": "bin", "transform": "bin" }
+    }
+  }
+}
