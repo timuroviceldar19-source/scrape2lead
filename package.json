@@ -15,6 +15,7 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "sales:buyer-template": "tsx scripts/generateBuyerOutreachTemplate.ts",
     "sales:sprint-workbook": "tsx scripts/generateSalesSprintWorkbook.ts",
+    "sales:crm-outreach": "tsx scripts/sales-crm-outreach-links.mts",
     "operator:intake": "tsx scripts/operatorIntake.ts",
     "kz:login": "tsx scripts/stat-gov-login.ts",
     "kz:enrich": "tsx scripts/kz-enrich.ts",

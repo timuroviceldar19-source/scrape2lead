@@ -1,0 +1,24 @@
+{
+  "entity": "lead",
+  "originatorId": "crm-services-prospects",
+  "originIdTemplate": "crm-prospect:{phone}",
+  "headerRow": 1,
+  "columns": [
+    { "key": "company", "header": "Компания" },
+    { "key": "phone", "header": "Телефон" },
+    { "key": "city", "header": "Город" }
+  ],
+  "required": ["company", "phone"],
+  "fields": {
+    "TITLE": { "template": "[CRM-услуги] {company} ({city})" },
+    "COMPANY_TITLE": { "column": "company" },
+    "PHONE": { "column": "phone", "transform": "phone" },
+    "COMMENTS": { "template": "Проспект для CRM-услуг.\nКомпания: {company}\nГород: {city}\nИсточник: 2GIS-пайплайн scrape2lead.\nПри интересе конвертировать в сделку категории «Продажи: CRM-услуги» (49)." }
+  },
+  "duplicateChecks": [
+    { "reason": "same phone", "filter": { "PHONE": { "column": "phone", "transform": "phone" } } }
+  ],
+  "defaults": {
+    "sourceId": "WEB"
+  }
+}

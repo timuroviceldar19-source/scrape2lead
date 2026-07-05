@@ -71,7 +71,7 @@ function resolveColumnIndexes(worksheet: ExcelJS.Worksheet, config: ImportConfig
   return indexes;
 }
 
-function cellText(cell: ExcelJS.Cell): string {
+export function cellText(cell: ExcelJS.Cell): string {
   const value = cell.value;
   if (value == null) return "";
   if (typeof value === "object") {

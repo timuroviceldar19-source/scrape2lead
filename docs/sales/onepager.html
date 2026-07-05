@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Порядок в Bitrix24 — импорт без дублей, чистка базы, поток лидов</title>
+<style>
+  :root {
+    --ink: #16181d;
+    --ink-soft: #4b5160;
+    --paper: #fbfaf7;
+    --line: #d9d6cd;
+    --accent: #1743c7;
+    --accent-ink: #ffffff;
+    --serif: Georgia, "Times New Roman", serif;
+    --sans: "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.55;
+  }
+  .page { max-width: 880px; margin: 0 auto; padding: 48px 28px 56px; }
+
+  .kicker {
+    font-size: 13px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(30px, 5.5vw, 46px);
+    line-height: 1.12;
+    margin: 10px 0 14px;
+    letter-spacing: -0.01em;
+  }
+  .lede { font-size: 18px; color: var(--ink-soft); max-width: 60ch; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
+    border-top: 2px solid var(--ink);
+    border-bottom: 1px solid var(--line);
+    margin: 36px 0 8px;
+  }
+  .stat { padding: 20px 18px 22px; border-left: 1px solid var(--line); }
+  .stat:first-child { border-left: none; padding-left: 0; }
+  .stat b {
+    display: block;
+    font-family: var(--serif);
+    font-size: clamp(30px, 4.5vw, 44px);
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .stat span { font-size: 14px; color: var(--ink-soft); }
+  .stats-note { font-size: 13px; color: var(--ink-soft); margin-bottom: 40px; }
+  .stats-note code {
+    font-size: 12px; background: #efede6; padding: 2px 6px; border-radius: 3px;
+  }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 26px;
+    margin: 44px 0 6px;
+  }
+  .h2-sub { color: var(--ink-soft); margin-bottom: 20px; }
+
+  .packs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .pack {
+    border: 1px solid var(--line);
+    background: #fff;
+    padding: 20px 20px 18px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .pack.feature { border: 2px solid var(--accent); position: relative; }
+  .pack.feature::after {
+    content: "чаще всего берут";
+    position: absolute; top: -11px; right: 14px;
+    background: var(--accent); color: var(--accent-ink);
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    padding: 3px 10px;
+  }
+  .pack h3 { font-size: 17px; }
+  .pack .price {
+    font-family: var(--serif); font-size: 24px; color: var(--accent);
+  }
+  .pack .price small { font-family: var(--sans); font-size: 13px; color: var(--ink-soft); }
+  .pack p { font-size: 14px; color: var(--ink-soft); }
+  .pack ul { padding-left: 18px; font-size: 14px; color: var(--ink-soft); }
+  .pack li { margin: 3px 0; }
+
+  .how { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; counter-reset: step; }
+  .how div { border-top: 2px solid var(--ink); padding-top: 12px; font-size: 14px; color: var(--ink-soft); }
+  .how div::before {
+    counter-increment: step;
+    content: "0" counter(step);
+    display: block;
+    font-family: var(--serif); font-size: 22px; color: var(--ink);
+    margin-bottom: 4px;
+  }
+  .how b { color: var(--ink); }
+
+  .cta {
+    margin-top: 48px;
+    background: var(--ink); color: #f2f1ec;
+    padding: 28px 26px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+    justify-content: space-between;
+  }
+  .cta .txt { max-width: 46ch; }
+  .cta h2 { color: #fff; margin: 0 0 6px; font-size: 22px; }
+  .cta p { font-size: 14px; color: #c9c7bd; }
+  .btn {
+    display: inline-block;
+    background: var(--accent); color: var(--accent-ink);
+    text-decoration: none; font-weight: 600; font-size: 15px;
+    padding: 13px 26px;
+    white-space: nowrap;
+  }
+  .btn:hover { background: #1236a8; }
+  .contact-line { font-size: 13px; color: #c9c7bd; margin-top: 6px; }
+
+  footer { margin-top: 22px; font-size: 12.5px; color: var(--ink-soft); }
+
+  @media (max-width: 640px) {
+    .stats, .packs, .how { grid-template-columns: 1fr; }
+    .stat { border-left: none; padding-left: 0; border-top: 1px solid var(--line); }
+    .stat:first-child { border-top: none; }
+  }
+  @media print {
+    body { background: #fff; }
+    .page { padding: 0; max-width: none; }
+    .cta { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <p class="kicker">Автоматизация Bitrix24 · Казахстан</p>
+  <h1>Импорт без дублей, чистая база,<br>поток лидов на автопилоте</h1>
+  <p class="lede">Настраиваю обмен данными с Bitrix24 так, что дубли невозможны
+  по построению: у каждой записи — ключ источника, каждый запуск — сначала отчёт,
+  потом запись. Ниже цифры реального проекта.</p>
+
+  <div class="stats">
+    <div class="stat"><b>4 075</b><span>сделок просканировано и приведено к единому ключу источника</span></div>
+    <div class="stat"><b>40 пар</b><span>настоящих дублей найдено и убрано в карантин — основная сделка не тронута</span></div>
+    <div class="stat"><b>0 ошибок</b><span>API за все прогоны: троттлинг, автоповторы, отчёт по каждой строке</span></div>
+  </div>
+  <p class="stats-note">Контрольный импорт после чистки: <code>create=8&nbsp;·&nbsp;existing=82&nbsp;·&nbsp;duplicate=0&nbsp;·&nbsp;failed=0</code> — 70% строк выгрузки были бы задвоены обычным импортом.</p>
+
+  <h2>Пакеты</h2>
+  <p class="h2-sub">Цены — ориентир для первого разговора; точная смета после 15-минутного брифа.</p>
+
+  <div class="packs">
+    <div class="pack feature">
+      <h3>Импорт лидов/сделок под ключ</h3>
+      <p class="price">от 80 000 ₸ <small>· разово, 2–3 дня</small></p>
+      <ul>
+        <li>Excel/CSV/любая система → Bitrix24</li>
+        <li>маппинг полей, включая пользовательские</li>
+        <li>защита от дублей + привязка компаний по БИН</li>
+        <li>отчёт по каждой строке до записи</li>
+      </ul>
+    </div>
+    <div class="pack">
+      <h3>Чистка и миграция CRM</h3>
+      <p class="price">от 100 000 ₸ <small>· разово, 1–3 дня</small></p>
+      <ul>
+        <li>поиск настоящих дублей по каскаду признаков</li>
+        <li>карантин вместо удаления — обратимо</li>
+        <li>ключи источника на старые записи</li>
+        <li>перенос между порталами / из amoCRM</li>
+      </ul>
+    </div>
+    <div class="pack">
+      <h3>Поток лидов на автопилоте</h3>
+      <p class="price">от 150 000 ₸/мес <small>· настройка от 100 000 ₸</small></p>
+      <ul>
+        <li>сбор из каталогов, реестров, госзакупок</li>
+        <li>обогащение: телефоны, email, мессенджеры</li>
+        <li>автозаливка в CRM без дублей</li>
+        <li>уведомления в Telegram</li>
+      </ul>
+    </div>
+    <div class="pack">
+      <h3>Кастомные интеграции</h3>
+      <p class="price">от 15 000 ₸/час <small>· оценка бесплатно</small></p>
+      <ul>
+        <li>синхронизации, вебхуки, роботы</li>
+        <li>1С, сайт, телефония, маркетплейсы</li>
+        <li>двусторонний обмен и отчёты</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Как это работает</h2>
+  <div class="how">
+    <div><b>Бриф и доступ.</b> 15 минут разговора + входящий вебхук Bitrix24. Прав администратора не нужно.</div>
+    <div><b>Dry-run бесплатно.</b> За день — отчёт по вашей базе: сколько дублей, что создастся, что обновится. В CRM ещё ничего не записано.</div>
+    <div><b>Запуск.</b> Вы подтверждаете отчёт — выполняю запись. Каждая операция журналируется и обратима.</div>
+  </div>
+
+  <div class="cta">
+    <div class="txt">
+      <h2>Пришлите выгрузку — покажу дубли бесплатно</h2>
+      <p>Dry-run-отчёт по вашей базе за один день. Файл можно обезличить — для анализа структуры этого достаточно.</p>
+      <p class="contact-line">Эльдар · WhatsApp/Telegram +7 706 417 13 36</p>
+    </div>
+    <a class="btn" href="https://wa.me/77064171336?text=Здравствуйте!%20Интересует%20аудит%20дублей%20в%20Bitrix24">Написать в WhatsApp</a>
+  </div>
+
+  <footer>Работаю по КЗ и СНГ удалённо. Кейс с полными цифрами и логами — по запросу.</footer>
+
+</div>
+</body>
+</html>
