@@ -181,6 +181,39 @@ describe("runImport", () => {
     expect(counts).toMatchObject({ create: 0, failed: 1 });
   });
 
+  it("rejects duplicate checks on fields the entity does not have", async () => {
+    const { gateway } = makeGateway();
+    const withFields: BitrixCrmGateway = {
+      ...gateway,
+      async listFields() {
+        return { ID: {}, TITLE: {}, OPPORTUNITY: {} };
+      }
+    };
+
+    await expect(runImport(withFields, leadConfig(), rows.slice(0, 1), {
+      execute: false,
+      updateExisting: false,
+      log: () => {}
+    })).rejects.toThrow(/PHONE.*ignore the filter/s);
+  });
+
+  it("accepts duplicate checks when the entity schema includes the filter fields", async () => {
+    const { gateway } = makeGateway();
+    const withFields: BitrixCrmGateway = {
+      ...gateway,
+      async listFields() {
+        return { ID: {}, TITLE: {}, PHONE: {} };
+      }
+    };
+
+    const { counts } = await runImport(withFields, leadConfig(), rows.slice(0, 1), {
+      execute: false,
+      updateExisting: false,
+      log: () => {}
+    });
+    expect(counts.create).toBe(1);
+  });
+
   it("applies the row limit before planning", async () => {
     const { gateway, calls } = makeGateway();
 

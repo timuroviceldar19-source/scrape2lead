@@ -25,6 +25,28 @@ export interface BitrixCrmGateway {
   ): Promise<Record<string, unknown> | null>;
   add(entity: BitrixEntity, fields: Record<string, unknown>): Promise<string>;
   update(entity: BitrixEntity, id: string, fields: Record<string, unknown>): Promise<void>;
+  /** crm.<entity>.fields — schema used to reject filters Bitrix would silently ignore. */
+  listFields?(entity: BitrixEntity): Promise<Record<string, unknown>>;
+}
+
+/**
+ * crm.*.list silently drops filter keys the entity does not have and returns
+ * an UNFILTERED list — every row would then look like a duplicate of the first
+ * record. Reject such configs before any duplicate check runs.
+ */
+async function assertDuplicateFilterFields(client: BitrixCrmGateway, config: ImportConfig): Promise<void> {
+  if (config.duplicateChecks.length === 0 || !client.listFields) return;
+
+  const known = new Set(Object.keys(await client.listFields(config.entity)));
+  const unknown = [...new Set(
+    config.duplicateChecks.flatMap((check) => Object.keys(check.filter)).filter((field) => !known.has(field))
+  )];
+  if (unknown.length > 0) {
+    throw new Error(
+      `duplicateChecks reference field(s) ${config.entity} does not have: ${unknown.join(", ")} — `
+      + "Bitrix would ignore the filter and report every row as a duplicate"
+    );
+  }
 }
 
 export interface ImportPlanItem {
@@ -57,6 +79,7 @@ export async function planImport(
   rows: ImportRow[],
   updateExisting: boolean
 ): Promise<ImportPlanItem[]> {
+  await assertDuplicateFilterFields(client, config);
   const plan: ImportPlanItem[] = [];
 
   for (const row of rows) {

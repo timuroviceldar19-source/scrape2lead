@@ -143,6 +143,11 @@ export class BitrixClient {
     );
   }
 
+  async listFields(entity: BitrixEntity): Promise<Record<string, unknown>> {
+    const result = await this.call(`crm.${entity}.fields`);
+    return (result ?? {}) as Record<string, unknown>;
+  }
+
   async add(entity: BitrixEntity, fields: Record<string, unknown>): Promise<string> {
     const result = await this.call(`crm.${entity}.add`, {
       fields,
