@@ -47,6 +47,7 @@
     "bitrix:import": "tsx scripts/bitrix-import.mts",
     "bitrix:backfill-gz-origin": "tsx scripts/bitrix-backfill-gz-origin.mts",
     "bitrix:gz-duplicate-hygiene": "tsx scripts/bitrix-gz-duplicate-hygiene.mts",
+    "bitrix:migrate-gz-categories": "tsx scripts/bitrix-migrate-gz-categories.mts",
     "kz:bitrix-push-gz-deals": "tsx scripts/bitrix-push-gz-deals.mts"
   },
   "dependencies": {
