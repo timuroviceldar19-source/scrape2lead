@@ -1,0 +1,20 @@
+{
+  "rules": [
+    {
+      "name": "pk-monitors",
+      "keywordsAny": ["компьютер", "монитор", "моноблок", "многофункциональн", "мфу", "принтер"],
+      "categoryId": 9,
+      "stageId": "C9:NEW"
+    },
+    {
+      "name": "panels-21-43",
+      "enstruSuffixes": [21, 43],
+      "categoryId": 41,
+      "stageId": "C41:NEW"
+    }
+  ],
+  "default": {
+    "categoryId": 29,
+    "stageId": "C29:NEW"
+  }
+}
