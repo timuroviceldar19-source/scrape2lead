@@ -55,10 +55,11 @@ export class BitrixClient {
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
-  async call(method: string, body: unknown = {}): Promise<unknown> {
+  async call(method: string, body: unknown = {}, callOptions: { maxRetries?: number } = {}): Promise<unknown> {
     let lastError: BitrixApiError | null = null;
+    const maxRetries = callOptions.maxRetries ?? this.maxRetries;
 
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) {
         await sleep(this.retryBaseDelayMs * 2 ** (attempt - 1));
       }

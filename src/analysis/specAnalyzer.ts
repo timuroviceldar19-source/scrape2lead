@@ -7,6 +7,7 @@
  * The legacy native-PDF Anthropic path remains available for compatibility.
  */
 
+import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { renderPdfPages, type RenderedPdfPage } from "./pdfRenderer.js";
@@ -80,6 +81,8 @@ export interface AnalyzeSpecOptions {
   fetchImpl?: typeof fetch;
   renderPdf?: (pdf: Buffer) => Promise<RenderedPdfPage[]>;
   client?: Anthropic;
+  /** Reports which provider/model actually produced the result (may be the fallback). */
+  onModelResolved?: (info: { provider: SpecAiProvider; model: string }) => void;
 }
 
 /** Resolves provider, credentials, primary model and optional fallback. */
@@ -209,6 +212,12 @@ const INSTRUCTIONS = [
   "- risks: string[] - риски/подводные камни (пустой массив, если нет).",
   "Пиши на русском. Массивы не должны содержать пустых строк; если данных нет - пустой массив."
 ].join("\n");
+
+/**
+ * Fingerprint of the prompt text, derived rather than hand-maintained so it
+ * can never drift out of sync when INSTRUCTIONS changes.
+ */
+export const PROMPT_VERSION = createHash("sha256").update(INSTRUCTIONS).digest("hex").slice(0, 8);
 
 /** Extracts and validates analysis JSON from raw model text. */
 export function parseSpecAnalysis(rawText: string): SpecAnalysis {
@@ -348,7 +357,9 @@ export async function analyzeSpecPdf(pdf: Buffer, options: AnalyzeSpecOptions = 
   const prompt = buildPrompt(options.context);
 
   if (config.provider === "anthropic") {
-    return analyzeWithAnthropic(pdf, prompt, config, maxTokens, maxAttempts, options.client);
+    const analysis = await analyzeWithAnthropic(pdf, prompt, config, maxTokens, maxAttempts, options.client);
+    options.onModelResolved?.({ provider: "anthropic", model: config.model });
+    return analysis;
   }
 
   const pages = await (options.renderPdf ?? renderPdfPages)(pdf);
@@ -363,7 +374,7 @@ export async function analyzeSpecPdf(pdf: Buffer, options: AnalyzeSpecOptions = 
   const errors: string[] = [];
   for (const target of targets) {
     try {
-      return await analyzeWithOpenCodeTarget(
+      const analysis = await analyzeWithOpenCodeTarget(
         target,
         pages,
         prompt,
@@ -371,6 +382,8 @@ export async function analyzeSpecPdf(pdf: Buffer, options: AnalyzeSpecOptions = 
         maxAttempts,
         options.fetchImpl ?? fetch
       );
+      options.onModelResolved?.({ provider: "opencode", model: target.model });
+      return analysis;
     } catch (error) {
       errors.push(`${target.model}: ${error instanceof Error ? error.message : String(error)}`);
     }

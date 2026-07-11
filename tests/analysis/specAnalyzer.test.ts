@@ -257,13 +257,15 @@ describe("analyzeSpecPdf with OpenCode vision", () => {
         choices: [{ message: { content: JSON.stringify(VALID) } }]
       }), { status: 200, headers: { "content-type": "application/json" } }));
     const renderPdf = vi.fn(async () => pages);
+    const onModelResolved = vi.fn();
 
     const result = await analyzeSpecPdf(Buffer.from("pdf"), {
       provider: "opencode",
       apiKey: "secret",
       fetchImpl,
       renderPdf,
-      maxAttemptsPerModel: 1
+      maxAttemptsPerModel: 1,
+      onModelResolved
     });
 
     expect(result).toEqual(VALID);
@@ -273,6 +275,11 @@ describe("analyzeSpecPdf with OpenCode vision", () => {
     expect(fetchImpl.mock.calls[1][0]).toBe("https://opencode.ai/zen/go/v1/chat/completions");
     expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).model).toBe("mimo-v2.5-free");
     expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body)).model).toBe("kimi-k2.6");
+    // The callback must report the fallback that actually answered, not the
+    // configured primary — callers store this to know which model produced
+    // a given result.
+    expect(onModelResolved).toHaveBeenCalledOnce();
+    expect(onModelResolved).toHaveBeenCalledWith({ provider: "opencode", model: "kimi-k2.6" });
   });
 
   it("retries the primary model when it returns malformed JSON", async () => {

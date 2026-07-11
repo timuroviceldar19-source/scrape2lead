@@ -106,4 +106,13 @@ describe("BitrixClient", () => {
   it("rejects webhook urls that are not http(s)", () => {
     expect(() => new BitrixClient("file:///etc/passwd")).toThrow(/http/);
   });
+
+  it("honors a per-call maxRetries override instead of the client default", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(500, { error_description: "server down" }));
+    const client = makeClient(fetchImpl as unknown as typeof fetch);
+
+    await expect(client.call("crm.timeline.comment.add", {}, { maxRetries: 0 })).rejects.toThrow(/server down/);
+    // The client default is maxRetries: 2 (3 attempts); the override caps this call at 1.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });
