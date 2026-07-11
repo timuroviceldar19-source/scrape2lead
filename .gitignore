@@ -41,6 +41,7 @@ raw_snapshots/*
 # Logs and temp files
 *.log
 logs/
+tmp/
 *.tmp
 *.cache
 
