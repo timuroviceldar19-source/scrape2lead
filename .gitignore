@@ -1,58 +1,44 @@
-# Dependencies
+# Dependencies and local tooling
 node_modules/
 .tools/
+.claude/settings.local.json
 
-# Build output
-dist/
-
-# Environment — copy .env.example and fill in values; never commit .env
+# Secrets and local environment
 .env
+.env.*
+!.env.example
+*.pem
+*.key
 
-# Runtime database
-data/*.db
-data/*.db-shm
-data/*.db-wal
-data/*.bak
-data/*.bak.*
-data/*.db.*
-data/*.xlsx
-data/stat-gov-session.json
-data/gz-published-seen.json
-data/debug/
+# Build, coverage and caches
+dist/
+coverage/
+.cache/
+*.cache
+*.tsbuildinfo
 
-# Local screenshots and scratch assets
-Assets/
-
-# Generated BIN batches and run artifacts
-bins-*.csv
-bins-*.json
-bins-batch-meta.json
-vitest-out.txt
-lint-out.txt
-
-# Runtime export artifacts
+# Runtime data
+data/*
+!data/.gitkeep
 exports/*
 !exports/.gitkeep
-
-# Raw snapshots (fixtures are kept via tests/fixtures — not here)
 raw_snapshots/*
 !raw_snapshots/.gitkeep
-
-# Logs and temp files
-*.log
 logs/
 tmp/
+*.log
 *.tmp
-*.cache
+
+# Local configuration overrides
+config/*.local.json
+config/*-local.json
+
+# Generated run artifacts
+bins-*.csv
+bins-*.json
+vitest-out.txt
+lint-out.txt
 
 # OS metadata
 .DS_Store
 Thumbs.db
-
-# Local config override — use config.example.json as starting point
-config.json
-config.feeder.json
-config.feeder.astana.json
-config.feeder.astana.lite.json
-".qwen/"  
-.qwen/  
