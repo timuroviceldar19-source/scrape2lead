@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildExportRow } from "../../src/kz/gzPlanExporter.js";
+import { buildExportRow, filterPlanRows } from "../../src/kz/gzPlanExporter.js";
 import type { GoszakupRegistryRecord } from "../../src/kz/registryTypes.js";
 import type { GoszakupPlanDetail, GoszakupPlanListItem } from "../../src/kz/goszakupPlanTypes.js";
 
@@ -118,5 +118,34 @@ describe("buildExportRow registry fallback", () => {
     expect(row?.short_characteristics).toBe("Краткое описание");
     expect(row?.extra_description).toBe("Приобретение интерактивная панель с меловой доской в комплекте");
     expect(row?.delivery_address).toBe("область Жетісу, г.Талдыкорган Алимжанова 20");
+  });
+});
+
+describe("filterPlanRows", () => {
+  function row(planned_amount: string, stru_name: string) {
+    return buildExportRow(
+      listItem({ planned_amount, item_name: stru_name }),
+      detail({ name_ru: stru_name }),
+      registry()
+    )!;
+  }
+
+  it("drops rows below the minimum amount", () => {
+    const rows = [row("100", "Панель интерактивная"), row("750000", "Панель интерактивная")];
+    const kept = filterPlanRows(rows, 500000, []);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].planned_amount).toBe("750000");
+  });
+
+  it("drops rows whose item name is in the stop-list", () => {
+    const rows = [row("900000", "Уголок"), row("900000", "Панель интерактивная")];
+    const kept = filterPlanRows(rows, 500000, ["Уголок"]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].stru_name).toBe("Панель интерактивная");
+  });
+
+  it("keeps everything when no filters are configured", () => {
+    const rows = [row("1", "Уголок"), row("900000", "Панель интерактивная")];
+    expect(filterPlanRows(rows, 0, [])).toHaveLength(2);
   });
 });

@@ -87,6 +87,10 @@ export interface GzPlanExportOptions extends GzPlanCollectOptions {
   databasePath?: string;
   skipRegistry?: boolean;
   forceRegistryRefresh?: boolean;
+  /** Drop plan rows with planned amount below this value (KZT). 0 disables. */
+  minAmount?: number;
+  /** Stop-list: drop plan rows whose item name matches any of these. */
+  excludeKeywords?: string[];
 }
 
 export interface GzPlanExportResult {

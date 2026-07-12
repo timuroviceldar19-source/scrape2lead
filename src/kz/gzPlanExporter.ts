@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
 import { isValidBin } from "./csv.js";
+import { isExcludedByName } from "./gzItemFilter.js";
 import { collectGoszakupRegistryForBins } from "./goszakupRegistryCollector.js";
 import { collectGzPlans } from "./goszakupPlanCollector.js";
 import type { GoszakupRegistryRecord } from "./registryTypes.js";
@@ -81,10 +82,15 @@ export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Pr
     }
   }
 
-  const rows = collectResult.items
+  const builtRows = collectResult.items
     .map((item) => buildExportRow(item, item.detail, registryByBin.get(item.detail?.customer_bin ?? "") ?? null))
-    .filter((row): row is GzPlanExportRow => row !== null)
+    .filter((row): row is GzPlanExportRow => row !== null);
+  const rows = filterPlanRows(builtRows, options.minAmount ?? 0, options.excludeKeywords ?? [])
     .sort(compareExportRows);
+  const dropped = builtRows.length - rows.length;
+  if (dropped > 0) {
+    console.log(`gz plan export: dropped ${dropped} rows below min or in stop-list`);
+  }
 
   const xlsxPath = options.outPath ?? defaultOutputPath();
   fs.mkdirSync(path.dirname(xlsxPath), { recursive: true });
@@ -198,6 +204,23 @@ function compareExportRows(a: GzPlanExportRow, b: GzPlanExportRow): number {
   const amountA = parseAmount(a.planned_amount);
   const amountB = parseAmount(b.planned_amount);
   return amountB - amountA;
+}
+
+/**
+ * Drops plan rows whose planned amount is below `minAmount` (when > 0) or whose
+ * item name matches the stop-list. Applied at export time so junk never reaches
+ * the xlsx / Bitrix.
+ */
+export function filterPlanRows(
+  rows: GzPlanExportRow[],
+  minAmount: number,
+  excludeKeywords: string[]
+): GzPlanExportRow[] {
+  return rows.filter((row) => {
+    if (minAmount > 0 && parseAmount(row.planned_amount) < minAmount) return false;
+    if (isExcludedByName(row.stru_name, excludeKeywords)) return false;
+    return true;
+  });
 }
 
 function parseAmount(value: string): number {

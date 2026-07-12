@@ -3,6 +3,7 @@ import path from "node:path";
 import ExcelJS from "exceljs";
 import { chromium, type Page } from "playwright";
 import { sleep } from "./csv.js";
+import { isExcludedByName } from "./gzItemFilter.js";
 import { parseGoszakupLotsHtml, parseGoszakupPagination, type GoszakupLotItem } from "./goszakupHtmlParser.js";
 
 const BASE_URL = "https://goszakup.gov.kz";
@@ -36,6 +37,8 @@ export interface GoszakupLotsNstruOptions {
   statusIds?: number[];
   /** Drop lots with planned amount below this value (KZT). */
   minAmount?: number;
+  /** Stop-list: drop lots whose name matches any of these. */
+  excludeKeywords?: string[];
   maxPages?: number;
   delayMs?: number;
   outPath?: string;
@@ -268,8 +271,7 @@ export async function exportGoszakupLotsByNstru(
     await browser.close();
   }
 
-  const minAmount = options.minAmount ?? 0;
-  const filteredRows = minAmount > 0 ? rows.filter((row) => parseAmount(row.amount) >= minAmount) : rows;
+  const filteredRows = filterLotRows(rows, options.minAmount ?? 0, options.excludeKeywords ?? []);
   const dedupedRows = dedupeRows(filteredRows).sort(compareRows);
   const xlsxPath = options.outPath ?? defaultOutputPath();
   await writeLotsWorkbook(xlsxPath, dedupedRows);
@@ -410,6 +412,22 @@ function monthIndex(month: string): number {
     if (name === month) return Number(index);
   }
   return 99;
+}
+
+/**
+ * Drops lots whose amount is below `minAmount` (when > 0) or whose name matches
+ * the stop-list. Applied at export time so junk never reaches the xlsx / Bitrix.
+ */
+export function filterLotRows(
+  rows: GoszakupLotsNstruRow[],
+  minAmount: number,
+  excludeKeywords: string[]
+): GoszakupLotsNstruRow[] {
+  return rows.filter((row) => {
+    if (minAmount > 0 && parseAmount(row.amount) < minAmount) return false;
+    if (isExcludedByName(row.lot_name, excludeKeywords)) return false;
+    return true;
+  });
 }
 
 function parseAmount(value: string): number {

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { GzPlanExportOptions } from "./goszakupPlanTypes.js";
+import { DEFAULT_GZ_EXCLUDE_KEYWORDS } from "./gzItemFilter.js";
 import {
   DEFAULT_GZ_PLAN_KEYWORDS,
   DEFAULT_GZ_PLAN_STATUSES,
@@ -15,6 +16,8 @@ const GzPlansConfigSchema = z.object({
   year: z.coerce.number().int().min(2000).max(2100).default(2026),
   months: z.array(z.coerce.number().int().min(1).max(12)).default([6, 7, 8]),
   statuses: z.array(z.string().min(1)).default([...DEFAULT_GZ_PLAN_STATUSES]),
+  minAmount: z.coerce.number().nonnegative().default(0),
+  excludeKeywords: z.array(z.string().min(1)).default([...DEFAULT_GZ_EXCLUDE_KEYWORDS]),
   maxPages: z.coerce.number().int().positive().default(50),
   delayMs: z.coerce.number().int().nonnegative().default(2000),
   skipRegistry: z.boolean().default(false),
@@ -75,6 +78,8 @@ export function mergeGzPlansExportOptions(
     year: merged.year,
     months: merged.months,
     statuses: merged.statuses,
+    minAmount: merged.minAmount,
+    excludeKeywords: merged.excludeKeywords,
     maxPages,
     delayMs,
     skipRegistry: merged.skipRegistry,

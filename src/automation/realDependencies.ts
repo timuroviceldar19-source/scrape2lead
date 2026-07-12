@@ -12,7 +12,8 @@ import type { AutomationDependencies, AutomationExportResult, AutomationStepResu
 const execFileAsync = promisify(execFile);
 const LotsConfigSchema = z.object({
   keywords: z.array(z.string()).default([]), nstruCodes: z.array(z.string()).default([]), inputPath: z.string().optional(),
-  statuses: z.array(z.string()).default([]), minAmount: z.number().nonnegative().optional(), maxPages: z.number().int().positive().optional(),
+  statuses: z.array(z.string()).default([]), minAmount: z.number().nonnegative().optional(), excludeKeywords: z.array(z.string()).default([]),
+  maxPages: z.number().int().positive().optional(),
   delayMs: z.number().int().nonnegative().optional(), headless: z.boolean().default(true), debugDir: z.string().optional(), pageLoadTimeoutMs: z.number().int().positive().optional()
 });
 
@@ -49,7 +50,7 @@ async function exportLotsForPeriods(configPath: string, outputPath: string, peri
     const result = await exportGoszakupLotsByNstru({
       inputPath: config.inputPath, nstruCodes: config.nstruCodes.length ? config.nstruCodes : undefined, keywords: config.keywords,
       year: period.year, months: period.months, statusIds: resolveLotStatusIds(config.statuses), minAmount: config.minAmount,
-      maxPages: config.maxPages, delayMs: config.delayMs, headless: config.headless, debugDir: config.debugDir,
+      excludeKeywords: config.excludeKeywords, maxPages: config.maxPages, delayMs: config.delayMs, headless: config.headless, debugDir: config.debugDir,
       pageLoadTimeoutMs: config.pageLoadTimeoutMs, outPath: partPath
     });
     parts.push({ path: result.xlsxPath, rows: result.rows });

@@ -5,12 +5,33 @@ import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import {
   buildLotsNstruSearchUrl,
+  filterLotRows,
   looksLikeIgnoredEnstruFilter,
   readNstruCodes,
   resolveLotStatusIds,
   writeLotsWorkbook,
   type GoszakupLotsNstruRow
 } from "../../src/kz/goszakupLotsNstruExporter.js";
+
+function lotRow(overrides: Partial<GoszakupLotsNstruRow> = {}): GoszakupLotsNstruRow {
+  return {
+    nstru_code: "262011.100.000000",
+    month: "Июнь",
+    lot_number: `lot-${Math.random()}`,
+    lot_name: "Компьютер",
+    announce_number: "1",
+    announce_name: "Приобретение",
+    customer: "ГУ Заказчик",
+    quantity: "1",
+    amount: "900 000",
+    method: "Запрос ценовых предложений",
+    status: "Опубликован",
+    lot_url: "",
+    announce_url: "",
+    customer_url: "",
+    ...overrides
+  };
+}
 
 describe("buildLotsNstruSearchUrl", () => {
   it("builds lots search URL with enstru, year and month filters", () => {
@@ -104,6 +125,27 @@ describe("looksLikeIgnoredEnstruFilter", () => {
       { lot_name: "Компьютер" }
     ];
     expect(looksLikeIgnoredEnstruFilter(items)).toBe(true);
+  });
+});
+
+describe("filterLotRows", () => {
+  it("drops lots below the minimum amount", () => {
+    const rows = [lotRow({ amount: "100 000" }), lotRow({ amount: "900 000" })];
+    const kept = filterLotRows(rows, 500000, []);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].amount).toBe("900 000");
+  });
+
+  it("drops lots whose name is in the stop-list", () => {
+    const rows = [lotRow({ lot_name: "Уголок" }), lotRow({ lot_name: "Компьютер" })];
+    const kept = filterLotRows(rows, 0, ["Уголок"]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].lot_name).toBe("Компьютер");
+  });
+
+  it("keeps everything when no filters are configured", () => {
+    const rows = [lotRow({ amount: "1" }), lotRow({ lot_name: "Уголок" })];
+    expect(filterLotRows(rows, 0, [])).toHaveLength(2);
   });
 });
 

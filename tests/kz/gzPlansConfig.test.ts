@@ -47,6 +47,25 @@ describe("loadGzPlansConfig", () => {
     const configPath = writeTempConfig({ keywords: [] });
     expect(() => loadGzPlansConfig(configPath)).toThrow();
   });
+
+  it("reads minAmount and excludeKeywords from the config file", () => {
+    const configPath = writeTempConfig({
+      keywords: ["Панель интерактивная"],
+      minAmount: 500000,
+      excludeKeywords: ["Уголок", "Стойка"]
+    });
+
+    const config = loadGzPlansConfig(configPath);
+    expect(config.minAmount).toBe(500000);
+    expect(config.excludeKeywords).toEqual(["Уголок", "Стойка"]);
+  });
+
+  it("defaults minAmount to 0 and excludeKeywords to the shared stop-list", () => {
+    const configPath = writeTempConfig({ keywords: ["Панель интерактивная"] });
+    const config = loadGzPlansConfig(configPath);
+    expect(config.minAmount).toBe(0);
+    expect(config.excludeKeywords).toContain("Уголок");
+  });
 });
 
 describe("resolvePlanStatusIds", () => {
@@ -90,6 +109,18 @@ describe("mergeGzPlansExportOptions", () => {
     expect(merged.keywords).toEqual(["Доска специальная"]);
     expect(merged.months).toEqual([9]);
     expect(merged.statuses).toEqual(["Опубликован"]);
+  });
+
+  it("threads minAmount and excludeKeywords into export options", () => {
+    const configPath = writeTempConfig({
+      keywords: ["Панель интерактивная"],
+      minAmount: 500000,
+      excludeKeywords: ["Уголок"]
+    });
+    const merged = mergeGzPlansExportOptions(loadGzPlansConfig(configPath));
+
+    expect(merged.minAmount).toBe(500000);
+    expect(merged.excludeKeywords).toEqual(["Уголок"]);
   });
 });
 
