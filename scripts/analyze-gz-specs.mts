@@ -78,30 +78,6 @@ const SPEC_FIELD_DEFINITIONS: Array<Record<string, unknown>> = [
     LIST_COLUMN_LABEL: "Спека: PDF",
     XML_ID: "s2l_spec_pdf",
     SORT: 543
-  },
-  {
-    FIELD_NAME: SPEC_MODEL_FIELD,
-    USER_TYPE_ID: "string",
-    EDIT_FORM_LABEL: "Спека: модель",
-    LIST_COLUMN_LABEL: "Спека: модель",
-    XML_ID: "s2l_spec_model",
-    SORT: 544
-  },
-  {
-    FIELD_NAME: SPEC_PDF_HASH_FIELD,
-    USER_TYPE_ID: "string",
-    EDIT_FORM_LABEL: "Спека: хеш PDF",
-    LIST_COLUMN_LABEL: "Спека: хеш PDF",
-    XML_ID: "s2l_spec_pdf_hash",
-    SORT: 545
-  },
-  {
-    FIELD_NAME: SPEC_RESULT_HASH_FIELD,
-    USER_TYPE_ID: "string",
-    EDIT_FORM_LABEL: "Спека: хеш результата",
-    LIST_COLUMN_LABEL: "Спека: хеш результата",
-    XML_ID: "s2l_spec_result_hash",
-    SORT: 546
   }
 ];
 
@@ -448,17 +424,14 @@ export class SpecDealClient implements DealResolver {
     return { ...toDealRef(row), originId: stringOrNull(row.ORIGIN_ID) };
   }
 
-  async writeAnalysis(id: string, analysis: SpecAnalysis, fileName: string, pdf: Buffer, meta: AnalysisMeta): Promise<void> {
+  async writeAnalysis(id: string, analysis: SpecAnalysis, fileName: string, pdf: Buffer, _meta: AnalysisMeta): Promise<void> {
     await this.client.call("crm.deal.update", {
       id,
       fields: {
         [SPEC_VERDICT_FIELD]: analysis.fitVerdict,
         [SPEC_SUMMARY_FIELD]: buildSpecSummaryText(analysis),
         [SPEC_ANALYZED_AT_FIELD]: new Date().toISOString(),
-        [SPEC_PDF_FIELD]: { fileData: [fileName, pdf.toString("base64")] },
-        [SPEC_MODEL_FIELD]: meta.modelLabel,
-        [SPEC_PDF_HASH_FIELD]: meta.pdfHash,
-        [SPEC_RESULT_HASH_FIELD]: meta.resultHash
+        [SPEC_PDF_FIELD]: { fileData: [fileName, pdf.toString("base64")] }
       }
     });
   }

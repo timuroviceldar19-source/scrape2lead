@@ -246,6 +246,27 @@ describe("SpecDealClient.getDealById", () => {
   });
 });
 
+describe("SpecDealClient.writeAnalysis", () => {
+  it("keeps technical model and hash values out of the visible deal fields", async () => {
+    const call = vi.fn(async (_method: string, _body?: unknown) => true);
+    const client = new SpecDealClient({ call });
+
+    await client.writeAnalysis("41293", ANALYSIS, "spec.pdf", Buffer.from("pdf"), {
+      modelLabel: "opencode:kimi-k2.6@test",
+      pdfHash: "pdf-hash",
+      resultHash: "result-hash"
+    });
+
+    const update = call.mock.calls.find(([method]) => method === "crm.deal.update");
+    expect(update).toBeDefined();
+    const fields = (update?.[1] as { fields: Record<string, unknown> }).fields;
+    expect(fields).not.toHaveProperty("UF_CRM_S2L_SPEC_MODEL");
+    expect(fields).not.toHaveProperty("UF_CRM_S2L_SPEC_PDF_HASH");
+    expect(fields).not.toHaveProperty("UF_CRM_S2L_SPEC_RESULT_HASH");
+    expect(fields).toHaveProperty("UF_CRM_S2L_SPEC_VERDICT", ANALYSIS.fitVerdict);
+  });
+});
+
 describe("SpecDealClient.hasCommentWithHash", () => {
   it("returns true when an existing timeline comment carries the same result-hash marker", async () => {
     const resultHash = sha256Hex("analysis-v1");
