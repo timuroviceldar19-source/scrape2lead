@@ -24,7 +24,10 @@ describe("automation core", () => {
     expect(createRunId(new Date("2026-07-12T06:00:01Z"))).toBe("20260712-060001");
   });
   it("computes the current and next five months", () => {
-    expect(computeRollingPeriod(new Date(2026, 10, 2), 6)).toEqual({ year: 2026, months: [11, 12, 1, 2, 3, 4] });
+    expect(computeRollingPeriod(new Date(2026, 10, 2), 6)).toEqual([
+      { year: 2026, months: [11, 12] },
+      { year: 2027, months: [1, 2, 3, 4] }
+    ]);
   });
   it("detects mojibake but accepts Cyrillic", () => {
     expect(hasBrokenEncoding(["РєРѕРјРїСЊСЋС‚РµСЂ"])).toBe(true);
