@@ -5,7 +5,9 @@ import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import {
   buildLotsNstruSearchUrl,
+  looksLikeIgnoredEnstruFilter,
   readNstruCodes,
+  resolveLotStatusIds,
   writeLotsWorkbook,
   type GoszakupLotsNstruRow
 } from "../../src/kz/goszakupLotsNstruExporter.js";
@@ -46,6 +48,62 @@ describe("buildLotsNstruSearchUrl", () => {
     });
 
     expect(url).toContain("page=2");
+  });
+
+  it("builds name search URL with filter[name] instead of filter[enstru]", () => {
+    const url = buildLotsNstruSearchUrl({
+      nameQuery: "компьютер",
+      year: 2026,
+      month: 7
+    });
+
+    expect(url).toContain(`filter%5Bname%5D=${encodeURIComponent("компьютер")}`);
+    expect(url).not.toContain("filter%5Benstru%5D");
+  });
+
+  it("throws when both or neither of nstruCode and nameQuery are provided", () => {
+    expect(() => buildLotsNstruSearchUrl({ year: 2026, month: 7 })).toThrow(/exactly one/);
+    expect(() =>
+      buildLotsNstruSearchUrl({
+        nstruCode: "262011.100.000000",
+        nameQuery: "компьютер",
+        year: 2026,
+        month: 7
+      })
+    ).toThrow(/exactly one/);
+  });
+});
+
+describe("resolveLotStatusIds", () => {
+  it("maps status names and numeric strings to ids", () => {
+    expect(resolveLotStatusIds(["Опубликован"])).toEqual([210]);
+    expect(resolveLotStatusIds(["опубликован (прием заявок)", "360"])).toEqual([220, 360]);
+  });
+
+  it("deduplicates resolved ids", () => {
+    expect(resolveLotStatusIds(["Опубликован", "210"])).toEqual([210]);
+  });
+
+  it("throws for unknown status names", () => {
+    expect(() => resolveLotStatusIds(["Несуществующий"])).toThrow(/Unknown lot status/);
+  });
+});
+
+describe("looksLikeIgnoredEnstruFilter", () => {
+  it("accepts uniform lot names produced by a valid enstru code", () => {
+    const items = Array.from({ length: 50 }, () => ({ lot_name: "Компьютер" }));
+    expect(looksLikeIgnoredEnstruFilter(items)).toBe(false);
+  });
+
+  it("flags mixed lot names produced when goszakup drops the filter", () => {
+    const items = [
+      { lot_name: "Удлинитель" },
+      { lot_name: "Батарейка" },
+      { lot_name: "Квартира" },
+      { lot_name: "Счетчик газовый" },
+      { lot_name: "Компьютер" }
+    ];
+    expect(looksLikeIgnoredEnstruFilter(items)).toBe(true);
   });
 });
 
@@ -89,7 +147,7 @@ describe("writeLotsWorkbook", () => {
     await workbook.xlsx.readFile(filePath);
     const sheet = workbook.getWorksheet("Лоты НСТРУ");
 
-    expect(sheet?.getRow(1).getCell(1).value).toBe("НСТРУ");
+    expect(sheet?.getRow(1).getCell(1).value).toBe("Запрос (НСТРУ/слово)");
     expect(sheet?.getRow(2).getCell(1).value).toBe("262011.100.000000");
     expect(sheet?.getRow(2).getCell(12).value).toEqual({
       text: row.lot_url,

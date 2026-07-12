@@ -21,6 +21,7 @@ interface CliArgs {
   stageId: string;
   webhookUrl: string | null;
   routingPath: string;
+  minAmount: number;
 }
 
 interface GzPlanRow {
@@ -80,6 +81,8 @@ const DEFAULT_ROUTING_CONFIG = "config/bitrix-gz-routing.json";
 const ORIGINATOR_ID = "scrape2lead-gz-plans";
 const DEFAULT_ASSIGNED_BY_ID = 2301;
 const COMPANY_BIN_FIELD = "UF_CRM_666171B20E9E3";
+// Plan line items priced at 1 tg (or below) are placeholders, not real budgets. Skip them by default.
+const DEFAULT_MIN_AMOUNT = 1000;
 
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
@@ -91,7 +94,8 @@ function parseArgs(argv: string[]): CliArgs {
     categoryId: 0,
     stageId: "NEW",
     webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null,
-    routingPath: DEFAULT_ROUTING_CONFIG
+    routingPath: DEFAULT_ROUTING_CONFIG,
+    minAmount: DEFAULT_MIN_AMOUNT
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -105,6 +109,7 @@ function parseArgs(argv: string[]): CliArgs {
     else if (arg === "--stage-id") args.stageId = argv[++i] ?? args.stageId;
     else if (arg === "--webhook-url") args.webhookUrl = argv[++i]?.trim() || null;
     else if (arg === "--routing") args.routingPath = argv[++i] ?? DEFAULT_ROUTING_CONFIG;
+    else if (arg === "--min-amount") args.minAmount = Number(argv[++i]);
   }
 
   return args;
@@ -149,7 +154,7 @@ async function main(): Promise<void> {
   for (const row of rows) {
     const existingDeal = await client.findDeal(ORIGINATOR_ID, originId(row));
     const duplicateDeal = existingDeal?.ID ? null : await client.findPotentialDuplicateDeal(row);
-    const issues = validateRequired(row);
+    const issues = validateRequired(row, args.minAmount);
     const warnings = validateWarnings(row);
     const action: PreflightItem["action"] = issues.length > 0
       ? "skip"
@@ -509,7 +514,7 @@ function buildDealGzFields(row: GzPlanRow): Record<string, unknown> {
     UF_CRM_6627AEBD72587: row.customerName,
     UF_CRM_6627AEBD7C2D2: row.bin,
     UF_CRM_6627AEBD85B4D: row.status,
-    UF_CRM_1715597423325: row.amount,
+    UF_CRM_1715597423325: formatMoneyForBitrixRobot(row.amount),
     UF_CRM_1715597726664: row.plannedMonth,
     UF_CRM_1782274598760: row.customerUrl,
     UF_CRM_1782386080157_IU_XLS: row.itemUrl,
@@ -540,13 +545,15 @@ function buildDealGzFields(row: GzPlanRow): Record<string, unknown> {
   });
 }
 
-function validateRequired(row: GzPlanRow): string[] {
+function validateRequired(row: GzPlanRow, minAmount: number): string[] {
   const issues: string[] = [];
   if (!row.planId) issues.push("missing plan ID");
   if (!row.planNumber) issues.push("missing plan number");
   if (!row.customerName) issues.push("missing customer");
   if (!normalizeBin(row.bin)) issues.push("missing or invalid BIN");
-  if (parseMoney(row.amount) <= 0) issues.push("missing or invalid amount");
+  const amount = parseMoney(row.amount);
+  if (amount <= 0) issues.push("missing or invalid amount");
+  else if (amount < minAmount) issues.push(`amount ${amount} below min ${minAmount}`);
   if (!isHttpUrl(row.planUrl)) issues.push("missing or invalid plan URL");
   if (!row.plannedMonth) issues.push("missing planned month");
   return issues;
@@ -629,9 +636,31 @@ function normalizeBin(value: string): string | null {
 }
 
 function parseMoney(value: string): number {
-  const normalized = value.replace(/\s+/g, "").replace(",", ".").replace(/[^\d.-]/g, "");
+  const normalized = normalizeMoneyText(value).replace(/[^\d.-]/g, "");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatMoneyForBitrixRobot(value: string): string {
+  const parsed = parseMoney(value);
+  return parsed > 0 ? parsed.toFixed(2) : "";
+}
+
+function normalizeMoneyText(value: string): string {
+  const compact = value.replace(/[\s\u00a0]+/g, "").trim();
+  const lastComma = compact.lastIndexOf(",");
+  const lastDot = compact.lastIndexOf(".");
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimalSeparator = lastComma > lastDot ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    return compact
+      .replaceAll(thousandsSeparator, "")
+      .replace(decimalSeparator, ".");
+  }
+
+  if (lastComma >= 0) return compact.replace(",", ".");
+  return compact;
 }
 
 function isHttpUrl(value: string): boolean {

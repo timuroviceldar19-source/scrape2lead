@@ -1,12 +1,12 @@
 {
   "keywords": [
-    "Доска специальная",
-    "Панель интерактивная",
-    "Панель жидкокристаллическая"
+    "\u0414\u043e\u0441\u043a\u0430 \u0441\u043f\u0435\u0446\u0438\u0430\u043b\u044c\u043d\u0430\u044f",
+    "\u041f\u0430\u043d\u0435\u043b\u044c \u0438\u043d\u0442\u0435\u0440\u0430\u043a\u0442\u0438\u0432\u043d\u0430\u044f",
+    "\u041f\u0430\u043d\u0435\u043b\u044c \u0436\u0438\u0434\u043a\u043e\u043a\u0440\u0438\u0441\u0442\u0430\u043b\u043b\u0438\u0447\u0435\u0441\u043a\u0430\u044f"
   ],
   "year": 2026,
-  "months": [6, 7, 8],
-  "statuses": ["Утвержден"],
+  "months": [9, 10, 11, 12],
+  "statuses": ["\u0423\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d"],
   "maxPages": 50,
   "delayMs": 2000,
   "skipRegistry": false,
@@ -15,5 +15,5 @@
   "outPath": null,
   "databasePath": "data/scrape2lead.db",
   "debugDir": "data/debug",
-  "pageLoadTimeoutMs": 30000
+  "pageLoadTimeoutMs": 90000
 }

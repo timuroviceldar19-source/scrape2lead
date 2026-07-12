@@ -1,22 +1,29 @@
 {
   "entity": "lead",
   "originatorId": "crm-services-prospects",
-  "originIdTemplate": "crm-prospect:{phone}",
+  "originIdTemplate": "crm-prospect:{externalId}",
   "headerRow": 1,
   "columns": [
     { "key": "company", "header": "Компания" },
     { "key": "phone", "header": "Телефон" },
-    { "key": "city", "header": "Город" }
+    { "key": "city", "header": "Город" },
+    { "key": "email", "header": "Email" },
+    { "key": "website", "header": "Сайт" },
+    { "key": "category", "header": "Категория" },
+    { "key": "externalId", "header": "Внешний ID" }
   ],
-  "required": ["company", "phone"],
+  "required": ["company", "externalId"],
   "fields": {
     "TITLE": { "template": "[CRM-услуги] {company} ({city})" },
     "COMPANY_TITLE": { "column": "company" },
     "PHONE": { "column": "phone", "transform": "phone" },
-    "COMMENTS": { "template": "Проспект для CRM-услуг.\nКомпания: {company}\nГород: {city}\nИсточник: 2GIS-пайплайн scrape2lead.\nПри интересе конвертировать в сделку категории «Продажи: CRM-услуги» (49)." }
+    "EMAIL": { "column": "email", "transform": "email" },
+    "WEB": { "column": "website", "transform": "url" },
+    "COMMENTS": { "template": "Проспект для CRM-услуг.\nКомпания: {company}\nГород: {city}\nКатегория 2GIS: {category}\nИсточник: 2GIS-пайплайн scrape2lead.\nПри интересе конвертировать в сделку категории «Продажи: CRM-услуги» (49)." }
   },
   "duplicateChecks": [
-    { "reason": "same phone", "filter": { "PHONE": { "column": "phone", "transform": "phone" } } }
+    { "reason": "same phone", "filter": { "PHONE": { "column": "phone", "transform": "phone" } } },
+    { "reason": "same email", "filter": { "EMAIL": { "column": "email", "transform": "email" } } }
   ],
   "defaults": {
     "sourceId": "WEB"

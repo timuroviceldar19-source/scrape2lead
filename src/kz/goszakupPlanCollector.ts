@@ -26,7 +26,15 @@ import { DEFAULT_GZ_PLAN_KEYWORDS as DEFAULT_KEYWORDS } from "./goszakupPlanType
 
 const DEFAULT_DEBUG_DIR = "data/debug";
 const MAX_PAGES_DEFAULT = 50;
+const DEFAULT_PAGE_LOAD_TIMEOUT_MS = 90_000;
+const SEARCH_PAGE_RETRIES = 2;
 const DETAIL_RETRIES = 2;
+
+export interface PlanSearchPage {
+  goto(url: string, options: { waitUntil: "domcontentloaded"; timeout: number }): Promise<unknown>;
+  waitForTimeout(timeout: number): Promise<unknown>;
+  content(): Promise<string>;
+}
 
 export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promise<GzPlanCollectResult> {
   const keywords = options.keywords ?? [...DEFAULT_KEYWORDS];
@@ -37,7 +45,7 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
   const maxPages = options.maxPages ?? MAX_PAGES_DEFAULT;
   const delayMs = options.delayMs ?? 2000;
   const debugDir = options.debugDir ?? DEFAULT_DEBUG_DIR;
-  const pageLoadTimeoutMs = options.pageLoadTimeoutMs ?? 30_000;
+  const pageLoadTimeoutMs = options.pageLoadTimeoutMs ?? DEFAULT_PAGE_LOAD_TIMEOUT_MS;
   const token = options.token ?? process.env.GOSZAKUP_TOKEN ?? null;
 
   const abpRefs = token
@@ -67,7 +75,8 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
         maxPages,
         pageLoadTimeoutMs,
         delayMs,
-        allowedStatusNames
+        allowedStatusNames,
+        pageLoadRetries: options.pageLoadRetries ?? SEARCH_PAGE_RETRIES
       });
 
       for (const item of items) {
@@ -127,8 +136,8 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
   }
 }
 
-async function collectPlanSearch(
-  page: Page,
+export async function collectPlanSearch(
+  page: PlanSearchPage,
   baseUrl: string,
   keyword: string,
   options: {
@@ -137,6 +146,7 @@ async function collectPlanSearch(
     pageLoadTimeoutMs: number;
     delayMs: number;
     allowedStatusNames: string[];
+    pageLoadRetries?: number;
   }
 ): Promise<GoszakupPlanListItem[]> {
   const allItems: GoszakupPlanListItem[] = [];
@@ -144,7 +154,7 @@ async function collectPlanSearch(
 
   while (pageNum < options.maxPages) {
     const url = buildGoszakupHtmlPageUrl(baseUrl, pageNum);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.pageLoadTimeoutMs });
+    await gotoPlanSearchPage(page, url, keyword, pageNum, options);
     await page.waitForTimeout(1500);
 
     const html = await page.content();
@@ -178,6 +188,38 @@ async function collectPlanSearch(
   }
 
   return allItems;
+}
+
+async function gotoPlanSearchPage(
+  page: PlanSearchPage,
+  url: string,
+  keyword: string,
+  pageNum: number,
+  options: {
+    pageLoadTimeoutMs: number;
+    delayMs: number;
+    pageLoadRetries?: number;
+  }
+): Promise<void> {
+  const retries = options.pageLoadRetries ?? SEARCH_PAGE_RETRIES;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.pageLoadTimeoutMs });
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt >= retries) {
+        console.error(
+          `goszakup plan search: keyword="${keyword}" page=${pageNum + 1} failed after ${attempt + 1} attempts: ${message}`
+        );
+        throw error;
+      }
+      console.warn(
+        `goszakup plan search: keyword="${keyword}" page=${pageNum + 1} retry ${attempt + 1}/${retries}: ${message}`
+      );
+      if (options.delayMs > 0) await sleep(options.delayMs);
+    }
+  }
 }
 
 async function fetchPlanDetailHtml(

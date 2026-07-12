@@ -1,0 +1,20 @@
+{
+  "keywords": [
+    "Компьютер персональный",
+    "Монитор",
+    "Моноблок",
+    "Устройство многофункциональное"
+  ],
+  "year": 2026,
+  "months": [9, 10, 11, 12],
+  "statuses": ["Утвержден"],
+  "maxPages": 50,
+  "delayMs": 2000,
+  "skipRegistry": false,
+  "forceRegistryRefresh": false,
+  "headless": true,
+  "outPath": "exports/gz-plans-pk-2026-sep-dec.xlsx",
+  "databasePath": "data/scrape2lead.db",
+  "debugDir": "data/debug",
+  "pageLoadTimeoutMs": 90000
+}

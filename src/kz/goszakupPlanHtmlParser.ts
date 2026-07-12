@@ -171,7 +171,7 @@ function extractPlanTableRows(html: string): string[] {
   const body = tbodyMatch ? tbodyMatch[1] : tableMatch[1];
 
   const rows: string[] = [];
-  const rowRegex = /<tr[^>]*role="row"[^>]*>([\s\S]*?)<\/tr>/gi;
+  const rowRegex = /<tr(?:\s[^>]*)?>([\s\S]*?)<\/tr>/gi;
   let match: RegExpExecArray | null;
   while ((match = rowRegex.exec(body)) !== null) {
     if (match[1].includes("dataTables_empty")) continue;

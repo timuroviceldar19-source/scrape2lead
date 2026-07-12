@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import ExcelJS from "exceljs";
+import { pathToFileURL } from "node:url";
 
 dotenv.config();
 
@@ -17,7 +18,7 @@ interface CliArgs {
   ensureLayout: boolean;
 }
 
-interface GzPlanRow {
+export interface GzPlanRow {
   rowNumber: number;
   bin: string;
   customerName: string;
@@ -230,7 +231,7 @@ const IMPORT_FIELD_DEFINITIONS: ImportFieldDefinition[] = [
     label: "Плановая сумма",
     xmlId: "scrape2lead_gz_amount",
     fieldName: "UF_CRM_S2L_GZ_AMOUNT",
-    getValue: (row) => row.amount
+    getValue: (row) => formatMoneyForBitrixRobot(row.amount)
   },
   {
     key: "customerUrl",
@@ -573,7 +574,7 @@ async function readGzPlanRows(inputPath: string): Promise<GzPlanRow[]> {
   return rows;
 }
 
-function buildLeadFields(row: GzPlanRow, assignedById: number | null, importFieldCodes: Record<string, string>): Record<string, unknown> {
+export function buildLeadFields(row: GzPlanRow, assignedById: number | null, importFieldCodes: Record<string, string>): Record<string, unknown> {
   const comments = [
     `GZ plan ID: ${row.planId}`,
     `BIN: ${row.bin || "-"}`,
@@ -772,7 +773,8 @@ function getUserFieldLabels(field: BitrixUserField): string[] {
 function buildTitle(row: GzPlanRow): string {
   const item = row.itemName || row.keyword || "GZ plan";
   const company = row.customerName || row.bin || row.planId;
-  return `[GZ ${row.planId}] ${company} - ${item}`.slice(0, 250);
+  const displayPlanNumber = row.planNumber || row.planId;
+  return `[GZ ${displayPlanNumber}] ${company} - ${item}`.slice(0, 250);
 }
 
 function dedupeRows(rows: GzPlanRow[]): GzPlanRow[] {
@@ -798,10 +800,33 @@ function cellText(cell: ExcelJS.Cell): string {
   return String(value).trim();
 }
 
+export function formatMoneyForBitrixRobot(value: string): string {
+  const parsed = parseMoney(value);
+  return parsed === undefined ? "" : parsed.toFixed(2);
+}
+
 function parseMoney(value: string): number | undefined {
-  const normalized = value.replace(/\s/g, "").replace(",", ".");
+  const normalized = normalizeMoneyText(value);
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeMoneyText(value: string): string {
+  const compact = value.replace(/[\s\u00a0]+/g, "").trim();
+  const lastComma = compact.lastIndexOf(",");
+  const lastDot = compact.lastIndexOf(".");
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimalSeparator = lastComma > lastDot ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    return compact
+      .replaceAll(thousandsSeparator, "")
+      .replace(decimalSeparator, ".");
+  }
+  if (lastComma >= 0) {
+    return compact.replace(",", ".");
+  }
+  return compact;
 }
 
 function normalizeEmail(value: string): string {
@@ -827,7 +852,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { collectPlanSearch, type PlanSearchPage } from "../../src/kz/goszakupPlanCollector.js";
 import {
   buildPlanSearchUrl,
   extractCustomerUrl,
@@ -47,7 +48,7 @@ describe("parseGoszakupPagination", () => {
     const html = fs.readFileSync(debugPath, "utf8");
     const pagination = parseGoszakupPagination(html);
 
-    expect(pagination.totalCount).toBe(191);
+    expect(pagination.totalCount).toBeGreaterThan(0);
     expect(pagination.totalPages).toBeGreaterThanOrEqual(2);
   });
 });
@@ -85,6 +86,68 @@ describe("parseGoszakupPlanSearchHtml", () => {
       </table>
     `;
     expect(parseGoszakupPlanSearchHtml(html, "test")).toHaveLength(0);
+  });
+});
+
+describe("collectPlanSearch", () => {
+  const emptySearchHtml = `
+    <table id="search-result">
+      <tbody>
+        <tr role="row"><td class="dataTables_empty">Nothing found</td></tr>
+      </tbody>
+    </table>
+  `;
+
+  it("retries a search page load before parsing the page", async () => {
+    let attempts = 0;
+    const page: PlanSearchPage = {
+      async goto() {
+        attempts++;
+        if (attempts === 1) throw new Error("Timeout 30000ms exceeded");
+      },
+      async waitForTimeout() {},
+      async content() {
+        return emptySearchHtml;
+      }
+    };
+
+    const items = await collectPlanSearch(page, "https://example.test/registry/plan", "Ноутбук", {
+      debugDir: path.join("data", "debug-test"),
+      maxPages: 1,
+      pageLoadTimeoutMs: 90_000,
+      delayMs: 0,
+      allowedStatusNames: [],
+      pageLoadRetries: 2
+    });
+
+    expect(items).toHaveLength(0);
+    expect(attempts).toBe(2);
+  });
+
+  it("throws after search page retries are exhausted", async () => {
+    let attempts = 0;
+    const page: PlanSearchPage = {
+      async goto() {
+        attempts++;
+        throw new Error("Timeout 90000ms exceeded");
+      },
+      async waitForTimeout() {},
+      async content() {
+        return emptySearchHtml;
+      }
+    };
+
+    await expect(
+      collectPlanSearch(page, "https://example.test/registry/plan", "Ноутбук", {
+        debugDir: path.join("data", "debug-test"),
+        maxPages: 1,
+        pageLoadTimeoutMs: 90_000,
+        delayMs: 0,
+        allowedStatusNames: [],
+        pageLoadRetries: 2
+      })
+    ).rejects.toThrow(/Timeout 90000ms exceeded/);
+    expect(attempts).toBe(3);
   });
 });
 

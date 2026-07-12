@@ -72,6 +72,7 @@ export interface GzPlanCollectOptions {
   headless?: boolean;
   debugDir?: string;
   pageLoadTimeoutMs?: number;
+  pageLoadRetries?: number;
   keepDuplicates?: boolean;
   token?: string | null;
   onProgress?: (message: string) => void;
@@ -98,7 +99,12 @@ export interface GzPlanExportResult {
 export const DEFAULT_GZ_PLAN_KEYWORDS = [
   "Доска специальная",
   "Панель интерактивная",
-  "Панель жидкокристаллическая"
+  "Панель жидкокристаллическая",
+  "Ноутбук",
+  "Моноблоки",
+  "Мфу",
+  "Комплект учебного оборудования",
+  "Персональный Компьютер"
 ] as const;
 
 export const DEFAULT_GZ_PLAN_STATUSES = ["Утвержден"] as const;

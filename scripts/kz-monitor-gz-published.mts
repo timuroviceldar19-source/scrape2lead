@@ -26,6 +26,11 @@ interface CliArgs {
   webhookUrl: string | null;
 }
 
+interface NotifyConfig {
+  webhookUrl: string;
+  dialogId: string;
+}
+
 interface MonitorStats {
   collected: number;
   candidate: number;
@@ -35,6 +40,14 @@ interface MonitorStats {
   missing: number;
   skippedSeen: number;
   failed: number;
+}
+
+interface MonitorReportItem {
+  originId: string;
+  leadId?: string | null;
+  customerName: string;
+  itemName: string;
+  planUrl: string;
 }
 
 interface BitrixLeadFields {
@@ -58,6 +71,7 @@ const ORIGINATOR_ID = "scrape2lead-gz-plans";
 const PUBLISHED_STATUS_ID = "5";
 const DEFAULT_LEDGER_PATH = "data/gz-published-seen.json";
 const PUBLISHED_AT_FIELD = "UF_CRM_S2L_GZ_PUBLISHED_AT";
+const NOTIFY_ITEM_LIMIT = 10;
 
 const IMPORT_FIELD_CODES: Array<{ code: string; getValue: (row: GzPlanExportRow) => string }> = [
   { code: "UF_CRM_1713874828510", getValue: (row) => row.method },
@@ -158,6 +172,12 @@ async function main(): Promise<void> {
       skippedSeen: 0,
       failed: 0
     };
+    const report = {
+      updated: [] as MonitorReportItem[],
+      created: [] as MonitorReportItem[],
+      missing: [] as MonitorReportItem[],
+      failed: [] as Array<{ originId: string; message: string }>
+    };
 
     for (const row of limited) {
       const fingerprint = buildGzPublishedFingerprint({
@@ -179,6 +199,7 @@ async function main(): Promise<void> {
         const lead = client ? await client.findLead(ORIGINATOR_ID, originId) : null;
         if (!lead && !args.createMissing) {
           stats.missing += 1;
+          report.missing.push(toReportItem(row, originId, null));
           console.log(`[missing] ${originId} | ${row.customer_name} | ${row.status}`);
           continue;
         }
@@ -197,10 +218,12 @@ async function main(): Promise<void> {
         if (leadId) {
           await client.updateLead(leadId, fields);
           stats.updated += 1;
+          report.updated.push(toReportItem(row, originId, leadId));
           console.log(`[updated] ${originId} -> lead ${leadId}`);
         } else {
           leadId = await client.addLead(fields);
           stats.created += 1;
+          report.created.push(toReportItem(row, originId, leadId));
           console.log(`[created] ${originId} -> lead ${leadId}`);
         }
 
@@ -214,7 +237,9 @@ async function main(): Promise<void> {
         });
       } catch (error) {
         stats.failed += 1;
-        console.error(`[failed] ${originId}: ${error instanceof Error ? error.message : String(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        report.failed.push({ originId, message });
+        console.error(`[failed] ${originId}: ${message}`);
       }
     }
 
@@ -223,6 +248,7 @@ async function main(): Promise<void> {
     }
 
     console.log(JSON.stringify(stats, null, 2));
+    await notifyMonitorReport(stats, report, execute);
     if (stats.failed > 0) process.exitCode = 1;
   } finally {
     storage.close();
@@ -263,6 +289,16 @@ function getRegistry(bin: string, storage: KzStorage): GoszakupRegistryRecord | 
   return bin ? storage.getGoszakupRegistryByBin(bin) : null;
 }
 
+function toReportItem(row: GzPlanExportRow, originId: string, leadId: string | null): MonitorReportItem {
+  return {
+    originId,
+    leadId,
+    customerName: row.customer_name || row.customer_bin || "-",
+    itemName: row.stru_name || row.keyword || "-",
+    planUrl: row.plan_link
+  };
+}
+
 function buildLeadFields(row: GzPlanExportRow, detectedAt: string): BitrixLeadFields {
   const comments = [
     `Published detected: ${detectedAt}`,
@@ -301,6 +337,107 @@ function buildLeadFields(row: GzPlanExportRow, detectedAt: string): BitrixLeadFi
 
 function buildTitle(row: GzPlanExportRow): string {
   return `[GZ ${row.plan_point_id}] ${row.customer_name || row.customer_bin} - ${row.stru_name || row.keyword}`.slice(0, 250);
+}
+
+async function notifyMonitorReport(
+  stats: MonitorStats,
+  report: {
+    updated: MonitorReportItem[];
+    created: MonitorReportItem[];
+    missing: MonitorReportItem[];
+    failed: Array<{ originId: string; message: string }>;
+  },
+  execute: boolean
+): Promise<void> {
+  const config = readNotifyConfig();
+  if (!config) return;
+
+  try {
+    const client = new BitrixNotifyClient(config.webhookUrl);
+    await client.sendMessage(config.dialogId, buildNotifyMessage(stats, report, execute, config.webhookUrl));
+    console.log(`notify: sent Bitrix report to dialog ${config.dialogId}`);
+  } catch (error) {
+    console.error(`notify: failed to send Bitrix report: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function readNotifyConfig(): NotifyConfig | null {
+  const webhookUrl = process.env.BITRIX24_NOTIFY_WEBHOOK_URL?.trim();
+  const dialogId = process.env.BITRIX24_NOTIFY_DIALOG_ID?.trim();
+  if (!webhookUrl || !dialogId) return null;
+  return { webhookUrl, dialogId };
+}
+
+function buildNotifyMessage(
+  stats: MonitorStats,
+  report: {
+    updated: MonitorReportItem[];
+    created: MonitorReportItem[];
+    missing: MonitorReportItem[];
+    failed: Array<{ originId: string; message: string }>;
+  },
+  execute: boolean,
+  webhookUrl: string
+): string {
+  const portalUrl = getPortalUrl(webhookUrl);
+  const lines = [
+    `[B]GZ Published Monitor ${execute ? "completed" : "dry-run"}[/B]`,
+    "",
+    `Collected: ${stats.collected}`,
+    `Candidates: ${stats.candidate}`,
+    `Planned updates: ${stats.planned}`,
+    `Updated leads: ${stats.updated}`,
+    `Created leads: ${stats.created}`,
+    `Missing in Bitrix: ${stats.missing}`,
+    `Already seen: ${stats.skippedSeen}`,
+    `Failed: ${stats.failed}`
+  ];
+
+  appendReportItems(lines, "Updated", report.updated, portalUrl);
+  appendReportItems(lines, "Created", report.created, portalUrl);
+  appendReportItems(lines, "Missing", report.missing, portalUrl);
+  appendFailures(lines, report.failed);
+
+  return lines.join("\n");
+}
+
+function appendReportItems(lines: string[], title: string, items: MonitorReportItem[], portalUrl: string): void {
+  if (items.length === 0) return;
+  lines.push("", `[B]${title}[/B]`);
+  for (const item of items.slice(0, NOTIFY_ITEM_LIMIT)) {
+    const leadPart = item.leadId ? `lead ${item.leadId}: ${portalUrl}/crm/lead/details/${item.leadId}/` : item.originId;
+    lines.push(`- ${leadPart}`);
+    lines.push(`  ${trimForReport(item.customerName, 90)} - ${trimForReport(item.itemName, 70)}`);
+    if (!item.leadId && item.planUrl) lines.push(`  ${item.planUrl}`);
+  }
+  if (items.length > NOTIFY_ITEM_LIMIT) {
+    lines.push(`... and ${items.length - NOTIFY_ITEM_LIMIT} more`);
+  }
+}
+
+function appendFailures(lines: string[], failed: Array<{ originId: string; message: string }>): void {
+  if (failed.length === 0) return;
+  lines.push("", "[B]Failures[/B]");
+  for (const item of failed.slice(0, NOTIFY_ITEM_LIMIT)) {
+    lines.push(`- ${item.originId}: ${trimForReport(item.message, 120)}`);
+  }
+  if (failed.length > NOTIFY_ITEM_LIMIT) {
+    lines.push(`... and ${failed.length - NOTIFY_ITEM_LIMIT} more`);
+  }
+}
+
+function getPortalUrl(webhookUrl: string): string {
+  try {
+    const url = new URL(webhookUrl);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return "https://ft3.bitrix24.kz";
+  }
+}
+
+function trimForReport(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function dedupeRows(rows: GzPlanExportRow[]): GzPlanExportRow[] {
@@ -378,6 +515,36 @@ class BitrixClient {
         data: configuration
       });
     }
+  }
+
+  private async call(method: string, body: unknown): Promise<{ result: unknown; error?: string; error_description?: string }> {
+    const response = await fetch(`${this.baseUrl}/${method}.json`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json() as { result: unknown; error?: string; error_description?: string };
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error_description || payload.error || `HTTP ${response.status}`);
+    }
+    return payload;
+  }
+}
+
+class BitrixNotifyClient {
+  private readonly baseUrl: string;
+
+  constructor(webhookUrl: string) {
+    this.baseUrl = webhookUrl.replace(/\/+$/, "");
+  }
+
+  async sendMessage(dialogId: string, message: string): Promise<void> {
+    await this.call("im.message.add", {
+      DIALOG_ID: dialogId,
+      MESSAGE: message,
+      SYSTEM: "N",
+      URL_PREVIEW: "N"
+    });
   }
 
   private async call(method: string, body: unknown): Promise<{ result: unknown; error?: string; error_description?: string }> {

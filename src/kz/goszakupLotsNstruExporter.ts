@@ -30,9 +30,12 @@ const MONTH_NAMES_RU: Record<number, string> = {
 export interface GoszakupLotsNstruOptions {
   inputPath?: string;
   nstruCodes?: string[];
+  keywords?: string[];
   year?: number;
   months?: number[];
   statusIds?: number[];
+  /** Drop lots with planned amount below this value (KZT). */
+  minAmount?: number;
   maxPages?: number;
   delayMs?: number;
   outPath?: string;
@@ -68,7 +71,7 @@ export interface GoszakupLotsNstruResult {
 }
 
 const EXPORT_COLUMNS: Array<{ header: string; key: keyof GoszakupLotsNstruRow; width: number }> = [
-  { header: "НСТРУ", key: "nstru_code", width: 20 },
+  { header: "Запрос (НСТРУ/слово)", key: "nstru_code", width: 24 },
   { header: "Месяц", key: "month", width: 10 },
   { header: "№ лота", key: "lot_number", width: 18 },
   { header: "Наименование лота", key: "lot_name", width: 42 },
@@ -86,6 +89,78 @@ const EXPORT_COLUMNS: Array<{ header: string; key: keyof GoszakupLotsNstruRow; w
 
 const HYPERLINK_KEYS = new Set<keyof GoszakupLotsNstruRow>(["lot_url", "announce_url", "customer_url"]);
 
+/** Status IDs from goszakup lots search form filter[status][] */
+export const GZ_LOT_STATUS_BY_NAME: Record<string, number> = {
+  "Закупка не состоялась": 370,
+  "Закупка состоялась": 360,
+  "Заполнение условных скидок": 270,
+  "Изменена документация": 190,
+  "На обжаловании": 440,
+  "Ожидание камерального контроля": 444,
+  "Ожидание проведения контроля качества": 445,
+  "Опубликован": 210,
+  "Опубликован (дополнение заявок)": 230,
+  "Опубликован (прием заявок)": 220,
+  "Опубликован (прием ценовых предложений)": 240,
+  "Отказ от лота": 410,
+  "Отменен": 430,
+  "Пересмотр итогов": 510,
+  "Принятие решение о пересмотре итогов": 550,
+  "Принятие решение об исполнении уведомления": 540,
+  "Приостановлен": 420,
+  "Пройдено контроль качества": 460,
+  "Рассмотрение дополнений заявок": 260,
+  "Рассмотрение заявок": 250,
+  "Формирование протокола допуска": 320,
+  "Формирование протокола итогов": 330,
+  "Формирование протокола преддопуска": 310,
+  "Формирование протокола промежуточных итогов": 325
+};
+
+/**
+ * Goszakup silently drops filter[enstru] when the code is missing from its
+ * dictionary and returns the full unfiltered lot list. A real code maps to a
+ * single dictionary item name, so mixed lot names on one page mean the filter
+ * was ignored.
+ */
+export function looksLikeIgnoredEnstruFilter(items: Array<{ lot_name: string | null }>): boolean {
+  const names = new Set(items.map((item) => (item.lot_name ?? "").trim().toLocaleLowerCase("ru")).filter(Boolean));
+  return names.size > 3;
+}
+
+export function resolveLotStatusIds(statuses: string[]): number[] {
+  const ids: number[] = [];
+  const unknown: string[] = [];
+
+  for (const raw of statuses) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+
+    if (/^\d+$/.test(trimmed)) {
+      ids.push(Number(trimmed));
+      continue;
+    }
+
+    const normalized = trimmed.toLocaleLowerCase("ru");
+    const match = Object.entries(GZ_LOT_STATUS_BY_NAME).find(
+      ([label]) => label.toLocaleLowerCase("ru") === normalized
+    );
+    if (match) {
+      ids.push(match[1]);
+    } else {
+      unknown.push(trimmed);
+    }
+  }
+
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown lot status(es): ${unknown.join(", ")}. Known: ${Object.keys(GZ_LOT_STATUS_BY_NAME).join(", ")}`
+    );
+  }
+
+  return [...new Set(ids)];
+}
+
 export function readNstruCodes(inputPath = DEFAULT_INPUT_PATH): string[] {
   const contents = fs.readFileSync(inputPath, "utf8");
   const seen = new Set<string>();
@@ -102,15 +177,20 @@ export function readNstruCodes(inputPath = DEFAULT_INPUT_PATH): string[] {
 }
 
 export function buildLotsNstruSearchUrl(options: {
-  nstruCode: string;
+  nstruCode?: string;
+  nameQuery?: string;
   year: number;
   month: number;
   statusIds?: number[];
   pageNum?: number;
   recordsPerPage?: number;
 }): string {
+  if (Boolean(options.nstruCode) === Boolean(options.nameQuery)) {
+    throw new Error("buildLotsNstruSearchUrl requires exactly one of nstruCode or nameQuery");
+  }
   const params = new URLSearchParams();
-  params.set("filter[enstru]", options.nstruCode);
+  if (options.nstruCode) params.set("filter[enstru]", options.nstruCode);
+  if (options.nameQuery) params.set("filter[name]", options.nameQuery);
   params.set("filter[year]", String(options.year));
   params.set("filter[month]", String(options.month));
   for (const statusId of options.statusIds ?? []) {
@@ -123,11 +203,28 @@ export function buildLotsNstruSearchUrl(options: {
   return `${BASE_URL}/ru/search/lots?${params.toString()}`;
 }
 
+interface LotSearchQuery {
+  type: "enstru" | "name";
+  value: string;
+}
+
 export async function exportGoszakupLotsByNstru(
   options: GoszakupLotsNstruOptions = {}
 ): Promise<GoszakupLotsNstruResult> {
   const inputPath = options.inputPath ?? DEFAULT_INPUT_PATH;
-  const codes = options.nstruCodes ? unique(options.nstruCodes) : readNstruCodes(inputPath);
+  const keywords = unique(options.keywords ?? []);
+  const codes = options.nstruCodes
+    ? unique(options.nstruCodes)
+    : keywords.length > 0
+      ? []
+      : readNstruCodes(inputPath);
+  const queries: LotSearchQuery[] = [
+    ...codes.map((value): LotSearchQuery => ({ type: "enstru", value })),
+    ...keywords.map((value): LotSearchQuery => ({ type: "name", value }))
+  ];
+  if (queries.length === 0) {
+    throw new Error("No search queries: provide nstruCodes, keywords or a non-empty input file");
+  }
   const year = options.year ?? DEFAULT_YEAR;
   const months = options.months?.length ? options.months : DEFAULT_MONTHS;
   const statusIds = options.statusIds ?? [];
@@ -148,11 +245,11 @@ export async function exportGoszakupLotsByNstru(
   const rows: GoszakupLotsNstruRow[] = [];
 
   try {
-    for (const code of codes) {
+    for (const query of queries) {
       for (const month of months) {
-        options.onProgress?.(`search nstru=${code} year=${year} month=${month}`);
+        options.onProgress?.(`search ${query.type}=${query.value} year=${year} month=${month}`);
         const items = await collectLotsPageSet(page, {
-          code,
+          query,
           year,
           month,
           statusIds,
@@ -161,8 +258,8 @@ export async function exportGoszakupLotsByNstru(
           pageLoadTimeoutMs
         });
 
-        rows.push(...items.map((item) => buildExportRow(code, month, item)));
-        options.onProgress?.(`found nstru=${code} month=${month} rows=${items.length}`);
+        rows.push(...items.map((item) => buildExportRow(query.value, month, item)));
+        options.onProgress?.(`found ${query.type}=${query.value} month=${month} rows=${items.length}`);
         if (delayMs > 0) await sleep(delayMs);
       }
     }
@@ -171,14 +268,16 @@ export async function exportGoszakupLotsByNstru(
     await browser.close();
   }
 
-  const dedupedRows = dedupeRows(rows).sort(compareRows);
+  const minAmount = options.minAmount ?? 0;
+  const filteredRows = minAmount > 0 ? rows.filter((row) => parseAmount(row.amount) >= minAmount) : rows;
+  const dedupedRows = dedupeRows(filteredRows).sort(compareRows);
   const xlsxPath = options.outPath ?? defaultOutputPath();
   await writeLotsWorkbook(xlsxPath, dedupedRows);
 
   return {
     xlsxPath,
     rows: dedupedRows.length,
-    codes: codes.length,
+    codes: queries.length,
     months
   };
 }
@@ -202,7 +301,7 @@ export async function writeLotsWorkbook(xlsxPath: string, rows: GoszakupLotsNstr
 async function collectLotsPageSet(
   page: Page,
   options: {
-    code: string;
+    query: LotSearchQuery;
     year: number;
     month: number;
     statusIds: number[];
@@ -216,7 +315,8 @@ async function collectLotsPageSet(
 
   while (pageNum < options.maxPages) {
     const url = buildLotsNstruSearchUrl({
-      nstruCode: options.code,
+      nstruCode: options.query.type === "enstru" ? options.query.value : undefined,
+      nameQuery: options.query.type === "name" ? options.query.value : undefined,
       year: options.year,
       month: options.month,
       statusIds: options.statusIds,
@@ -228,13 +328,20 @@ async function collectLotsPageSet(
     const html = await page.content();
     fs.mkdirSync(options.debugDir, { recursive: true });
     fs.writeFileSync(
-      path.join(options.debugDir, `goszakup-lots-nstru-${sanitizeCode(options.code)}-month${options.month}-page${pageNum}.html`),
+      path.join(options.debugDir, `goszakup-lots-nstru-${sanitizeCode(options.query.value)}-month${options.month}-page${pageNum}.html`),
       html,
       "utf8"
     );
 
     const items = parseGoszakupLotsHtml(html);
     if (items.length === 0) break;
+
+    if (pageNum === 0 && options.query.type === "enstru" && looksLikeIgnoredEnstruFilter(items)) {
+      console.warn(
+        `goszakup lots: filter[enstru]=${options.query.value} ignored by site (mixed lot names, code likely missing from dictionary) — skipping month ${options.month}`
+      );
+      return [];
+    }
 
     allItems.push(...items);
 
@@ -285,8 +392,7 @@ function applyHyperlinks(sheet: ExcelJS.Worksheet, rows: GoszakupLotsNstruRow[])
 function dedupeRows(rows: GoszakupLotsNstruRow[]): GoszakupLotsNstruRow[] {
   const byKey = new Map<string, GoszakupLotsNstruRow>();
   for (const row of rows) {
-    const key = `${row.nstru_code}:${row.lot_number}`;
-    if (!byKey.has(key)) byKey.set(key, row);
+    if (!byKey.has(row.lot_number)) byKey.set(row.lot_number, row);
   }
   return [...byKey.values()];
 }
@@ -324,7 +430,7 @@ function unique(values: string[]): string[] {
 }
 
 function sanitizeCode(code: string): string {
-  return code.replace(/[^0-9A-Za-z.-]+/g, "-");
+  return code.replace(/[^0-9A-Za-zа-яё.-]+/gi, "-");
 }
 
 function defaultOutputPath(): string {

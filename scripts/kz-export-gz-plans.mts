@@ -77,7 +77,7 @@ function parseArgs(argv: string[]): CliArgs {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const fileConfig = loadGzPlansConfig(args.configPath);
-  const options = mergeGzPlansExportOptions(fileConfig, {
+  const options = mergeGzPlansExportOptions(fileConfig, compactOverrides({
     outPath: args.outPath,
     keywords: args.keywords,
     year: args.year,
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
     forceRegistryRefresh: args.forceRegistryRefresh,
     keepDuplicates: args.keepDuplicates,
     headless: args.headless
-  });
+  }));
 
   const result = await exportGzPlansReport({
     ...options,
@@ -99,6 +99,12 @@ async function main(): Promise<void> {
 
   console.log(`gz-plans export: ${result.xlsxPath}`);
   console.log(`rows=${result.rows} customers=${result.customers} registry_hits=${result.registryHits}`);
+}
+
+function compactOverrides<T extends Record<string, unknown>>(overrides: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(overrides).filter(([, value]) => value !== undefined)
+  ) as Partial<T>;
 }
 
 main().catch((error) => {
