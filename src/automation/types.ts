@@ -52,6 +52,7 @@ export interface RollingPeriod { year: number; months: number[] }
 export interface AutomationStepResult {
   counts: Record<string, number>;
   criticalErrors?: string[];
+  output?: string;
 }
 
 export interface AutomationExportResult { path: string; rows: number }

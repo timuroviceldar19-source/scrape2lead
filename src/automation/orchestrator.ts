@@ -28,13 +28,20 @@ export async function prepareAutomationRun(config: AutomationConfig, deps: Autom
     const lots = await runStage(manifest, manifestPath, "exportLots", () => deps.exportLots(config.lotsConfig, lotsPath, periods), log);
     manifest.artifacts.lots = artifact(lots.path, lots.rows); save(manifestPath, manifest);
     const plansReportPath = path.join(runDir, "plans-dry-run.json");
-    const plansDry = await runStage(manifest, manifestPath, "dryRunPlans", () => deps.dryRunPlans(plans.path, plansReportPath), log);
+    const plansDry = await runStage(manifest, manifestPath, "dryRunPlans", async () => {
+      const result = await deps.dryRunPlans(plans.path, plansReportPath);
+      assertNoCriticalErrors("plans", result);
+      return result;
+    }, log);
     writeReport(plansReportPath, plansDry); manifest.artifacts.plansDryRun = artifact(plansReportPath);
-    assertNoCriticalErrors("plans", plansDry); save(manifestPath, manifest);
+    save(manifestPath, manifest);
     const lotsReportPath = path.join(runDir, "lots-dry-run.json");
-    const lotsDry = await runStage(manifest, manifestPath, "dryRunLots", () => deps.dryRunLots(lots.path, lotsReportPath), log);
+    const lotsDry = await runStage(manifest, manifestPath, "dryRunLots", async () => {
+      const result = await deps.dryRunLots(lots.path, lotsReportPath);
+      assertNoCriticalErrors("lots", result);
+      return result;
+    }, log);
     writeReport(lotsReportPath, lotsDry); manifest.artifacts.lotsDryRun = artifact(lotsReportPath);
-    assertNoCriticalErrors("lots", lotsDry);
     manifest.status = "ready"; save(manifestPath, manifest);
   } catch (error) {
     const message = errorMessage(error);

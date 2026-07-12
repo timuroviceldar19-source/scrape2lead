@@ -21,7 +21,7 @@ import {
 
 dotenv.config();
 
-export const DEFAULT_INPUT = "exports/gz-lots-computers-live-2026-jul-dec.xlsx";
+export const DEFAULT_INPUT = "exports/gz-lots-latest.xlsx";
 export const ORIGINATOR_ID = "scrape2lead-gz-lots";
 export const ORIGIN_ID_PREFIX = "gz-lot:";
 const SPEC_PDF_FIELD = "UF_CRM_S2L_SPEC_PDF";

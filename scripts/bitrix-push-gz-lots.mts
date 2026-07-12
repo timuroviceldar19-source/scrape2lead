@@ -5,7 +5,7 @@ import { parseAnnounceCustomer, type AnnounceCustomer } from "../src/kz/goszakup
 
 dotenv.config();
 
-const DEFAULT_INPUT = "exports/gz-lots-computers-2026-jul-dec.xlsx";
+const DEFAULT_INPUT = "exports/gz-lots-latest.xlsx";
 const DEFAULT_CATEGORY_ID = 43;
 const DEFAULT_STAGE_ID = "C43:NEW";
 const DEFAULT_ASSIGNED_BY_ID = 2301;

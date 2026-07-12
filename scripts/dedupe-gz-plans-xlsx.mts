@@ -7,8 +7,8 @@ interface CliArgs {
 
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
-    inputPath: "exports/gz-plans-2026-jun-dec-approved-keep-duplicates.xlsx",
-    outputPath: "exports/gz-plans-2026-jun-dec-approved-155.xlsx"
+    inputPath: "exports/gz-plans-latest.xlsx",
+    outputPath: "exports/gz-plans-deduped.xlsx"
   };
 
   for (let i = 0; i < argv.length; i++) {

@@ -32,6 +32,12 @@ describe("automation orchestrator",()=>{
     const result=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z")); expect(result.status).toBe("failed");
     await expect(approveAutomationRun(config(runs),result.runId,d)).rejects.toThrow(/not ready/);
   });
+  it("blocks approval when a dry-run reports critical errors",async()=>{
+    const runs=root(), d=deps(); vi.mocked(d.dryRunPlans).mockResolvedValue({counts:{candidate:2},criticalErrors:["invalid routing"]});
+    const result=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
+    expect(result.status).toBe("failed"); expect(result.stages.dryRunPlans.status).toBe("failed");
+    await expect(approveAutomationRun(config(runs),result.runId,d)).rejects.toThrow(/not ready/);
+  });
   it("rejects approval when an artifact changed",async()=>{
     const runs=root(), d=deps(); const prepared=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
     fs.appendFileSync(prepared.artifacts.plans!.path,"tamper");

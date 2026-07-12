@@ -1,0 +1,10 @@
+{
+  "runsDir": "runs",
+  "keepSuccessfulRuns": 30,
+  "lockPath": "runs/prepare.lock",
+  "staleLockMinutes": 180,
+  "plansConfig": "config/gz-plans.json",
+  "lotsConfig": "config/gz-lots-computers.json",
+  "periodMonths": 6,
+  "approvalLimit": null
+}

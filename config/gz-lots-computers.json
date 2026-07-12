@@ -15,8 +15,6 @@
     "262013.000.000012",
     "262013.000.000013"
   ],
-  "year": 2026,
-  "months": [7, 8, 9, 10, 11, 12],
   "statuses": [
     "Опубликован",
     "Опубликован (прием заявок)",
@@ -26,6 +24,5 @@
   "minAmount": 300000,
   "maxPages": 50,
   "delayMs": 2000,
-  "headless": true,
-  "outPath": "exports/gz-lots-computers-2026-jul-dec.xlsx"
+  "headless": true
 }

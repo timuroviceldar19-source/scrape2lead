@@ -24,6 +24,7 @@ exports/*
 !exports/.gitkeep
 raw_snapshots/*
 !raw_snapshots/.gitkeep
+runs/
 logs/
 tmp/
 *.log

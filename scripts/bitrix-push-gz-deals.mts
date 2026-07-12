@@ -76,7 +76,7 @@ interface PreflightItem {
   warnings: string[];
 }
 
-const DEFAULT_INPUT = "exports/gz-plans-2026-jul01-approved-fresh.xlsx";
+const DEFAULT_INPUT = "exports/gz-plans-latest.xlsx";
 const DEFAULT_ROUTING_CONFIG = "config/bitrix-gz-routing.json";
 const ORIGINATOR_ID = "scrape2lead-gz-plans";
 const DEFAULT_ASSIGNED_BY_ID = 2301;

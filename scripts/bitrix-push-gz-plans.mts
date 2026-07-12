@@ -89,7 +89,7 @@ interface LeadDetailsSection {
   }>;
 }
 
-const DEFAULT_INPUT = "exports/gz-plans-2026-jun-dec-approved-fresh-2026-06-30.xlsx";
+const DEFAULT_INPUT = "exports/gz-plans-latest.xlsx";
 const ORIGINATOR_ID = "scrape2lead-gz-plans";
 const IMPORT_SECTION_TITLE = "Импорт";
 const IMPORT_FIELD_DEFINITIONS: ImportFieldDefinition[] = [
