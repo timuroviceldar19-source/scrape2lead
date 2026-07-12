@@ -37,6 +37,7 @@ export interface AutomationManifest {
 }
 
 export interface AutomationConfig {
+  sourcePath?: string;
   runsDir: string;
   keepSuccessfulRuns: number;
   lockPath: string;

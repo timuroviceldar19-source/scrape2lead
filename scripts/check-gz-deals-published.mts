@@ -97,7 +97,7 @@ function parseArgs(argv: string[]): CliArgs {
   const stamp = timestampForFile();
   const args: CliArgs = {
     webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null,
-    since: "2026-07-02",
+    since: defaultSinceDate(),
     execute: false,
     limit: null,
     delayMs: 350,
@@ -121,6 +121,10 @@ function parseArgs(argv: string[]): CliArgs {
   }
 
   return args;
+}
+
+function defaultSinceDate(now = new Date()): string {
+  return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 async function main(): Promise<void> {

@@ -5,7 +5,7 @@ import type { AutomationManifest, AutomationStatus, RollingPeriod } from "./type
 
 export function createRunId(now = new Date()): string {
   const p = (value: number) => String(value).padStart(2, "0");
-  return `${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}-${p(now.getUTCHours())}${p(now.getUTCMinutes())}${p(now.getUTCSeconds())}`;
+  return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
 }
 
 export function computeRollingPeriod(now: Date, count: number): RollingPeriod[] {

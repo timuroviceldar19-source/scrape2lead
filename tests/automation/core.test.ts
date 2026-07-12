@@ -21,7 +21,7 @@ function tempDir(): string { const dir = fs.mkdtempSync(path.join(os.tmpdir(), "
 
 describe("automation core", () => {
   it("creates sortable run IDs", () => {
-    expect(createRunId(new Date("2026-07-12T06:00:01Z"))).toBe("20260712-060001");
+    expect(createRunId(new Date(2026, 6, 12, 10, 0, 1))).toBe("20260712-100001");
   });
   it("computes the current and next five months", () => {
     expect(computeRollingPeriod(new Date(2026, 10, 2), 6)).toEqual([

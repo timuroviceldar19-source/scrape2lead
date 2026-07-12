@@ -19,7 +19,7 @@ export function loadAutomationConfig(filePath = "config/automation.json"): Autom
   const config = AutomationConfigSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
   validateCollectorConfig(config.plansConfig, "plans");
   validateCollectorConfig(config.lotsConfig, "lots");
-  return config;
+  return { ...config, sourcePath: filePath };
 }
 
 export function validateCollectorConfig(filePath: string, name: string): void {

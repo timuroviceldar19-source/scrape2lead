@@ -7,14 +7,19 @@ import type { AutomationArtifact, AutomationConfig, AutomationDependencies, Auto
 export async function prepareAutomationRun(config: AutomationConfig, deps: AutomationDependencies, now = new Date()): Promise<AutomationManifest> {
   const runId = createRunId(now);
   const runDir = path.resolve(config.runsDir, runId);
-  if (fs.existsSync(runDir)) throw new Error(`automation run already exists: ${runId}`);
+  const lock = acquireRunLock(path.resolve(config.lockPath), runId, now, config.staleLockMinutes);
+  if (fs.existsSync(runDir)) {
+    releaseRunLock(path.resolve(config.lockPath), runId);
+    throw new Error(`automation run already exists: ${runId}`);
+  }
   fs.mkdirSync(runDir, { recursive: true });
   const manifestPath = path.join(runDir, "manifest.json");
-  const lock = acquireRunLock(path.resolve(config.lockPath), runId, now, config.staleLockMinutes);
   let manifest: AutomationManifest = {
     schemaVersion: 1, runId, status: "preparing", createdAt: now.toISOString(), updatedAt: now.toISOString(),
     recoveredLockRunId: lock.recoveredRunId,
-    config: { path: "config/automation.json", sha256: crypto.createHash("sha256").update(JSON.stringify(config)).digest("hex") },
+    config: { path: config.sourcePath ?? "config/automation.json", sha256: config.sourcePath && fs.existsSync(config.sourcePath)
+      ? fileSha256(config.sourcePath)
+      : crypto.createHash("sha256").update(JSON.stringify(config)).digest("hex") },
     stages: {}, artifacts: {}, errors: [], approval: null
   };
   save(manifestPath, manifest);
@@ -63,7 +68,10 @@ export async function approveAutomationRun(config: AutomationConfig, runId: stri
   if (manifest.status === "applied") throw new Error(`automation run already applied: ${runId}`);
   const resumable = manifest.approval !== null && ["failed", "applying", "applied_ai_failed"].includes(manifest.status);
   if (manifest.status !== "ready" && !resumable) throw new Error(`automation run is not ready: ${manifest.status}`);
-  verifyArtifact(manifest.artifacts.plans, "plans"); verifyArtifact(manifest.artifacts.lots, "lots");
+  verifyArtifact(manifest.artifacts.plans, "plans");
+  verifyArtifact(manifest.artifacts.lots, "lots");
+  verifyArtifact(manifest.artifacts.plansDryRun, "plans dry-run");
+  verifyArtifact(manifest.artifacts.lotsDryRun, "lots dry-run");
   manifest.approval ??= { requestedAt: new Date().toISOString() }; manifest.status = "applying"; save(manifestPath, manifest);
   const log = (message: string) => fs.appendFileSync(path.join(runDir, "run.log"), `${new Date().toISOString()} ${message}\n`);
   try {
