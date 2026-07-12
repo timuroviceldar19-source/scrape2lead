@@ -41,15 +41,15 @@ describe("buildPlanSearchUrl", () => {
 });
 
 describe("parseGoszakupPagination", () => {
-  it("parses total count and pages from plan search debug HTML", () => {
-    const debugPath = path.resolve("data/debug/goszakup-plan-search-панель-интерактивная-page0.html");
-    if (!fs.existsSync(debugPath)) return;
-
-    const html = fs.readFileSync(debugPath, "utf8");
+  it("parses total count and pages from plan search HTML", () => {
+    const html = `
+      <strong>Показано c 1 по 50 из 51 записей</strong>
+      <select><option value="50" selected="selected">50</option></select>
+    `;
     const pagination = parseGoszakupPagination(html);
 
-    expect(pagination.totalCount).toBeGreaterThan(0);
-    expect(pagination.totalPages).toBeGreaterThanOrEqual(2);
+    expect(pagination.totalCount).toBe(51);
+    expect(pagination.totalPages).toBe(2);
   });
 });
 
