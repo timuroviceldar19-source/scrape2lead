@@ -1,45 +1,80 @@
-/**
- * Shared "junk" filter for GZ exports (plans and lots).
- *
- * `keywords` in the configs are a search allowlist ("what to look for"). This
- * module is the opposite: a stop-list that drops items whose name is not worth
- * importing (furniture, stationery, etc.).
- */
+/** Shared junk filtering for GZ plan and lot exports. */
 
-/** Default stop-list; overridden by the `excludeKeywords` config field. */
 export const DEFAULT_GZ_EXCLUDE_KEYWORDS = [
-  "Уголок",
-  "Стойка",
-  "Калькулятор",
-  "Игра",
-  "Плинтус",
+  "Уголок", "Стойка", "Калькулятор", "Игра", "Плинтус",
   "Источник бесперебойного питания"
 ] as const;
 
 const WORD_SPLIT = /[^\p{L}\p{N}]+/u;
+const RUSSIAN_SUFFIXES = [
+  "иями", "ями", "ами", "ого", "ему", "ому", "ими", "ыми",
+  "ий", "ый", "ой", "ая", "яя", "ое", "ее", "ые", "ие", "ых", "их", "ую", "юю",
+  "ов", "ев", "ам", "ям", "ах", "ях", "ом", "ем", "а", "я", "ы", "и", "е", "о", "у", "ю"
+] as const;
 
-/**
- * True when the item name should be dropped because it matches an exclude
- * keyword. Matching is case-insensitive (ru locale). A single-word keyword
- * matches on a whole token — so "игра" does not hit "выиграл" and "стойка"
- * does not hit "рабочая станция". A keyword containing whitespace (a phrase,
- * e.g. "Источник бесперебойного питания") matches as a substring.
- */
-export function isExcludedByName(name: string, excludeKeywords: readonly string[]): boolean {
-  if (!name || excludeKeywords.length === 0) return false;
+export interface GzItemFilterOptions<T> {
+  minAmount: number;
+  excludeKeywords: readonly string[];
+  getAmount: (item: T) => number;
+  getName: (item: T) => string;
+}
 
-  const normalized = name.toLocaleLowerCase("ru");
-  const tokens = new Set(normalized.split(WORD_SPLIT).filter(Boolean));
+export interface GzItemFilterResult<T> {
+  items: T[];
+  droppedBelowMinAmount: number;
+  droppedByName: number;
+}
 
-  for (const raw of excludeKeywords) {
-    const keyword = raw.trim().toLocaleLowerCase("ru");
-    if (!keyword) continue;
-    if (/\s/.test(keyword)) {
-      if (normalized.includes(keyword)) return true;
-    } else if (tokens.has(keyword)) {
-      return true;
+/** Filters arbitrary GZ rows and reports mutually exclusive drop reasons. */
+export function filterGzItems<T>(items: readonly T[], options: GzItemFilterOptions<T>): GzItemFilterResult<T> {
+  const kept: T[] = [];
+  let droppedBelowMinAmount = 0;
+  let droppedByName = 0;
+
+  for (const item of items) {
+    if (options.minAmount > 0 && options.getAmount(item) < options.minAmount) {
+      droppedBelowMinAmount++;
+      continue;
     }
+    if (isExcludedByName(options.getName(item), options.excludeKeywords)) {
+      droppedByName++;
+      continue;
+    }
+    kept.push(item);
   }
 
-  return false;
+  return { items: kept, droppedBelowMinAmount, droppedByName };
+}
+
+/** Matches normalized whole words and adjacent phrase words with conservative Russian stemming. */
+export function isExcludedByName(name: string, excludeKeywords: readonly string[]): boolean {
+  if (!name || excludeKeywords.length === 0) return false;
+  const nameTokens = tokenize(name);
+  if (nameTokens.length === 0) return false;
+
+  return excludeKeywords.some((rawKeyword) => {
+    const keywordTokens = tokenize(rawKeyword);
+    if (keywordTokens.length === 0 || keywordTokens.length > nameTokens.length) return false;
+    for (let start = 0; start <= nameTokens.length - keywordTokens.length; start++) {
+      if (keywordTokens.every((keyword, offset) => wordsMatch(nameTokens[start + offset], keyword))) return true;
+    }
+    return false;
+  });
+}
+
+function tokenize(value: string): string[] {
+  return value.normalize("NFKC").toLocaleLowerCase("ru").replace(/ё/g, "е").split(WORD_SPLIT).filter(Boolean);
+}
+
+function wordsMatch(candidate: string, keyword: string): boolean {
+  if (candidate === keyword) return true;
+  const keywordStem = russianStem(keyword);
+  return keywordStem.length >= 3 && russianStem(candidate).startsWith(keywordStem);
+}
+
+function russianStem(word: string): string {
+  for (const suffix of RUSSIAN_SUFFIXES) {
+    if (word.endsWith(suffix) && word.length - suffix.length >= 3) return word.slice(0, -suffix.length);
+  }
+  return word;
 }

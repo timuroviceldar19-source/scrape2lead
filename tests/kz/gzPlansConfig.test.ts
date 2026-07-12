@@ -27,6 +27,22 @@ function writeTempConfig(content: Record<string, unknown>): string {
 }
 
 describe("loadGzPlansConfig", () => {
+  it("loads the strict filters from the real PK config", () => {
+    const config = loadGzPlansConfig("config/gz-plans.pk.json");
+
+    expect(config.minAmount).toBe(500000);
+    expect(config.excludeKeywords).toEqual([
+      "Уголок",
+      "Стойка",
+      "Калькулятор",
+      "Игра",
+      "Плинтус",
+      "Источник бесперебойного питания",
+      "Услуги",
+      "Коммутационная панель"
+    ]);
+  });
+
   it("loads and validates config from JSON file", () => {
     const configPath = writeTempConfig({
       keywords: ["Панель интерактивная"],

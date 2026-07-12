@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
 import { isValidBin } from "./csv.js";
-import { isExcludedByName } from "./gzItemFilter.js";
+import { filterGzItems } from "./gzItemFilter.js";
 import { collectGoszakupRegistryForBins } from "./goszakupRegistryCollector.js";
 import { collectGzPlans } from "./goszakupPlanCollector.js";
 import type { GoszakupRegistryRecord } from "./registryTypes.js";
@@ -85,11 +85,10 @@ export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Pr
   const builtRows = collectResult.items
     .map((item) => buildExportRow(item, item.detail, registryByBin.get(item.detail?.customer_bin ?? "") ?? null))
     .filter((row): row is GzPlanExportRow => row !== null);
-  const rows = filterPlanRows(builtRows, options.minAmount ?? 0, options.excludeKeywords ?? [])
-    .sort(compareExportRows);
-  const dropped = builtRows.length - rows.length;
-  if (dropped > 0) {
-    console.log(`gz plan export: dropped ${dropped} rows below min or in stop-list`);
+  const filterResult = filterPlanRowsWithStats(builtRows, options.minAmount ?? 0, options.excludeKeywords ?? []);
+  const rows = filterResult.items.sort(compareExportRows);
+  if (filterResult.droppedBelowMinAmount > 0 || filterResult.droppedByName > 0) {
+    console.log(`gz plan export: dropped below_min=${filterResult.droppedBelowMinAmount} stop_list=${filterResult.droppedByName}`);
   }
 
   const xlsxPath = options.outPath ?? defaultOutputPath();
@@ -216,10 +215,14 @@ export function filterPlanRows(
   minAmount: number,
   excludeKeywords: string[]
 ): GzPlanExportRow[] {
-  return rows.filter((row) => {
-    if (minAmount > 0 && parseAmount(row.planned_amount) < minAmount) return false;
-    if (isExcludedByName(row.stru_name, excludeKeywords)) return false;
-    return true;
+  return filterPlanRowsWithStats(rows, minAmount, excludeKeywords).items;
+}
+
+function filterPlanRowsWithStats(rows: GzPlanExportRow[], minAmount: number, excludeKeywords: string[]) {
+  return filterGzItems(rows, {
+    minAmount, excludeKeywords,
+    getAmount: (row) => parseAmount(row.planned_amount),
+    getName: (row) => row.stru_name
   });
 }
 

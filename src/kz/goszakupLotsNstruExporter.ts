@@ -3,7 +3,7 @@ import path from "node:path";
 import ExcelJS from "exceljs";
 import { chromium, type Page } from "playwright";
 import { sleep } from "./csv.js";
-import { isExcludedByName } from "./gzItemFilter.js";
+import { filterGzItems } from "./gzItemFilter.js";
 import { parseGoszakupLotsHtml, parseGoszakupPagination, type GoszakupLotItem } from "./goszakupHtmlParser.js";
 
 const BASE_URL = "https://goszakup.gov.kz";
@@ -271,7 +271,11 @@ export async function exportGoszakupLotsByNstru(
     await browser.close();
   }
 
-  const filteredRows = filterLotRows(rows, options.minAmount ?? 0, options.excludeKeywords ?? []);
+  const filterResult = filterLotRowsWithStats(rows, options.minAmount ?? 0, options.excludeKeywords ?? []);
+  const filteredRows = filterResult.items;
+  if (filterResult.droppedBelowMinAmount > 0 || filterResult.droppedByName > 0) {
+    options.onProgress?.(`filter dropped below_min=${filterResult.droppedBelowMinAmount} stop_list=${filterResult.droppedByName}`);
+  }
   const dedupedRows = dedupeRows(filteredRows).sort(compareRows);
   const xlsxPath = options.outPath ?? defaultOutputPath();
   await writeLotsWorkbook(xlsxPath, dedupedRows);
@@ -423,10 +427,14 @@ export function filterLotRows(
   minAmount: number,
   excludeKeywords: string[]
 ): GoszakupLotsNstruRow[] {
-  return rows.filter((row) => {
-    if (minAmount > 0 && parseAmount(row.amount) < minAmount) return false;
-    if (isExcludedByName(row.lot_name, excludeKeywords)) return false;
-    return true;
+  return filterLotRowsWithStats(rows, minAmount, excludeKeywords).items;
+}
+
+function filterLotRowsWithStats(rows: GoszakupLotsNstruRow[], minAmount: number, excludeKeywords: string[]) {
+  return filterGzItems(rows, {
+    minAmount, excludeKeywords,
+    getAmount: (row) => parseAmount(row.amount),
+    getName: (row) => row.lot_name
   });
 }
 
