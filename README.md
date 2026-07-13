@@ -69,8 +69,14 @@ prepare; подтверждение всегда остаётся ручным. 
 npm run kz:export-gz-plans
 npm run kz:export-lots-nstru
 npm run kz:export-lots-computers
+npm run kz:export-gz-contracts -- --config config/gz-contracts-panels.json
 npm run kz:dedupe-gz-plans -- --input exports/input.xlsx
 ```
+
+Экспорт договоров ищет каждый код ЕНС ТРУ отдельно в публичном реестре за период с
+`2026-01-01` по текущую локальную дату. Результат сохраняется в `exports/` и содержит
+БИН заказчика, название заказчика, БИН/ИИН поставщика, название поставщика и код поиска.
+Параметры запуска: `--from`, `--to`, `--out`, `--limit`, `--max-pages`, `--headful` и `--dry-run`.
 
 Конфигурации находятся в `config/gz-plans*.json` и `config/gz-lots-computers.json`. Команда экспорта произвольных кодов НС ТРУ по умолчанию читает `Nstru.txt`.
 
