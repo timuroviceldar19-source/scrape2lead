@@ -74,6 +74,9 @@ describe("goszakup contract exporter", () => {
     await workbook.xlsx.readFile(outPath);
     const sheet = workbook.worksheets[0];
     expect(sheet.columnCount).toBe(5);
+    expect(sheet.getColumn(1).numFmt).toBe("@");
+    expect(sheet.getColumn(3).numFmt).toBe("@");
+    expect(sheet.getColumn(5).numFmt).toBe("@");
     expect(sheet.getRow(2).values).toEqual([
       undefined, "980840002542", "КГУ «Тестовая школа»", "120340012345", "ТОО «Тест-поставщик»", "279020.100.000001"
     ]);

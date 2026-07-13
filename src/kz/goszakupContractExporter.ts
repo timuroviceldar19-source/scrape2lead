@@ -283,6 +283,7 @@ async function writeContractWorkbook(outPath: string, rows: ExportRow[]): Promis
     { header: "Название Поставщика", key: "supplierName", width: 55 },
     { header: "Код ЕНС ТРУ поиска", key: "searchCode", width: 24 }
   ];
+  for (const columnNumber of [1, 3, 5]) sheet.getColumn(columnNumber).numFmt = "@";
   sheet.getRow(1).font = { bold: true };
   sheet.views = [{ state: "frozen", ySplit: 1 }];
   for (const row of rows) sheet.addRow(row);
