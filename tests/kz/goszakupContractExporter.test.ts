@@ -125,7 +125,7 @@ describe("goszakup contract exporter", () => {
   it("falls back through lots and purchase numbers when the portal ENSTRU contract filter is empty", async () => {
     const pageLoader = fallbackLoader();
     const result = await exportGoszakupContracts({
-      codes: ["262030.100.000021"], from: "2026-01-01", to: "2026-01-31",
+      codes: ["262030.100.000021"], from: "2026-07-01", to: "2026-07-31",
       outPath: tempFile(), delayMs: 0, pageLoader
     });
 
