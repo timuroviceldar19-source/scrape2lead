@@ -33,6 +33,22 @@ function loader(options: { parties?: string; failCode?: string; signedAt?: strin
   });
 }
 
+function fallbackLoader(): ContractPageLoader {
+  let code = "262030.100.000021";
+  return vi.fn(async (url: string) => {
+    if (url.includes("/search/lots")) return fixture("lots.html");
+    if (url.includes("filter%5Bbuy_id%5D")) return fixture("search.html");
+    if (url.includes("/registry/contract")) {
+      code = new URL(url).searchParams.get("filter[enstru]") ?? code;
+      return '<table id="search-result"><tbody></tbody></table><div class="dataTables_info">Показано c 1 по 0 из 0 записей</div>';
+    }
+    if (url.includes("customer_n_supplier")) return fixture("parties-bin.html");
+    if (url.includes("/units/")) return fixture("units.html").replace("262030.100.000021", code);
+    if (url.includes("/show/")) return fixture("general.html");
+    throw new Error(`unexpected URL ${url}`);
+  });
+}
+
 describe("goszakup contract exporter", () => {
   it("builds a separate encoded search URL for a code and signing period", () => {
     const url = buildContractSearchUrl({
@@ -104,5 +120,18 @@ describe("goszakup contract exporter", () => {
       outPath: tempFile(), delayMs: 0, pageLoader: loader({ unitCode: "999999.999.999999" })
     });
     expect(mismatch).toEqual(expect.objectContaining({ rows: 0, skippedCodeMismatch: 1 }));
+  });
+
+  it("falls back through lots and purchase numbers when the portal ENSTRU contract filter is empty", async () => {
+    const pageLoader = fallbackLoader();
+    const result = await exportGoszakupContracts({
+      codes: ["262030.100.000021"], from: "2026-01-01", to: "2026-01-31",
+      outPath: tempFile(), delayMs: 0, pageLoader
+    });
+
+    expect(result.rows).toBe(1);
+    expect(result.warnings).toContainEqual(expect.stringMatching(/fallback.*lots/i));
+    expect((pageLoader as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).includes("/search/lots"))).toBe(true);
+    expect((pageLoader as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).includes("filter%5Bbuy_id%5D"))).toBe(true);
   });
 });
