@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
+import { pathToFileURL } from "node:url";
 import dotenv from "dotenv";
 import ExcelJS from "exceljs";
 import {
@@ -24,7 +25,7 @@ interface CliArgs {
   minAmount: number;
 }
 
-interface GzPlanRow {
+export interface GzPlanRow {
   rowNumber: number;
   bin: string;
   customerName: string;
@@ -457,10 +458,11 @@ async function readGzPlanRows(inputPath: string): Promise<GzPlanRow[]> {
   return rows;
 }
 
-function buildCompanyFields(row: GzPlanRow, assignedById: number | null): Record<string, unknown> {
+export function buildCompanyFields(row: GzPlanRow, assignedById: number | null): Record<string, unknown> {
   const fields: Record<string, unknown> = {
     TITLE: row.customerName || row.bin || `GZ plan ${row.planId}`,
     ASSIGNED_BY_ID: assignedById ?? undefined,
+    OPENED: "Y",
     SOURCE_ID: "WEB",
     SOURCE_DESCRIPTION: "scrape2lead gz-plans",
     ORIGINATOR_ID,
@@ -684,7 +686,9 @@ function stripUndefined<T extends Record<string, unknown>>(fields: T): T {
   ) as T;
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
