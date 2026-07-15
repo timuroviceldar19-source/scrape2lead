@@ -7,11 +7,12 @@ export const GZ_PLAN_ORIGINATOR_IDS: readonly string[] = ["scrape2lead-gz-plans"
 
 const PLAN_NUMBER_FIELD = "UF_CRM_PLAN_ID";
 const DUPLICATE_STAGE = /:DUPLICATE$/i;
-const H3_BLOCK = /<h3[^>]*>([\s\S]*?)<\/h3>/gi;
-const NUMBERED_HEADING = /^\s*(\d+)\s*:/;
 
 export interface GzBackfillDeal {
   ID?: string | number;
+  TITLE?: string | null;
+  CATEGORY_ID?: string | number | null;
+  ORIGIN_ID?: string | null;
   ORIGINATOR_ID?: string | null;
   STAGE_ID?: string | null;
   UF_CRM_PLAN_ID?: string | number | null;
@@ -22,15 +23,21 @@ export interface GzBackfillDeal {
 export interface GzPlanNumberSource {
   canonicalPlanPointId: string;
   legacyPlanId: string | null;
-  /** The snapshot is keyed by the legacy segment, never by the canonical id. */
-  snapshotId: string | null;
+}
+
+/** One deal, one canonical page load. Two deals never share a load. */
+export interface GzPlanNumberFetchTarget {
+  dealId: string;
+  canonicalPlanPointId: string;
+  planLink: string;
+  stageId: string;
 }
 
 export interface GzPlanNumberReportEntry {
   dealId: string;
   canonicalPlanPointId: string;
   planNumber: string;
-  source: "snapshot" | "playwright";
+  source: "canonical-page";
   stageId: string;
 }
 
@@ -41,7 +48,7 @@ export interface GzPlanNumberUnresolved {
 }
 
 export interface GzPlanNumberPlan {
-  resolved: GzPlanNumberReportEntry[];
+  pending: GzPlanNumberFetchTarget[];
   unresolved: GzPlanNumberUnresolved[];
 }
 
@@ -61,36 +68,23 @@ export function getGzPlanLink(deal: GzBackfillDeal): string {
   return text(deal.UF_CRM_PLAN_LINK) || text(deal.UF_CRM_1782386571874_IU_XLS);
 }
 
+/**
+ * The legacy segment is reported for provenance only. It is not an identity and
+ * must never key a cache: 26 legacy segments in the live CRM are shared by two
+ * canonical points, so a page stored under one is evidence about neither.
+ */
 export function resolveGzPlanNumberSource(deal: GzBackfillDeal): GzPlanNumberSource | null {
   const identity = parseGzPlanLinkIdentity(getGzPlanLink(deal));
   if (!identity) return null;
 
   return {
     canonicalPlanPointId: identity.planPointId,
-    legacyPlanId: identity.legacyPlanId,
-    snapshotId: identity.legacyPlanId
+    legacyPlanId: identity.legacyPlanId
   };
 }
 
-/**
- * Reads the plan number from the page heading (`<h3>86795650: Доска специальная</h3>`).
- * The page also carries an unnumbered site announcement heading, and a page that
- * offers two different numbers is ambiguous rather than authoritative.
- */
-export function extractGzPlanNumberFromHeading(html: string): string | null {
-  const numbers = new Set<string>();
-  for (const match of html.matchAll(H3_BLOCK)) {
-    const numbered = match[1].match(NUMBERED_HEADING);
-    if (numbered) numbers.add(numbered[1]);
-  }
-  return numbers.size === 1 ? [...numbers][0] : null;
-}
-
-export function planGzPlanNumberBackfill(
-  deals: readonly GzBackfillDeal[],
-  options: { readSnapshot: (snapshotId: string) => string | null }
-): GzPlanNumberPlan {
-  const resolved: GzPlanNumberReportEntry[] = [];
+export function planGzPlanNumberBackfill(deals: readonly GzBackfillDeal[]): GzPlanNumberPlan {
+  const pending: GzPlanNumberFetchTarget[] = [];
   const unresolved: GzPlanNumberUnresolved[] = [];
 
   for (const deal of deals) {
@@ -103,39 +97,21 @@ export function planGzPlanNumberBackfill(
       continue;
     }
 
-    const html = source.snapshotId ? options.readSnapshot(source.snapshotId) : null;
-    if (!html) {
-      unresolved.push({
-        dealId,
-        canonicalPlanPointId: source.canonicalPlanPointId,
-        reason: "no local snapshot"
-      });
-      continue;
-    }
-
-    const planNumber = extractGzPlanNumberFromHeading(html);
-    if (!planNumber) {
-      unresolved.push({
-        dealId,
-        canonicalPlanPointId: source.canonicalPlanPointId,
-        reason: "no numbered heading in snapshot"
-      });
-      continue;
-    }
-
-    resolved.push({
+    pending.push({
       dealId,
       canonicalPlanPointId: source.canonicalPlanPointId,
-      planNumber,
-      source: "snapshot",
+      planLink: getGzPlanLink(deal),
       stageId: text(deal.STAGE_ID)
     });
   }
 
-  return { resolved, unresolved };
+  return { pending, unresolved };
 }
 
-export function canExecuteGzPlanNumberBackfill(plan: GzPlanNumberPlan): { ok: boolean; reason?: string } {
+export function canExecuteGzPlanNumberBackfill(plan: {
+  resolved: readonly GzPlanNumberReportEntry[];
+  unresolved: readonly GzPlanNumberUnresolved[];
+}): { ok: boolean; reason?: string } {
   if (plan.unresolved.length > 0) {
     const ids = plan.unresolved.map((entry) => entry.dealId).join(", ");
     return { ok: false, reason: `${plan.unresolved.length} unresolved candidate(s): ${ids}` };

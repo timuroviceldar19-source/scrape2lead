@@ -1,10 +1,8 @@
-import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   buildGzPlanNumberUpdate,
   canExecuteGzPlanNumberBackfill,
   decideGzPlanNumberWrite,
-  extractGzPlanNumberFromHeading,
   isGzPlanNumberBackfillCandidate,
   planGzPlanNumberBackfill,
   resolveGzPlanNumberSource,
@@ -17,9 +15,9 @@ const LEGACY_URL = "https://goszakup.gov.kz/ru/registry/show_plan/86795650/47517
 // Row 21 of run 20260715-120949: the same lineage after goszakup amended it.
 const AMENDED_URL = "https://goszakup.gov.kz/ru/registry/show_plan/87173984/4753515";
 
-// The real page carries a site-wide announcement <h3> before the real heading.
-const ANNOUNCEMENT_H3 = "<h3>Всем участникам государственных закупок в сфере строительства!</h3>";
-const REAL_PAGE = `<div>${ANNOUNCEMENT_H3}<h3>86795650: Доска специальная</h3></div>`;
+// Deals 41719 and 38807 in the live CRM: two distinct canonical points, one legacy segment.
+const COLLIDING_URL_A = "https://goszakup.gov.kz/ru/registry/show_plan/87018811/4775438";
+const COLLIDING_URL_B = "https://goszakup.gov.kz/ru/registry/show_plan/87018653/4775438";
 
 function makeDeal(overrides: Partial<GzBackfillDeal> = {}): GzBackfillDeal {
   return {
@@ -37,7 +35,7 @@ function makeEntry(overrides: Partial<GzPlanNumberReportEntry> = {}): GzPlanNumb
     dealId: "39149",
     canonicalPlanPointId: "87173984",
     planNumber: "86795650",
-    source: "snapshot",
+    source: "canonical-page",
     stageId: "C41:PREPAYMENT_INVOIC",
     ...overrides
   };
@@ -70,16 +68,26 @@ describe("resolveGzPlanNumberSource", () => {
   it("separates the canonical point id from the legacy segment", () => {
     expect(resolveGzPlanNumberSource(makeDeal({ UF_CRM_PLAN_LINK: LEGACY_URL }))).toEqual({
       canonicalPlanPointId: "86795650",
-      legacyPlanId: "4751746",
-      snapshotId: "4751746"
+      legacyPlanId: "4751746"
     });
   });
 
-  it("looks the snapshot up by the legacy segment, not the canonical id", () => {
-    const source = resolveGzPlanNumberSource(makeDeal({ UF_CRM_PLAN_LINK: AMENDED_URL }));
+  it("keeps two canonical points that share a legacy segment apart", () => {
+    const a = resolveGzPlanNumberSource(makeDeal({ ID: "41719", UF_CRM_PLAN_LINK: COLLIDING_URL_A }));
+    const b = resolveGzPlanNumberSource(makeDeal({ ID: "38807", UF_CRM_PLAN_LINK: COLLIDING_URL_B }));
 
-    expect(source?.canonicalPlanPointId).toBe("87173984");
-    expect(source?.snapshotId).toBe("4753515");
+    expect(a?.legacyPlanId).toBe(b?.legacyPlanId);
+    expect(a?.canonicalPlanPointId).not.toBe(b?.canonicalPlanPointId);
+  });
+
+  it("offers no cache key at all, so no page can be shared between two points", () => {
+    // The 20260715 backfill exposed `snapshotId = legacyPlanId` here and read one
+    // page for both 87018811 and 87018653. 26 legacy segments in the live CRM are
+    // shared this way; a value read under that key is evidence about neither point.
+    const source = resolveGzPlanNumberSource(makeDeal({ UF_CRM_PLAN_LINK: COLLIDING_URL_A }));
+
+    expect(source).not.toHaveProperty("snapshotId");
+    expect(Object.keys(source ?? {})).toEqual(["canonicalPlanPointId", "legacyPlanId"]);
   });
 
   it("falls back to the alternate link field", () => {
@@ -94,84 +102,48 @@ describe("resolveGzPlanNumberSource", () => {
   });
 });
 
-describe("extractGzPlanNumberFromHeading", () => {
-  it("reads the number from the real heading", () => {
-    expect(extractGzPlanNumberFromHeading(REAL_PAGE)).toBe("86795650");
-  });
-
-  it("reads the number from an actual goszakup snapshot", () => {
-    const html = fs.readFileSync("data/debug/goszakup-plan-detail-4751746.html", "utf8");
-
-    expect(extractGzPlanNumberFromHeading(html)).toBe("86795650");
-  });
-
-  it("ignores the site announcement heading that carries no number", () => {
-    expect(extractGzPlanNumberFromHeading(`<div>${ANNOUNCEMENT_H3}</div>`)).toBeNull();
-  });
-
-  it("rejects an empty or non-numeric heading", () => {
-    expect(extractGzPlanNumberFromHeading("")).toBeNull();
-    expect(extractGzPlanNumberFromHeading("<h3></h3>")).toBeNull();
-    expect(extractGzPlanNumberFromHeading("<h3>: Доска специальная</h3>")).toBeNull();
-    expect(extractGzPlanNumberFromHeading("<h3>ABC123: Доска специальная</h3>")).toBeNull();
-  });
-
-  it("rejects an ambiguous page carrying two different numbered headings", () => {
-    const ambiguous = "<h3>86795650: Доска специальная</h3><h3>82425225: Панель интерактивная</h3>";
-
-    expect(extractGzPlanNumberFromHeading(ambiguous)).toBeNull();
-  });
-
-  it("accepts a page repeating the same numbered heading", () => {
-    const repeated = "<h3>86795650: Доска специальная</h3><h3>86795650: Доска специальная</h3>";
-
-    expect(extractGzPlanNumberFromHeading(repeated)).toBe("86795650");
-  });
-});
-
 describe("planGzPlanNumberBackfill", () => {
-  const readSnapshot = (id: string): string | null => (id === "4753515" ? REAL_PAGE : null);
-
-  it("resolves from the local snapshot without deferring to Playwright", () => {
-    const plan = planGzPlanNumberBackfill([makeDeal()], { readSnapshot });
+  it("sends every candidate to its own canonical page load", () => {
+    const plan = planGzPlanNumberBackfill([makeDeal()]);
 
     expect(plan.unresolved).toEqual([]);
-    expect(plan.resolved).toEqual([makeEntry()]);
+    expect(plan.pending).toEqual([
+      {
+        dealId: "39149",
+        canonicalPlanPointId: "87173984",
+        planLink: AMENDED_URL,
+        stageId: "C41:PREPAYMENT_INVOIC"
+      }
+    ]);
   });
 
-  it("defers only the deals with no local snapshot", () => {
-    const missing = makeDeal({ ID: "40001", UF_CRM_PLAN_LINK: LEGACY_URL });
-    const plan = planGzPlanNumberBackfill([makeDeal(), missing], { readSnapshot });
+  it("never lets two candidates behind one legacy segment share a page load", () => {
+    const plan = planGzPlanNumberBackfill([
+      makeDeal({ ID: "41719", UF_CRM_PLAN_LINK: COLLIDING_URL_A }),
+      makeDeal({ ID: "38807", UF_CRM_PLAN_LINK: COLLIDING_URL_B })
+    ]);
 
-    expect(plan.resolved.map((entry) => entry.dealId)).toEqual(["39149"]);
-    expect(plan.unresolved.map((entry) => entry.dealId)).toEqual(["40001"]);
-    expect(plan.unresolved[0].canonicalPlanPointId).toBe("86795650");
-  });
-
-  it("defers a candidate whose snapshot carries no numbered heading", () => {
-    const plan = planGzPlanNumberBackfill([makeDeal()], {
-      readSnapshot: () => `<div>${ANNOUNCEMENT_H3}</div>`
-    });
-
-    expect(plan.resolved).toEqual([]);
-    expect(plan.unresolved[0].reason).toBe("no numbered heading in snapshot");
+    expect(plan.pending).toHaveLength(2);
+    expect(plan.pending.map((target) => target.canonicalPlanPointId)).toEqual(["87018811", "87018653"]);
+    expect(plan.pending.map((target) => target.planLink)).toEqual([COLLIDING_URL_A, COLLIDING_URL_B]);
   });
 
   it("defers a candidate carrying no usable plan link", () => {
-    const plan = planGzPlanNumberBackfill([makeDeal({ UF_CRM_PLAN_LINK: "" })], { readSnapshot });
+    const plan = planGzPlanNumberBackfill([makeDeal({ UF_CRM_PLAN_LINK: "" })]);
 
+    expect(plan.pending).toEqual([]);
     expect(plan.unresolved).toEqual([
       { dealId: "39149", canonicalPlanPointId: "", reason: "no usable plan link" }
     ]);
   });
 
   it("excludes non-candidates from the plan entirely", () => {
-    const plan = planGzPlanNumberBackfill(
-      [makeDeal({ ID: "1", UF_CRM_PLAN_ID: "111" }), makeDeal({ ID: "2", ORIGINATOR_ID: "scrape2lead-gz-lots" })],
-      { readSnapshot }
-    );
+    const plan = planGzPlanNumberBackfill([
+      makeDeal({ ID: "1", UF_CRM_PLAN_ID: "111" }),
+      makeDeal({ ID: "2", ORIGINATOR_ID: "scrape2lead-gz-lots" })
+    ]);
 
-    expect(plan.resolved).toEqual([]);
+    expect(plan.pending).toEqual([]);
     expect(plan.unresolved).toEqual([]);
   });
 });
@@ -184,7 +156,7 @@ describe("canExecuteGzPlanNumberBackfill", () => {
   it("refuses execute while any candidate is unresolved", () => {
     const verdict = canExecuteGzPlanNumberBackfill({
       resolved: [makeEntry()],
-      unresolved: [{ dealId: "40001", canonicalPlanPointId: "86795650", reason: "no snapshot" }]
+      unresolved: [{ dealId: "40001", canonicalPlanPointId: "86795650", reason: "page did not load" }]
     });
 
     expect(verdict.ok).toBe(false);

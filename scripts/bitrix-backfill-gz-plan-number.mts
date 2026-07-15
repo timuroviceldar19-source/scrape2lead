@@ -3,24 +3,27 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import dotenv from "dotenv";
 import { chromium } from "playwright";
+import { BitrixClient } from "../src/bitrix/client.js";
+import {
+  GZ_CANONICAL_PLAN_PAGE_DIR,
+  canonicalPlanPageFileName,
+  extractGzPlanNumberFromHeading,
+  verifyCanonicalPlanPageUrl
+} from "../src/kz/gzCanonicalPlanPage.js";
 import {
   GZ_PLAN_ORIGINATOR_IDS,
   buildGzPlanNumberUpdate,
   canExecuteGzPlanNumberBackfill,
   decideGzPlanNumberWrite,
-  extractGzPlanNumberFromHeading,
-  getGzPlanLink,
   isGzPlanNumberBackfillCandidate,
   planGzPlanNumberBackfill,
-  resolveGzPlanNumberSource,
   type GzBackfillDeal,
-  type GzPlanNumberPlan,
-  type GzPlanNumberReportEntry
+  type GzPlanNumberReportEntry,
+  type GzPlanNumberUnresolved
 } from "../src/bitrix/gzPlanNumberBackfill.js";
 
 dotenv.config();
 
-const DEBUG_DIR = "data/debug";
 const REPORT_DIR = "data";
 const PAGE_LOAD_TIMEOUT_MS = 90_000;
 const FETCH_RETRIES = 2;
@@ -38,11 +41,11 @@ interface CliArgs {
 }
 
 interface Report {
-  schemaVersion: 1;
+  schemaVersion: 2;
   createdAt: string;
   candidates: number;
   resolved: GzPlanNumberReportEntry[];
-  unresolved: GzPlanNumberPlan["unresolved"];
+  unresolved: GzPlanNumberUnresolved[];
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -55,113 +58,84 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
-class BitrixClient {
-  private readonly baseUrl: string;
-
-  constructor(webhookUrl: string) {
-    this.baseUrl = webhookUrl.replace(/\/+$/, "");
+async function listGzDeals(client: BitrixClient): Promise<GzBackfillDeal[]> {
+  const deals: GzBackfillDeal[] = [];
+  for (const originatorId of GZ_PLAN_ORIGINATOR_IDS) {
+    const rows = await client.listAll("deal", { ORIGINATOR_ID: originatorId }, DEAL_SELECT);
+    deals.push(...rows as GzBackfillDeal[]);
   }
-
-  private async call(method: string, params: Record<string, unknown>): Promise<unknown> {
-    const response = await fetch(`${this.baseUrl}/${method}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params)
-    });
-    const payload = await response.json() as { result?: unknown; next?: number; error_description?: string; error?: string };
-    if (payload.error) throw new Error(`${payload.error}: ${payload.error_description ?? ""}`);
-    return payload;
-  }
-
-  async listGzDeals(): Promise<GzBackfillDeal[]> {
-    const deals: GzBackfillDeal[] = [];
-    for (const originatorId of GZ_PLAN_ORIGINATOR_IDS) {
-      let start = 0;
-      for (;;) {
-        const page = await this.call("crm.deal.list", {
-          filter: { ORIGINATOR_ID: originatorId },
-          select: DEAL_SELECT,
-          start
-        }) as { result: GzBackfillDeal[]; next?: number };
-        deals.push(...page.result);
-        if (page.next == null) break;
-        start = page.next;
-      }
-    }
-    return deals;
-  }
-
-  async getDeal(id: string): Promise<GzBackfillDeal | null> {
-    const payload = await this.call("crm.deal.get", { id }) as { result?: GzBackfillDeal };
-    return payload.result ?? null;
-  }
-
-  async updateDeal(id: string, fields: Record<string, unknown>): Promise<void> {
-    await this.call("crm.deal.update", { id, fields });
-  }
+  return deals;
 }
 
-function readSnapshot(snapshotId: string): string | null {
-  const file = path.join(DEBUG_DIR, `goszakup-plan-detail-${snapshotId}.html`);
-  return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
-}
-
-async function fetchMissingPages(
-  plan: GzPlanNumberPlan,
-  deals: readonly GzBackfillDeal[],
+/**
+ * Every candidate gets its own page load, keyed and cached by its canonical
+ * point. The legacy `data/debug` cache is never read: its file names come from
+ * the second `show_plan` segment, which several canonical points share.
+ */
+async function fetchCanonicalPages(
+  plan: ReturnType<typeof planGzPlanNumberBackfill>,
   headless: boolean
-): Promise<GzPlanNumberPlan> {
-  if (plan.unresolved.length === 0) return plan;
-
-  const byId = new Map(deals.map((deal) => [String(deal.ID ?? ""), deal]));
-  const resolved = [...plan.resolved];
-  const stillUnresolved: GzPlanNumberPlan["unresolved"] = [];
+): Promise<{ resolved: GzPlanNumberReportEntry[]; unresolved: GzPlanNumberUnresolved[] }> {
+  const resolved: GzPlanNumberReportEntry[] = [];
+  const unresolved: GzPlanNumberUnresolved[] = [...plan.unresolved];
+  if (plan.pending.length === 0) return { resolved, unresolved };
 
   const browser = await chromium.launch({ headless });
   const context = await browser.newContext({ locale: "ru-RU", viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
 
   try {
-    for (const pending of plan.unresolved) {
-      const deal = byId.get(pending.dealId);
-      const url = deal ? getGzPlanLink(deal) : "";
-      const source = deal ? resolveGzPlanNumberSource(deal) : null;
-      if (!deal || !url || !source) {
-        stillUnresolved.push({ ...pending, reason: "no usable plan link" });
-        continue;
-      }
-
-      let planNumber: string | null = null;
-      for (let attempt = 0; attempt <= FETCH_RETRIES && !planNumber; attempt++) {
+    for (const target of plan.pending) {
+      let load: { finalUrl: string; html: string | null; error?: string } = {
+        finalUrl: "",
+        html: null,
+        error: "unknown error"
+      };
+      for (let attempt = 0; attempt <= FETCH_RETRIES && load.html == null; attempt++) {
         try {
-          await page.goto(url, { waitUntil: "domcontentloaded", timeout: PAGE_LOAD_TIMEOUT_MS });
+          await page.goto(target.planLink, { waitUntil: "domcontentloaded", timeout: PAGE_LOAD_TIMEOUT_MS });
           await page.waitForTimeout(FETCH_DELAY_MS);
-          const html = await page.content();
-          planNumber = extractGzPlanNumberFromHeading(html);
-          if (planNumber) {
-            const cacheId = source.snapshotId ?? source.canonicalPlanPointId;
-            fs.mkdirSync(DEBUG_DIR, { recursive: true });
-            fs.writeFileSync(path.join(DEBUG_DIR, `goszakup-plan-detail-${cacheId}.html`), html, "utf8");
-          }
+          load = { finalUrl: page.url(), html: await page.content() };
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.warn(`  deal ${pending.dealId}: fetch attempt ${attempt + 1} failed: ${message}`);
+          load = { finalUrl: "", html: null, error: error instanceof Error ? error.message : String(error) };
           if (attempt < FETCH_RETRIES) await page.waitForTimeout(FETCH_DELAY_MS);
         }
       }
 
+      const reject = (reason: string): void => {
+        unresolved.push({ dealId: target.dealId, canonicalPlanPointId: target.canonicalPlanPointId, reason });
+        console.log(`  deal ${target.dealId}: ${reason}`);
+      };
+
+      if (load.html == null) {
+        reject(`page did not load: ${load.error ?? "unknown error"}`);
+        continue;
+      }
+      const urlVerdict = verifyCanonicalPlanPageUrl(load.finalUrl, target.canonicalPlanPointId);
+      if (!urlVerdict.ok) {
+        reject(urlVerdict.reason ?? "final url did not match the requested point");
+        continue;
+      }
+      const planNumber = extractGzPlanNumberFromHeading(load.html);
       if (!planNumber) {
-        stillUnresolved.push({ ...pending, reason: "no numbered heading after live fetch" });
+        reject("canonical page carries no single numbered heading");
         continue;
       }
 
-      console.log(`  deal ${pending.dealId}: point ${source.canonicalPlanPointId} -> plan number ${planNumber} (live)`);
+      fs.mkdirSync(GZ_CANONICAL_PLAN_PAGE_DIR, { recursive: true });
+      fs.writeFileSync(
+        path.join(GZ_CANONICAL_PLAN_PAGE_DIR, canonicalPlanPageFileName(target.canonicalPlanPointId)),
+        load.html,
+        "utf8"
+      );
+
+      console.log(`  deal ${target.dealId}: point ${target.canonicalPlanPointId} -> plan number ${planNumber}`);
       resolved.push({
-        dealId: pending.dealId,
-        canonicalPlanPointId: source.canonicalPlanPointId,
+        dealId: target.dealId,
+        canonicalPlanPointId: target.canonicalPlanPointId,
         planNumber,
-        source: "playwright",
-        stageId: String(deal.STAGE_ID ?? "").trim()
+        source: "canonical-page",
+        stageId: target.stageId
       });
     }
   } finally {
@@ -169,14 +143,17 @@ async function fetchMissingPages(
     await browser.close();
   }
 
-  return { resolved, unresolved: stillUnresolved };
+  return { resolved, unresolved };
 }
 
-function writeReport(plan: GzPlanNumberPlan, candidates: number): string {
+function writeReport(
+  plan: { resolved: GzPlanNumberReportEntry[]; unresolved: GzPlanNumberUnresolved[] },
+  candidates: number
+): string {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
   const file = path.join(REPORT_DIR, `gz-plan-number-backfill-${stamp}.json`);
   const report: Report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     createdAt: new Date().toISOString(),
     candidates,
     resolved: plan.resolved,
@@ -188,23 +165,19 @@ function writeReport(plan: GzPlanNumberPlan, candidates: number): string {
 }
 
 async function runDryRun(client: BitrixClient, args: CliArgs): Promise<number> {
-  const deals = await client.listGzDeals();
+  const deals = await listGzDeals(client);
   const candidates = deals.filter(isGzPlanNumberBackfillCandidate);
   console.log(`gz plan number backfill: mode=dry-run originators=${GZ_PLAN_ORIGINATOR_IDS.join(",")}`);
   console.log(`deals=${deals.length} candidates=${candidates.length}`);
 
-  const local = planGzPlanNumberBackfill(deals, { readSnapshot });
-  console.log(`local snapshots resolved=${local.resolved.length} need live fetch=${local.unresolved.length}`);
+  const plan = planGzPlanNumberBackfill(deals);
+  console.log(`canonical page loads=${plan.pending.length} unusable link=${plan.unresolved.length}`);
 
-  const plan = await fetchMissingPages(local, deals, args.headless);
-  const file = writeReport(plan, candidates.length);
+  const fetched = await fetchCanonicalPages(plan, args.headless);
+  const file = writeReport(fetched, candidates.length);
 
-  const bySource = plan.resolved.reduce<Record<string, number>>((acc, entry) => {
-    acc[entry.source] = (acc[entry.source] ?? 0) + 1;
-    return acc;
-  }, {});
-  console.log(`resolved=${plan.resolved.length} ${JSON.stringify(bySource)} unresolved=${plan.unresolved.length}`);
-  for (const entry of plan.unresolved) {
+  console.log(`resolved=${fetched.resolved.length} unresolved=${fetched.unresolved.length}`);
+  for (const entry of fetched.unresolved) {
     console.log(`  [unresolved] deal ${entry.dealId} point ${entry.canonicalPlanPointId || "-"}: ${entry.reason}`);
   }
   console.log(`report: ${file}`);
@@ -214,19 +187,19 @@ async function runDryRun(client: BitrixClient, args: CliArgs): Promise<number> {
     return 0;
   }
 
-  const verdict = canExecuteGzPlanNumberBackfill(plan);
+  const verdict = canExecuteGzPlanNumberBackfill(fetched);
   console.log(verdict.ok
     ? `execute allowed: npx tsx scripts/bitrix-backfill-gz-plan-number.mts --execute --report ${file}`
     : `execute BLOCKED: ${verdict.reason}`);
   // Only an unresolved candidate is a failure; an empty set means the work is done.
-  return plan.unresolved.length > 0 ? 1 : 0;
+  return fetched.unresolved.length > 0 ? 1 : 0;
 }
 
 async function runExecute(client: BitrixClient, args: CliArgs): Promise<number> {
   if (!args.reportPath) throw new Error("--execute requires --report <path to dry-run report>");
   const report = JSON.parse(fs.readFileSync(args.reportPath, "utf8")) as Report;
 
-  const verdict = canExecuteGzPlanNumberBackfill({ resolved: report.resolved, unresolved: report.unresolved });
+  const verdict = canExecuteGzPlanNumberBackfill(report);
   if (!verdict.ok) {
     console.error(`execute refused: ${verdict.reason}`);
     return 1;
@@ -241,7 +214,7 @@ async function runExecute(client: BitrixClient, args: CliArgs): Promise<number> 
   for (const entry of report.resolved) {
     let deal: GzBackfillDeal | null;
     try {
-      deal = await client.getDeal(entry.dealId);
+      deal = (await client.call("crm.deal.get", { id: entry.dealId })) as GzBackfillDeal | null;
     } catch (error) {
       failed.push(`${entry.dealId} (read: ${error instanceof Error ? error.message : String(error)})`);
       continue;
@@ -262,7 +235,7 @@ async function runExecute(client: BitrixClient, args: CliArgs): Promise<number> 
     }
 
     try {
-      await client.updateDeal(entry.dealId, buildGzPlanNumberUpdate(entry.planNumber));
+      await client.update("deal", entry.dealId, buildGzPlanNumberUpdate(entry.planNumber));
       written++;
     } catch (error) {
       failed.push(`${entry.dealId} (update: ${error instanceof Error ? error.message : String(error)})`);

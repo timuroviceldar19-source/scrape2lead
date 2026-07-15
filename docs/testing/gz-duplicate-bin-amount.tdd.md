@@ -69,26 +69,35 @@ Canonical plan IDs were not implicated: the four rows share legacy URL segment
 
 ## Plan number is the lineage key — `plan number` duplicates are valid
 
-Confirmed against goszakup snapshots in `data/debug`, so the earlier note
-calling these duplicates false positives was wrong and is retracted.
-
 `№ пункта плана` (`plan_list_number`) is the **stable identity of a plan point
 across revisions**. The canonical plan point id (first `show_plan` segment)
 identifies **one revision**: goszakup mints a new record on every amendment
-while the displayed number stays put. Evidence:
+while the displayed number stays put.
 
-- `show_plan/86795650/4751746` heads `86795650: Комплект учебного оборудования`;
-  `show_plan/87173984/4753515` heads `86795650: Доска специальная`. Same BIN,
-  same delivery address, same `Панель интерактивная 75 дюймов`; the customer
-  reclassified the item (ENSTRU `329959.900.000019` → `262030.100.000043`).
-- Lineage `82425225` spans three records: `82425225` → `86979823` → `87306836`,
-  content identical throughout.
+Evidence, from the run exports only:
+
 - 46 of 76 rows in run `20260715-120949` are amendments (`№ пункта плана` !=
-  `ID пункта (API)`); in the older exports it is nearly every row.
+  `ID пункта (API)`); in the older exports it is nearly every row. Re-counted
+  from `runs/20260715-120949/plans.xlsx` on 2026-07-15, after the snapshot
+  evidence below was withdrawn.
 
 A lineage match is therefore a **valid blocking match**: deal 39149 sits at
 `C41:PREPAYMENT_INVOIC`, and creating a second deal for row 21 would duplicate
-live work. It stays blocking until step 4 introduces update semantics, which is
-the real gap — an amendment's new name, ENSTRU or amount never reaches the CRM
-today. See [gz-plan-number-backfill.tdd.md](gz-plan-number-backfill.tdd.md) for
-the first migration step.
+live work. Deals 39149 and 40687 carry importer-written plan numbers and appear
+in no backfill report, so this reasoning does not rest on the backfill. The
+match stays blocking until step 4 introduces update semantics, which is the real
+gap — an amendment's new name, ENSTRU or amount never reaches the CRM today.
+
+### Retracted: the `data/debug` snapshot evidence
+
+An earlier revision of this section cited page headings read from
+`data/debug/goszakup-plan-detail-*.html`: a `86795650/4751746` vs
+`87173984/4753515` reading, and a three-record `82425225` → `86979823` →
+`87306836` lineage. Those files are named after the **second** `show_plan`
+segment, which is not an identity — 26 such segments in the live CRM are shared
+by two different canonical points. A heading read under that key is evidence
+about neither point, so every conclusion drawn from it is withdrawn, including
+the claim that this file's duplicates were "confirmed against goszakup
+snapshots". The lineage semantics above survive because the exports carry both
+columns directly. See
+[gz-plan-number-backfill.tdd.md](gz-plan-number-backfill.tdd.md).
