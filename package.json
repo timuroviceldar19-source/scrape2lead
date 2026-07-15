@@ -24,6 +24,7 @@
     "bitrix:delete-gz-leads-by-assignee": "tsx scripts/bitrix-delete-gz-leads-by-assignee.mts",
     "bitrix:import": "tsx scripts/bitrix-import.mts",
     "bitrix:backfill-gz-origin": "tsx scripts/bitrix-backfill-gz-origin.mts",
+    "bitrix:backfill-gz-plan-number": "tsx scripts/bitrix-backfill-gz-plan-number.mts",
     "bitrix:gz-duplicate-hygiene": "tsx scripts/bitrix-gz-duplicate-hygiene.mts",
     "bitrix:migrate-gz-categories": "tsx scripts/bitrix-migrate-gz-categories.mts",
     "kz:bitrix-push-gz-deals": "tsx scripts/bitrix-push-gz-deals.mts",
