@@ -164,6 +164,103 @@ export function canExecuteGzPlanNumberCorrection(
   return { ok: true };
 }
 
+export interface GzPlanNumberCorrectionIo {
+  readDeal(dealId: string): Promise<GzBackfillDeal | null>;
+  loadCanonicalPage(url: string): Promise<GzPlanNumberCorrectionReload>;
+  updateDeal(dealId: string, fields: Record<string, unknown>): Promise<void>;
+}
+
+export interface GzPlanNumberCorrectionPlannedWrite {
+  dealId: string;
+  fields: { UF_CRM_PLAN_ID: string };
+}
+
+export interface GzPlanNumberCorrectionOutcome {
+  written: number;
+  skipped: number;
+  planned: GzPlanNumberCorrectionPlannedWrite[];
+  blocked: string[];
+  failed: string[];
+}
+
+/**
+ * Reads, loads and decides for every replacement before touching anything, then
+ * writes only if the whole set came back clean. A block found on the last deal
+ * must not leave the first ones already rewritten.
+ *
+ * A network failure part way through the write series cannot be excluded
+ * transactionally; a repeated run is idempotent and finishes the set.
+ */
+export async function executeGzPlanNumberCorrection(
+  report: GzPlanNumberCorrectionReport,
+  io: GzPlanNumberCorrectionIo
+): Promise<GzPlanNumberCorrectionOutcome> {
+  const gate = canExecuteGzPlanNumberCorrection(report);
+  if (!gate.ok) {
+    return { written: 0, skipped: 0, planned: [], blocked: [`report: ${gate.reason}`], failed: [] };
+  }
+
+  const replacements = planGzPlanNumberReplacements(report);
+  // Entries the canonical page already confirmed carry no write, so they are
+  // neither read nor loaded.
+  let skipped = report.verified.length - replacements.length;
+
+  const planned: GzPlanNumberCorrectionPlannedWrite[] = [];
+  const blocked: string[] = [];
+
+  for (const entry of replacements) {
+    let deal: GzBackfillDeal | null;
+    try {
+      deal = await io.readDeal(entry.dealId);
+    } catch (error) {
+      blocked.push(`${entry.dealId} (read: ${message(error)})`);
+      continue;
+    }
+    if (!deal) {
+      blocked.push(`${entry.dealId} (deal no longer exists)`);
+      continue;
+    }
+
+    let reload: GzPlanNumberCorrectionReload;
+    try {
+      reload = await io.loadCanonicalPage(entry.requestedUrl);
+    } catch (error) {
+      blocked.push(`${entry.dealId} (load: ${message(error)})`);
+      continue;
+    }
+
+    const decision = decideGzPlanNumberCorrectionWrite(entry, deal, reload);
+    if (decision.action === "blocked") {
+      blocked.push(`${entry.dealId} (${decision.reason})`);
+      continue;
+    }
+    if (decision.action === "skip") {
+      skipped++;
+      continue;
+    }
+    planned.push({ dealId: entry.dealId, fields: decision.fields as { UF_CRM_PLAN_ID: string } });
+  }
+
+  // Nothing is written unless every replacement came back clean: a block found
+  // on the last deal must not leave the earlier ones already rewritten.
+  if (blocked.length > 0) {
+    return { written: 0, skipped, planned, blocked, failed: [] };
+  }
+
+  let written = 0;
+  const failed: string[] = [];
+  for (const write of planned) {
+    try {
+      await io.updateDeal(write.dealId, write.fields);
+      written++;
+    } catch (error) {
+      failed.push(`${write.dealId} (update: ${message(error)})`);
+    }
+  }
+
+  return { written, skipped, planned, blocked, failed };
+}
+
 export function decideGzPlanNumberCorrectionWrite(
   entry: GzPlanNumberCorrectionEntry,
   deal: GzBackfillDeal,
@@ -200,4 +297,8 @@ export function decideGzPlanNumberCorrectionWrite(
 
 function text(value: string | number | null | undefined): string {
   return String(value ?? "").trim();
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

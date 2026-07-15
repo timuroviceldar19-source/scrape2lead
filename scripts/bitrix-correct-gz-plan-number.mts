@@ -12,8 +12,8 @@ import { getGzPlanLink, resolveGzPlanNumberSource, type GzBackfillDeal } from ".
 import {
   canExecuteGzPlanNumberCorrection,
   classifyGzPlanNumberCorrection,
-  decideGzPlanNumberCorrectionWrite,
   detectGzPlanControlDrift,
+  executeGzPlanNumberCorrection,
   planGzPlanNumberReplacements,
   summarizeGzPlanNumberCorrection,
   type GzPlanNumberCorrectionEntry,
@@ -235,67 +235,28 @@ async function runExecute(client: BitrixClient, args: CliArgs): Promise<number> 
   if (!args.reportPath) throw new Error("--execute requires --report <path to correction report>");
   const report = readCorrectionReport(args.reportPath);
 
-  const verdict = canExecuteGzPlanNumberCorrection(report);
-  if (!verdict.ok) {
-    console.error(`execute refused: ${verdict.reason}`);
-    return 1;
-  }
-
   const replacements = planGzPlanNumberReplacements(report);
   console.log(`gz plan number correction: mode=execute report=${args.reportPath} replacements=${replacements.length}`);
 
-  // A fresh session, so the write rests on its own load rather than on the
-  // report's. Only the records that change are reloaded.
-  const reloads = await withBrowser(args.headless, async (page) => {
-    const loaded = new Map<string, PageLoad>();
-    for (const entry of replacements) {
-      loaded.set(entry.dealId, await loadCanonicalPage(page, entry.requestedUrl));
-    }
-    return loaded;
+  // One fresh session, so each write rests on its own load rather than on the
+  // report's. Every read, load and decision happens before the first write.
+  const outcome = await withBrowser(args.headless, async (page) => {
+    return executeGzPlanNumberCorrection(report, {
+      readDeal: (dealId) => readDeal(client, dealId),
+      loadCanonicalPage: (url) => loadCanonicalPage(page, url),
+      updateDeal: (dealId, fields) => client.update("deal", dealId, fields)
+    });
   });
 
-  let written = 0;
-  let skipped = 0;
-  const blocked: string[] = [];
-  const failed: string[] = [];
-
-  for (const entry of report.verified) {
-    let deal: GzBackfillDeal | null;
-    try {
-      deal = await readDeal(client, entry.dealId);
-    } catch (error) {
-      failed.push(`${entry.dealId} (read: ${error instanceof Error ? error.message : String(error)})`);
-      continue;
-    }
-    if (!deal) {
-      blocked.push(`${entry.dealId} (deal no longer exists)`);
-      continue;
-    }
-
-    const reload = reloads.get(entry.dealId);
-    const decision = decideGzPlanNumberCorrectionWrite(entry, deal, reload);
-    if (decision.action === "blocked") {
-      blocked.push(`${entry.dealId} (${decision.reason})`);
-      continue;
-    }
-    if (decision.action === "skip") {
-      skipped++;
-      continue;
-    }
-
-    try {
-      await client.update("deal", entry.dealId, decision.fields as Record<string, unknown>);
-      written++;
-      console.log(`  deal ${entry.dealId}: ${entry.storedPlanNumber} -> ${entry.livePlanNumber}`);
-    } catch (error) {
-      failed.push(`${entry.dealId} (update: ${error instanceof Error ? error.message : String(error)})`);
-    }
+  console.log(
+    `written=${outcome.written} skipped=${outcome.skipped} blocked=${outcome.blocked.length} failed=${outcome.failed.length}`
+  );
+  for (const item of outcome.blocked) console.log(`  [blocked] ${item}`);
+  for (const item of outcome.failed) console.log(`  [failed] ${item}`);
+  if (outcome.blocked.length > 0) {
+    console.log(`preflight failed: ${outcome.planned.length} replacement(s) withheld, nothing was written`);
   }
-
-  console.log(`written=${written} skipped=${skipped} blocked=${blocked.length} failed=${failed.length}`);
-  for (const item of blocked) console.log(`  [blocked] ${item}`);
-  for (const item of failed) console.log(`  [failed] ${item}`);
-  return failed.length > 0 || blocked.length > 0 ? 1 : 0;
+  return outcome.failed.length > 0 || outcome.blocked.length > 0 ? 1 : 0;
 }
 
 /**

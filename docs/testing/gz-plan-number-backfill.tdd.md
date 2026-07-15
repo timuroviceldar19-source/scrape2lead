@@ -55,6 +55,11 @@ between a candidate and a deal outside the report.
 - `src/bitrix/gzPlanNumberCorrection.ts` + `scripts/bitrix-correct-gz-plan-number.mts`
   re-verify the 74 suspect deals against their own pages, and write only
   `UF_CRM_PLAN_ID` after a second, independent load agrees with the report.
+- Execute is all-or-nothing on preflight: every deal is re-read, every canonical
+  page re-loaded and every decision computed **before the first write**. Any
+  `blocked` entry or read/load error ends the run at `written=0`. The first
+  cut of this CLI decided and wrote in one loop, so a block on the last deal
+  would have left the earlier ones already rewritten — a partial correction.
 - The legacy cache is kept intact as forensic evidence and marked untrusted in
   [gz-legacy-plan-snapshot-cache.md](gz-legacy-plan-snapshot-cache.md).
 
@@ -66,8 +71,15 @@ between a candidate and a deal outside the report.
   signatures returned empty values, so each failure landed on behavior rather
   than on a missing import.
 - GREEN command: same. GREEN evidence: 62 tests passed.
+- Preflight RED command: `npx vitest run tests/bitrix/gzPlanNumberCorrection.test.ts`
+- Preflight RED evidence: 7 of 36 tests failed against an
+  `executeGzPlanNumberCorrection` skeleton returning an empty outcome. Two of
+  the new tests passed vacuously against it — a stub that writes nothing does
+  satisfy "writes nothing"; they are load-bearing only next to the green-path
+  test, which failed.
+- Preflight GREEN command: same. Evidence: 36 tests passed.
 - Full regression command: `npm test`
-- Full regression evidence: 38 files passed, 375 tests passed (was 36 / 341).
+- Full regression evidence: 38 files passed, 385 tests passed (was 36 / 341).
 - Typecheck command: `npm run lint`. Evidence: exit code 0.
 
 ## Test specification
@@ -86,6 +98,11 @@ between a candidate and a deal outside the report.
 | Execute is blocked while anything is unresolved | `tests/bitrix/gzPlanNumberCorrection.test.ts` | Unit | PASS |
 | Drift in any control field blocks the write | `tests/bitrix/gzPlanNumberCorrection.test.ts` | Unit | PASS |
 | A write needs a fresh load agreeing with the report | `tests/bitrix/gzPlanNumberCorrection.test.ts` | Unit | PASS |
+| A block on the second replacement writes neither | `tests/bitrix/gzPlanNumberCorrection.test.ts` | Unit | PASS |
+| A failed or throwing page load writes nothing | `tests/bitrix/gzPlanNumberCorrection.test.ts` | Unit | PASS |
+| A vanished or unreadable deal writes nothing | `tests/bitrix/gzPlanNumberCorrection.test.ts` | Unit | PASS |
+| A green preflight writes every replacement once | `tests/bitrix/gzPlanNumberCorrection.test.ts` | Unit | PASS |
+| A confirmed deal is skipped without being read | `tests/bitrix/gzPlanNumberCorrection.test.ts` | Unit | PASS |
 | The update payload holds only `UF_CRM_PLAN_ID` | both module tests | Unit | PASS |
 | A repeated execute only skips | `tests/bitrix/gzPlanNumberCorrection.test.ts` | Unit | PASS |
 
@@ -93,7 +110,7 @@ between a candidate and a deal outside the report.
 
 - Command:
   `npx vitest run tests/bitrix/gzPlanNumberCorrection.test.ts tests/kz/gzCanonicalPlanPage.test.ts --coverage.enabled --coverage.include='src/bitrix/gzPlanNumberCorrection.ts' --coverage.include='src/kz/gzCanonicalPlanPage.ts'`
-- `gzPlanNumberCorrection.ts`: 100% statements/functions/lines, 87.75% branches.
+- `gzPlanNumberCorrection.ts`: 100% statements/functions/lines, 90.27% branches.
 - `gzCanonicalPlanPage.ts`: 100% statements/branches/functions/lines.
 - Repository-wide coverage remains below 80% because many CLI entrypoints have
   no direct tests; both new modules exceed the required threshold.
@@ -119,6 +136,16 @@ between a candidate and a deal outside the report.
 **Not executed.** Writing the 24 replacements to Bitrix requires separate
 explicit confirmation. The execute path, its post-audit and the re-run
 idempotency claim are unproven against live data until then.
+
+## What the preflight does not cover
+
+A network failure part way through the 24 updates cannot be excluded
+transactionally: Bitrix has no multi-record transaction, so the run can still
+stop with some deals written and some not. That is bounded rather than
+eliminated — the write set is fixed before the first call, each write touches
+one field on one deal, and a repeated run re-derives the same decisions and
+skips whatever already landed, so re-running finishes the set. `failed` entries
+are reported per deal and the run exits non-zero.
 
 ## What the original file claimed and this one does not
 

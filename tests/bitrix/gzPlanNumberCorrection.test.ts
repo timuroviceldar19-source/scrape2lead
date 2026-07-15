@@ -1,14 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { hashGzPlanPage } from "../../src/kz/gzCanonicalPlanPage.js";
 import {
   canExecuteGzPlanNumberCorrection,
   classifyGzPlanNumberCorrection,
   decideGzPlanNumberCorrectionWrite,
   detectGzPlanControlDrift,
+  executeGzPlanNumberCorrection,
   planGzPlanNumberReplacements,
   readGzPlanControlFields,
   summarizeGzPlanNumberCorrection,
   type GzPlanNumberCorrectionEntry,
+  type GzPlanNumberCorrectionIo,
   type GzPlanNumberCorrectionLoad,
   type GzPlanNumberCorrectionReport
 } from "../../src/bitrix/gzPlanNumberCorrection.js";
@@ -308,5 +310,188 @@ describe("decideGzPlanNumberCorrectionWrite", () => {
     const decision = decideGzPlanNumberCorrectionWrite(makeEntry(), makeDeal(), { finalUrl: URL, html: null });
 
     expect(decision.action).toBe("blocked");
+  });
+});
+
+describe("executeGzPlanNumberCorrection", () => {
+  const SECOND_PAGE = "<div><h3>81205554: Доска</h3></div>";
+  const SECOND_STORED = "81211733";
+  const SECOND_LIVE = "81205554";
+
+  function secondDeal(overrides: Partial<GzBackfillDeal> = {}): GzBackfillDeal {
+    return makeDeal({
+      ID: "38808",
+      ORIGIN_ID: "gz-plan:87018811",
+      UF_CRM_PLAN_LINK: SIBLING_URL,
+      UF_CRM_PLAN_ID: SECOND_STORED,
+      ...overrides
+    });
+  }
+
+  function secondEntry(overrides: Partial<GzPlanNumberCorrectionEntry> = {}): GzPlanNumberCorrectionEntry {
+    return makeEntry({
+      dealId: "38808",
+      canonicalPlanPointId: SIBLING_POINT,
+      requestedUrl: SIBLING_URL,
+      finalUrl: SIBLING_URL,
+      pageHash: hashGzPlanPage(SECOND_PAGE),
+      storedPlanNumber: SECOND_STORED,
+      livePlanNumber: SECOND_LIVE,
+      control: readGzPlanControlFields(secondDeal()),
+      ...overrides
+    });
+  }
+
+  function makeIo(
+    deals: Record<string, GzBackfillDeal | null>,
+    pages: Record<string, string | null> = { [URL]: LIVE_PAGE, [SIBLING_URL]: SECOND_PAGE }
+  ): { io: GzPlanNumberCorrectionIo; updateDeal: ReturnType<typeof vi.fn>; readDeal: ReturnType<typeof vi.fn> } {
+    const updateDeal = vi.fn(async () => {});
+    const readDeal = vi.fn(async (dealId: string) => deals[dealId] ?? null);
+    return {
+      io: {
+        readDeal,
+        loadCanonicalPage: vi.fn(async (url: string) => ({ finalUrl: url, html: pages[url] ?? null })),
+        updateDeal
+      },
+      updateDeal,
+      readDeal
+    };
+  }
+
+  it("writes nothing at all when a later replacement is blocked", async () => {
+    // The block sits on the second deal: the first must not already be rewritten.
+    const report = makeReport({ verified: [makeEntry(), secondEntry()] });
+    const { io, updateDeal } = makeIo({
+      "38807": makeDeal(),
+      "38808": secondDeal({ STAGE_ID: "C41:WON" })
+    });
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(updateDeal).not.toHaveBeenCalled();
+    expect(outcome.written).toBe(0);
+    expect(outcome.blocked.join(" ")).toContain("38808");
+  });
+
+  it("writes every replacement once the whole preflight is green", async () => {
+    const report = makeReport({ verified: [makeEntry(), secondEntry()] });
+    const { io, updateDeal } = makeIo({ "38807": makeDeal(), "38808": secondDeal() });
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(outcome.written).toBe(2);
+    expect(outcome.blocked).toEqual([]);
+    expect(updateDeal.mock.calls).toEqual([
+      ["38807", { UF_CRM_PLAN_ID: LIVE_NUMBER }],
+      ["38808", { UF_CRM_PLAN_ID: SECOND_LIVE }]
+    ]);
+  });
+
+  it("writes nothing when one canonical page fails to load", async () => {
+    const report = makeReport({ verified: [makeEntry(), secondEntry()] });
+    const { io, updateDeal } = makeIo(
+      { "38807": makeDeal(), "38808": secondDeal() },
+      { [URL]: LIVE_PAGE, [SIBLING_URL]: null }
+    );
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(updateDeal).not.toHaveBeenCalled();
+    expect(outcome.written).toBe(0);
+  });
+
+  it("writes nothing when a canonical load throws", async () => {
+    const report = makeReport({ verified: [makeEntry(), secondEntry()] });
+    const { io, updateDeal } = makeIo({ "38807": makeDeal(), "38808": secondDeal() });
+    io.loadCanonicalPage = vi.fn(async (url: string) => {
+      if (url === SIBLING_URL) throw new Error("net::ERR_TIMED_OUT");
+      return { finalUrl: url, html: LIVE_PAGE };
+    });
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(updateDeal).not.toHaveBeenCalled();
+    expect(outcome.written).toBe(0);
+    expect(outcome.blocked.join(" ")).toContain("net::ERR_TIMED_OUT");
+  });
+
+  it("writes nothing when one deal can no longer be read", async () => {
+    const report = makeReport({ verified: [makeEntry(), secondEntry()] });
+    const { io, updateDeal } = makeIo({ "38807": makeDeal(), "38808": null });
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(updateDeal).not.toHaveBeenCalled();
+    expect(outcome.written).toBe(0);
+    expect(outcome.blocked.join(" ")).toContain("38808");
+  });
+
+  it("writes nothing when a read throws", async () => {
+    const report = makeReport({ verified: [makeEntry(), secondEntry()] });
+    const { io, updateDeal } = makeIo({ "38807": makeDeal(), "38808": secondDeal() });
+    io.readDeal = vi.fn(async (dealId: string) => {
+      if (dealId === "38808") throw new Error("QUERY_LIMIT_EXCEEDED");
+      return makeDeal();
+    });
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(updateDeal).not.toHaveBeenCalled();
+    expect(outcome.written).toBe(0);
+    expect(outcome.blocked.join(" ")).toContain("QUERY_LIMIT_EXCEEDED");
+  });
+
+  it("refuses an unresolved report without reading or writing anything", async () => {
+    const report = makeReport({
+      verified: [makeEntry()],
+      unresolved: [
+        { dealId: "38809", canonicalPlanPointId: POINT, requestedUrl: URL, finalUrl: "", reason: "timeout" }
+      ]
+    });
+    const { io, updateDeal, readDeal } = makeIo({ "38807": makeDeal() });
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(readDeal).not.toHaveBeenCalled();
+    expect(updateDeal).not.toHaveBeenCalled();
+    expect(outcome.written).toBe(0);
+  });
+
+  it("only skips on a repeated run, writing nothing", async () => {
+    const report = makeReport({ verified: [makeEntry(), secondEntry()] });
+    const { io, updateDeal } = makeIo({
+      "38807": makeDeal({ UF_CRM_PLAN_ID: LIVE_NUMBER }),
+      "38808": secondDeal({ UF_CRM_PLAN_ID: SECOND_LIVE })
+    });
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(updateDeal).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ written: 0, skipped: 2, blocked: [] });
+  });
+
+  it("counts a confirmed deal as skipped without reading or loading it", async () => {
+    const report = makeReport({ verified: [makeEntry({ verdict: "unchanged", storedPlanNumber: LIVE_NUMBER })] });
+    const { io, updateDeal, readDeal } = makeIo({ "38807": makeDeal() });
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(readDeal).not.toHaveBeenCalled();
+    expect(updateDeal).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ written: 0, skipped: 1 });
+  });
+
+  it("reports a failure mid-series without inventing a rollback", async () => {
+    const report = makeReport({ verified: [makeEntry(), secondEntry()] });
+    const { io } = makeIo({ "38807": makeDeal(), "38808": secondDeal() });
+    io.updateDeal = vi.fn(async (dealId: string) => {
+      if (dealId === "38808") throw new Error("net::ERR_CONNECTION_RESET");
+    });
+
+    const outcome = await executeGzPlanNumberCorrection(report, io);
+
+    expect(outcome.written).toBe(1);
+    expect(outcome.failed.join(" ")).toContain("38808");
   });
 });
