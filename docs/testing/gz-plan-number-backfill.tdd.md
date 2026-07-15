@@ -133,9 +133,41 @@ between a candidate and a deal outside the report.
 - Wrong values were off by between 3 and 211368, so the defect was invisible to
   any eyeball check of "looks like a plan number".
 
-**Not executed.** Writing the 24 replacements to Bitrix requires separate
-explicit confirmation. The execute path, its post-audit and the re-run
-idempotency claim are unproven against live data until then.
+## Execute and post-audit — live
+
+Run after explicit confirmation, against the report above (SHA-256
+`B872E6B7…3F31C3`, verified before the first write).
+
+- Execute command:
+  `npx tsx scripts/bitrix-correct-gz-plan-number.mts --execute --report data/gz-plan-number-correction-20260715-095006.json`
+- Execute result: `written=24 skipped=50 blocked=0 failed=0`, exit 0. Preflight
+  passed on all 24, so the writes ran; the 50 confirmed deals were skipped
+  without being read.
+- Post-audit command: same script with `--audit`.
+- Post-audit result: `live-matching=74/74 problems=0`, exit 0. Every deal was
+  re-read from Bitrix and its canonical page re-loaded in a fresh session; the
+  audit re-derives the number from the page rather than re-reading what was
+  written, and checks the six control fields against the report. 0 drifted.
+- Idempotency: a second execute gave `written=0 skipped=74 blocked=0 failed=0`,
+  exit 0.
+
+### Effect on the fused lineages
+
+Re-measured across all 539 GZ plans deals after the correction:
+
+- 26 legacy segments are still shared by two canonical points — that is a
+  property of goszakup's URLs and was never the thing to fix.
+- Twins carrying an identical plan number: **0** (was 15). All fused pairs are
+  separated.
+- Deals missing a plan number: 0.
+- 8 plan numbers are claimed by more than one canonical point. These are
+  genuine amendment lineages — one number spanning an older and a newer point —
+  which is the documented semantics and precisely what the duplicate rule is
+  meant to see.
+- One of those 8 was exposed by the correction: deal 38735 carried the foreign
+  number 81456405, which masked its lineage with deal 41525 (`C41:NEW`). With
+  81245037 restored the two are visible as one lineage. This is the rule working
+  as intended, not a new defect.
 
 ## What the preflight does not cover
 
@@ -159,8 +191,10 @@ instead.
 
 ## Follow-up, not done here
 
-Resolving the 22 existing duplicate pairs is step 2, switching origin to the
-lineage key is step 3, and update semantics for amendments is step 4. Whether
-the false lineages created by this defect produced additional duplicate pairs
-has not been re-counted; that count is only meaningful after the correction is
-executed.
+Resolving the existing duplicate pairs is step 2, switching origin to the
+lineage key is step 3, and update semantics for amendments is step 4.
+
+The read-only pair count is now worth redoing on corrected data: the 15 fused
+pairs were invisible to the rule as *false* lineages, and at least one real
+lineage (38735 / 41525) was masked. No deal was archived and no origin backfill
+was run here — both are out of scope for this correction.
