@@ -48,6 +48,23 @@ describe("parseRegistryProfileHtml", () => {
     expect(record).toBeNull();
   });
 
+  it("parses the Jarma customer profile used by GZ plan exports", () => {
+    const html = fs.readFileSync(path.join(FIXTURES, "goszakup-registry-profile-980840002897.html"), "utf8");
+    const record = parseRegistryProfileHtml(html, "980840002897");
+
+    expect(record).toMatchObject({
+      bin: "980840002897",
+      participant_id: "34591",
+      name_ru: "Государственное учреждение «Аппарат акима Жарминского района области Абай»",
+      email: "jarma_finhoz@mail.ru",
+      phone: "65-272",
+      website: null,
+      reporting_administrator: 'ГУ "Отдел финансов Жарминского района области Абай"',
+      director_name: "АҚЗАМОВ ДАНИЯР ТОҚАНҰЛЫ",
+      full_address_ru: "область Абай, Жарминский район, с.Калбатау, ДОСТЫК, 105"
+    });
+  });
+
   it("parses reporting administrator and contact address grid", () => {
     const html = fs.readFileSync(path.join(FIXTURES, "goszakup-registry-profile-school.html"), "utf8");
     const record = parseRegistryProfileHtml(html, "000240001420");
@@ -112,6 +129,9 @@ describe("normalizePhone", () => {
   });
   it("rejects empty string", () => {
     expect(normalizePhone("")).toBeNull();
+  });
+  it("preserves a short local phone published in the supplier profile", () => {
+    expect(normalizePhone("65-272")).toBe("65-272");
   });
 });
 

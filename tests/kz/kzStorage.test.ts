@@ -26,6 +26,15 @@ describe("KzStorage active GZ registry surface", () => {
     expect(storage.isGoszakupRegistryFresh("123456789012", 7, now, { requireAnyContact: true })).toBe(false);
   });
 
+  it("does not treat a cached registry record without a name as complete", () => {
+    const db = new Database(":memory:");
+    const storage = new KzStorage({ db });
+    storage.upsertGoszakupRegistry(registryRecord({ name_ru: null }));
+
+    const now = new Date("2026-06-30T00:00:00.000Z");
+    expect(storage.isGoszakupRegistryFresh("123456789012", 7, now, { requireName: true })).toBe(false);
+  });
+
   it("records enrichment errors", () => {
     const db = new Database(":memory:");
     const storage = new KzStorage({ db });

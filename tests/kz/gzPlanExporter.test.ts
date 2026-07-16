@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildExportRow, filterPlanRows } from "../../src/kz/gzPlanExporter.js";
+import {
+  assertRegistryCoverage,
+  buildExportRow,
+  buildRegistryProfileHints,
+  filterPlanRows
+} from "../../src/kz/gzPlanExporter.js";
 import type { GoszakupRegistryRecord } from "../../src/kz/registryTypes.js";
 import type { GoszakupPlanDetail, GoszakupPlanListItem } from "../../src/kz/goszakupPlanTypes.js";
 
@@ -72,6 +77,15 @@ function registry(overrides: Partial<GoszakupRegistryRecord> = {}): GoszakupRegi
 }
 
 describe("buildExportRow registry fallback", () => {
+  it("prefers the official registry customer name", () => {
+    const row = buildExportRow(
+      listItem({ customer_name: "Сокращённое название" }),
+      detail({ customer_name: "Название из плана" }),
+      registry({ name_ru: "Официальное название" })
+    );
+    expect(row?.customer_name).toBe("Официальное название");
+  });
+
   it("uses registry reporting administrator when plan detail has no abp_name", () => {
     const row = buildExportRow(listItem(), detail({ abp_name: null, ref_abp_code: null }), registry());
     expect(row?.reporting_administrator).toBe('ГУ "Управление образования Карагандинской области"');
@@ -118,6 +132,57 @@ describe("buildExportRow registry fallback", () => {
     expect(row?.short_characteristics).toBe("Краткое описание");
     expect(row?.extra_description).toBe("Приобретение интерактивная панель с меловой доской в комплекте");
     expect(row?.delivery_address).toBe("область Жетісу, г.Талдыкорган Алимжанова 20");
+  });
+});
+
+describe("registry profile hints", () => {
+  it("collects one direct supplier profile URL for all rows of the same BIN", () => {
+    const items = ["87017028", "87017029", "87017030"].map((planPointId) => ({
+      ...listItem({
+        plan_point_id: planPointId,
+        customer_url: "https://goszakup.gov.kz/ru/registry/show_supplier/34591"
+      }),
+      detail: detail({ plan_point_id: planPointId, customer_bin: "980840002897" })
+    }));
+
+    expect(buildRegistryProfileHints(items)).toEqual(new Map([
+      ["980840002897", "https://goszakup.gov.kz/ru/registry/show_supplier/34591"]
+    ]));
+  });
+
+  it("ignores non-goszakup supplier URLs", () => {
+    const items = [{
+      ...listItem({ customer_url: "https://example.test/ru/registry/show_supplier/34591" }),
+      detail: detail({ customer_bin: "980840002897" })
+    }];
+    expect(buildRegistryProfileHints(items)).toEqual(new Map());
+  });
+
+  it("rejects conflicting supplier profiles for one BIN", () => {
+    const items = ["34591", "99999"].map((participantId) => ({
+      ...listItem({ customer_url: `https://goszakup.gov.kz/ru/registry/show_supplier/${participantId}` }),
+      detail: detail({ customer_bin: "980840002897" })
+    }));
+    expect(() => buildRegistryProfileHints(items)).toThrow(/980840002897.*34591.*99999/);
+  });
+});
+
+describe("registry coverage preflight", () => {
+  const items = ["87017028", "87017029", "87017030"].map((planPointId) => ({
+    ...listItem({ plan_point_id: planPointId }),
+    detail: detail({ plan_point_id: planPointId, customer_bin: "980840002897" })
+  }));
+
+  it("reports the BIN and all affected plan IDs when enrichment is missing", () => {
+    expect(() => assertRegistryCoverage(items, new Map())).toThrow(
+      /980840002897.*87017028.*87017029.*87017030/
+    );
+  });
+
+  it("accepts a registry profile with a name and optional blank contacts", () => {
+    expect(() => assertRegistryCoverage(items, new Map([
+      ["980840002897", registry({ bin: "980840002897", name_ru: "Customer", email: null, phone: null, website: null })]
+    ]))).not.toThrow();
   });
 });
 
