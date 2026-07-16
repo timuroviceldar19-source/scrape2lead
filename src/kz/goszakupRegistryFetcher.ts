@@ -18,7 +18,17 @@ export async function fetchRegistryForBin(
   if (profileUrl && isAllowedSupplierProfileUrl(profileUrl)) {
     try {
       const directResult = await fetchRegistryProfile(page, bin, profileUrl, debugDir);
-      if (directResult.record) return directResult;
+      if (directResult.record) {
+        const participantId = profileUrl.match(/show_supplier\/(\d+)/)?.[1] ?? null;
+        return {
+          ...directResult,
+          record: {
+            ...directResult.record,
+            participant_id: directResult.record.participant_id ?? participantId,
+            registry_url: directResult.record.registry_url ?? profileUrl
+          }
+        };
+      }
       console.warn(`registry: direct profile BIN mismatch or parse failure for ${bin}; falling back to search`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
