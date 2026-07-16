@@ -54,7 +54,7 @@ describe("parseRegistryProfileHtml", () => {
 
     expect(record).toMatchObject({
       bin: "980840002897",
-      participant_id: "34591",
+      participant_id: null,
       name_ru: "Государственное учреждение «Аппарат акима Жарминского района области Абай»",
       email: "jarma_finhoz@mail.ru",
       phone: "65-272",

@@ -21,6 +21,7 @@ describe("fetchRegistryForBin direct profile hints", () => {
 
     expect(result).not.toBe("not_found");
     expect(result !== "not_found" && result.record?.participant_id).toBe("34591");
+    expect(result !== "not_found" && result.record?.registry_url).toBe(PROFILE_URL);
     expect(mock.visited).toEqual([PROFILE_URL]);
     expect(mock.searchUses).toBe(0);
   });
