@@ -278,6 +278,13 @@ export function normalizePhone(raw: string | null): string | null {
     if (normalized && normalized.length === 12 && !PHONE_EXCLUDED_NUMBERS.has(normalized)) {
       return normalized;
     }
+    if (
+      digits.length >= 5
+      && digits.length <= 9
+      && /^[+\d()\s.-]+$/.test(trimmed)
+    ) {
+      return trimmed;
+    }
   }
   return null;
 }

@@ -36,11 +36,18 @@ export class KzStorage {
     bin: string,
     ttlDays: number,
     now = new Date(),
-    options: { requireAnyContact?: boolean } = {}
+    options: { requireAnyContact?: boolean; requireName?: boolean } = {}
   ): boolean {
-    const row = this.db.prepare("SELECT updated_at, phone, email, website FROM goszakup_registry_data WHERE bin = ?")
-      .get(bin) as { updated_at: string | null; phone: string | null; email: string | null; website: string | null } | undefined;
+    const row = this.db.prepare("SELECT updated_at, name_ru, phone, email, website FROM goszakup_registry_data WHERE bin = ?")
+      .get(bin) as {
+        updated_at: string | null;
+        name_ru: string | null;
+        phone: string | null;
+        email: string | null;
+        website: string | null;
+      } | undefined;
     if (!row?.updated_at) return false;
+    if (options.requireName && !row.name_ru?.trim()) return false;
     if (options.requireAnyContact && !hasAnyContact(row)) return false;
     const updatedAt = new Date(row.updated_at);
     if (Number.isNaN(updatedAt.getTime())) return false;

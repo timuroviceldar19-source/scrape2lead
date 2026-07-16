@@ -56,20 +56,37 @@ export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Pr
   const databasePath = options.databasePath ?? process.env.KZ_DATABASE_PATH ?? "data/scrape2lead.db";
   const storage = new KzStorage({ databasePath });
 
+  try {
+    return await exportCollectedPlans(collectResult.items, options, storage, databasePath);
+  } finally {
+    storage.close();
+  }
+}
+
+async function exportCollectedPlans(
+  items: Array<GoszakupPlanListItem & { detail: GoszakupPlanDetail | null }>,
+  options: GzPlanExportOptions,
+  storage: KzStorage,
+  databasePath: string
+): Promise<GzPlanExportResult> {
+
   const customerBins = [...new Set(
-    collectResult.items
+    items
       .map((item) => item.detail?.customer_bin)
       .filter((bin): bin is string => Boolean(bin && isValidBin(bin)))
   )];
 
   let registryHits = 0;
   if (!options.skipRegistry && customerBins.length > 0) {
+    const profileUrlsByBin = buildRegistryProfileHints(items);
     await collectGoszakupRegistryForBins(customerBins, {
       databasePath,
       forceRefresh: options.forceRegistryRefresh ?? false,
       delayMs: options.delayMs,
       headless: options.headless,
-      requireContacts: true
+      requireContacts: true,
+      requireName: true,
+      profileUrlsByBin
     });
   }
 
@@ -82,7 +99,11 @@ export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Pr
     }
   }
 
-  const builtRows = collectResult.items
+  if (!options.skipRegistry) {
+    assertRegistryCoverage(items, registryByBin);
+  }
+
+  const builtRows = items
     .map((item) => buildExportRow(item, item.detail, registryByBin.get(item.detail?.customer_bin ?? "") ?? null))
     .filter((row): row is GzPlanExportRow => row !== null);
   const filterResult = filterPlanRowsWithStats(builtRows, options.minAmount ?? 0, options.excludeKeywords ?? []);
@@ -106,14 +127,69 @@ export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Pr
 
   await workbook.xlsx.writeFile(xlsxPath);
 
-  storage.close();
-
   return {
     xlsxPath,
     rows: rows.length,
     customers: customerBins.length,
     registryHits
   };
+}
+
+type CollectedPlanItem = GoszakupPlanListItem & { detail: GoszakupPlanDetail | null };
+
+export function buildRegistryProfileHints(items: CollectedPlanItem[]): Map<string, string> {
+  const hints = new Map<string, string>();
+  for (const item of items) {
+    const bin = item.detail?.customer_bin;
+    if (!bin || !isValidBin(bin) || !item.customer_url) continue;
+    const profileUrl = normalizeSupplierProfileUrl(item.customer_url);
+    if (!profileUrl) continue;
+
+    const existing = hints.get(bin);
+    if (existing && existing !== profileUrl) {
+      throw new Error(`registry profile conflict for BIN ${bin}: ${existing} vs ${profileUrl}`);
+    }
+    hints.set(bin, profileUrl);
+  }
+  return hints;
+}
+
+export function assertRegistryCoverage(
+  items: CollectedPlanItem[],
+  registryByBin: ReadonlyMap<string, GoszakupRegistryRecord>
+): void {
+  const planIdsByBin = new Map<string, string[]>();
+  for (const item of items) {
+    const bin = item.detail?.customer_bin;
+    if (!bin || !isValidBin(bin)) continue;
+    const planIds = planIdsByBin.get(bin) ?? [];
+    if (!planIds.includes(item.plan_point_id)) planIds.push(item.plan_point_id);
+    planIdsByBin.set(bin, planIds);
+  }
+
+  const failures: string[] = [];
+  for (const [bin, planIds] of planIdsByBin) {
+    const record = registryByBin.get(bin);
+    if (!record || record.bin !== bin || !record.name_ru?.trim()) {
+      failures.push(`BIN ${bin} (plans: ${planIds.join(", ")})`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`registry preflight failed: ${failures.join("; ")}`);
+  }
+}
+
+function normalizeSupplierProfileUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return null;
+    if (url.hostname !== "goszakup.gov.kz" && url.hostname !== "www.goszakup.gov.kz") return null;
+    const match = url.pathname.match(/^\/(ru|kz)\/registry\/show_supplier\/(\d+)\/?$/);
+    if (!match) return null;
+    return `https://goszakup.gov.kz/${match[1]}/registry/show_supplier/${match[2]}`;
+  } catch {
+    return null;
+  }
 }
 
 export function buildExportRow(
@@ -139,7 +215,7 @@ export function buildExportRow(
 
   return {
     customer_bin: customerBin,
-    customer_name: listItem.customer_name ?? detail?.customer_name ?? registry?.name_ru ?? "",
+    customer_name: registry?.name_ru ?? listItem.customer_name ?? detail?.customer_name ?? "",
     website: registry?.website ?? "",
     email: registry?.email ?? "",
     phone: registry?.phone ?? "",
