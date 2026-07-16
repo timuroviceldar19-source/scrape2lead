@@ -5,6 +5,19 @@ import ExcelJS from "exceljs";
 import { goszakupGetJson } from "../src/kz/goszakupClient.js";
 import { parseGoszakupPlanSearchHtml } from "../src/kz/goszakupPlanHtmlParser.js";
 import { GZ_PLAN_STATUS_BY_NAME } from "../src/kz/goszakupPlanTypes.js";
+import { extractGzPlanPointIdFromUrl } from "../src/kz/gzPlanIdentity.js";
+import { loadGzRoutingConfig } from "../src/bitrix/gzDealRouting.js";
+import {
+  buildPublishedDealUpdate,
+  applyPublishedDealUpdate,
+  ensurePublishedDealStages,
+  listPublishedStageRoutes,
+  validatePublishedDealStages,
+  type AddPublishedStageInput,
+  type BitrixDealStage,
+  type PublishedStageAction,
+  type PublishedStageRoute
+} from "../src/bitrix/gzPublishedDealStage.js";
 
 dotenv.config();
 
@@ -17,6 +30,8 @@ interface CliArgs {
   jsonReportPath: string;
   xlsxReportPath: string;
   token: string | null;
+  routingPath: string;
+  ensurePublishedStages: boolean;
 }
 
 interface BitrixDeal {
@@ -34,6 +49,8 @@ interface BitrixDeal {
   UF_CRM_6627AEBD85B4D?: string | null;
   UF_CRM_6A436D5A3614C?: string | null;
   UF_CRM_S2L_GZ_PUBLISHED_AT?: string | null;
+  CATEGORY_ID?: string | number | null;
+  STAGE_ID?: string | null;
 }
 
 interface StatusCheck {
@@ -62,6 +79,11 @@ interface ReportItem {
   checkedAt: string;
   updatedInBitrix: boolean;
   source: "api" | "html";
+  categoryId: string | null;
+  previousBitrixStage: string | null;
+  targetBitrixStage: string | null;
+  stageAction: PublishedStageAction | "not-published";
+  stageSkipReason: string | null;
 }
 
 interface Report {
@@ -80,6 +102,9 @@ interface Report {
     updated: number;
     failed: number;
     skippedInvalidOrigin: number;
+    stageMoved: number;
+    stageSkipped: number;
+    noOp: number;
   };
   published: ReportItem[];
   notPublished: ReportItem[];
@@ -91,6 +116,7 @@ const ORIGINATOR_ID = "scrape2lead-gz-plans";
 const PUBLISHED_STATUS_ID = "5";
 const PUBLISHED_STATUS_NAME = "Опубликован";
 const PUBLISHED_AT_FIELD = "UF_CRM_S2L_GZ_PUBLISHED_AT";
+const DEFAULT_ROUTING_PATH = path.join("config", "bitrix-gz-routing.json");
 const KNOWN_STATUS_NAMES = new Set(Object.keys(GZ_PLAN_STATUS_BY_NAME).map((status) => normalizeRu(status)));
 
 function parseArgs(argv: string[]): CliArgs {
@@ -103,7 +129,9 @@ function parseArgs(argv: string[]): CliArgs {
     delayMs: 350,
     jsonReportPath: path.join("logs", `gz-deals-published-monitor-${stamp}.json`),
     xlsxReportPath: path.join("logs", `gz-deals-published-monitor-${stamp}.xlsx`),
-    token: process.env.GOSZAKUP_TOKEN?.trim() || null
+    token: process.env.GOSZAKUP_TOKEN?.trim() || null,
+    routingPath: DEFAULT_ROUTING_PATH,
+    ensurePublishedStages: false
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -118,6 +146,8 @@ function parseArgs(argv: string[]): CliArgs {
       args.xlsxReportPath = replaceExtension(args.jsonReportPath, ".xlsx");
     } else if (arg === "--xlsx-report") args.xlsxReportPath = argv[++i] ?? args.xlsxReportPath;
     else if (arg === "--goszakup-token") args.token = argv[++i]?.trim() || null;
+    else if (arg === "--routing") args.routingPath = argv[++i] ?? args.routingPath;
+    else if (arg === "--ensure-published-stages") args.ensurePublishedStages = true;
   }
 
   return args;
@@ -133,7 +163,20 @@ async function main(): Promise<void> {
 
   const startedAt = new Date().toISOString();
   const client = new BitrixClient(args.webhookUrl);
+  const routing = loadGzRoutingConfig(args.routingPath);
+  const publishedRoutes = listPublishedStageRoutes(routing);
+
+  if (args.ensurePublishedStages) {
+    const setup = await ensurePublishedDealStages(client, publishedRoutes, args.execute);
+    for (const item of setup) {
+      console.log(`[${item.action}] category ${item.categoryId} -> ${item.publishedStageId}`);
+    }
+    return;
+  }
+
+  await validatePublishedDealStages(client, publishedRoutes);
   if (args.execute) await client.ensurePublishedAtField();
+  const routesByCategory = new Map(publishedRoutes.map((route) => [String(route.categoryId), route]));
 
   const deals = await client.listRecentGzDeals(args.since);
   const limitedDeals = args.limit ? deals.slice(0, args.limit) : deals;
@@ -153,7 +196,10 @@ async function main(): Promise<void> {
       notPublished: 0,
       updated: 0,
       failed: 0,
-      skippedInvalidOrigin: 0
+      skippedInvalidOrigin: 0,
+      stageMoved: 0,
+      stageSkipped: 0,
+      noOp: 0
     },
     published: [],
     notPublished: [],
@@ -165,7 +211,9 @@ async function main(): Promise<void> {
 
   for (const deal of limitedDeals) {
     const originId = stringOrNull(deal.ORIGIN_ID);
-    const planId = extractPlanId(originId);
+    const planUrl = stringOrNull(deal.UF_CRM_PLAN_LINK)
+      ?? stringOrNull(deal.UF_CRM_1782386571874_IU_XLS);
+    const planId = extractGzPlanPointIdFromUrl(planUrl) ?? extractPlanId(originId);
     if (!originId || !planId) {
       report.stats.skippedInvalidOrigin += 1;
       report.skippedInvalidOrigin.push(deal);
@@ -192,19 +240,33 @@ async function main(): Promise<void> {
         planUrl: check.planUrl,
         checkedAt,
         updatedInBitrix: false,
-        source: check.source
+        source: check.source,
+        categoryId: stringOrNull(deal.CATEGORY_ID),
+        previousBitrixStage: stringOrNull(deal.STAGE_ID),
+        targetBitrixStage: null,
+        stageAction: "not-published",
+        stageSkipReason: null
       };
 
       report.stats.checked += 1;
       if (item.published) {
         report.stats.published += 1;
-        if (args.execute) {
-          await client.updateDealPublished(item.dealId, check.status ?? PUBLISHED_STATUS_NAME, checkedAt);
+        const route = getPublishedRoute(deal, routesByCategory);
+        const update = buildPublishedDealUpdate(deal, route, check.status ?? PUBLISHED_STATUS_NAME, checkedAt);
+        item.targetBitrixStage = route.publishedStageId;
+        item.stageAction = update.stageAction;
+        item.stageSkipReason = update.stageSkipReason;
+        if (update.stageAction === "moved") report.stats.stageMoved += 1;
+        if (update.stageAction === "skipped-noninitial") report.stats.stageSkipped += 1;
+        if (Object.keys(update.fields).length === 0) report.stats.noOp += 1;
+        if (await applyPublishedDealUpdate(client, item.dealId, update, args.execute)) {
           item.updatedInBitrix = true;
           report.stats.updated += 1;
-          console.log(`[updated] deal ${item.dealId} | ${originId} | ${check.status}`);
+          console.log(`[updated] deal ${item.dealId} | ${originId} | ${check.status} | stage=${update.stageAction}`);
+        } else if (Object.keys(update.fields).length === 0) {
+          console.log(`[no-op] deal ${item.dealId} | ${originId} | ${check.status}`);
         } else {
-          console.log(`[dry-run] update deal ${item.dealId} | ${originId} | ${check.status}`);
+          console.log(`[dry-run] update deal ${item.dealId} | ${originId} | ${check.status} | stage=${update.stageAction}`);
         }
         report.published.push(item);
       } else {
@@ -237,6 +299,16 @@ async function main(): Promise<void> {
   if (report.stats.failed > 0) process.exitCode = 1;
 }
 
+function getPublishedRoute(
+  deal: BitrixDeal,
+  routesByCategory: Map<string, PublishedStageRoute>
+): PublishedStageRoute {
+  const categoryId = stringOrNull(deal.CATEGORY_ID);
+  const route = categoryId ? routesByCategory.get(categoryId) : undefined;
+  if (!route) throw new Error(`no published-stage route for deal category ${categoryId ?? "-"}`);
+  return route;
+}
+
 class BitrixClient {
   private readonly baseUrl: string;
 
@@ -261,6 +333,8 @@ class BitrixClient {
         "OPPORTUNITY",
         "DATE_CREATE",
         "DATE_MODIFY",
+        "CATEGORY_ID",
+        "STAGE_ID",
         "UF_CRM_PLAN_LINK",
         "UF_CRM_1782386571874_IU_XLS",
         "UF_CRM_PLAN_STATUS",
@@ -272,16 +346,32 @@ class BitrixClient {
     return deals.filter((deal) => String(deal.ORIGINATOR_ID ?? "") === ORIGINATOR_ID);
   }
 
-  async updateDealPublished(id: string, status: string, detectedAt: string): Promise<void> {
+  async updateDeal(id: string, fields: Record<string, string>): Promise<void> {
     await this.call("crm.deal.update", {
       id,
-      fields: {
-        UF_CRM_PLAN_STATUS: status,
-        UF_CRM_6627AEBD85B4D: status,
-        [PUBLISHED_AT_FIELD]: detectedAt
-      },
+      fields,
       params: {
         REGISTER_SONET_EVENT: "Y"
+      }
+    });
+  }
+
+  async listDealStages(categoryId: number): Promise<BitrixDealStage[]> {
+    const result = await this.call("crm.status.list", {
+      order: { SORT: "ASC" },
+      filter: { ENTITY_ID: `DEAL_STAGE_${categoryId}` }
+    });
+    return Array.isArray(result) ? result as BitrixDealStage[] : [];
+  }
+
+  async addDealStage(input: AddPublishedStageInput): Promise<void> {
+    await this.call("crm.status.add", {
+      fields: {
+        ENTITY_ID: `DEAL_STAGE_${input.categoryId}`,
+        STATUS_ID: input.statusId,
+        NAME: input.name,
+        SORT: input.sort,
+        SEMANTICS: input.semantics
       }
     });
   }
@@ -417,6 +507,9 @@ async function writeReports(report: Report): Promise<void> {
     { metric: "Not published", value: report.stats.notPublished },
     { metric: "Updated", value: report.stats.updated },
     { metric: "Failed", value: report.stats.failed },
+    { metric: "Stage moved", value: report.stats.stageMoved },
+    { metric: "Stage skipped", value: report.stats.stageSkipped },
+    { metric: "No-op", value: report.stats.noOp },
     { metric: "Started at", value: report.startedAt },
     { metric: "Finished at", value: report.finishedAt ?? "" }
   ]);
@@ -449,6 +542,11 @@ function addItemsSheet(workbook: ExcelJS.Workbook, name: string, items: ReportIt
     { header: "Amount", key: "amount", width: 16 },
     { header: "Old status", key: "previousBitrixStatus", width: 18 },
     { header: "New status", key: "currentGoszakupStatus", width: 18 },
+    { header: "Category", key: "categoryId", width: 12 },
+    { header: "Old stage", key: "previousBitrixStage", width: 24 },
+    { header: "Target stage", key: "targetBitrixStage", width: 24 },
+    { header: "Stage action", key: "stageAction", width: 22 },
+    { header: "Stage skip reason", key: "stageSkipReason", width: 48 },
     { header: "Published", key: "published", width: 12 },
     { header: "Updated in Bitrix", key: "updatedInBitrix", width: 18 },
     { header: "Plan URL", key: "planUrl", width: 60 },

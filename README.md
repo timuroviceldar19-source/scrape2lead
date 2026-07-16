@@ -98,6 +98,10 @@ npm run bitrix:migrate-gz-categories -- --help
 
 ```powershell
 npm run kz:check-gz-deals-published
+npm run kz:check-gz-deals-published -- --ensure-published-stages
+npm run kz:check-gz-deals-published -- --ensure-published-stages --execute
+npm run kz:check-gz-deals-published -- --limit 10
+npm run kz:check-gz-deals-published -- --limit 10 --execute
 npm run kz:monitor-gz-published-leads -- --dry-run
 npm run kz:analyze-gz-specs -- --limit 10
 ```

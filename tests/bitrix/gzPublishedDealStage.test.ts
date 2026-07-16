@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildPublishedDealUpdate,
+  applyPublishedDealUpdate,
   ensurePublishedDealStages,
   listPublishedStageRoutes,
   type PublishedStageClient,
@@ -71,6 +72,23 @@ describe("buildPublishedDealUpdate", () => {
       UF_CRM_PLAN_STATUS: "Опубликован",
       UF_CRM_6627AEBD85B4D: "Опубликован"
     });
+  });
+});
+
+describe("applyPublishedDealUpdate", () => {
+  it("sends the exact planned fields to Bitrix only in execute mode", async () => {
+    const updateDeal = vi.fn(async () => {});
+    const update = buildPublishedDealUpdate(deal(), ROUTE, "Опубликован", "2026-07-16T10:00:00.000Z");
+    await expect(applyPublishedDealUpdate({ updateDeal }, "41293", update, true)).resolves.toBe(true);
+    expect(updateDeal).toHaveBeenCalledWith("41293", update.fields);
+  });
+
+  it("does not call Bitrix for dry-runs or complete no-ops", async () => {
+    const updateDeal = vi.fn(async () => {});
+    const update = buildPublishedDealUpdate(deal(), ROUTE, "Опубликован", "2026-07-16T10:00:00.000Z");
+    await expect(applyPublishedDealUpdate({ updateDeal }, "41293", update, false)).resolves.toBe(false);
+    await expect(applyPublishedDealUpdate({ updateDeal }, "41293", { ...update, fields: {} }, true)).resolves.toBe(false);
+    expect(updateDeal).not.toHaveBeenCalled();
   });
 });
 

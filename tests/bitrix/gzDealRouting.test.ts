@@ -71,8 +71,8 @@ describe("resolveGzRoute", () => {
 describe("gzRoutingConfigSchema", () => {
   it("rejects rules without any matcher", () => {
     expect(() => gzRoutingConfigSchema.parse({
-      rules: [{ name: "bad", categoryId: 1, stageId: "C1:NEW" }],
-      default: { categoryId: 29, stageId: "C29:NEW" }
+      rules: [{ name: "bad", categoryId: 1, stageId: "C1:NEW", publishedStageId: "C1:S2L_PUBLISHED" }],
+      default: { categoryId: 29, stageId: "C29:NEW", publishedStageId: "C29:S2L_PUBLISHED" }
     })).toThrow(/enstruSuffixes and\/or keywordsAny/);
   });
 
