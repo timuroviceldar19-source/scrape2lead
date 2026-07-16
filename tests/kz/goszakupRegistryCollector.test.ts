@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Page } from "playwright";
 import { afterEach, describe, expect, it } from "vitest";
-import { fetchRegistryForBin } from "../../src/kz/goszakupRegistryCollector.js";
+import { fetchRegistryForBin } from "../../src/kz/goszakupRegistryFetcher.js";
 
 const FIXTURES = path.resolve("tests/fixtures");
 const PROFILE_URL = "https://goszakup.gov.kz/ru/registry/show_supplier/34591";
