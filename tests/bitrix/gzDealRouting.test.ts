@@ -12,16 +12,18 @@ const CONFIG: GzRoutingConfig = {
       name: "pk-monitors",
       keywordsAny: ["компьютер", "монитор", "моноблок", "многофункциональн", "мфу"],
       categoryId: 9,
-      stageId: "C9:NEW"
+      stageId: "C9:NEW",
+      publishedStageId: "C9:S2L_PUBLISHED"
     },
     {
       name: "panels-21-43",
       enstruSuffixes: [21, 43],
       categoryId: 41,
-      stageId: "C41:NEW"
+      stageId: "C41:NEW",
+      publishedStageId: "C41:S2L_PUBLISHED"
     }
   ],
-  default: { categoryId: 29, stageId: "C29:NEW" }
+  default: { categoryId: 29, stageId: "C29:NEW", publishedStageId: "C29:S2L_PUBLISHED" }
 };
 
 describe("extractEnstruSuffix", () => {
@@ -76,5 +78,22 @@ describe("gzRoutingConfigSchema", () => {
 
   it("accepts the shipped config shape", () => {
     expect(() => gzRoutingConfigSchema.parse(CONFIG)).not.toThrow();
+  });
+
+  it("requires a published stage for every route", () => {
+    expect(() => gzRoutingConfigSchema.parse({
+      rules: [{ name: "bad", keywordsAny: ["pc"], categoryId: 9, stageId: "C9:NEW" }],
+      default: { categoryId: 29, stageId: "C29:NEW", publishedStageId: "C29:S2L_PUBLISHED" }
+    })).toThrow(/publishedStageId/);
+  });
+
+  it("rejects conflicting stage mappings for the same category", () => {
+    expect(() => gzRoutingConfigSchema.parse({
+      rules: [
+        { name: "one", keywordsAny: ["pc"], categoryId: 9, stageId: "C9:NEW", publishedStageId: "C9:S2L_PUBLISHED" },
+        { name: "two", keywordsAny: ["monitor"], categoryId: 9, stageId: "C9:OTHER", publishedStageId: "C9:OTHER_PUBLISHED" }
+      ],
+      default: { categoryId: 29, stageId: "C29:NEW", publishedStageId: "C29:S2L_PUBLISHED" }
+    })).toThrow(/conflicting stage mapping.*category 9/i);
   });
 });
