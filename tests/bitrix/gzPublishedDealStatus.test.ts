@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildPublishedDealUpdate,
-  applyPublishedDealUpdate
+  applyPublishedDealUpdate,
+  selectPublishedDealBatch
 } from "../../src/bitrix/gzPublishedDealStatus.js";
 
 const DETECTED_AT = "2026-07-16T10:00:00.000Z";
@@ -126,5 +127,19 @@ describe("applyPublishedDealUpdate", () => {
     const skipped = buildPublishedDealUpdate(deal({ UF_CRM_PLAN_STATUS: "Отменен", UF_CRM_6627AEBD85B4D: "Отменен" }), "Опубликован", DETECTED_AT);
     await expect(applyPublishedDealUpdate({ updateDeal }, "41293", skipped, true)).resolves.toBe(false);
     expect(updateDeal).not.toHaveBeenCalled();
+  });
+});
+
+describe("selectPublishedDealBatch", () => {
+  const deals = Array.from({ length: 35 }, (_, index) => ({ id: index + 1 }));
+
+  it("selects a non-overlapping window by offset and limit", () => {
+    expect(selectPublishedDealBatch(deals, 20, 10).map((deal) => deal.id)).toEqual([
+      21, 22, 23, 24, 25, 26, 27, 28, 29, 30
+    ]);
+  });
+
+  it("returns the remaining deals when the limit is omitted", () => {
+    expect(selectPublishedDealBatch(deals, 30, null).map((deal) => deal.id)).toEqual([31, 32, 33, 34, 35]);
   });
 });
