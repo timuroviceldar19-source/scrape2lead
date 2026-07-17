@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import ExcelJS from "exceljs";
 import { pathToFileURL } from "node:url";
+import { buildGzPlanOriginId, resolveGzPlanPointId } from "../src/kz/gzPlanIdentity.js";
 
 dotenv.config();
 
@@ -217,7 +218,7 @@ const IMPORT_FIELD_DEFINITIONS: ImportFieldDefinition[] = [
     label: "ID пункта API",
     xmlId: "scrape2lead_gz_plan_id",
     fieldName: "UF_CRM_S2L_GZ_PLAN_ID",
-    getValue: (row) => row.planId
+    getValue: (row) => canonicalPlanId(row)
   },
   {
     key: "plannedMonth",
@@ -362,7 +363,9 @@ async function main(): Promise<void> {
   }
 
   const rows = await readGzPlanRows(args.inputPath);
-  const filteredRows = args.planId ? rows.filter((row) => row.planId === args.planId) : rows;
+  const filteredRows = args.planId
+    ? rows.filter((row) => row.planId === args.planId || canonicalPlanId(row) === args.planId)
+    : rows;
   const candidates = dedupeRows(filteredRows)
     .map((row) => ({ ...row, email: normalizeEmail(row.email) }))
     .filter((row) => row.email || row.phone || row.website);
@@ -575,8 +578,9 @@ async function readGzPlanRows(inputPath: string): Promise<GzPlanRow[]> {
 }
 
 export function buildLeadFields(row: GzPlanRow, assignedById: number | null, importFieldCodes: Record<string, string>): Record<string, unknown> {
+  const planPointId = canonicalPlanId(row);
   const comments = [
-    `GZ plan ID: ${row.planId}`,
+    `GZ plan ID: ${planPointId}`,
     `BIN: ${row.bin || "-"}`,
     `Customer: ${row.customerName || "-"}`,
     `Reporting administrator: ${row.reportingAdministrator || "-"}`,
@@ -595,12 +599,12 @@ export function buildLeadFields(row: GzPlanRow, assignedById: number | null, imp
 
   const fields: Record<string, unknown> = {
     TITLE: buildTitle(row),
-    COMPANY_TITLE: row.customerName || row.bin || `GZ plan ${row.planId}`,
+    COMPANY_TITLE: row.customerName || row.bin || `GZ plan ${planPointId}`,
     COMMENTS: comments,
     SOURCE_ID: "WEB",
     SOURCE_DESCRIPTION: "scrape2lead gz-plans",
     ORIGINATOR_ID,
-    ORIGIN_ID: `gz-plan:${row.planId}`,
+    ORIGIN_ID: buildGzPlanOriginId(planPointId),
     ADDRESS: row.address || undefined,
     CURRENCY_ID: "KZT",
     OPPORTUNITY: parseMoney(row.amount)
@@ -781,11 +785,16 @@ function dedupeRows(rows: GzPlanRow[]): GzPlanRow[] {
   const seen = new Set<string>();
   const result: GzPlanRow[] = [];
   for (const row of rows) {
-    if (seen.has(row.planId)) continue;
-    seen.add(row.planId);
+    const planPointId = canonicalPlanId(row);
+    if (seen.has(planPointId)) continue;
+    seen.add(planPointId);
     result.push(row);
   }
   return result;
+}
+
+function canonicalPlanId(row: GzPlanRow): string {
+  return resolveGzPlanPointId(row.planUrl, row.planId) ?? row.planId;
 }
 
 function cellText(cell: ExcelJS.Cell): string {

@@ -1,4 +1,5 @@
 import { GZ_ORIGINATOR_ID } from "./gzLeadCleanup.js";
+import { buildGzPlanOriginId, extractGzPlanPointIdFromUrl } from "../kz/gzPlanIdentity.js";
 
 export const GZ_PLAN_LINK_FIELD = "UF_CRM_PLAN_LINK";
 export const GZ_PLAN_POINT_ID_FIELD = "UF_CRM_6A436D5A3614C";
@@ -19,15 +20,12 @@ export type BackfillAction =
   | { action: "no-plan-id" }
   | { action: "conflict"; originId: string; claimedByDealId: string };
 
-const SHOW_PLAN_URL_PATTERN = /\/registry\/show_plan\/\d+\/(\d+)(?:[/?#]|$)/;
-
 export function extractPlanIdFromUrl(url: string | null | undefined): string | null {
-  const match = (url ?? "").trim().match(SHOW_PLAN_URL_PATTERN);
-  return match?.[1] ?? null;
+  return extractGzPlanPointIdFromUrl(url);
 }
 
 export function buildGzOriginId(planId: string): string {
-  return `gz-plan:${planId}`;
+  return buildGzPlanOriginId(planId);
 }
 
 export interface BackfillOptions {
@@ -50,8 +48,8 @@ export function decideBackfillAction(
   }
   if (originId) return { action: "foreign-origin" };
 
-  const planId = String(deal[GZ_PLAN_POINT_ID_FIELD] ?? "").trim().match(/^\d+$/)?.[0]
-    ?? extractPlanIdFromUrl(deal[GZ_PLAN_LINK_FIELD]);
+  const planId = extractPlanIdFromUrl(deal[GZ_PLAN_LINK_FIELD])
+    ?? String(deal[GZ_PLAN_POINT_ID_FIELD] ?? "").trim().match(/^\d+$/)?.[0];
   if (!planId) return { action: "no-plan-id" };
 
   const newOriginId = buildGzOriginId(planId);

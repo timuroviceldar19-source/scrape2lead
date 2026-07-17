@@ -64,5 +64,6 @@ describe("buildLeadFields", () => {
     expect(fields.UF_CRM_S2L_GZ_AMOUNT).toBe("4950000.00");
     expect(fields.OPPORTUNITY).toBe(4950000);
     expect(fields.ASSIGNED_BY_ID).toBe(42);
+    expect(fields.ORIGIN_ID).toBe("gz-plan:123456");
   });
 });

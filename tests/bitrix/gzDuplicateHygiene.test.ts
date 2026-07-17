@@ -14,7 +14,7 @@ describe("findGzDuplicatePairs", () => {
         ID: 39943,
         TITLE: "Keyed deal",
         ORIGINATOR_ID: "scrape2lead-gz-plans",
-        ORIGIN_ID: "gz-plan:4553677"
+        ORIGIN_ID: "gz-plan:86446786"
       },
       {
         ID: 38825,
@@ -28,7 +28,7 @@ describe("findGzDuplicatePairs", () => {
         TITLE: "Old XLS copy without keyed pair",
         ORIGINATOR_ID: DEFAULT_OLD_XLS_ORIGINATOR_ID,
         ORIGIN_ID: null,
-        [GZ_PLAN_LINK_FIELD]: "https://goszakup.gov.kz/ru/registry/show_plan/86446786/4707153"
+        [GZ_PLAN_LINK_FIELD]: "https://goszakup.gov.kz/ru/registry/show_plan/86446787/4707153"
       },
       {
         ID: 38827,
@@ -41,8 +41,8 @@ describe("findGzDuplicatePairs", () => {
 
     expect(pairs).toEqual([
       {
-        planId: "4553677",
-        originId: "gz-plan:4553677",
+        planId: "86446786",
+        originId: "gz-plan:86446786",
         oldDealId: "38825",
         oldCategoryId: "0",
         keyedDealId: "39943",
@@ -52,13 +52,13 @@ describe("findGzDuplicatePairs", () => {
     ]);
   });
 
-  it("uses the plan point id field before URL parsing and honors configured old originators", () => {
+  it("uses the canonical URL id before the legacy field and honors configured old originators", () => {
     const pairs = findGzDuplicatePairs(
       [
         {
           ID: 40701,
           ORIGINATOR_ID: "scrape2lead-gz-plans",
-          ORIGIN_ID: "gz-plan:4791188"
+          ORIGIN_ID: "gz-plan:1"
         },
         {
           ID: 39305,
@@ -73,7 +73,7 @@ describe("findGzDuplicatePairs", () => {
 
     expect(pairs).toMatchObject([
       {
-        planId: "4791188",
+        planId: "1",
         oldDealId: "39305",
         keyedDealId: "40701"
       }
@@ -86,7 +86,7 @@ describe("findGzDuplicatePairs", () => {
         ID: 39943,
         TITLE: "Keyed deal with link",
         ORIGINATOR_ID: "scrape2lead-gz-plans",
-        ORIGIN_ID: "gz-plan:4553677",
+        ORIGIN_ID: "gz-plan:86446786",
         [GZ_PLAN_LINK_FIELD]: "https://goszakup.gov.kz/ru/registry/show_plan/86446786/4553677"
       }
     ]);

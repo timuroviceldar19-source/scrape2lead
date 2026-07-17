@@ -1,6 +1,5 @@
 import path from "node:path";
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
 import dotenv from "dotenv";
 import ExcelJS from "exceljs";
 import {
@@ -9,6 +8,11 @@ import {
   type GzRoute,
   type GzRoutingConfig
 } from "../src/bitrix/gzDealRouting.js";
+import {
+  getGzPlanDealIdentity,
+  legacyDealMatchesRow
+} from "../src/bitrix/gzPlanDealIdentity.js";
+import { buildGzDuplicateSearches } from "../src/bitrix/gzDuplicateSearch.js";
 
 dotenv.config();
 
@@ -25,7 +29,7 @@ interface CliArgs {
   minAmount: number;
 }
 
-export interface GzPlanRow {
+interface GzPlanRow {
   rowNumber: number;
   bin: string;
   customerName: string;
@@ -63,6 +67,16 @@ interface ExistingDeal {
   ORIGINATOR_ID?: string | null;
   ORIGIN_ID?: string | null;
   OPPORTUNITY?: string | number | null;
+  UF_CRM_PLAN_ID?: string | number | null;
+  UF_CRM_PLAN_LINK?: string | null;
+  UF_CRM_1782386293000_IU_XLS?: string | number | null;
+  UF_CRM_1782386571874_IU_XLS?: string | null;
+}
+
+interface DuplicateMatch {
+  deal: ExistingDeal;
+  reason: string;
+  blocking: boolean;
 }
 
 interface PreflightItem {
@@ -128,7 +142,11 @@ function loadRoutingOrFallback(args: CliArgs): GzRoutingConfig {
   console.warn(`routing config ${args.routingPath} not found; using --category-id=${args.categoryId} --stage-id=${args.stageId} for all rows`);
   return {
     rules: [],
-    default: { categoryId: args.categoryId, stageId: args.stageId }
+    default: {
+      categoryId: args.categoryId,
+      stageId: args.stageId,
+      publishedStageId: args.categoryId === 0 ? "S2L_PUBLISHED" : `C${args.categoryId}:S2L_PUBLISHED`
+    }
   };
 }
 
@@ -153,20 +171,27 @@ async function main(): Promise<void> {
   const preflight: PreflightItem[] = [];
 
   for (const row of rows) {
-    const existingDeal = await client.findDeal(ORIGINATOR_ID, originId(row));
+    const identity = getGzPlanDealIdentity(row);
+    let existingDeal = await client.findDeal(ORIGINATOR_ID, identity.originId);
+    if (!existingDeal && identity.legacyOriginId) {
+      existingDeal = await client.findMatchingLegacyDeal(row, identity.legacyOriginId);
+    }
     const duplicateDeal = existingDeal?.ID ? null : await client.findPotentialDuplicateDeal(row);
     const issues = validateRequired(row, args.minAmount);
     const warnings = validateWarnings(row);
+    if (duplicateDeal && !duplicateDeal.blocking) {
+      warnings.push(`possible duplicate of deal ${duplicateDeal.deal.ID} (${duplicateDeal.reason})`);
+    }
     const action: PreflightItem["action"] = issues.length > 0
       ? "skip"
       : existingDeal?.ID
         ? (args.updateExisting ? "update" : "existing")
-        : duplicateDeal
+        : duplicateDeal?.blocking
           ? "duplicate"
         : "create";
     preflight.push({
       row,
-      originId: originId(row),
+      originId: identity.originId,
       existingDealId: existingDeal?.ID ? String(existingDeal.ID) : null,
       duplicateDealId: duplicateDeal ? String(duplicateDeal.deal.ID ?? "") : null,
       duplicateReason: duplicateDeal?.reason ?? null,
@@ -223,40 +248,48 @@ class BitrixClient {
   }
 
   async findDeal(originatorId: string, dealOriginId: string): Promise<ExistingDeal | null> {
+    const rows = await this.findDeals(originatorId, dealOriginId);
+    return rows[0] ?? null;
+  }
+
+  async findMatchingLegacyDeal(row: GzPlanRow, legacyOriginId: string): Promise<ExistingDeal | null> {
+    const rows = await this.findDeals(ORIGINATOR_ID, legacyOriginId);
+    return rows.find((deal) => legacyDealMatchesRow(row, deal)) ?? null;
+  }
+
+  private async findDeals(originatorId: string, dealOriginId: string): Promise<ExistingDeal[]> {
     const result = await this.call("crm.deal.list", {
       filter: {
         ORIGINATOR_ID: originatorId,
         ORIGIN_ID: dealOriginId
       },
-      select: ["ID", "TITLE", "COMPANY_ID", "ORIGINATOR_ID", "ORIGIN_ID", "OPPORTUNITY"]
+      select: [
+        "ID", "TITLE", "COMPANY_ID", "ORIGINATOR_ID", "ORIGIN_ID", "OPPORTUNITY",
+        "UF_CRM_PLAN_ID", "UF_CRM_PLAN_LINK",
+        "UF_CRM_1782386293000_IU_XLS", "UF_CRM_1782386571874_IU_XLS"
+      ]
     });
-    const rows = Array.isArray(result) ? result : [];
-    return (rows[0] as ExistingDeal | undefined) ?? null;
+    return Array.isArray(result) ? result as ExistingDeal[] : [];
   }
 
-  async findPotentialDuplicateDeal(row: GzPlanRow): Promise<{ deal: ExistingDeal; reason: string } | null> {
-    const searches: Array<{ reason: string; filter: Record<string, unknown> }> = [];
-    if (row.planId) {
-      searches.push({ reason: "plan point id", filter: { UF_CRM_6A436D5A3614C: row.planId } });
-    }
-    if (row.planNumber) {
-      searches.push({ reason: "plan number", filter: { UF_CRM_PLAN_ID: row.planNumber } });
-    }
-    if (row.planUrl) {
-      searches.push({ reason: "plan url", filter: { UF_CRM_PLAN_LINK: row.planUrl } });
-      searches.push({ reason: "plan url alt", filter: { UF_CRM_1782386571874_IU_XLS: row.planUrl } });
-    }
-    const bin = normalizeBin(row.bin);
-    const amount = parseMoney(row.amount);
-    if (bin && amount > 0) {
-      searches.push({ reason: "BIN + amount", filter: { UF_CRM_6627AEBD7C2D2: bin, OPPORTUNITY: amount } });
-    }
+  async findPotentialDuplicateDeal(row: GzPlanRow): Promise<DuplicateMatch | null> {
+    const searches = buildGzDuplicateSearches({
+      planPointId: canonicalPlanId(row),
+      planNumber: row.planNumber,
+      planUrl: row.planUrl,
+      bin: normalizeBin(row.bin),
+      amount: parseMoney(row.amount)
+    });
 
     const seen = new Set<string>();
     for (const search of searches) {
       const result = await this.call("crm.deal.list", {
         filter: search.filter,
-        select: ["ID", "TITLE", "COMPANY_ID", "ORIGINATOR_ID", "ORIGIN_ID", "OPPORTUNITY"]
+        select: [
+          "ID", "TITLE", "COMPANY_ID", "ORIGINATOR_ID", "ORIGIN_ID", "OPPORTUNITY",
+          "UF_CRM_PLAN_ID", "UF_CRM_PLAN_LINK",
+          "UF_CRM_1782386293000_IU_XLS", "UF_CRM_1782386571874_IU_XLS"
+        ]
       });
       const rows = Array.isArray(result) ? result as ExistingDeal[] : [];
       for (const deal of rows) {
@@ -266,7 +299,7 @@ class BitrixClient {
         if (String(deal.ORIGINATOR_ID ?? "") === ORIGINATOR_ID && String(deal.ORIGIN_ID ?? "") === originId(row)) {
           continue;
         }
-        return { deal, reason: search.reason };
+        return { deal, reason: search.reason, blocking: search.blocking };
       }
     }
 
@@ -458,11 +491,10 @@ async function readGzPlanRows(inputPath: string): Promise<GzPlanRow[]> {
   return rows;
 }
 
-export function buildCompanyFields(row: GzPlanRow, assignedById: number | null): Record<string, unknown> {
+function buildCompanyFields(row: GzPlanRow, assignedById: number | null): Record<string, unknown> {
   const fields: Record<string, unknown> = {
     TITLE: row.customerName || row.bin || `GZ plan ${row.planId}`,
     ASSIGNED_BY_ID: assignedById ?? undefined,
-    OPENED: "Y",
     SOURCE_ID: "WEB",
     SOURCE_DESCRIPTION: "scrape2lead gz-plans",
     ORIGINATOR_ID,
@@ -498,6 +530,7 @@ function buildDealUpdateFields(row: GzPlanRow): Record<string, unknown> {
 }
 
 function buildDealGzFields(row: GzPlanRow): Record<string, unknown> {
+  const planPointId = canonicalPlanId(row);
   return stripUndefined({
     TITLE: buildTitle(row),
     SOURCE_ID: "WEB",
@@ -529,7 +562,7 @@ function buildDealGzFields(row: GzPlanRow): Record<string, unknown> {
     UF_CRM_6A436D59AACBF: row.address,
     UF_CRM_6A436D59CD2B1: row.directorName,
     UF_CRM_6A436D5A19612: row.truCode,
-    UF_CRM_6A436D5A3614C: row.planId,
+    UF_CRM_6A436D5A3614C: planPointId,
     UF_CRM_6A436D5A5700E: row.customerUrl,
     UF_CRM_6A436D5A76648: row.shortSpec,
     UF_CRM_6A436D5A92D16: row.extraDescription,
@@ -549,7 +582,7 @@ function buildDealGzFields(row: GzPlanRow): Record<string, unknown> {
 
 function validateRequired(row: GzPlanRow, minAmount: number): string[] {
   const issues: string[] = [];
-  if (!row.planId) issues.push("missing plan ID");
+  if (!canonicalPlanId(row)) issues.push("missing plan ID");
   if (!row.planNumber) issues.push("missing plan number");
   if (!row.customerName) issues.push("missing customer");
   if (!normalizeBin(row.bin)) issues.push("missing or invalid BIN");
@@ -593,7 +626,7 @@ function printPreflight(args: CliArgs, totalRows: number, items: PreflightItem[]
 
 function buildComments(row: GzPlanRow): string {
   return [
-    `GZ plan ID: ${row.planId}`,
+    `GZ plan ID: ${canonicalPlanId(row) || row.planId}`,
     `GZ plan number: ${row.planNumber || "-"}`,
     `BIN: ${row.bin || "-"}`,
     `Customer: ${row.customerName || "-"}`,
@@ -607,7 +640,15 @@ function buildTitle(row: GzPlanRow): string {
 }
 
 function originId(row: GzPlanRow): string {
-  return `gz-plan:${row.planId}`;
+  return getGzPlanDealIdentity(row).originId;
+}
+
+function canonicalPlanId(row: GzPlanRow): string {
+  try {
+    return getGzPlanDealIdentity(row).planPointId;
+  } catch {
+    return "";
+  }
 }
 
 function companyOriginId(row: GzPlanRow): string {
@@ -686,9 +727,7 @@ function stripUndefined<T extends Record<string, unknown>>(fields: T): T {
   ) as T;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
-}
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});

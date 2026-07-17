@@ -95,9 +95,11 @@ export function stageMatchesDealCategory(stageId: string, categoryId: string | n
 }
 
 function extractPlanIdFromDeal(deal: DuplicateHygieneDeal): string | null {
+  const fromLink = extractPlanIdFromUrl(deal[GZ_PLAN_LINK_FIELD]);
+  if (fromLink) return fromLink;
   const fieldValue = String(deal[GZ_PLAN_POINT_ID_FIELD] ?? "").trim();
   if (/^\d+$/.test(fieldValue)) return fieldValue;
-  return extractPlanIdFromUrl(deal[GZ_PLAN_LINK_FIELD]);
+  return null;
 }
 
 function isGzPlanOriginId(value: string): boolean {

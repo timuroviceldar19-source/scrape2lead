@@ -60,7 +60,7 @@ describe("parseGoszakupPlanSearchHtml", () => {
 
     expect(items).toHaveLength(3);
     expect(items[0].plan_list_number).toBe("87156652");
-    expect(items[0].plan_point_id).toBe("4797958");
+    expect(items[0].plan_point_id).toBe("87230655");
     expect(items[0].item_name).toBe("Панель интерактивная");
     expect(items[0].quantity).toBe("2");
     expect(items[0].unit_price).toBe("646 551.00");

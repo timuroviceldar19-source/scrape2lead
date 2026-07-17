@@ -1,4 +1,5 @@
 import type { GoszakupPlanDetail, GoszakupPlanListItem } from "./goszakupPlanTypes.js";
+import { extractGzPlanPointIdFromUrl } from "./gzPlanIdentity.js";
 import { parseGoszakupPagination } from "./goszakupHtmlParser.js";
 
 export { parseGoszakupPagination };
@@ -201,9 +202,7 @@ function extractPlanPointId(rowHtml: string, firstCell: string): string | null {
 }
 
 function extractPlanPointIdFromUrl(detailUrl: string | null): string | null {
-  if (!detailUrl) return null;
-  const match = detailUrl.match(/show_plan\/(?:\d+\/)?(\d+)/i);
-  return match?.[1] ?? null;
+  return extractGzPlanPointIdFromUrl(detailUrl);
 }
 
 export function extractCustomerUrl(rowHtml: string): string | null {

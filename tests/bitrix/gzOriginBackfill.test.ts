@@ -11,14 +11,14 @@ import {
 describe("extractPlanIdFromUrl", () => {
   it("extracts the plan point id from goszakup show_plan urls", () => {
     expect(extractPlanIdFromUrl("https://goszakup.gov.kz/ru/registry/show_plan/86446786/4714749"))
-      .toBe("4714749");
+      .toBe("86446786");
     expect(extractPlanIdFromUrl("https://goszakup.gov.kz/ru/registry/show_plan/86446786/4714749?tab=x"))
-      .toBe("4714749");
+      .toBe("86446786");
   });
 
   it("returns null for foreign or malformed urls", () => {
     expect(extractPlanIdFromUrl("https://goszakup.gov.kz/ru/registry/show_supplier/7862")).toBeNull();
-    expect(extractPlanIdFromUrl("https://goszakup.gov.kz/ru/registry/show_plan/86446786")).toBeNull();
+    expect(extractPlanIdFromUrl("https://goszakup.gov.kz/ru/registry/show_plan/86446786")).toBe("86446786");
     expect(extractPlanIdFromUrl("")).toBeNull();
     expect(extractPlanIdFromUrl(null)).toBeNull();
   });
@@ -31,15 +31,15 @@ describe("decideBackfillAction", () => {
     expect(decideBackfillAction({
       ID: 39299,
       [GZ_PLAN_LINK_FIELD]: "https://goszakup.gov.kz/ru/registry/show_plan/86446786/4714749"
-    }, noClaims)).toEqual({ action: "backfill", originId: "gz-plan:4714749", planId: "4714749" });
+    }, noClaims)).toEqual({ action: "backfill", originId: "gz-plan:86446786", planId: "86446786" });
   });
 
-  it("prefers the plan point id field over url parsing when present", () => {
+  it("prefers the canonical URL id over a legacy plan point field", () => {
     expect(decideBackfillAction({
       ID: 1,
       [GZ_PLAN_POINT_ID_FIELD]: "555",
       [GZ_PLAN_LINK_FIELD]: "https://goszakup.gov.kz/ru/registry/show_plan/1/999"
-    }, noClaims)).toEqual({ action: "backfill", originId: "gz-plan:555", planId: "555" });
+    }, noClaims)).toEqual({ action: "backfill", originId: "gz-plan:1", planId: "1" });
   });
 
   it("leaves already-keyed deals alone", () => {
@@ -74,7 +74,7 @@ describe("decideBackfillAction", () => {
     expect(decideBackfillAction(xlsDeal, noClaims)).toEqual({ action: "foreign-origin" });
 
     expect(decideBackfillAction(xlsDeal, noClaims, { claimOriginators: new Set(["app_iu_xls_import"]) }))
-      .toEqual({ action: "backfill", originId: "gz-plan:4714749", planId: "4714749" });
+      .toEqual({ action: "backfill", originId: "gz-plan:86446786", planId: "86446786" });
 
     expect(decideBackfillAction(
       { ...xlsDeal, ORIGIN_ID: "xls:1" },
@@ -89,19 +89,19 @@ describe("decideBackfillAction", () => {
   });
 
   it("flags a conflict when the derived origin id is already claimed by another deal", () => {
-    const claims = new Map([["gz-plan:4714749", "40673"]]);
+    const claims = new Map([["gz-plan:86446786", "40673"]]);
     expect(decideBackfillAction({
       ID: 39299,
       [GZ_PLAN_LINK_FIELD]: "https://goszakup.gov.kz/ru/registry/show_plan/86446786/4714749"
-    }, claims)).toEqual({ action: "conflict", originId: "gz-plan:4714749", claimedByDealId: "40673" });
+    }, claims)).toEqual({ action: "conflict", originId: "gz-plan:86446786", claimedByDealId: "40673" });
   });
 
   it("does not flag a conflict against the deal itself", () => {
-    const claims = new Map([["gz-plan:4714749", "39299"]]);
+    const claims = new Map([["gz-plan:86446786", "39299"]]);
     expect(decideBackfillAction({
       ID: 39299,
       [GZ_PLAN_LINK_FIELD]: "https://goszakup.gov.kz/ru/registry/show_plan/86446786/4714749"
-    }, claims)).toEqual({ action: "backfill", originId: "gz-plan:4714749", planId: "4714749" });
+    }, claims)).toEqual({ action: "backfill", originId: "gz-plan:86446786", planId: "86446786" });
   });
 });
 

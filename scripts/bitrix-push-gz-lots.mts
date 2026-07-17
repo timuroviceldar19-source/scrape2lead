@@ -1,6 +1,5 @@
 import dotenv from "dotenv";
 import ExcelJS from "exceljs";
-import { pathToFileURL } from "node:url";
 import { chromium, type Browser, type Page } from "playwright";
 import { parseAnnounceCustomer, type AnnounceCustomer } from "../src/kz/goszakupAnnounceCustomer.js";
 
@@ -303,15 +302,10 @@ async function readGzLotRows(inputPath: string): Promise<GzLotRow[]> {
   return rows;
 }
 
-export function buildCompanyFields(
-  customer: AnnounceCustomer,
-  companyOriginId: string,
-  assignedById: number | null
-): Record<string, unknown> {
+function buildCompanyFields(customer: AnnounceCustomer, companyOriginId: string, assignedById: number | null): Record<string, unknown> {
   return stripUndefined({
     TITLE: customer.name || customer.bin,
     ASSIGNED_BY_ID: assignedById ?? undefined,
-    OPENED: "Y",
     SOURCE_ID: "WEB",
     SOURCE_DESCRIPTION: "scrape2lead gz lots search",
     ORIGINATOR_ID,
@@ -424,9 +418,7 @@ function stripUndefined<T extends Record<string, unknown>>(fields: T): T {
   ) as T;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
-}
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});

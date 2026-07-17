@@ -9,6 +9,7 @@ import {
   createRunId,
   fileSha256,
   hasBrokenEncoding,
+  manifestWorkflow,
   readManifest,
   releaseRunLock,
   writeManifestAtomic
@@ -50,6 +51,11 @@ describe("automation core", () => {
     const recovered = acquireRunLock(file, "two", new Date("2026-07-12T12:00:01Z"), 60);
     expect(recovered.recoveredRunId).toBe("one"); releaseRunLock(file, "two");
   });
+  it("reads the workflow of a v3 manifest and defaults older ones to plans-and-lots", () => {
+    expect(manifestWorkflow(sampleManifest("ready"))).toBe("plans-and-lots");
+    expect(manifestWorkflow({ ...sampleManifest("ready"), schemaVersion: 3, workflow: "plans-only" })).toBe("plans-only");
+    expect(manifestWorkflow({ ...sampleManifest("ready"), schemaVersion: 3, workflow: "plans-and-lots" })).toBe("plans-and-lots");
+  });
   it("retains newest successful runs and never deletes failed runs", () => {
     const root = tempDir();
     for (const [id, status] of [["20260701-100000","applied"],["20260702-100000","ready"],["20260703-100000","failed"]] as const) {
@@ -58,10 +64,19 @@ describe("automation core", () => {
     expect(cleanupSuccessfulRuns(root, 1)).toEqual(["20260701-100000"]);
     expect(fs.existsSync(path.join(root,"20260703-100000"))).toBe(true);
   });
+  it("never touches a nested runs dir belonging to another workflow", () => {
+    const root = tempDir();
+    const run = path.join(root, "20260701-100000"); fs.mkdirSync(run);
+    writeManifestAtomic(path.join(run, "manifest.json"), sampleManifest("applied", "20260701-100000"));
+    const nested = path.join(root, "pk"); fs.mkdirSync(nested);
+    fs.writeFileSync(path.join(nested, "scheduler.log"), "pk log");
+    expect(cleanupSuccessfulRuns(root, 0)).toEqual(["20260701-100000"]);
+    expect(fs.existsSync(path.join(nested, "scheduler.log"))).toBe(true);
+  });
 });
 
 function sampleManifest(status: AutomationManifest["status"], runId = "20260712-100000"): AutomationManifest {
   return { schemaVersion: 1, runId, status, createdAt: "2026-07-12T10:00:00.000Z", updatedAt: "2026-07-12T10:00:00.000Z",
     recoveredLockRunId: null, config: { path: "config/automation.json", sha256: "x" },
-    stages: {}, artifacts: {}, errors: [], approval: null };
+    stages: {}, artifacts: {}, errors: [], push: null, approval: null };
 }

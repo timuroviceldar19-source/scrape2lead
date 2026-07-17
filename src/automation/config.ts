@@ -4,6 +4,7 @@ import { hasBrokenEncoding } from "./core.js";
 import type { AutomationConfig } from "./types.js";
 
 const AutomationConfigSchema = z.object({
+  workflow: z.enum(["plans-and-lots", "plans-only"]).default("plans-and-lots"),
   runsDir: z.string().min(1).default("runs"),
   keepSuccessfulRuns: z.number().int().positive().default(30),
   lockPath: z.string().min(1).default("runs/prepare.lock"),
@@ -18,7 +19,7 @@ export function loadAutomationConfig(filePath = "config/automation.json"): Autom
   if (!fs.existsSync(filePath)) throw new Error(`automation config not found: ${filePath}`);
   const config = AutomationConfigSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
   validateCollectorConfig(config.plansConfig, "plans");
-  validateCollectorConfig(config.lotsConfig, "lots");
+  if (config.workflow === "plans-and-lots") validateCollectorConfig(config.lotsConfig, "lots");
   return { ...config, sourcePath: filePath };
 }
 

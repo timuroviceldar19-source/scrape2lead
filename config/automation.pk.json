@@ -1,0 +1,10 @@
+{
+  "workflow": "plans-only",
+  "runsDir": "runs/pk",
+  "keepSuccessfulRuns": 30,
+  "lockPath": "runs/prepare.lock",
+  "staleLockMinutes": 180,
+  "plansConfig": "config/gz-plans.pk.json",
+  "periodMonths": 6,
+  "approvalLimit": null
+}

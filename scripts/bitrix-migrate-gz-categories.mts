@@ -10,6 +10,7 @@ import {
   resolveGzRoute,
   type GzRoutingConfig
 } from "../src/bitrix/gzDealRouting.js";
+import { extractGzPlanPointIdFromUrl } from "../src/kz/gzPlanIdentity.js";
 
 dotenv.config();
 
@@ -17,6 +18,8 @@ const SOURCE_CATEGORY_ID = 41;
 const TRU_CODE_FIELD = "UF_CRM_6A436D5A19612";
 const TRU_CODE_FALLBACK_FIELD = "UF_CRM_REF_ENSTRU_CODE";
 const ITEM_NAME_FIELD = "UF_CRM_6627AEBD54B8D";
+const PLAN_LINK_FIELD = "UF_CRM_PLAN_LINK";
+const PLAN_LINK_FALLBACK_FIELD = "UF_CRM_1782386571874_IU_XLS";
 /** Closed/service stage suffixes that must never be moved. */
 const FROZEN_STAGE_SUFFIXES = new Set(["WON", "LOSE", "APOLOGY", "DUPLICATE", "UC_2B9SSK"]);
 
@@ -95,7 +98,8 @@ async function buildTruCodeMapFromExports(dir: string): Promise<Map<string, stri
       if (!worksheet) continue;
       worksheet.eachRow((row, rowNumber) => {
         if (rowNumber === 1) return;
-        const planId = cellText(row.getCell(19));
+        const planId = extractGzPlanPointIdFromUrl(cellText(row.getCell(25)))
+          ?? cellText(row.getCell(19));
         const truCode = cellText(row.getCell(10));
         if (planId && truCode && !map.has(planId)) map.set(planId, truCode);
       });
@@ -141,7 +145,11 @@ async function main(): Promise<void> {
   const deals = await client.listAll(
     "deal",
     { ORIGINATOR_ID: GZ_ORIGINATOR_ID, CATEGORY_ID: SOURCE_CATEGORY_ID },
-    ["ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "ORIGIN_ID", TRU_CODE_FIELD, TRU_CODE_FALLBACK_FIELD, ITEM_NAME_FIELD]
+    [
+      "ID", "TITLE", "STAGE_ID", "CATEGORY_ID", "ORIGIN_ID",
+      TRU_CODE_FIELD, TRU_CODE_FALLBACK_FIELD, ITEM_NAME_FIELD,
+      PLAN_LINK_FIELD, PLAN_LINK_FALLBACK_FIELD
+    ]
   );
   console.log(`deals in category ${SOURCE_CATEGORY_ID} with originator ${GZ_ORIGINATOR_ID}: ${deals.length}`);
 
@@ -151,7 +159,9 @@ async function main(): Promise<void> {
   for (const deal of deals) {
     const dealId = String(deal.ID ?? "");
     const currentStageId = String(deal.STAGE_ID ?? "");
-    const planId = String(deal.ORIGIN_ID ?? "").replace(/^gz-plan:/, "");
+    const planId = extractGzPlanPointIdFromUrl(
+      String(deal[PLAN_LINK_FIELD] ?? deal[PLAN_LINK_FALLBACK_FIELD] ?? "")
+    ) ?? String(deal.ORIGIN_ID ?? "").replace(/^gz-plan:/, "");
     const truCode = String(deal[TRU_CODE_FIELD] ?? "").trim()
       || String(deal[TRU_CODE_FALLBACK_FIELD] ?? "").trim()
       || (planId ? truByPlanId.get(planId) ?? "" : "");

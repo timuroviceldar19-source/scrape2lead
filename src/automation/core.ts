@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { AutomationManifest, AutomationStatus, RollingPeriod } from "./types.js";
+import type { AutomationManifest, AutomationStatus, AutomationWorkflow, RollingPeriod } from "./types.js";
 
 export function createRunId(now = new Date()): string {
   const p = (value: number) => String(value).padStart(2, "0");
@@ -38,6 +38,11 @@ export function readManifest(filePath: string): AutomationManifest {
   return JSON.parse(fs.readFileSync(filePath, "utf8")) as AutomationManifest;
 }
 
+/** v1/v2 manifests predate plans-only runs, so an absent workflow means plans-and-lots. */
+export function manifestWorkflow(manifest: AutomationManifest): AutomationWorkflow {
+  return manifest.workflow ?? "plans-and-lots";
+}
+
 interface RunLock { runId: string; acquiredAt: string }
 export function acquireRunLock(lockPath: string, runId: string, now = new Date(), staleMinutes = 180): { recoveredRunId: string | null } {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -58,7 +63,7 @@ export function releaseRunLock(lockPath: string, runId: string): void {
   if (current.runId === runId) fs.rmSync(lockPath, { force: true });
 }
 
-const RETAINABLE: ReadonlySet<AutomationStatus> = new Set(["ready", "applied", "applied_ai_failed"]);
+const RETAINABLE: ReadonlySet<AutomationStatus> = new Set(["ready", "pushed", "applied", "applied_ai_failed"]);
 export function cleanupSuccessfulRuns(runsDir: string, keep: number): string[] {
   if (!fs.existsSync(runsDir)) return [];
   const successful = fs.readdirSync(runsDir, { withFileTypes: true })

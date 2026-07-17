@@ -2,12 +2,14 @@ import path from "node:path";
 import dotenv from "dotenv";
 import { loadAutomationConfig } from "../src/automation/config.js";
 import { readManifest } from "../src/automation/core.js";
-import { approveAutomationRun, prepareAutomationRun } from "../src/automation/orchestrator.js";
+import { approveAutomationRun, prepareAutomationRun, pushAutomationRun, runScheduledAutomation } from "../src/automation/orchestrator.js";
 import { createRealAutomationDependencies } from "../src/automation/realDependencies.js";
 
 dotenv.config();
 const USAGE = `Usage:
   npm run automation:prepare [-- --config config/automation.json]
+  npm run automation:run [-- --config config/automation.json]
+  npm run automation:push -- --run <run-id> [--config config/automation.json]
   npm run automation:approve -- --run <run-id> [--config config/automation.json]
   npm run automation:status -- --run <run-id> [--config config/automation.json]`;
 
@@ -32,9 +34,22 @@ async function main(): Promise<void> {
     console.log(`report=${path.resolve(config.runsDir,manifest.runId,"summary.txt")}`);
     if(manifest.status!=="ready") process.exitCode=1; return;
   }
+  if(args.command==="run"){
+    requireEnv("BITRIX24_WEBHOOK_URL");
+    const manifest=await runScheduledAutomation(config,createRealAutomationDependencies());
+    console.log(`automation run: run=${manifest.runId} status=${manifest.status}`);
+    console.log(`report=${path.resolve(config.runsDir,manifest.runId,"summary.txt")}`);
+    if(manifest.status!=="pushed") process.exitCode=1; return;
+  }
   if(!args.runId) throw new Error("--run <run-id> is required");
   if(args.command==="status"){
     const manifest=readManifest(path.resolve(config.runsDir,args.runId,"manifest.json")); console.log(JSON.stringify(manifest,null,2)); return;
+  }
+  if(args.command==="push"){
+    requireEnv("BITRIX24_WEBHOOK_URL");
+    const manifest=await pushAutomationRun(config,args.runId,createRealAutomationDependencies());
+    console.log(`automation push: run=${manifest.runId} status=${manifest.status}`);
+    if(manifest.status!=="pushed") process.exitCode=1; return;
   }
   if(args.command==="approve"){
     requireEnv("BITRIX24_WEBHOOK_URL"); requireAiEnv();

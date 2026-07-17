@@ -2,11 +2,16 @@ export type AutomationStatus =
   | "preparing"
   | "ready"
   | "failed"
+  | "pushing"
+  | "pushed"
   | "applying"
   | "applied"
   | "applied_ai_failed";
 
 export type StageStatus = "running" | "succeeded" | "failed";
+
+/** `plans-only` collects and pushes plans; lots and AI analysis stay out of the run. */
+export type AutomationWorkflow = "plans-and-lots" | "plans-only";
 
 export interface AutomationStage {
   status: StageStatus;
@@ -23,8 +28,10 @@ export interface AutomationArtifact {
 }
 
 export interface AutomationManifest {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2 | 3;
   runId: string;
+  /** Absent in v1/v2 manifests, which are always full plans-and-lots runs. Read via `manifestWorkflow`. */
+  workflow?: AutomationWorkflow;
   status: AutomationStatus;
   createdAt: string;
   updatedAt: string;
@@ -33,11 +40,13 @@ export interface AutomationManifest {
   stages: Record<string, AutomationStage>;
   artifacts: Partial<Record<"plans" | "lots" | "plansDryRun" | "lotsDryRun", AutomationArtifact>>;
   errors: Array<{ stage: string; message: string; at: string }>;
+  push: { startedAt: string } | null;
   approval: { requestedAt: string } | null;
 }
 
 export interface AutomationConfig {
   sourcePath?: string;
+  workflow: AutomationWorkflow;
   runsDir: string;
   keepSuccessfulRuns: number;
   lockPath: string;

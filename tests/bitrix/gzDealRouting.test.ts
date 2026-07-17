@@ -1,7 +1,9 @@
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   extractEnstruSuffix,
   gzRoutingConfigSchema,
+  loadGzRoutingConfig,
   resolveGzRoute,
   type GzRoutingConfig
 } from "../../src/bitrix/gzDealRouting.js";
@@ -65,6 +67,18 @@ describe("resolveGzRoute", () => {
 
   it("matches keywords case-insensitively across keyword and itemName", () => {
     expect(resolveGzRoute({ itemName: "МОНОБЛОК 23.8" }, CONFIG).ruleName).toBe("pk-monitors");
+  });
+});
+
+describe("shipped PK plans routing", () => {
+  it("routes every keyword of the PK plans collector to the PK pipeline", () => {
+    const routing = loadGzRoutingConfig("config/bitrix-gz-routing.json");
+    const pk = JSON.parse(fs.readFileSync("config/gz-plans.pk.json", "utf8")) as { keywords: string[] };
+    expect(pk.keywords.length).toBeGreaterThan(0);
+    for (const keyword of pk.keywords) {
+      expect(resolveGzRoute({ keyword }, routing))
+        .toEqual({ categoryId: 9, stageId: "C9:NEW", ruleName: "pk-monitors" });
+    }
   });
 });
 
