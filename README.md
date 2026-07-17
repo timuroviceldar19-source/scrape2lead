@@ -144,13 +144,13 @@ npm run bitrix:migrate-gz-categories -- --help
 
 ```powershell
 npm run kz:check-gz-deals-published
-npm run kz:check-gz-deals-published -- --ensure-published-stages
-npm run kz:check-gz-deals-published -- --ensure-published-stages --execute
 npm run kz:check-gz-deals-published -- --limit 10
 npm run kz:check-gz-deals-published -- --limit 10 --execute
 npm run kz:monitor-gz-published-leads -- --dry-run
 npm run kz:analyze-gz-specs -- --limit 10
 ```
+
+Монитор публикаций обновляет только статус сделки: у сделок со статусом «Утвержден», опубликованных на Goszakup, он записывает «Опубликован» в `UF_CRM_PLAN_STATUS` и в устаревшее совместимое поле, а при первом обнаружении — дату в `UF_CRM_S2L_GZ_PUBLISHED_AT`. Стадии и воронки Bitrix не изменяются, `STAGE_ID` никогда не передаётся. Сделки с другим, пустым или уже опубликованным статусом попадают в отчёт как пропущенные.
 
 Анализатор использует OpenCode vision по умолчанию и поддерживает Anthropic как альтернативный провайдер. Отправляйте во внешнюю модель только публичные тендерные документы.
 

@@ -8,8 +8,7 @@ const routingRuleSchema = z.object({
   /** Подстроки для поиска в keyword/itemName без учёта регистра. */
   keywordsAny: z.array(z.string().min(1)).optional(),
   categoryId: z.number().int().nonnegative(),
-  stageId: z.string().min(1),
-  publishedStageId: z.string().min(1)
+  stageId: z.string().min(1)
 }).refine(
   (rule) => (rule.enstruSuffixes?.length ?? 0) > 0 || (rule.keywordsAny?.length ?? 0) > 0,
   { message: "routing rule needs enstruSuffixes and/or keywordsAny" }
@@ -19,21 +18,20 @@ export const gzRoutingConfigSchema = z.object({
   rules: z.array(routingRuleSchema).min(1),
   default: z.object({
     categoryId: z.number().int().nonnegative(),
-    stageId: z.string().min(1),
-    publishedStageId: z.string().min(1)
+    stageId: z.string().min(1)
   })
 }).superRefine((config, ctx) => {
-  const mappings = new Map<number, { stageId: string; publishedStageId: string }>();
+  const stageByCategory = new Map<number, string>();
   for (const route of [...config.rules, config.default]) {
-    const existing = mappings.get(route.categoryId);
-    if (existing && (existing.stageId !== route.stageId || existing.publishedStageId !== route.publishedStageId)) {
+    const existing = stageByCategory.get(route.categoryId);
+    if (existing && existing !== route.stageId) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `conflicting stage mapping for category ${route.categoryId}`
       });
       continue;
     }
-    mappings.set(route.categoryId, { stageId: route.stageId, publishedStageId: route.publishedStageId });
+    stageByCategory.set(route.categoryId, route.stageId);
   }
 });
 

@@ -14,18 +14,16 @@ const CONFIG: GzRoutingConfig = {
       name: "pk-monitors",
       keywordsAny: ["компьютер", "монитор", "моноблок", "многофункциональн", "мфу"],
       categoryId: 9,
-      stageId: "C9:NEW",
-      publishedStageId: "C9:S2L_PUBLISHED"
+      stageId: "C9:NEW"
     },
     {
       name: "panels-21-43",
       enstruSuffixes: [21, 43],
       categoryId: 41,
-      stageId: "C41:NEW",
-      publishedStageId: "C41:S2L_PUBLISHED"
+      stageId: "C41:NEW"
     }
   ],
-  default: { categoryId: 29, stageId: "C29:NEW", publishedStageId: "C29:S2L_PUBLISHED" }
+  default: { categoryId: 29, stageId: "C29:NEW" }
 };
 
 describe("extractEnstruSuffix", () => {
@@ -85,8 +83,8 @@ describe("shipped PK plans routing", () => {
 describe("gzRoutingConfigSchema", () => {
   it("rejects rules without any matcher", () => {
     expect(() => gzRoutingConfigSchema.parse({
-      rules: [{ name: "bad", categoryId: 1, stageId: "C1:NEW", publishedStageId: "C1:S2L_PUBLISHED" }],
-      default: { categoryId: 29, stageId: "C29:NEW", publishedStageId: "C29:S2L_PUBLISHED" }
+      rules: [{ name: "bad", categoryId: 1, stageId: "C1:NEW" }],
+      default: { categoryId: 29, stageId: "C29:NEW" }
     })).toThrow(/enstruSuffixes and\/or keywordsAny/);
   });
 
@@ -94,20 +92,22 @@ describe("gzRoutingConfigSchema", () => {
     expect(() => gzRoutingConfigSchema.parse(CONFIG)).not.toThrow();
   });
 
-  it("requires a published stage for every route", () => {
-    expect(() => gzRoutingConfigSchema.parse({
-      rules: [{ name: "bad", keywordsAny: ["pc"], categoryId: 9, stageId: "C9:NEW" }],
+  it("ignores a retired publishedStageId left over in an existing config", () => {
+    const parsed = gzRoutingConfigSchema.parse({
+      rules: [{ name: "pc", keywordsAny: ["pc"], categoryId: 9, stageId: "C9:NEW", publishedStageId: "C9:S2L_PUBLISHED" }],
       default: { categoryId: 29, stageId: "C29:NEW", publishedStageId: "C29:S2L_PUBLISHED" }
-    })).toThrow(/publishedStageId/);
+    });
+    expect(parsed.rules[0]).not.toHaveProperty("publishedStageId");
+    expect(parsed.default).not.toHaveProperty("publishedStageId");
   });
 
   it("rejects conflicting stage mappings for the same category", () => {
     expect(() => gzRoutingConfigSchema.parse({
       rules: [
-        { name: "one", keywordsAny: ["pc"], categoryId: 9, stageId: "C9:NEW", publishedStageId: "C9:S2L_PUBLISHED" },
-        { name: "two", keywordsAny: ["monitor"], categoryId: 9, stageId: "C9:OTHER", publishedStageId: "C9:OTHER_PUBLISHED" }
+        { name: "one", keywordsAny: ["pc"], categoryId: 9, stageId: "C9:NEW" },
+        { name: "two", keywordsAny: ["monitor"], categoryId: 9, stageId: "C9:OTHER" }
       ],
-      default: { categoryId: 29, stageId: "C29:NEW", publishedStageId: "C29:S2L_PUBLISHED" }
+      default: { categoryId: 29, stageId: "C29:NEW" }
     })).toThrow(/conflicting stage mapping.*category 9/i);
   });
 });

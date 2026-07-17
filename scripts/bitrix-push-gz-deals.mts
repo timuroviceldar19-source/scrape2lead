@@ -144,8 +144,7 @@ function loadRoutingOrFallback(args: CliArgs): GzRoutingConfig {
     rules: [],
     default: {
       categoryId: args.categoryId,
-      stageId: args.stageId,
-      publishedStageId: args.categoryId === 0 ? "S2L_PUBLISHED" : `C${args.categoryId}:S2L_PUBLISHED`
+      stageId: args.stageId
     }
   };
 }
