@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  READ_ONLY_METHODS,
   ReadOnlyBitrixClient,
   flattenBitrixParams
 } from "../../src/bitrix/reporting/readOnlyClient.js";
@@ -54,5 +55,29 @@ describe("ReadOnlyBitrixClient", () => {
       filter: { CATEGORY_ID: 9 }
     })).toBe("order%5BID%5D=ASC&select%5B0%5D=ID&select%5B1%5D=TITLE&filter%5BCATEGORY_ID%5D=9");
   });
-});
 
+  it("exposes no contact, phone, email or mutating method in the reporting allowlist", () => {
+    expect(READ_ONLY_METHODS).not.toContain("crm.contact.list");
+    expect(READ_ONLY_METHODS.join(" ")).not.toMatch(/(?:phone|email|\.add|\.update|\.delete)/i);
+  });
+
+  it("passes an allowed direct read and ignores null parameters", async () => {
+    const call = vi.fn(async () => [{ ID: "1" }]);
+    const client = new ReadOnlyBitrixClient({ call });
+
+    await expect(client.call("crm.deal.list", { filter: {} })).resolves.toEqual([{ ID: "1" }]);
+    expect(flattenBitrixParams({ id: 1, missing: null, absent: undefined })).toBe("id=1");
+  });
+
+  it("surfaces batch API errors and bounded-pagination overflow", async () => {
+    const errorClient = new ReadOnlyBitrixClient({ call: vi.fn(async () => ({ result: {}, result_error: { p0: { error: "bad" } } })) });
+    await expect(errorClient.listAllBatched("crm.deal.list", {}, undefined, 1)).rejects.toThrow(/batch returned/);
+
+    const full = Array.from({ length: 50 }, (_, index) => ({ ID: String(index) }));
+    const fullClient = new ReadOnlyBitrixClient({ call: vi.fn(async (_method, body) => ({
+      result: Object.fromEntries(Object.keys((body as { cmd: Record<string, string> }).cmd).map((key) => [key, full])),
+      result_error: {}
+    })) });
+    await expect(fullClient.listAllBatched("crm.deal.list", {}, undefined, 1)).rejects.toThrow(/exceeded/);
+  });
+});

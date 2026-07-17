@@ -122,5 +122,35 @@ describe("Bitrix B2G reporting model", () => {
     expect(metrics.previousPeriodEntries).toBe(1);
     expect(metrics.ageBuckets).toEqual(expect.objectContaining({ "61+": 1 }));
   });
-});
 
+  it("uses the Bitrix offset at a UTC period boundary and produces repeatable normalization", () => {
+    const utcBoundaryDeal = deal({ ID: "44", DATE_CREATE: "2025-12-31T22:30:00Z" });
+    const utcBoundaryEvent = event({ OWNER_ID: "44", CREATED_TIME: "2025-12-31T22:30:00Z" });
+
+    const first = buildNormalizedReport([utcBoundaryDeal], [utcBoundaryEvent], config);
+    const second = buildNormalizedReport([utcBoundaryDeal], [utcBoundaryEvent], config);
+
+    expect(first).toEqual(second);
+    expect(computeReportMetrics(first, config).currentPeriodEntries).toBe(1);
+  });
+
+  it("covers context semantics, empty lookups and every operational age bucket", () => {
+    expect(mapCanonicalPhase(0, "WON", "S")).toBe("won");
+    expect(mapCanonicalPhase(0, "LOSE", "F")).toBe("lost");
+    expect(mapCanonicalPhase(0, "NEW", "P")).toBe("legacy_unknown");
+
+    const ages = [3, 10, 20, 45, 80];
+    const rows = ages.map((ageDays, index) => deal({
+      ID: String(100 + index),
+      OPPORTUNITY: index === 0 ? "bad-value" : "1",
+      COMPANY_ID: index === 0 ? "" : String(700 + index),
+      ASSIGNED_BY_ID: index === 0 ? "" : String(70 + index),
+      DATE_MODIFY: new Date(new Date(config.asOf).getTime() - ageDays * 86_400_000).toISOString()
+    }));
+    const report = buildNormalizedReport(rows, [], config);
+    const metrics = computeReportMetrics(report, config);
+
+    expect(metrics.ageBuckets).toEqual({ "0-7": 1, "8-14": 1, "15-30": 1, "31-60": 1, "61+": 1 });
+    expect(report.deals[0]).toEqual(expect.objectContaining({ amount: 0, managerName: "Не назначен", companyName: "Без компании" }));
+  });
+});
