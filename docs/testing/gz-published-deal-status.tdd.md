@@ -10,6 +10,7 @@ earlier stage-moving design: no `S2L_PUBLISHED` stages are created and `STAGE_ID
 - As a manager, I want every Bitrix stage and pipeline left untouched by the monitor.
 - As a manager, I want deals with a different, empty, or already published status left alone.
 - As an auditor, I want the first publication timestamp and the skip reason preserved in reports.
+- As an operator, I want to inspect large result sets in non-overlapping batches without rechecking earlier deals.
 
 ## RED / GREEN report
 
@@ -19,9 +20,10 @@ earlier stage-moving design: no `S2L_PUBLISHED` stages are created and `STAGE_ID
 | Skips for other, empty, and already published statuses | Covered by the same failing run | Same targeted run passed |
 | Dry-run plans an update without calling Bitrix | Covered by the same failing run | Same targeted run passed, `updateDeal` mock never called |
 | Routing config without `publishedStageId` | N/A | `npx vitest run tests/bitrix/gzDealRouting.test.ts`: passed |
-| Repository compatibility | N/A | `npm test`: 42 files and 442 tests passed; `npm run lint`: passed |
+| Non-overlapping `--offset` / `--limit` batches | Targeted run: 2 failed with `selectPublishedDealBatch is not a function` | Same targeted run: 16 passed |
+| Repository compatibility | N/A | `npm test`: 42 files and 444 tests passed; `npm run lint` and `npm run build`: passed |
 | CLI type safety | N/A | Standalone `tsc --noEmit` for `scripts/check-gz-deals-published.mts`: passed |
-| Live read-only dry-run | N/A | `npm run kz:check-gz-deals-published -- --limit 10`: completed without any stage-setup requirement |
+| Live read-only dry-run | N/A | 67 reports covered all 662 deals in batches of 10; no Bitrix writes were requested |
 
 ## Test specification
 
@@ -34,6 +36,7 @@ earlier stage-moving design: no `S2L_PUBLISHED` stages are created and `STAGE_ID
 | 5 | Other, empty, and already published statuses are skipped with a reason and no fields | Unit | PASS |
 | 6 | Execute sends the exact calculated fields; dry-run and skipped deals send nothing | Mocked integration | PASS |
 | 7 | A retired `publishedStageId` left in an existing routing config is ignored | Unit | PASS |
+| 8 | Offset and limit select a stable non-overlapping batch, including the final partial batch | Unit + live read-only | PASS |
 
 ## Coverage and known gaps
 
