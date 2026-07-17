@@ -22,6 +22,12 @@ export interface PublishedDealUpdateClient {
   updateDeal(id: string, fields: Record<string, string>): Promise<void>;
 }
 
+export function selectPublishedDealBatch<T>(deals: T[], offset: number, limit: number | null): T[] {
+  const start = Math.max(0, Math.trunc(offset));
+  if (limit === null) return deals.slice(start);
+  return deals.slice(start, start + Math.max(0, Math.trunc(limit)));
+}
+
 /**
  * Стадии и воронки Bitrix не трогаем: Goszakup — источник истины только для
  * статуса пункта плана, поэтому обновление никогда не содержит STAGE_ID.

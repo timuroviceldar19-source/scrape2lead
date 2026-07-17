@@ -9,6 +9,7 @@ import { extractGzPlanPointIdFromUrl } from "../src/kz/gzPlanIdentity.js";
 import {
   buildPublishedDealUpdate,
   applyPublishedDealUpdate,
+  selectPublishedDealBatch,
   type PublishedDealAction
 } from "../src/bitrix/gzPublishedDealStatus.js";
 
@@ -18,6 +19,7 @@ interface CliArgs {
   webhookUrl: string | null;
   since: string;
   execute: boolean;
+  offset: number;
   limit: number | null;
   delayMs: number;
   jsonReportPath: string;
@@ -78,6 +80,9 @@ interface Report {
   mode: "dry-run" | "execute";
   originatorId: string;
   since: string;
+  offset: number;
+  limit: number | null;
+  totalDeals: number;
   startedAt: string;
   finishedAt: string | null;
   jsonReportPath: string;
@@ -111,6 +116,7 @@ function parseArgs(argv: string[]): CliArgs {
     webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null,
     since: defaultSinceDate(),
     execute: false,
+    offset: 0,
     limit: null,
     delayMs: 350,
     jsonReportPath: path.join("logs", `gz-deals-published-monitor-${stamp}.json`),
@@ -123,6 +129,7 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === "--webhook-url") args.webhookUrl = argv[++i]?.trim() || null;
     else if (arg === "--since") args.since = argv[++i] ?? args.since;
     else if (arg === "--execute") args.execute = true;
+    else if (arg === "--offset") args.offset = parseNonNegativeInt(argv[++i], "--offset");
     else if (arg === "--limit") args.limit = parseOptionalInt(argv[++i]);
     else if (arg === "--delay-ms") args.delayMs = Number(argv[++i] ?? args.delayMs);
     else if (arg === "--report") {
@@ -149,12 +156,15 @@ async function main(): Promise<void> {
   if (args.execute) await client.ensurePublishedAtField();
 
   const deals = await client.listRecentGzDeals(args.since);
-  const limitedDeals = args.limit ? deals.slice(0, args.limit) : deals;
+  const limitedDeals = selectPublishedDealBatch(deals, args.offset, args.limit);
 
   const report: Report = {
     mode: args.execute ? "execute" : "dry-run",
     originatorId: ORIGINATOR_ID,
     since: args.since,
+    offset: args.offset,
+    limit: args.limit,
+    totalDeals: deals.length,
     startedAt,
     finishedAt: null,
     jsonReportPath: args.jsonReportPath,
@@ -176,7 +186,7 @@ async function main(): Promise<void> {
     skippedInvalidOrigin: []
   };
 
-  console.log(`gz deals published monitor: mode=${report.mode} since=${args.since} deals=${limitedDeals.length}`);
+  console.log(`gz deals published monitor: mode=${report.mode} since=${args.since} total=${deals.length} offset=${args.offset} deals=${limitedDeals.length}`);
 
   for (const deal of limitedDeals) {
     const originId = stringOrNull(deal.ORIGIN_ID);
@@ -595,6 +605,11 @@ function parseOptionalInt(value: string | undefined): number | null {
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseNonNegativeInt(value: string | undefined, flag: string): number {
+  if (value === undefined || !/^\d+$/.test(value)) throw new Error(`${flag} must be a non-negative integer`);
+  return Number.parseInt(value, 10);
 }
 
 function replaceExtension(filePath: string, extension: string): string {
