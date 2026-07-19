@@ -32,14 +32,24 @@ describe("KGD CAPTCHA browser integration", () => {
     });
     await page.close();
   });
+
+  it("fails fast when KGD renders a data retrieval error", async () => {
+    const page = await browser.newPage();
+    await page.setContent("<main></main>");
+    const outcomePromise = waitForKgdOutcome(page, "100740005402", 2_000);
+    await page.locator("main").evaluate((element) => { element.textContent = "Ошибка при получении данных"; });
+
+    await expect(outcomePromise).rejects.toThrow("KGD portal error");
+    await page.close();
+  });
 });
 
 describe("automatic CAPTCHA attempts", () => {
-  it("retries once, then returns null for manual fallback", async () => {
+  it("retries once, then fails without entering a manual fallback", async () => {
     const solveToken = vi.fn().mockRejectedValueOnce(new Error("first failed")).mockResolvedValueOnce("token");
     const reset = vi.fn(async () => undefined);
-    const result = await runAutomaticCaptchaAttempts({ attempts: 2, solveToken, applyToken: async () => true, submit: async () => undefined, waitForOutcome: async () => ({ kind: "invalid" }), reset });
-    expect(result).toBeNull(); expect(solveToken).toHaveBeenCalledTimes(2); expect(reset).toHaveBeenCalledTimes(2);
+    await expect(runAutomaticCaptchaAttempts({ attempts: 2, solveToken, applyToken: async () => true, submit: async () => undefined, waitForOutcome: async () => ({ kind: "invalid" }), reset })).rejects.toThrow("Automatic CAPTCHA failed after 2 attempts");
+    expect(solveToken).toHaveBeenCalledTimes(2); expect(reset).toHaveBeenCalledTimes(2);
   });
 
   it("returns the first successful payload without another paid attempt", async () => {
