@@ -6,6 +6,8 @@
 npm run kz:check-counterparties -- --input data/counterparties.xlsx --limit 20
 ```
 
+Для автоматической CAPTCHA добавьте `CAPSOLVER_API_KEY` в локальный `.env`. При наличии ключа используется CapSolver; после двух неудачных попыток Chromium остаётся открытым для ручного решения. Режим можно переопределить через `--captcha-mode auto|manual`. Явный `auto` без ключа завершается ошибкой.
+
 Перед запуском должны быть доступны Python 3 с `reportlab`, Playwright Chromium (`npx playwright install chromium`) и, для автоматического рендера PDF в PNG, Poppler (`pdftoppm`).
 
 Скрипт сначала обновляет публичные bulk-списки КГД, затем открывает Chromium в headed-режиме. Для каждого интерактивного сервиса он заполняет БИН; пользователь решает CAPTCHA и нажимает кнопку поиска. Обход CAPTCHA не выполняется.

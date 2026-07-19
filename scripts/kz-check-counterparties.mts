@@ -1,15 +1,21 @@
 import crypto from "node:crypto";
 import path from "node:path";
+import dotenv from "dotenv";
+import { CapSolverClient } from "../src/kz/capSolverClient.js";
 import { parseCounterpartyArgs, readCounterpartyBins } from "../src/kz/kgdCounterpartyInput.js";
 import { createBulkChecker, loadBulkSources } from "../src/kz/kgdBulkProvider.js";
 import { KgdInteractiveClient } from "../src/kz/kgdInteractiveClient.js";
+import { resolveCaptchaMode } from "../src/kz/kgdCaptchaMode.js";
 import { runCounterpartyChecks } from "../src/kz/kgdCounterpartyWorkflow.js";
 import { verifyPdfWithPoppler, writeCounterpartyExcel, writeCounterpartyPdf } from "../src/kz/kgdReport.js";
 
 async function main(): Promise<void> {
+  dotenv.config({ quiet: true });
   const args = parseCounterpartyArgs(process.argv.slice(2)); const input = await readCounterpartyBins(args.input, args.limit);
   console.log(`Вход: строк=${input.totalRows}, валидных уникальных к обработке=${input.bins.length}, невалидных=${input.invalidRows}, дублей=${input.duplicateRows}, пропущено лимитом=${input.limitSkipped}`);
-  const sources = await loadBulkSources("data/kgd-cache"); const bulk = createBulkChecker(sources); const interactive = new KgdInteractiveClient(10 * 60_000, console.log);
+  const captchaMode = resolveCaptchaMode(args.captchaMode, process.env.CAPSOLVER_API_KEY); const capSolver = captchaMode === "auto" ? new CapSolverClient({ apiKey: process.env.CAPSOLVER_API_KEY! }) : undefined;
+  console.log(`CAPTCHA mode: ${captchaMode}`);
+  const sources = await loadBulkSources("data/kgd-cache"); const bulk = createBulkChecker(sources); const interactive = new KgdInteractiveClient({ timeoutMs: 10 * 60_000, onProgress: console.log, captchaMode, capSolver });
   const progressKey = crypto.createHash("sha256").update(path.resolve(args.input)).digest("hex").slice(0, 12); const progressPath = path.join("data", "kgd-progress", `${progressKey}.json`);
   try {
     const results = await runCounterpartyChecks(input.bins, { progressPath, checkCounterparty: (bin) => interactive.checkCounterparty(bin), checkLiquidation: (bin) => interactive.checkLiquidation(bin), checkBulk: bulk, onProgress: console.log });

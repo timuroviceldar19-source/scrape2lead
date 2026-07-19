@@ -34,3 +34,12 @@ RED checkpoints: `6052a9e`, `e7105b1`, `b343f0f`. Новые тесты были
 ## Known manual checks
 
 Ручной CAPTCHA smoke требует участия пользователя и не выполнялся автоматически. В текущем окружении `pdftoppm` отсутствует; ReportLab PDF создан и проверен по структуре, а CLI выполнит Poppler render автоматически там, где утилита установлена, иначе выведет предупреждение.
+
+## CapSolver extension
+
+- RED checkpoint: `3fef744`; тесты падали из-за отсутствующих CapSolver, browser-injection и mode-модулей.
+- `tests/kz/capSolverClient.test.ts` проверяет `createTask`, polling, ready/failed, balance/HTTP/timeout и редактирование ключа из ошибок.
+- `tests/kz/kgdCaptchaAutomation.test.ts` проверяет site key, textarea, callback, две попытки и ручной fallback в реальном Chromium fixture.
+- Live callback smoke на странице КГД: site key обнаружен, callback вызван; платный CapSolver-запрос без пользовательского ключа не выполнялся.
+- Targeted coverage: 96.83% statements/lines, 95% functions; browser-context код отдельно исполнен Playwright-тестом.
+- Полный regression: 57 test files и 510 тестов PASS; один существующий E2E-тест skipped. `npm run build` PASS.

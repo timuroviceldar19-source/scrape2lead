@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
 
-export interface CounterpartyArgs { input: string; limit: number }
+import type { CaptchaMode } from "./kgdCaptchaMode.js";
+
+export interface CounterpartyArgs { input: string; limit: number; captchaMode: CaptchaMode | undefined }
 export interface BinInputResult { bins: string[]; totalRows: number; invalidRows: number; duplicateRows: number; limitSkipped: number }
 
 export function isValidCounterpartyBin(value: string): boolean { return /^\d{12}$/.test(value); }
@@ -10,17 +12,22 @@ export function isValidCounterpartyBin(value: string): boolean { return /^\d{12}
 export function parseCounterpartyArgs(argv: string[]): CounterpartyArgs {
   let input = "";
   let limit = 20;
+  let captchaMode: CaptchaMode | undefined;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--input") input = argv[++i] ?? "";
     else if (argv[i] === "--limit") {
       const raw = argv[++i] ?? "";
       limit = Number(raw);
       if (!/^\d+$/.test(raw) || !Number.isSafeInteger(limit) || limit <= 0) throw new Error("--limit must be a positive integer");
+    } else if (argv[i] === "--captcha-mode") {
+      const value = argv[++i];
+      if (value !== "auto" && value !== "manual") throw new Error("--captcha-mode must be auto or manual");
+      captchaMode = value;
     } else throw new Error(`Unknown argument: ${argv[i]}`);
   }
   if (!input) throw new Error("--input <file.xlsx|csv> is required");
   if (!/\.(csv|xlsx)$/i.test(input)) throw new Error("Input must be a CSV or XLSX file");
-  return { input, limit };
+  return { input, limit, captchaMode };
 }
 
 export async function readCounterpartyBins(file: string, limit = 20): Promise<BinInputResult> {

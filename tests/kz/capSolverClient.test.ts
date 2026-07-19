@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CapSolverClient } from "../../src/kz/capSolverClient.js";
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+async function captureError(promise: Promise<unknown>): Promise<Error> { try { await promise; } catch (error) { return error as Error; } throw new Error("Expected rejection"); }
 
 describe("CapSolverClient", () => {
   it("creates a proxyless reCAPTCHA v2 task and returns a ready token", async () => {
@@ -24,11 +25,11 @@ describe("CapSolverClient", () => {
   });
 
   it.each([
-    [{ errorId: 1, errorCode: "ERROR_ZERO_BALANCE", errorDescription: "Not enough balance" }, /ERROR_ZERO_BALANCE/],
+    [{ errorId: 1, errorCode: "ERROR_ZERO_BALANCE", errorDescription: "Rejected key top-secret" }, /ERROR_ZERO_BALANCE/],
     [{ errorId: 0, status: "failed", errorCode: "ERROR_CAPTCHA_UNSOLVABLE" }, /ERROR_CAPTCHA_UNSOLVABLE/]
   ])("reports API failures without leaking the key", async (failure, expected) => {
     const fetcher = vi.fn().mockResolvedValueOnce(json(failure.errorId ? failure : { errorId: 0, taskId: "t" })).mockResolvedValueOnce(json(failure));
-    const error = await new CapSolverClient({ apiKey: "top-secret", fetcher, sleep: async () => undefined }).solveRecaptchaV2({ websiteURL: "https://x", websiteKey: "s" }).catch((value) => value as Error);
+    const error = await captureError(new CapSolverClient({ apiKey: "top-secret", fetcher, sleep: async () => undefined }).solveRecaptchaV2({ websiteURL: "https://x", websiteKey: "s" }));
     expect(error.message).toMatch(expected);
     expect(error.message).not.toContain("top-secret");
   });
@@ -37,14 +38,14 @@ describe("CapSolverClient", () => {
     const fetcher = vi.fn().mockResolvedValueOnce(json({ errorId: 0, taskId: "t" })).mockResolvedValue(json({ errorId: 0, status: "processing" }));
     let now = 0;
     const client = new CapSolverClient({ apiKey: "top-secret", fetcher, timeoutMs: 2, now: () => now, sleep: async () => { now += 2; } });
-    const error = await client.solveRecaptchaV2({ websiteURL: "https://x", websiteKey: "s" }).catch((value) => value as Error);
+    const error = await captureError(client.solveRecaptchaV2({ websiteURL: "https://x", websiteKey: "s" }));
     expect(error.message).toMatch(/timeout/i);
     expect(error.message).not.toContain("top-secret");
   });
 
   it("reports HTTP errors without echoing response bodies or keys", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response("top-secret internal", { status: 503 }));
-    const error = await new CapSolverClient({ apiKey: "top-secret", fetcher }).solveRecaptchaV2({ websiteURL: "https://x", websiteKey: "s" }).catch((value) => value as Error);
+    const error = await captureError(new CapSolverClient({ apiKey: "top-secret", fetcher }).solveRecaptchaV2({ websiteURL: "https://x", websiteKey: "s" }));
     expect(error.message).toBe("CapSolver HTTP 503");
   });
 });
