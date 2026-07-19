@@ -32,3 +32,11 @@ The live KGD retry was not repeated after the fix to avoid another paid CapSolve
 - GREEN checkpoint `399dc07`: the rendered/JSON portal error now rejects the attempt, and exhausted automatic attempts throw instead of selecting manual fallback.
 - Target result: 5/5 tests PASS; CAPTCHA automation coverage is 96.55% lines/statements and 80% functions.
 - Full regression: 57 files and 512 tests PASS; one pre-existing E2E test skipped. `npm run build` PASS.
+
+## Early outcome rejection regression (20.07.2026)
+
+- Live batch evidence: a portal-error toast rejected the response promise while the submit click was still pending, causing Node 24 to terminate on an unhandled rejection.
+- RED checkpoint `2074f4e`: all assertions completed, but Vitest failed the target with one `Unhandled Rejection` matching the live stack.
+- GREEN checkpoint `aa9804a`: the outcome promise receives a rejection handler immediately while remaining awaitable by the attempt loop.
+- Target result: 6/6 tests PASS with no unhandled errors; CAPTCHA automation coverage is 100% lines/statements/functions.
+- Full regression: 57 files and 513 tests PASS; one pre-existing E2E test skipped. `npm run build` PASS.
