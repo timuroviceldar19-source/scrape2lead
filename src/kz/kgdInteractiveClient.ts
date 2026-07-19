@@ -59,21 +59,41 @@ async function fillBin(page: Page, bin: string): Promise<void> {
   for (const locator of candidates) try { await locator.first().waitFor({ state: "visible", timeout: 8_000 }); await locator.first().fill(bin); return; } catch { /* try next stable locator */ }
   throw new Error("Не найдено поле БИН на странице КГД");
 }
-function waitForPayload(page: Page, bin: string, timeoutMs: number): Promise<unknown> { return new Promise((resolve, reject) => { const timer = setTimeout(() => { page.off("response", listener); reject(new Error("CAPTCHA timeout")); }, timeoutMs); const listener = async (response: Response) => { if (!/json/i.test(response.headers()["content-type"] ?? "")) return; try { const value = await response.json(); if (!JSON.stringify(value).includes(bin)) return; clearTimeout(timer); page.off("response", listener); resolve(value); } catch { /* ignore unrelated responses */ } }; page.on("response", listener); }); }
+async function waitForPayload(page: Page, bin: string, timeoutMs: number): Promise<unknown> {
+  const outcome = await waitForKgdOutcome(page, bin, timeoutMs, false);
+  return outcome.payload;
+}
 
-function waitForKgdOutcome(page: Page, bin: string, timeoutMs: number): Promise<CaptchaOutcome> {
+const NO_DATA_PATTERN = /\u0434\u0430\u043d\u043d\u044b\u0435\s+\u043d\u0435\s+\u043d\u0430\u0439\u0434\u0435\u043d\u044b/i;
+const NO_DATA_PAYLOAD = { data: { isLiquidated: false } };
+
+export function waitForKgdOutcome(page: Page, bin: string, timeoutMs: number, detectInvalid = true): Promise<CaptchaOutcome> {
   return new Promise((resolve, reject) => {
-    const finish = (result: CaptchaOutcome): void => { clearTimeout(timer); page.off("response", listener); resolve(result); };
-    const timer = setTimeout(() => { page.off("response", listener); reject(new Error("KGD response timeout")); }, timeoutMs);
+    let settled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = (): void => { clearTimeout(timer); if (pollTimer) clearTimeout(pollTimer); page.off("response", listener); };
+    const finish = (result: CaptchaOutcome): void => { if (settled) return; settled = true; cleanup(); resolve(result); };
+    const timer = setTimeout(() => { if (settled) return; settled = true; cleanup(); reject(new Error("KGD response timeout")); }, timeoutMs);
     const listener = async (response: Response) => {
       if (!/json/i.test(response.headers()["content-type"] ?? "")) return;
       try {
         const value = await response.json(); const serialized = JSON.stringify(value);
-        if (serialized.includes("error.invalid-recaptcha")) finish({ kind: "invalid" });
+        if (NO_DATA_PATTERN.test(serialized)) finish({ kind: "success", payload: NO_DATA_PAYLOAD });
+        else if (detectInvalid && serialized.includes("error.invalid-recaptcha")) finish({ kind: "invalid" });
         else if (serialized.includes(bin)) finish({ kind: "success", payload: value });
       } catch { /* ignore unrelated responses */ }
     };
     page.on("response", listener);
+
+    const pollForNoData = async (): Promise<void> => {
+      if (settled) return;
+      try {
+        const bodyText = await page.locator("body").innerText({ timeout: 1_000 });
+        if (NO_DATA_PATTERN.test(bodyText)) { finish({ kind: "success", payload: NO_DATA_PAYLOAD }); return; }
+      } catch { /* page may be navigating while the result is rendered */ }
+      if (!settled) pollTimer = setTimeout(() => void pollForNoData(), 200);
+    };
+    void pollForNoData();
   });
 }
 
