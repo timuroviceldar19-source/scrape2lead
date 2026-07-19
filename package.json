@@ -35,10 +35,12 @@
     "kz:bitrix-push-gz-deals": "tsx scripts/bitrix-push-gz-deals.mts",
     "kz:bitrix-push-gz-lots": "tsx scripts/bitrix-push-gz-lots.mts",
     "kz:check-gz-deals-published": "tsx scripts/check-gz-deals-published.mts",
-    "kz:analyze-gz-specs": "tsx scripts/analyze-gz-specs.mts"
+    "kz:analyze-gz-specs": "tsx scripts/analyze-gz-specs.mts",
+    "kz:check-counterparties": "tsx scripts/kz-check-counterparties.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
+    "@e965/xlsx": "^0.20.3",
     "better-sqlite3": "^11.10.0",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",

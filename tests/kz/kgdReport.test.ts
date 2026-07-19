@@ -15,7 +15,7 @@ describe("KGD report artifacts", () => {
     const book = new ExcelJS.Workbook(); await book.xlsx.readFile(file); const sheet = book.worksheets[0];
     expect(sheet.autoFilter).toBeTruthy(); expect(sheet.views[0].state).toBe("frozen");
     expect(sheet.getRow(2).fill).toMatchObject({ type: "pattern", fgColor: { argb: "FFC6EFCE" } });
-    expect(sheet.getRow(2).values.join(" ")).toContain("2026-07-10");
+    expect(String(sheet.getRow(2).values)).toContain("2026-07-10");
   });
 
   it("creates a non-empty ReportLab PDF with Cyrillic content", async () => {
