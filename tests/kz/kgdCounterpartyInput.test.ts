@@ -7,11 +7,17 @@ import { parseCounterpartyArgs, readCounterpartyBins } from "../../src/kz/kgdCou
 
 describe("counterparty CLI input", () => {
   it("defaults limit to 20 and validates positive integers", () => {
-    expect(parseCounterpartyArgs(["--input", "bins.csv"])).toEqual({ input: "bins.csv", limit: 20 });
+    expect(parseCounterpartyArgs(["--input", "bins.csv"])).toEqual({ input: "bins.csv", limit: 20, captchaMode: undefined });
     expect(parseCounterpartyArgs(["--input", "bins.csv", "--limit", "2"]).limit).toBe(2);
     for (const value of ["0", "-1", "1.5", "x"]) {
       expect(() => parseCounterpartyArgs(["--input", "x.csv", "--limit", value])).toThrow(/positive integer/i);
     }
+  });
+
+  it("parses explicit CAPTCHA modes", () => {
+    expect(parseCounterpartyArgs(["--input", "bins.csv", "--captcha-mode", "auto"]).captchaMode).toBe("auto");
+    expect(parseCounterpartyArgs(["--input", "bins.csv", "--captcha-mode", "manual"]).captchaMode).toBe("manual");
+    expect(() => parseCounterpartyArgs(["--input", "bins.csv", "--captcha-mode", "bad"])).toThrow(/captcha-mode/i);
   });
 
   it("reads CSV, preserves leading zeroes/order, deduplicates and reports skipped rows", async () => {
