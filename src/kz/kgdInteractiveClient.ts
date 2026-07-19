@@ -42,8 +42,7 @@ export class KgdInteractiveClient {
           reset: () => resetRecaptcha(page),
           onAttemptError: (error, attempt) => this.onProgress(`${label}: автоматическая попытка ${attempt}/2 не удалась: ${error.message}`)
         });
-        if (payload !== null) return payload;
-        this.onProgress(`${label}: CapSolver не завершил проверку, переход к ручной CAPTCHA.`);
+        return payload;
       }
       const responsePromise = waitForPayload(page, bin, this.timeoutMs);
       this.onProgress(`${label}: БИН заполнен. Решите CAPTCHA в открытом Chromium и запустите поиск.`);
@@ -65,6 +64,7 @@ async function waitForPayload(page: Page, bin: string, timeoutMs: number): Promi
 }
 
 const NO_DATA_PATTERN = /\u0434\u0430\u043d\u043d\u044b\u0435\s+\u043d\u0435\s+\u043d\u0430\u0439\u0434\u0435\u043d\u044b/i;
+const PORTAL_ERROR_PATTERN = /\u043e\u0448\u0438\u0431\u043a\u0430\s+\u043f\u0440\u0438\s+\u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u0438\s+\u0434\u0430\u043d\u043d\u044b\u0445/i;
 const NO_DATA_PAYLOAD = { data: { isLiquidated: false } };
 
 export function waitForKgdOutcome(page: Page, bin: string, timeoutMs: number, detectInvalid = true): Promise<CaptchaOutcome> {
@@ -73,12 +73,14 @@ export function waitForKgdOutcome(page: Page, bin: string, timeoutMs: number, de
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
     const cleanup = (): void => { clearTimeout(timer); if (pollTimer) clearTimeout(pollTimer); page.off("response", listener); };
     const finish = (result: CaptchaOutcome): void => { if (settled) return; settled = true; cleanup(); resolve(result); };
-    const timer = setTimeout(() => { if (settled) return; settled = true; cleanup(); reject(new Error("KGD response timeout")); }, timeoutMs);
+    const fail = (error: Error): void => { if (settled) return; settled = true; cleanup(); reject(error); };
+    const timer = setTimeout(() => fail(new Error("KGD response timeout")), timeoutMs);
     const listener = async (response: Response) => {
       if (!/json/i.test(response.headers()["content-type"] ?? "")) return;
       try {
         const value = await response.json(); const serialized = JSON.stringify(value);
-        if (NO_DATA_PATTERN.test(serialized)) finish({ kind: "success", payload: NO_DATA_PAYLOAD });
+        if (PORTAL_ERROR_PATTERN.test(serialized)) fail(new Error("KGD portal error: data retrieval failed"));
+        else if (NO_DATA_PATTERN.test(serialized)) finish({ kind: "success", payload: NO_DATA_PAYLOAD });
         else if (detectInvalid && serialized.includes("error.invalid-recaptcha")) finish({ kind: "invalid" });
         else if (serialized.includes(bin)) finish({ kind: "success", payload: value });
       } catch { /* ignore unrelated responses */ }
@@ -89,6 +91,7 @@ export function waitForKgdOutcome(page: Page, bin: string, timeoutMs: number, de
       if (settled) return;
       try {
         const bodyText = await page.locator("body").innerText({ timeout: 1_000 });
+        if (PORTAL_ERROR_PATTERN.test(bodyText)) { fail(new Error("KGD portal error: data retrieval failed")); return; }
         if (NO_DATA_PATTERN.test(bodyText)) { finish({ kind: "success", payload: NO_DATA_PAYLOAD }); return; }
       } catch { /* page may be navigating while the result is rendered */ }
       if (!settled) pollTimer = setTimeout(() => void pollForNoData(), 200);

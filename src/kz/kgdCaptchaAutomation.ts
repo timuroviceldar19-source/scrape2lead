@@ -56,7 +56,7 @@ export async function injectRecaptchaToken(page: Page, token: string, siteKey: s
   /* v8 ignore stop */
 }
 
-export async function runAutomaticCaptchaAttempts(options: AutomaticCaptchaAttemptOptions): Promise<unknown | null> {
+export async function runAutomaticCaptchaAttempts(options: AutomaticCaptchaAttemptOptions): Promise<unknown> {
   for (let attempt = 1; attempt <= options.attempts; attempt++) {
     let outcomePromise: Promise<CaptchaOutcome> | undefined;
     try {
@@ -72,7 +72,7 @@ export async function runAutomaticCaptchaAttempts(options: AutomaticCaptchaAttem
     }
     await options.reset();
   }
-  return null;
+  throw new Error(`Automatic CAPTCHA failed after ${options.attempts} attempts`);
 }
 
 function asError(value: unknown): Error { return value instanceof Error ? value : new Error(String(value)); }
