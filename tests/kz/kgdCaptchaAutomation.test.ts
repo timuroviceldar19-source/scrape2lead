@@ -57,4 +57,21 @@ describe("automatic CAPTCHA attempts", () => {
     await expect(runAutomaticCaptchaAttempts({ attempts: 2, solveToken, applyToken: async () => true, submit: async () => undefined, waitForOutcome: async () => ({ kind: "success", payload }), reset: async () => undefined })).resolves.toEqual(payload);
     expect(solveToken).toHaveBeenCalledTimes(1);
   });
+
+  it("handles an outcome rejection that arrives while submit is still pending", async () => {
+    let rejectOutcome!: (error: Error) => void;
+    const outcome = new Promise<never>((_resolve, reject) => { rejectOutcome = reject; });
+    const onAttemptError = vi.fn();
+
+    await expect(runAutomaticCaptchaAttempts({
+      attempts: 1,
+      solveToken: async () => "token",
+      applyToken: async () => true,
+      submit: async () => { rejectOutcome(new Error("KGD portal error")); await new Promise((resolve) => setTimeout(resolve, 20)); },
+      waitForOutcome: () => outcome,
+      reset: async () => undefined,
+      onAttemptError
+    })).rejects.toThrow("Automatic CAPTCHA failed after 1 attempts");
+    expect(onAttemptError).toHaveBeenCalledWith(expect.objectContaining({ message: "KGD portal error" }), 1);
+  });
 });
