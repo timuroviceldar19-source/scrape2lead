@@ -24,3 +24,11 @@ The journey was derived from the user's live observation on 20.07.2026: when KGD
 ## Known gaps
 
 The live KGD retry was not repeated after the fix to avoid another paid CapSolver request without need. The saved progress for BIN `100740005402` remains reusable for a resumed run.
+
+## Portal-error and no-manual-fallback regression (20.07.2026)
+
+- User journey: when KGD renders `Ошибка при получении данных`, fail the current automatic attempt immediately; after two failed attempts, return control to the batch workflow without opening manual CAPTCHA waiting.
+- RED checkpoint `ccd6b41`: the Playwright toast test timed out and the automatic-attempt test resolved to `null`, reproducing both reported behaviors.
+- GREEN checkpoint `399dc07`: the rendered/JSON portal error now rejects the attempt, and exhausted automatic attempts throw instead of selecting manual fallback.
+- Target result: 5/5 tests PASS; CAPTCHA automation coverage is 96.55% lines/statements and 80% functions.
+- Full regression: 57 files and 512 tests PASS; one pre-existing E2E test skipped. `npm run build` PASS.
