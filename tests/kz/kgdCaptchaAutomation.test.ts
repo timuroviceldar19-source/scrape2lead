@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Browser } from "playwright";
 import { discoverRecaptchaSiteKey, injectRecaptchaToken, runAutomaticCaptchaAttempts } from "../../src/kz/kgdCaptchaAutomation.js";
+import { waitForKgdOutcome } from "../../src/kz/kgdInteractiveClient.js";
 
 describe("KGD CAPTCHA browser integration", () => {
   let browser: Browser;
@@ -16,6 +17,19 @@ describe("KGD CAPTCHA browser integration", () => {
     expect(await injectRecaptchaToken(page, "solution-token", "site-key-1")).toBe(true);
     expect(await page.locator('textarea[name="g-recaptcha-response"]').inputValue()).toBe("solution-token");
     expect(await page.evaluate(() => (globalThis as any).__callbackToken)).toBe("solution-token");
+    await page.close();
+  });
+
+  it("treats the rendered no-data message as a successful negative result", async () => {
+    const page = await browser.newPage();
+    await page.setContent("<main></main>");
+    const outcomePromise = waitForKgdOutcome(page, "100740005402", 2_000);
+    await page.locator("main").evaluate((element) => { element.textContent = "Данные не найдены"; });
+
+    await expect(outcomePromise).resolves.toEqual({
+      kind: "success",
+      payload: { data: { isLiquidated: false } }
+    });
     await page.close();
   });
 });
