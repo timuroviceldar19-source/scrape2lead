@@ -28,7 +28,7 @@ export async function readCounterpartyBins(file: string, limit = 20): Promise<Bi
   const rows = path.extname(file).toLowerCase() === ".csv" ? readCsv(fs.readFileSync(file, "utf8")) : await readXlsx(file);
   if (rows.length === 0) throw new Error("Input is empty");
   const header = rows[0].map(normalizeHeader);
-  const binIndex = header.findIndex((value) => ["бин", "бин(иин)", "бин/иин"].includes(value));
+  const binIndex = header.findIndex((value) => ["бин", "bin", "бин(иин)", "бин/иин"].includes(value));
   if (binIndex < 0) throw new Error("BIN column not found (expected БИН, БИН(ИИН), or БИН/ИИН)");
   const seen = new Set<string>();
   const unique: string[] = [];

@@ -21,6 +21,12 @@ describe("counterparty CLI input", () => {
     await expect(readCounterpartyBins(file, 1)).resolves.toEqual({ bins: ["000240001420"], totalRows: 4, invalidRows: 1, duplicateRows: 1, limitSkipped: 1 });
   });
 
+  it("accepts the latin bin header used by repository batch files", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kgd-latin-bin-")); const file = path.join(dir, "bins.csv");
+    fs.writeFileSync(file, "bin\n160640003364\n");
+    expect((await readCounterpartyBins(file, 20)).bins).toEqual(["160640003364"]);
+  });
+
   it("finds a normalized BIN/IIN header in XLSX", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kgd-xlsx-"));
     const file = path.join(dir, "bins.xlsx");
