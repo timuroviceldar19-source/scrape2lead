@@ -63,6 +63,7 @@ export async function runAutomaticCaptchaAttempts(options: AutomaticCaptchaAttem
       const token = await options.solveToken();
       if (!await options.applyToken(token)) throw new Error("reCAPTCHA callback not found");
       outcomePromise = options.waitForOutcome();
+      void outcomePromise.catch(() => undefined);
       await options.submit();
       const outcome = await outcomePromise;
       if (outcome.kind === "success") return outcome.payload;
