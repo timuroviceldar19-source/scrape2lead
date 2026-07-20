@@ -10,6 +10,13 @@ export interface PublishedDealSnapshot {
   UF_CRM_S2L_GZ_PUBLISHED_AT?: string | null;
 }
 
+export interface PanelsGzPlanSnapshot {
+  TITLE?: string | null;
+  CATEGORY_ID?: string | number | null;
+  UF_CRM_1713874845756?: string | null;
+  UF_CRM_S2L_GZ_KEYWORD?: string | null;
+}
+
 export type PublishedDealAction = "update-status" | "skipped";
 
 export interface PublishedDealUpdate {
@@ -26,6 +33,29 @@ export function selectPublishedDealBatch<T>(deals: T[], offset: number, limit: n
   const start = Math.max(0, Math.trunc(offset));
   if (limit === null) return deals.slice(start);
   return deals.slice(start, start + Math.max(0, Math.trunc(limit)));
+}
+
+export function isPanelsGzPlanDeal(deal: PanelsGzPlanSnapshot, keywords: readonly string[]): boolean {
+  const explicitValues = [
+    text(deal.UF_CRM_1713874845756),
+    text(deal.UF_CRM_S2L_GZ_KEYWORD)
+  ].filter(Boolean);
+  const haystack = normalizeRu(explicitValues.length > 0 ? explicitValues.join(" ") : text(deal.TITLE));
+  if (!haystack) return false;
+
+  return keywords.some((keyword) => {
+    const normalizedKeyword = normalizeRu(keyword);
+    return normalizedKeyword.length > 0 && haystack.includes(normalizedKeyword);
+  });
+}
+
+export function selectPanelsPublishedDealBatch<T extends PanelsGzPlanSnapshot>(
+  deals: T[],
+  keywords: readonly string[],
+  offset: number,
+  limit: number | null
+): T[] {
+  return selectPublishedDealBatch(deals.filter((deal) => isPanelsGzPlanDeal(deal, keywords)), offset, limit);
 }
 
 /**

@@ -154,7 +154,7 @@ describe("panels GZ plans selection", () => {
     [{ UF_CRM_S2L_GZ_KEYWORD: "ПАНЕЛЬ ЖИДКОКРИСТАЛЛИЧЕСКАЯ" }, "keyword"],
     [{ UF_CRM_1713874845756: "Доска специальная" }, "special board"],
     [{ TITLE: "[GZ 123] Заказчик - Панель интерактивная" }, "legacy title fallback"]
-  ])("includes a panels deal identified by %s", (candidate) => {
+  ])("includes a panels deal identified by %s (%s)", (candidate, _source) => {
     expect(isPanelsGzPlanDeal(candidate, keywords)).toBe(true);
   });
 
