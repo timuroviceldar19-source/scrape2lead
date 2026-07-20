@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildPublishedDealUpdate,
   applyPublishedDealUpdate,
+  isPanelsGzPlanDeal,
+  selectPanelsPublishedDealBatch,
   selectPublishedDealBatch
 } from "../../src/bitrix/gzPublishedDealStatus.js";
 
@@ -141,5 +143,49 @@ describe("selectPublishedDealBatch", () => {
 
   it("returns the remaining deals when the limit is omitted", () => {
     expect(selectPublishedDealBatch(deals, 30, null).map((deal) => deal.id)).toEqual([31, 32, 33, 34, 35]);
+  });
+});
+
+describe("panels GZ plans selection", () => {
+  const keywords = ["Доска специальная", "Панель интерактивная", "Панель жидкокристаллическая"];
+
+  it.each([
+    [{ UF_CRM_1713874845756: "Панель интерактивная с комплектом" }, "item name"],
+    [{ UF_CRM_S2L_GZ_KEYWORD: "ПАНЕЛЬ ЖИДКОКРИСТАЛЛИЧЕСКАЯ" }, "keyword"],
+    [{ UF_CRM_1713874845756: "Доска специальная" }, "special board"],
+    [{ TITLE: "[GZ 123] Заказчик - Панель интерактивная" }, "legacy title fallback"]
+  ])("includes a panels deal identified by %s", (candidate) => {
+    expect(isPanelsGzPlanDeal(candidate, keywords)).toBe(true);
+  });
+
+  it("does not use TITLE when an explicit item field is populated", () => {
+    expect(isPanelsGzPlanDeal({
+      UF_CRM_1713874845756: "Компьютер персональный",
+      TITLE: "Панель интерактивная"
+    }, keywords)).toBe(false);
+  });
+
+  it("excludes PK plans and ignores the Bitrix category", () => {
+    expect(isPanelsGzPlanDeal({
+      CATEGORY_ID: 41,
+      UF_CRM_1713874845756: "Компьютер персональный",
+      UF_CRM_S2L_GZ_KEYWORD: "Монитор"
+    }, keywords)).toBe(false);
+    expect(isPanelsGzPlanDeal({
+      CATEGORY_ID: 9,
+      UF_CRM_S2L_GZ_KEYWORD: "Панель интерактивная"
+    }, keywords)).toBe(true);
+  });
+
+  it("applies offset and limit after filtering out non-panels deals", () => {
+    const deals = [
+      { id: 1, UF_CRM_S2L_GZ_KEYWORD: "Компьютер персональный" },
+      { id: 2, UF_CRM_S2L_GZ_KEYWORD: "Панель интерактивная" },
+      { id: 3, UF_CRM_S2L_GZ_KEYWORD: "Монитор" },
+      { id: 4, UF_CRM_S2L_GZ_KEYWORD: "Доска специальная" },
+      { id: 5, UF_CRM_S2L_GZ_KEYWORD: "Панель жидкокристаллическая" }
+    ];
+
+    expect(selectPanelsPublishedDealBatch(deals, keywords, 1, 1)).toEqual([deals[3]]);
   });
 });
