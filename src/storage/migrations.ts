@@ -494,6 +494,14 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_procurement_records_parent ON procurement_records(source, parent_external_id);
       CREATE INDEX IF NOT EXISTS idx_procurement_records_bin ON procurement_records(customer_bin);
     `
+  },
+  {
+    version: 19,
+    run: (db: Database.Database) => {
+      if (!tableExists(db, "procurement_records")) return;
+      const columns = new Set(getColumnNames(db, "procurement_records"));
+      addColumnIfMissing(db, "procurement_records", columns, "source_record_id", "TEXT");
+    }
   }
 ];
 

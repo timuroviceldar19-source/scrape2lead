@@ -9,7 +9,7 @@ export function parseEpzPlan(input: unknown, collectedAt = new Date().toISOStrin
   const externalId = text(row.external_id);
   const enstru = object(row.enstru);
   return {
-    source, recordKind: "plan", externalId, parentExternalId: null,
+    source, recordKind: "plan", sourceRecordId: nullableText(row.id), externalId, parentExternalId: null,
     status: nullableText(row.status_name), productName: text(enstru.name_ru ?? enstru.name_text_ru),
     description: text(row.extra_description), truCode: nullableText(enstru.code ?? enstru.key ?? row.enstru_key),
     customerName: nullableText(row.organization_name), customerBin: normalizeBin(row.organization_bin ?? row.customer_bin),
@@ -30,7 +30,7 @@ export function parseEpzLot(input: unknown, collectedAt = new Date().toISOString
   const enstrus = Array.isArray(row.enstrus) ? row.enstrus : [];
   const firstEnstru = object(enstrus[0]);
   return {
-    source, recordKind: "tender", externalId,
+    source, recordKind: "tender", sourceRecordId: nullableText(row.id), externalId,
     parentExternalId: nullableText(firstPlan.external_id ?? firstPlan.id),
     status: nullableText(row.status_name ?? object(row.status).name),
     productName: text(row.name_ru ?? firstEnstru.name_ru),

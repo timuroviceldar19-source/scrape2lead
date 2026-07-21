@@ -14,7 +14,8 @@ export interface ExistingProcurementDeal {
 
 export function procurementOpportunityOriginId(record: ProcurementRecord): string {
   if (record.recordKind === "tender" && record.parentExternalId) return `proc:${record.source}:plan:${record.parentExternalId}`;
-  return `proc:${record.source}:${record.recordKind}:${record.externalId}`;
+  const upstreamKey = record.sourceRecordId ?? record.externalId;
+  return `proc:${record.source}:${record.recordKind}:${upstreamKey}`;
 }
 
 export function buildProcurementDealDecision(record: ProcurementRecord, existing: ExistingProcurementDeal | null): {

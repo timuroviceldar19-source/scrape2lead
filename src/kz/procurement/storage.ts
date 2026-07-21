@@ -8,21 +8,21 @@ export class ProcurementStorage {
   upsert(record: ProcurementRecord): void {
     this.options.db.prepare(`
       INSERT INTO procurement_records (
-        source, record_kind, external_id, parent_external_id, status, product_name, description,
+        source, record_kind, source_record_id, external_id, parent_external_id, status, product_name, description,
         tru_code, customer_name, customer_bin, amount, currency, start_date, end_date, url,
         purchase_method, collected_at
       ) VALUES (
-        @source, @recordKind, @externalId, @parentExternalId, @status, @productName, @description,
+        @source, @recordKind, @sourceRecordId, @externalId, @parentExternalId, @status, @productName, @description,
         @truCode, @customerName, @customerBin, @amount, @currency, @startDate, @endDate, @url,
         @purchaseMethod, @collectedAt
       )
       ON CONFLICT(source, record_kind, external_id) DO UPDATE SET
-        parent_external_id=excluded.parent_external_id, status=excluded.status,
+        source_record_id=excluded.source_record_id, parent_external_id=excluded.parent_external_id, status=excluded.status,
         product_name=excluded.product_name, description=excluded.description, tru_code=excluded.tru_code,
         customer_name=excluded.customer_name, customer_bin=excluded.customer_bin, amount=excluded.amount,
         currency=excluded.currency, start_date=excluded.start_date, end_date=excluded.end_date,
         url=excluded.url, purchase_method=excluded.purchase_method, collected_at=excluded.collected_at
-    `).run(record);
+    `).run({ ...record, sourceRecordId: record.sourceRecordId ?? null });
   }
 
   list(): ProcurementRecord[] {
@@ -34,7 +34,7 @@ export class ProcurementStorage {
 function mapRow(row: Record<string, unknown>): ProcurementRecord {
   return {
     source: String(row.source) as ProcurementRecord["source"], recordKind: String(row.record_kind) as ProcurementRecord["recordKind"],
-    externalId: String(row.external_id), parentExternalId: nullable(row.parent_external_id), status: nullable(row.status),
+    sourceRecordId: nullable(row.source_record_id), externalId: String(row.external_id), parentExternalId: nullable(row.parent_external_id), status: nullable(row.status),
     productName: String(row.product_name), description: String(row.description), truCode: nullable(row.tru_code),
     customerName: nullable(row.customer_name), customerBin: nullable(row.customer_bin), amount: Number(row.amount),
     currency: String(row.currency), startDate: nullable(row.start_date), endDate: nullable(row.end_date), url: String(row.url),

@@ -5,6 +5,7 @@ export type ProcurementProduct = "panel" | "pk";
 export interface ProcurementRecord {
   source: ProcurementSource;
   recordKind: ProcurementRecordKind;
+  sourceRecordId?: string | null;
   externalId: string;
   parentExternalId: string | null;
   status: string | null;

@@ -5,7 +5,7 @@ export function parseTizilimTender(input: unknown, collectedAt = new Date().toIS
   const customer = object(row.customer);
   const externalId = text(row.number);
   return {
-    source: "tizilim", recordKind: "tender", externalId,
+    source: "tizilim", recordKind: "tender", sourceRecordId: nullableText(row.id), externalId,
     parentExternalId: nullableText(row.plan_number ?? row.parent_number),
     status: nullableText(object(row.status).name_ru ?? row.status_name),
     productName: text(row.name_ru), description: text(row.description_ru),

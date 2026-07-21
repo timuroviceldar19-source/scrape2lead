@@ -27,7 +27,8 @@ describe("planProcurementPush", () => {
       findByOrigin: vi.fn(async (_originator: string, originId: string) => originId.endsWith(":plan:parent")
         ? { ID: "700", CATEGORY_ID: "1", STAGE_ID: "C1:UC_XMKT7F" } : null),
       findPotentialDuplicate: vi.fn(async () => null),
-      addDeal: vi.fn(async () => "900"), updateDeal: vi.fn(async () => undefined)
+      addDeal: vi.fn(async (_fields: Record<string, unknown>) => "900"),
+      updateDeal: vi.fn(async (_id: string, _fields: Record<string, unknown>) => undefined)
     };
     const result = await planProcurementPush([
       row({ externalId: "new" }),

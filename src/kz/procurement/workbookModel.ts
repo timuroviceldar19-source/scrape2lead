@@ -3,7 +3,7 @@ import type { ClassifiedProcurement, ProcurementClassification } from "./types.j
 export interface ProcurementWorkbookSheet { name: "Data" | "Review" | "Rejected" | "Summary"; rows: Array<Array<string | number | null>> }
 export interface ProcurementWorkbookModel { sheets: ProcurementWorkbookSheet[]; summary: { total: number; data: number; review: number; rejected: number } }
 
-const HEADERS = ["Source", "Kind", "External ID", "Parent ID", "Product", "Reason", "Status", "Name", "Description",
+const HEADERS = ["Source", "Kind", "Source record ID", "External ID", "Parent ID", "Product", "Reason", "Status", "Name", "Description",
   "TRU code", "Customer", "BIN", "Amount", "Currency", "Start", "End", "Method", "URL", "Collected at"];
 
 export function buildProcurementWorkbookModel(input: ProcurementClassification): ProcurementWorkbookModel {
@@ -25,7 +25,7 @@ export function buildProcurementWorkbookModel(input: ProcurementClassification):
 
 function toRow(item: ClassifiedProcurement): Array<string | number | null> {
   const row = item.record;
-  return [row.source, row.recordKind, row.externalId, row.parentExternalId, item.product, item.reason, row.status,
+  return [row.source, row.recordKind, row.sourceRecordId ?? null, row.externalId, row.parentExternalId, item.product, item.reason, row.status,
     row.productName, row.description, row.truCode, row.customerName, row.customerBin, row.amount, row.currency,
     row.startDate, row.endDate, row.purchaseMethod, row.url, row.collectedAt];
 }
