@@ -50,6 +50,15 @@ describe("procurement product and CRM eligibility filters", () => {
     ]);
     expect(result.rejected.map((x) => x.reason)).toEqual(["missing_external_id", "missing_url"]);
   });
+
+  it("keeps broad panel search hits in Review until interactivity is explicit", () => {
+    const result = classifyProcurementRecords([
+      row({ externalId: "ambiguous", productName: "Liquid crystal panel", description: "graphic display" }),
+      row({ externalId: "interactive", productName: "Liquid crystal panel", description: "interactive touchscreen" })
+    ], { panelKeywords: ["liquid crystal panel"] });
+    expect(result.review.map((item) => [item.record.externalId, item.reason])).toContainEqual(["ambiguous", "ambiguous_panel"]);
+    expect(result.data.map((item) => item.record.externalId)).toContain("interactive");
+  });
 });
 
 function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
