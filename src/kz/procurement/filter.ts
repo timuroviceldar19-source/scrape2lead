@@ -37,6 +37,14 @@ function classify(record: ProcurementRecord, config: Required<ProcurementFilterO
   if (!record.url.trim()) return rejected(record, null, "missing_url");
   if (record.amount < config.minAmount) return rejected(record, null, "below_min_amount");
 
+  if (record.recordKind === "plan") {
+    const status = normalize(record.status ?? "");
+    if (!status) return review(record, null, "missing_status");
+    const inactive = ["исключ", "чернов", "исполн", "заверш", "перенес", "договор утвержден",
+      "excluded", "draft", "executed", "completed", "transferred"].some((word) => status.includes(word));
+    if (inactive) return rejected(record, null, "inactive_status");
+  }
+
   const haystack = normalize(`${record.productName} ${record.description}`);
   if (config.stopWords.some((word) => haystack.includes(normalize(word)))) return rejected(record, null, "stop_word");
 
@@ -64,7 +72,7 @@ function classify(record: ProcurementRecord, config: Required<ProcurementFilterO
 function rejected(record: ProcurementRecord, product: ProcurementProduct | null, reason: ClassifiedProcurement["reason"]) {
   return { bucket: "rejected" as const, item: { record, product, reason } };
 }
-function review(record: ProcurementRecord, product: ProcurementProduct, reason: ClassifiedProcurement["reason"]) {
+function review(record: ProcurementRecord, product: ProcurementProduct | null, reason: ClassifiedProcurement["reason"]) {
   return { bucket: "review" as const, item: { record, product, reason } };
 }
 function normalize(value: string): string { return value.normalize("NFKC").toLocaleLowerCase("ru").replace(/\s+/g, " ").trim(); }
