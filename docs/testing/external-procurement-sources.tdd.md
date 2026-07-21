@@ -25,17 +25,17 @@ Each checkpoint was executed and observed failing before its implementation comm
 
 ## GREEN verification
 
-- Targeted procurement suite: 11 files, 25 tests passed.
-- Full suite: 68 files passed, 1 skipped; 552 tests passed, 1 skipped.
+- Targeted procurement suite: 11 files, 26 tests passed.
+- Full suite: 68 files passed, 1 skipped; 553 tests passed, 1 skipped.
 - `npm run lint`: passed.
-- Changed-module coverage: 94.55% statements/lines, 91.42% functions; every executable
+- Changed-module coverage: 94.69% statements/lines, 91.54% functions; every executable
   procurement module has more than 80% line coverage.
 - XLSX verification with `@oai/artifact-tool`: four sheets present, expected row counts,
   no formula errors, Summary rendered successfully.
 
 ## Read-only manual runs
 
-Four iterative XLSX → inspection → dry-run cycles were performed. The final control run
+Five iterative XLSX → inspection → dry-run cycles were performed. The final control run
 collected 325 records and classified 28 as Data, 63 as Review and 234 as Rejected. Bitrix
 dry-run planned 28 creates, 0 updates, found 0 duplicates and produced 0 errors. It made no
 CRM writes.
