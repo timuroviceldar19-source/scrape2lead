@@ -20,6 +20,7 @@ describe("EPZ procurement normalization", () => {
     })).toMatchObject({
       source: "mitwork",
       recordKind: "plan",
+      sourceRecordId: "219",
       externalId: "mtw-7",
       productName: "Компьютер персональный",
       truCode: "262013.000.000011",
