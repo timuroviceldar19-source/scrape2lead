@@ -466,6 +466,34 @@ const migrations: Migration[] = [
       addColumnIfMissing(db, "goszakup_registry_data", columns, "full_address_ru", "TEXT");
       addColumnIfMissing(db, "goszakup_registry_data", columns, "reporting_administrator", "TEXT");
     }
+  },
+  {
+    version: 18,
+    sql: `
+      CREATE TABLE IF NOT EXISTS procurement_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        record_kind TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        parent_external_id TEXT,
+        status TEXT,
+        product_name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        tru_code TEXT,
+        customer_name TEXT,
+        customer_bin TEXT,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'KZT',
+        start_date TEXT,
+        end_date TEXT,
+        url TEXT NOT NULL,
+        purchase_method TEXT,
+        collected_at TEXT NOT NULL,
+        UNIQUE(source, record_kind, external_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_procurement_records_parent ON procurement_records(source, parent_external_id);
+      CREATE INDEX IF NOT EXISTS idx_procurement_records_bin ON procurement_records(customer_bin);
+    `
   }
 ];
 
