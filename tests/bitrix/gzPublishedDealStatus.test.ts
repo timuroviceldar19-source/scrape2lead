@@ -110,6 +110,17 @@ describe("buildPublishedDealUpdate", () => {
     }), "Опубликован", DETECTED_AT);
     expect(result.action).toBe("update-status");
   });
+
+  it("moves a cadastral-control deal to published regardless of case and padding", () => {
+    const result = buildPublishedDealUpdate(deal({
+      UF_CRM_PLAN_STATUS: "  НА ПРОВЕРКЕ КАМЕРАЛЬНОГО КОНТРОЛЯ  ",
+      UF_CRM_6627AEBD85B4D: "На проверке камерального контроля"
+    }), "Опубликован", DETECTED_AT);
+
+    expect(result.action).toBe("update-status");
+    expect(result.fields.UF_CRM_PLAN_STATUS).toBe("Опубликован");
+    expect(result.fields).not.toHaveProperty("STAGE_ID");
+  });
 });
 
 describe("applyPublishedDealUpdate", () => {
