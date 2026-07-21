@@ -12,6 +12,15 @@ describe("EPZ customer enrichment", () => {
     expect(enriched[1]?.customerBin).toBe("981240001604");
     expect(enriched[2]?.customerBin).toBeNull();
   });
+
+  it("loads a published lot customer from its public announcement", async () => {
+    const fetchJson = vi.fn(async () => ({ customer: { iin_bin: "050540000581", name: "АО Покупатель" } }));
+    const tender = row("lot-1", { recordKind: "tender", customerSourceId: null, announcementSourceId: "40179226",
+      status: "Опубликован", endDate: "2026-08-01T00:00:00Z" });
+    const [enriched] = await enrichEligibleEpzCustomers([tender], { fetchJson });
+    expect(fetchJson.mock.calls[0]?.[0]).toContain("/announcements/40179226/");
+    expect(enriched?.customerBin).toBe("050540000581");
+  });
 });
 
 function row(id: string, overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {

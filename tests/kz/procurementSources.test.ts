@@ -37,6 +37,7 @@ describe("EPZ procurement normalization", () => {
       id: 44,
       external_id: 991,
       lot_number: "4493136",
+      announcement_id: 40179226,
       announcement_number: "1240690",
       name_ru: "Поставка ноутбуков",
       enstru_key: "262011.100.000002",
@@ -49,6 +50,7 @@ describe("EPZ procurement normalization", () => {
     })).toMatchObject({
       source: "samruk",
       recordKind: "tender",
+      announcementSourceId: "40179226",
       externalId: "991",
       parentExternalId: "7788",
       truCode: "262011.100.000002",
