@@ -91,6 +91,8 @@ export interface GzPlanExportOptions extends GzPlanCollectOptions {
   minAmount?: number;
   /** Stop-list: drop plan rows whose item name matches any of these. */
   excludeKeywords?: string[];
+  /** Allow-list: keep only plan rows whose ESTRU code starts with one of these prefixes. Empty disables. */
+  includeTruCodePrefixes?: string[];
 }
 
 export interface GzPlanExportResult {
@@ -111,7 +113,7 @@ export const DEFAULT_GZ_PLAN_KEYWORDS = [
   "Персональный Компьютер"
 ] as const;
 
-export const DEFAULT_GZ_PLAN_STATUSES = ["Утвержден"] as const;
+export const DEFAULT_GZ_PLAN_STATUSES = ["Утвержден", "На проверке камерального контроля"] as const;
 
 /** Status IDs from goszakup plan search form filter[status][] */
 export const GZ_PLAN_STATUS_BY_NAME: Record<string, number> = {
@@ -131,6 +133,7 @@ export const GZ_PLAN_STATUS_BY_NAME: Record<string, number> = {
   "Заявка подтверждена": 26,
   "Исполнен": 19,
   "На обжаловании": 22,
+  "На проверке камерального контроля": 444,
   "Опубликован": 5,
   "Отменен": 7,
   "Отменен. Изменен": 21,

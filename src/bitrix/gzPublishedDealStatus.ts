@@ -2,7 +2,12 @@ export const GZ_PUBLISHED_AT_FIELD = "UF_CRM_S2L_GZ_PUBLISHED_AT";
 export const GZ_PLAN_STATUS_FIELD = "UF_CRM_PLAN_STATUS";
 export const GZ_PLAN_STATUS_LEGACY_FIELD = "UF_CRM_6627AEBD85B4D";
 export const GZ_APPROVED_STATUS_NAME = "Утвержден";
+export const GZ_CAMERAL_CONTROL_STATUS_NAME = "На проверке камерального контроля";
 export const GZ_PUBLISHED_STATUS_NAME = "Опубликован";
+export const GZ_PREPUBLICATION_STATUS_NAMES = [
+  GZ_APPROVED_STATUS_NAME,
+  GZ_CAMERAL_CONTROL_STATUS_NAME
+] as const;
 
 export interface PublishedDealSnapshot {
   UF_CRM_PLAN_STATUS?: string | null;
@@ -72,11 +77,11 @@ export function buildPublishedDealUpdate(
   if (matches(currentStatus, GZ_PUBLISHED_STATUS_NAME)) {
     return { fields: {}, action: "skipped", skipReason: "deal is already published in Bitrix" };
   }
-  if (!matches(currentStatus, GZ_APPROVED_STATUS_NAME)) {
+  if (!GZ_PREPUBLICATION_STATUS_NAMES.some((status) => matches(currentStatus, status))) {
     return {
       fields: {},
       action: "skipped",
-      skipReason: `current status ${currentStatus || "-"} is not ${GZ_APPROVED_STATUS_NAME}`
+      skipReason: `current status ${currentStatus || "-"} is not eligible for publication monitoring`
     };
   }
 
