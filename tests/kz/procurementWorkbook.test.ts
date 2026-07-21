@@ -17,6 +17,7 @@ describe("procurement workbook model", () => {
     expect(model.sheets.map((sheet) => sheet.name)).toEqual(["Data", "Review", "Rejected", "Summary"]);
     expect(model.summary).toMatchObject({ total: 3, data: 1, review: 1, rejected: 1 });
     expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["stop_word", 1]);
+    expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["source:mitwork", 3]);
   });
 
   it("writes a styled, filterable workbook with all four sheets", async () => {
