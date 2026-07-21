@@ -41,8 +41,12 @@ function classify(record: ProcurementRecord, config: Required<ProcurementFilterO
   if (config.stopWords.some((word) => haystack.includes(normalize(word)))) return rejected(record, null, "stop_word");
 
   let product: ProcurementProduct;
-  if (config.panelKeywords.some((word) => haystack.includes(normalize(word)))) {
+  const panelMatched = config.panelKeywords.some((word) => haystack.includes(normalize(word)));
+  const explicitlyInteractive = ["интерактив", "interactive", "сенсор"].some((word) => haystack.includes(word));
+  if (panelMatched && explicitlyInteractive) {
     product = "panel";
+  } else if (panelMatched) {
+    return review(record, "panel", "ambiguous_panel");
   } else {
     const normalizedCode = normalizeTru(record.truCode);
     const codeAllowed = config.pkTruPrefixes.some((prefix) => normalizedCode.startsWith(normalizeTru(prefix)));

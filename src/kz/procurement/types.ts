@@ -32,6 +32,7 @@ export type ProcurementDropReason =
   | "irrelevant_tru_code"
   | "irrelevant_product"
   | "missing_tru_code"
+  | "ambiguous_panel"
   | "missing_bin";
 
 export interface ClassifiedProcurement {
