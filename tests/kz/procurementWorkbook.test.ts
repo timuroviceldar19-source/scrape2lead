@@ -27,7 +27,7 @@ describe("procurement workbook model", () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(target);
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["Data", "Review", "Rejected", "Summary"]);
-    expect(workbook.getWorksheet("Data")?.autoFilter).toEqual({ from: "A1", to: "T2" });
+    expect(workbook.getWorksheet("Data")?.autoFilter).toBe("A1:T2");
     expect(workbook.getWorksheet("Summary")?.getCell("B2").value).toBe(2);
   });
 });
