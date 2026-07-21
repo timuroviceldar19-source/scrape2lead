@@ -59,6 +59,15 @@ describe("procurement product and CRM eligibility filters", () => {
     expect(result.review.map((item) => [item.record.externalId, item.reason])).toContainEqual(["ambiguous", "ambiguous_panel"]);
     expect(result.data.map((item) => item.record.externalId)).toContain("interactive");
   });
+
+  it("rejects inactive plans and reviews plans without a normalized status", () => {
+    const result = classifyProcurementRecords([
+      row({ externalId: "excluded", status: "Excluded" }),
+      row({ externalId: "unknown", status: null })
+    ]);
+    expect(result.rejected.map((item) => [item.record.externalId, item.reason])).toContainEqual(["excluded", "inactive_status"]);
+    expect(result.review.map((item) => [item.record.externalId, item.reason])).toContainEqual(["unknown", "missing_status"]);
+  });
 });
 
 function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
