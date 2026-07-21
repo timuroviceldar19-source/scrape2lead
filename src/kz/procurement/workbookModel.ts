@@ -10,6 +10,9 @@ export function buildProcurementWorkbookModel(input: ProcurementClassification):
   const summary = { total: input.data.length + input.review.length + input.rejected.length,
     data: input.data.length, review: input.review.length, rejected: input.rejected.length };
   const reasons = new Map<string, number>();
+  const allItems = [...input.data, ...input.review, ...input.rejected];
+  const sources = new Map<string, number>();
+  for (const item of allItems) sources.set(item.record.source, (sources.get(item.record.source) ?? 0) + 1);
   for (const item of [...input.review, ...input.rejected]) {
     const reason = item.reason ?? "unknown";
     reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
@@ -19,7 +22,9 @@ export function buildProcurementWorkbookModel(input: ProcurementClassification):
     { name: "Review", rows: [HEADERS, ...input.review.map(toRow)] },
     { name: "Rejected", rows: [HEADERS, ...input.rejected.map(toRow)] },
     { name: "Summary", rows: [["Metric", "Count"], ["total", summary.total], ["data", summary.data],
-      ["review", summary.review], ["rejected", summary.rejected], ...[...reasons.entries()].sort(([a], [b]) => a.localeCompare(b))] }
+      ["review", summary.review], ["rejected", summary.rejected],
+      ...[...sources.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([source, count]) => [`source:${source}`, count]),
+      ...[...reasons.entries()].sort(([a], [b]) => a.localeCompare(b))] }
   ], summary };
 }
 
