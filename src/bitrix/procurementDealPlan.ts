@@ -41,10 +41,7 @@ function buildFields(record: ProcurementRecord): Record<string, unknown> {
     CATEGORY_ID: PROCUREMENT_CATEGORY_ID, OPENED: "Y", TYPE_ID: "SALE", SOURCE_ID: "WEB",
     SOURCE_DESCRIPTION: record.source, ORIGINATOR_ID: PROCUREMENT_ORIGINATOR_ID,
     ORIGIN_ID: procurementOpportunityOriginId(record), OPPORTUNITY: record.amount, CURRENCY_ID: record.currency,
-    COMMENTS: buildComments(record), UF_CRM_PROC_SOURCE: record.source, UF_CRM_PROC_KIND: record.recordKind,
-    UF_CRM_PROC_EXTERNAL_ID: record.externalId, UF_CRM_PROC_PARENT_ID: record.parentExternalId ?? undefined,
-    UF_CRM_PROC_STATUS: record.status ?? undefined, UF_CRM_PROC_TRU: record.truCode ?? undefined,
-    UF_CRM_PROC_URL: record.url, UF_CRM_PROC_START: record.startDate ?? undefined, UF_CRM_PROC_END: record.endDate ?? undefined
+    COMMENTS: buildComments(record)
   });
 }
 
