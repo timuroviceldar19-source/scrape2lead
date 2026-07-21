@@ -6,6 +6,7 @@ export interface ProcurementRecord {
   source: ProcurementSource;
   recordKind: ProcurementRecordKind;
   sourceRecordId?: string | null;
+  announcementSourceId?: string | null;
   externalId: string;
   parentExternalId: string | null;
   status: string | null;

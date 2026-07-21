@@ -30,7 +30,7 @@ export function parseEpzLot(input: unknown, collectedAt = new Date().toISOString
   const enstrus = Array.isArray(row.enstrus) ? row.enstrus : [];
   const firstEnstru = object(enstrus[0]);
   return {
-    source, recordKind: "tender", sourceRecordId: nullableText(row.id), externalId,
+    source, recordKind: "tender", sourceRecordId: nullableText(row.id), announcementSourceId: nullableText(row.announcement_id), externalId,
     parentExternalId: nullableText(firstPlan.external_id ?? firstPlan.id),
     status: nullableText(row.status_name ?? object(row.status).name),
     productName: text(row.name_ru ?? firstEnstru.name_ru),

@@ -2,6 +2,7 @@ import { classifyProcurementRecords, type ProcurementFilterOptions } from "./fil
 import type { ProcurementRecord } from "./types.js";
 
 const EPZ_ORGANIZATIONS = "https://zakup.gov.kz/api/core/api/public/organizations";
+const EPZ_ANNOUNCEMENTS = "https://zakup.gov.kz/api/core/api/public/announcements";
 
 export async function enrichEligibleEpzCustomers(
   records: ProcurementRecord[],
@@ -9,21 +10,35 @@ export async function enrichEligibleEpzCustomers(
 ): Promise<ProcurementRecord[]> {
   const fetchJson = options.fetchJson ?? fetchOrganization;
   const eligible = new Set(classifyProcurementRecords(records, options.filter).review
-    .filter((item) => item.reason === "missing_bin" && item.record.source !== "tizilim" && item.record.customerSourceId)
+    .filter((item) => item.reason === "missing_bin" && item.record.source !== "tizilim"
+      && (item.record.customerSourceId || item.record.announcementSourceId))
     .map((item) => `${item.record.source}:${item.record.recordKind}:${item.record.externalId}`));
   const cache = new Map<string, Promise<{ bin: string | null; name: string | null }>>();
   return await Promise.all(records.map(async (record) => {
     const key = `${record.source}:${record.recordKind}:${record.externalId}`;
-    if (!eligible.has(key) || !record.customerSourceId) return record;
-    let request = cache.get(record.customerSourceId);
+    const lookupKey = record.customerSourceId ? `organization:${record.customerSourceId}`
+      : record.announcementSourceId ? `announcement:${record.announcementSourceId}` : null;
+    if (!eligible.has(key) || !lookupKey) return record;
+    let request = cache.get(lookupKey);
     if (!request) {
-      request = loadOrganization(record.customerSourceId, fetchJson).catch(() => ({ bin: null, name: null }));
-      cache.set(record.customerSourceId, request);
+      request = (record.customerSourceId
+        ? loadOrganization(record.customerSourceId, fetchJson)
+        : loadAnnouncement(record.announcementSourceId as string, fetchJson))
+        .catch(() => ({ bin: null, name: null }));
+      cache.set(lookupKey, request);
     }
     const organization = await request;
     return { ...record, customerBin: organization.bin ?? record.customerBin,
       customerName: organization.name ?? record.customerName };
   }));
+}
+
+async function loadAnnouncement(id: string, fetchJson: (url: string) => Promise<unknown>): Promise<{ bin: string | null; name: string | null }> {
+  const raw = object(await fetchJson(`${EPZ_ANNOUNCEMENTS}/${encodeURIComponent(id)}/`));
+  const customer = object(raw.customer);
+  const organizer = object(raw.organizer);
+  return { bin: normalizeBin(customer.iin_bin ?? organizer.iin_bin),
+    name: nullableText(customer.name ?? customer.name_ru ?? organizer.name ?? organizer.name_ru) };
 }
 
 async function loadOrganization(id: string, fetchJson: (url: string) => Promise<unknown>): Promise<{ bin: string | null; name: string | null }> {

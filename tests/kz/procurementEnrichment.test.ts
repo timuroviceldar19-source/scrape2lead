@@ -14,7 +14,7 @@ describe("EPZ customer enrichment", () => {
   });
 
   it("loads a published lot customer from its public announcement", async () => {
-    const fetchJson = vi.fn(async () => ({ customer: { iin_bin: "050540000581", name: "АО Покупатель" } }));
+    const fetchJson = vi.fn(async (_url: string) => ({ customer: { iin_bin: "050540000581", name: "АО Покупатель" } }));
     const tender = row("lot-1", { recordKind: "tender", customerSourceId: null, announcementSourceId: "40179226",
       status: "Опубликован", endDate: "2026-08-01T00:00:00Z" });
     const [enriched] = await enrichEligibleEpzCustomers([tender], { fetchJson });
