@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { collectExternalProcurement } from "../src/kz/procurement/collector.js";
 import { loadProcurementConfig } from "../src/kz/procurement/config.js";
+import { enrichEligibleEpzCustomers } from "../src/kz/procurement/enrichment.js";
 import { classifyProcurementRecords } from "../src/kz/procurement/filter.js";
 import { ProcurementStorage } from "../src/kz/procurement/storage.js";
 import { buildProcurementWorkbookModel } from "../src/kz/procurement/workbookModel.js";
@@ -19,12 +20,15 @@ const databasePath = path.resolve(config.databasePath);
 fs.mkdirSync(path.dirname(databasePath), { recursive: true });
 fs.mkdirSync(outputDirectory, { recursive: true });
 
-const records = (await collectExternalProcurement({
+const collectedRecords = (await collectExternalProcurement({
   keywords: config.keywords,
   pageSize: args.pageSize ?? config.pageSize,
   maxPages: args.maxPages ?? config.maxPages,
   delayMs: args.delayMs ?? config.delayMs
 })).filter((record) => config.sources.includes(record.source));
+const filterOptions = { minAmount: config.minAmount, pkTruPrefixes: config.pkTruPrefixes,
+  panelKeywords: config.panelKeywords, stopWords: config.stopWords };
+const records = await enrichEligibleEpzCustomers(collectedRecords, { filter: filterOptions });
 
 const database = new Database(databasePath);
 try {
@@ -34,12 +38,7 @@ try {
   database.close();
 }
 
-const classification = classifyProcurementRecords(records, {
-  minAmount: config.minAmount,
-  pkTruPrefixes: config.pkTruPrefixes,
-  panelKeywords: config.panelKeywords,
-  stopWords: config.stopWords
-});
+const classification = classifyProcurementRecords(records, filterOptions);
 const model = buildProcurementWorkbookModel(classification);
 await writeProcurementWorkbook(xlsxPath, model);
 fs.writeFileSync(jsonPath, JSON.stringify({ generatedAt: new Date().toISOString(), config: args.config,

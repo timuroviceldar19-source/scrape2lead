@@ -12,7 +12,7 @@ export function parseEpzPlan(input: unknown, collectedAt = new Date().toISOStrin
     source, recordKind: "plan", sourceRecordId: nullableText(row.id), externalId, parentExternalId: null,
     status: nullableText(row.status_name), productName: text(enstru.name_ru ?? enstru.name_text_ru),
     description: text(row.extra_description), truCode: nullableText(enstru.code ?? enstru.key ?? row.enstru_key),
-    customerName: nullableText(row.organization_name), customerBin: normalizeBin(row.organization_bin ?? row.customer_bin),
+    customerSourceId: nullableText(row.organization_id), customerName: nullableText(row.organization_name), customerBin: normalizeBin(row.organization_bin ?? row.customer_bin),
     amount: number(row.total_price), currency: "KZT", startDate: null, endDate: null,
     url: epzSearchUrl("plan-items", externalId, row.system_id),
     purchaseMethod: nullableText(row.purchase_method_name), collectedAt
@@ -36,7 +36,7 @@ export function parseEpzLot(input: unknown, collectedAt = new Date().toISOString
     productName: text(row.name_ru ?? firstEnstru.name_ru),
     description: text(row.description_ru ?? firstEnstru.short_description_ru),
     truCode: nullableText(row.enstru_key ?? firstEnstru.code),
-    customerName: nullableText(row.organization_name), customerBin: normalizeBin(row.organization_bin ?? row.customer_bin),
+    customerSourceId: nullableText(row.organization_id), customerName: nullableText(row.organization_name), customerBin: normalizeBin(row.organization_bin ?? row.customer_bin),
     amount: number(row.total_price), currency: "KZT",
     startDate: nullableText(row.offer_start_date ?? row.announcement_publish_date), endDate: nullableText(row.offer_end_date),
     url: epzSearchUrl("lots", text(row.lot_number ?? externalId), system.id ?? row.system_id),

@@ -502,6 +502,14 @@ const migrations: Migration[] = [
       const columns = new Set(getColumnNames(db, "procurement_records"));
       addColumnIfMissing(db, "procurement_records", columns, "source_record_id", "TEXT");
     }
+  },
+  {
+    version: 20,
+    run: (db: Database.Database) => {
+      if (!tableExists(db, "procurement_records")) return;
+      const columns = new Set(getColumnNames(db, "procurement_records"));
+      addColumnIfMissing(db, "procurement_records", columns, "customer_source_id", "TEXT");
+    }
   }
 ];
 

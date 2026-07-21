@@ -12,6 +12,7 @@ export interface ProcurementRecord {
   productName: string;
   description: string;
   truCode: string | null;
+  customerSourceId?: string | null;
   customerName: string | null;
   customerBin: string | null;
   amount: number;
