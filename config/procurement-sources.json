@@ -1,0 +1,28 @@
+{
+  "sources": ["mitwork", "samruk", "tizilim"],
+  "keywords": [
+    "Компьютер персональный",
+    "Монитор",
+    "Моноблок",
+    "Ноутбук",
+    "Доска специальная",
+    "Интерактивная панель",
+    "Панель жидкокристаллическая"
+  ],
+  "minAmount": 500000,
+  "pkTruPrefixes": ["262011.", "262013.", "262017.100."],
+  "panelKeywords": ["доска специальная", "интерактивная панель", "панель интерактивная", "панель жидкокристаллическая"],
+  "stopWords": ["мфу", "принтер", "устройство многофункциональное"],
+  "pageSize": 50,
+  "maxPages": 5,
+  "delayMs": 200,
+  "databasePath": "data/procurement.sqlite",
+  "outputDirectory": "output/procurement",
+  "manualRunsRequired": 7,
+  "bitrix": {
+    "categoryId": 1,
+    "stageId": "C1:NEW",
+    "managerIds": ["2015", "2209", "2255"],
+    "executeEnabled": false
+  }
+}
