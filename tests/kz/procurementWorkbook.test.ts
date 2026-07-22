@@ -36,9 +36,12 @@ describe("procurement workbook model", () => {
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["Планы", "Тендеры", "Review", "Rejected", "Summary"]);
     const plans = workbook.getWorksheet("Планы");
     expect(plans?.autoFilter).toBeTruthy();
+    expect(plans?.getColumn(1).numFmt).toBe("@");
+    expect(plans?.getColumn(18).numFmt).toBe("@");
     const headerValues = plans?.getRow(1).values;
     const placeHeader = Array.isArray(headerValues) ? headerValues.findIndex((value) => value === "Место поставки") : -1;
     expect(plans?.getCell(2, placeHeader).value).toBe("Астана\nАлматы");
+    expect(plans?.getRow(2).height).toBeGreaterThan(20);
     expect(workbook.getWorksheet("Summary")?.getCell("B2").value).toBe(2);
   });
 });

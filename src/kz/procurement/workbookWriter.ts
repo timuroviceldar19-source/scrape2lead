@@ -10,6 +10,8 @@ const TAB_COLORS: Record<string, string> = {
 };
 const LINK_HEADERS = new Set(["Ссылка", "Ссылка на наименование", "Ссылка на заказчика", "Ссылка на пункт плана"]);
 const MONEY_HEADERS = new Set(["Сумма", "Плановая сумма", "Цена за ед.", "Цена за единицу"]);
+const TEXT_HEADERS = new Set(["БИН", "БИН Заказчика", "Кандидат БИН", "КАТО", "ID карточки", "Внешний ID",
+  "Внешний ID тендера", "ID связанного плана", "№ пункта плана", "ID пункта (API)"]);
 
 export async function writeProcurementWorkbook(targetPath: string, model: ProcurementWorkbookModel): Promise<void> {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -47,6 +49,10 @@ function styleSheet(sheet: ExcelJS.Worksheet, filterable: boolean): void {
     if (rowNumber % 2 === 0) row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "EAF2F8" } };
     row.alignment = { vertical: "top", wrapText: true };
     row.eachCell((cell) => { cell.border = border("D9E2F3"); });
+    const rowValues = Array.isArray(row.values) ? row.values : [];
+    const lineCounts = Array.from(rowValues.slice(1), (value) => String(value ?? "").split("\n").length);
+    const maxLines = Math.max(1, ...lineCounts);
+    row.height = Math.min(90, Math.max(20, maxLines * 15));
   }
 
   if (!filterable || sheet.columnCount === 0) return;
@@ -54,7 +60,8 @@ function styleSheet(sheet: ExcelJS.Worksheet, filterable: boolean): void {
   for (let column = 1; column <= sheet.columnCount; column++) {
     const label = String(sheet.getCell(1, column).value ?? "");
     if (LINK_HEADERS.has(label)) applyLinks(sheet, column);
-    if (MONEY_HEADERS.has(label)) sheet.getColumn(column).numFmt = "#,##0 [$₸-kk-KZ]";
+    if (MONEY_HEADERS.has(label)) sheet.getColumn(column).numFmt = "#,##0 \"₸\"";
+    if (TEXT_HEADERS.has(label)) sheet.getColumn(column).numFmt = "@";
   }
 }
 

@@ -13,8 +13,14 @@ export class ProcurementBitrixClient implements ProcurementPushClient {
   }
 
   async findPotentialDuplicate(record: ProcurementRecord): Promise<ExistingProcurementDeal | null> {
-    const rows = await this.client.listAll("deal", { "=OPPORTUNITY": record.amount },
-      ["ID", "TITLE", "COMMENTS", "ORIGIN_ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID"], 4);
+    const select = ["ID", "TITLE", "COMMENTS", "ORIGIN_ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID"];
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await this.client.listAll("deal", { "=OPPORTUNITY": record.amount }, select, 4);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("result exceeds")) throw error;
+      rows = await this.findNarrowCandidates(record, select);
+    }
     const externalId = normalize(record.externalId);
     const customerBin = normalize(record.customerBin ?? "");
     const targetTitle = normalize(`${record.customerName ?? ""} ${record.productName}`);
@@ -26,6 +32,23 @@ export class ProcurementBitrixClient implements ProcurementPushClient {
       if ((sameExternalId || (sameBin && similarTitle)) && row.ID !== undefined) return toExistingDeal(row);
     }
     return null;
+  }
+
+  private async findNarrowCandidates(record: ProcurementRecord, select: string[]): Promise<Record<string, unknown>[]> {
+    const filters: Record<string, unknown>[] = [
+      { "=OPPORTUNITY": record.amount, "%TITLE": record.externalId },
+      { "=OPPORTUNITY": record.amount, "%COMMENTS": record.externalId }
+    ];
+    if (record.customerBin) filters.push(
+      { "=OPPORTUNITY": record.amount, "%COMMENTS": record.customerBin },
+      { "=OPPORTUNITY": record.amount, "%TITLE": record.customerBin }
+    );
+    const unique = new Map<string, Record<string, unknown>>();
+    for (const filter of filters) {
+      const rows = await this.client.listAll("deal", filter, select, 4);
+      for (const row of rows) unique.set(String(row.ID ?? JSON.stringify(row)), row);
+    }
+    return [...unique.values()];
   }
 
   async addDeal(fields: Record<string, unknown>): Promise<string> { return await this.client.add("deal", fields); }
