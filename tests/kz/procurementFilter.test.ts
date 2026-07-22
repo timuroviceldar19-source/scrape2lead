@@ -46,9 +46,20 @@ describe("procurement product and CRM eligibility filters", () => {
   it("rejects records without a stable id or URL", () => {
     const result = classifyProcurementRecords([
       row({ externalId: "", url: "https://example.kz/one" }),
-      row({ externalId: "two", url: "" })
+      row({ externalId: "two", url: "" }),
+      row({ externalId: "three", sourceRecordId: null })
     ]);
-    expect(result.rejected.map((x) => x.reason)).toEqual(["missing_external_id", "missing_url"]);
+    expect(result.rejected.map((x) => x.reason)).toEqual(["missing_external_id", "missing_url", "missing_source_record_id"]);
+  });
+
+  it("keeps detail failures and identity mismatches in Review", () => {
+    const result = classifyProcurementRecords([
+      row({ externalId: "failed", detailIssue: "detail_fetch_failed" }),
+      row({ externalId: "mismatch", detailIssue: "detail_identity_mismatch" })
+    ]);
+    expect(result.review.map((item) => [item.record.externalId, item.reason])).toEqual([
+      ["failed", "detail_fetch_failed"], ["mismatch", "detail_identity_mismatch"]
+    ]);
   });
 
   it("keeps broad panel search hits in Review until interactivity is explicit", () => {
@@ -86,6 +97,7 @@ function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
   return {
     source: "mitwork",
     recordKind: "plan",
+    sourceRecordId: "1",
     externalId: "1",
     parentExternalId: null,
     status: "Утвержден",

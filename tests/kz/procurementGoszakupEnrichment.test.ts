@@ -28,12 +28,22 @@ describe("strict Goszakup enrichment", () => {
     ]);
     expect(result?.enrichment).toBeUndefined();
   });
+
+  it("adds registry contacts only by an already confirmed BIN without replacing EPZ detail provenance", () => {
+    const [result] = applyGoszakupEnrichmentCandidates([
+      row({ customerBin: "123456789012", enrichment: { source: "epz-plan-detail", confidence: "exact" } })
+    ], [{ bin: "123456789012", customerName: "ТОО Покупатель", website: "https://buyer.kz", email: "info@buyer.kz",
+      phone: "+7 7172 00 00 00", directorName: "Иванов И.И.", legalAddress: "Астана" }]);
+    expect(result?.enrichment).toMatchObject({ source: "epz-plan-detail", confidence: "exact" });
+    expect(result?.customerProfile).toMatchObject({ source: "goszakup", website: "https://buyer.kz",
+      email: "info@buyer.kz", phone: "+7 7172 00 00 00", directorName: "Иванов И.И.", fullAddress: "Астана" });
+  });
 });
 
-function row(): ProcurementRecord {
+function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
   return { source: "samruk", recordKind: "plan", sourceRecordId: "42", externalId: "42", parentExternalId: null,
     status: "Утвержден", productName: "Ноутбук", description: "", truCode: null,
     customerName: "ТОО Покупатель", customerBin: null, amount: 1_000_000, currency: "KZT",
     startDate: null, endDate: null, url: "https://example.kz/42", purchaseMethod: null,
-    collectedAt: "2026-07-22T00:00:00Z" };
+    collectedAt: "2026-07-22T00:00:00Z", ...overrides };
 }

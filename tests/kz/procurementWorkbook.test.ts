@@ -8,32 +8,36 @@ import { writeProcurementWorkbook } from "../../src/kz/procurement/workbookWrite
 import type { ClassifiedProcurement } from "../../src/kz/procurement/types.js";
 
 describe("procurement workbook model", () => {
-  it("creates Data, Review, Rejected and Summary with reconciled counts", () => {
+  it("creates separate business sheets and control sheets with reconciled counts", () => {
     const model = buildProcurementWorkbookModel({
       data: [item("data", null)],
       review: [item("review", "missing_bin")],
       rejected: [item("rejected", "stop_word")]
     }, { complete: true, planYearId: 9, pageLimit: 500, pagesFetched: 17, incompleteReasons: [] });
-    expect(model.sheets.map((sheet) => sheet.name)).toEqual(["Data", "Review", "Rejected", "Summary"]);
+    expect(model.sheets.map((sheet) => sheet.name)).toEqual(["Планы", "Тендеры", "Review", "Rejected", "Summary"]);
     expect(model.summary).toMatchObject({ total: 3, data: 1, review: 1, rejected: 1 });
     expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["stop_word", 1]);
     expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["source:mitwork", 3]);
     expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["collection:complete", "yes"]);
     expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["collection:plan_year_id", 9]);
-    expect(model.sheets.find((sheet) => sheet.name === "Data")?.rows[0]).toEqual(expect.arrayContaining([
-      "Enrichment source", "Confidence", "Candidate BIN", "Candidate TRU code"
+    expect(model.sheets.find((sheet) => sheet.name === "Планы")?.rows[0]).toEqual(expect.arrayContaining([
+      "БИН Заказчика", "Дата акта, которым утвержден план", "Код товара/работы/услуги (СТРУ)",
+      "Единица измерения", "Кол-во", "Цена за ед.", "КАТО", "Количество по адресам", "Источник обогащения"
     ]));
   });
 
-  it("writes a styled, filterable workbook with all four sheets", async () => {
+  it("writes a styled, filterable workbook with five sheets and joined delivery places", async () => {
     const target = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "procurement-xlsx-")), "result.xlsx");
     const classification = { data: [item("ok", null)], review: [item("review", "missing_bin")], rejected: [] };
     await writeProcurementWorkbook(target, buildProcurementWorkbookModel(classification));
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(target);
-    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["Data", "Review", "Rejected", "Summary"]);
-    expect(workbook.getWorksheet("Data")?.autoFilter).toBe("A1:X2");
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["Планы", "Тендеры", "Review", "Rejected", "Summary"]);
+    const plans = workbook.getWorksheet("Планы");
+    expect(plans?.autoFilter).toBeTruthy();
+    const placeHeader = plans?.getRow(1).values.findIndex((value) => value === "Место поставки") ?? -1;
+    expect(plans?.getCell(2, placeHeader).value).toBe("Астана\nАлматы");
     expect(workbook.getWorksheet("Summary")?.getCell("B2").value).toBe(2);
   });
 });
@@ -48,6 +52,10 @@ function item(id: string, reason: ClassifiedProcurement["reason"]): ClassifiedPr
       customerName: "Customer", customerBin: id === "review" ? null : "123456789012", amount: 1_000_000,
       currency: "KZT", startDate: null, endDate: null, url: `https://example.kz/${id}`,
       purchaseMethod: null, collectedAt: "2026-07-21T00:00:00.000Z"
+      , planDetail: { approvedAt: "2026-04-15", financialYear: 2026, nameRu: "Ноутбук", nameKk: "Ноутбук",
+        shortDescriptionRu: "Описание", shortDescriptionKk: null, extraDescription: null, unitName: "Штука",
+        quantity: 4, unitPrice: 250_000, prepaymentPercent: null, deliveryDeadline: null, itemType: "Товар",
+        deliveries: [{ address: "Астана", kato: "710000000", quantity: 2 }, { address: "Алматы", kato: "750000000", quantity: 2 }] }
     }
   };
 }

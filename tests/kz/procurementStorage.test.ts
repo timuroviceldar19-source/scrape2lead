@@ -21,6 +21,16 @@ describe("ProcurementStorage", () => {
     storage.upsert(row({ recordKind: "tender" }));
     expect(storage.list()).toHaveLength(3);
   });
+
+  it("round-trips optional plan detail JSON", () => {
+    const storage = new ProcurementStorage({ db: new Database(":memory:") });
+    storage.upsert(row({ planDetail: { approvedAt: "2026-04-15", financialYear: 2026, nameRu: "Ноутбук",
+      nameKk: "Ноутбук", shortDescriptionRu: "Описание", shortDescriptionKk: null, extraDescription: null,
+      unitName: "Штука", quantity: 4, unitPrice: 250_000, prepaymentPercent: null, deliveryDeadline: null,
+      itemType: "Товар", deliveries: [{ address: "Астана", kato: "710000000", quantity: 4 }] } }));
+    expect(storage.list()[0]?.planDetail).toMatchObject({ financialYear: 2026, quantity: 4,
+      deliveries: [{ address: "Астана", kato: "710000000", quantity: 4 }] });
+  });
 });
 
 function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
