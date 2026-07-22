@@ -24,6 +24,9 @@ describe("procurement workbook model", () => {
       "БИН Заказчика", "Дата акта, которым утвержден план", "Код товара/работы/услуги (СТРУ)",
       "Единица измерения", "Кол-во", "Цена за ед.", "КАТО", "Количество по адресам", "Источник обогащения"
     ]));
+    const plans = model.sheets.find((sheet) => sheet.name === "Планы");
+    const customerLinkColumn = plans?.rows[0].indexOf("Ссылка на заказчика") ?? -1;
+    expect(plans?.rows[1][customerLinkColumn]).toBe("https://zakup.gov.kz/registry/pipp/117476");
   });
 
   it("writes a styled, filterable workbook with five sheets and joined delivery places", async () => {
@@ -52,6 +55,7 @@ function item(id: string, reason: ClassifiedProcurement["reason"]): ClassifiedPr
     reason,
     record: {
       source: "mitwork", recordKind: "plan", externalId: id, parentExternalId: null,
+      customerSourceId: "117476",
       status: "Утвержден", productName: "Ноутбук", description: "", truCode: "262011.100.000002",
       customerName: "Customer", customerBin: id === "review" ? null : "123456789012", amount: 1_000_000,
       currency: "KZT", startDate: null, endDate: null, url: `https://example.kz/${id}`,

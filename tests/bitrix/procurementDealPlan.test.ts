@@ -25,6 +25,7 @@ describe("procurement Bitrix lifecycle", () => {
       externalId: "4128263137",
       productName: "Панель интерактивная",
       customerName: "ТОО \"АЭС Шульбинская ГЭС\"",
+      customerSourceId: "117476",
       customerBin: "970940002871",
       amount: 5_900_000,
       truCode: "262030.100.000021",
@@ -55,6 +56,7 @@ describe("procurement Bitrix lifecycle", () => {
       UF_CRM_6627AEBD7C2D2: "970940002871",
       UF_CRM_6627AEBD85B4D: "Утвержден",
       UF_CRM_1715597423325: "5900000",
+      UF_CRM_1782274598760: "https://zakup.gov.kz/registry/pipp/117476",
       UF_CRM_1782386293000_IU_XLS: "18121209",
       UF_CRM_1782386571874_IU_XLS: "https://zakup.gov.kz/plan-items/18121209",
       UF_CRM_PLAN_ID: "18121209",
@@ -79,6 +81,7 @@ describe("procurement Bitrix lifecycle", () => {
       UF_CRM_6A436D59CD2B1: "Руководитель",
       UF_CRM_6A436D5A19612: "262030.100.000021",
       UF_CRM_6A436D5A3614C: "4128263137",
+      UF_CRM_6A436D5A5700E: "https://zakup.gov.kz/registry/pipp/117476",
       UF_CRM_6A436D5A76648: "LCD поверхность",
       UF_CRM_6A436D5A92D16: "Диагональ 75 дюймов",
       UF_CRM_6A436D5AD0A2B: "п. Шульбинск"
@@ -86,6 +89,12 @@ describe("procurement Bitrix lifecycle", () => {
     expect(String(result.fields.COMMENTS)).toContain("КАТО: 101065100");
     expect(String(result.fields.COMMENTS)).toContain("E-mail: info@example.kz");
     expect(String(result.fields.COMMENTS)).toContain("Источник обогащения: epz-plan-detail (exact)");
+  });
+
+  it("does not emit a broken customer search link without an EPZ organization id", () => {
+    const result = buildProcurementDealDecision(row({ customerSourceId: null }), null);
+    expect(result.fields).not.toHaveProperty("UF_CRM_1782274598760");
+    expect(result.fields).not.toHaveProperty("UF_CRM_6A436D5A5700E");
   });
 
   it("updates the linked plan when its tender is published without resetting manual stage", () => {
