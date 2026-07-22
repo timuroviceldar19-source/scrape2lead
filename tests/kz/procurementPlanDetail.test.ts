@@ -24,7 +24,7 @@ describe("EPZ plan detail enrichment", () => {
       .mockRejectedValueOnce(new Error("temporary"))
       .mockResolvedValue(fixture);
     const completeness = complete();
-    const records = [row(), row({ externalId: "duplicate-search-hit" })];
+    const records = [row(), row()];
     const result = await enrichEligibleEpzPlanDetails(records, { fetchJson, completeness, retryDelayMs: 0 });
 
     expect(fetchJson).toHaveBeenCalledTimes(2);

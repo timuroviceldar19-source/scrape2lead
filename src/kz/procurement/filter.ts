@@ -29,18 +29,35 @@ export function classifyProcurementRecords(records: ProcurementRecord[], options
   return result;
 }
 
+export function isPlanDetailCandidate(record: ProcurementRecord, options: ProcurementFilterOptions = {}): boolean {
+  if (record.recordKind !== "plan" || record.source === "tizilim") return false;
+  if (normalize(record.status ?? "") !== "утвержден") return false;
+  if (record.amount < (options.minAmount ?? 500_000)) return false;
+  const haystack = normalize(`${record.productName} ${record.description}`);
+  const stopWords = options.stopWords ?? DEFAULT_STOP_WORDS;
+  if (stopWords.some((word) => haystack.includes(normalize(word)))) return false;
+  const panelKeywords = options.panelKeywords ?? DEFAULT_PANEL_KEYWORDS;
+  return panelKeywords.some((word) => haystack.includes(normalize(word)))
+    || PK_NAME_WORDS.some((word) => containsTerm(haystack, normalize(word)));
+}
+
 function classify(record: ProcurementRecord, config: Required<ProcurementFilterOptions>): {
   bucket: "data" | "review" | "rejected";
   item: ClassifiedProcurement;
 } {
   if (!record.externalId.trim()) return rejected(record, null, "missing_external_id");
   if (!record.url.trim()) return rejected(record, null, "missing_url");
+  if (record.recordKind === "plan" && record.source !== "tizilim" && !record.sourceRecordId?.trim()) {
+    return rejected(record, null, "missing_source_record_id");
+  }
   if (record.amount < config.minAmount) return rejected(record, null, "below_min_amount");
 
   if (record.recordKind === "plan") {
     const status = normalize(record.status ?? "");
     if (status !== "утвержден") return rejected(record, null, "unsupported_status");
   }
+
+  if (record.detailIssue) return review(record, null, record.detailIssue);
 
   const haystack = normalize(`${record.productName} ${record.description}`);
   if (config.stopWords.some((word) => haystack.includes(normalize(word)))) return rejected(record, null, "stop_word");

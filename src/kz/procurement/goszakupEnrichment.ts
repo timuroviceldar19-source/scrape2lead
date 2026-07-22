@@ -5,6 +5,12 @@ export interface GoszakupEnrichmentCandidate {
   customerName?: string | null;
   bin?: string | null;
   truCode?: string | null;
+  website?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  reportingAdministrator?: string | null;
+  legalAddress?: string | null;
+  directorName?: string | null;
 }
 
 export function applyGoszakupEnrichmentCandidates(
@@ -12,29 +18,36 @@ export function applyGoszakupEnrichmentCandidates(
   candidates: GoszakupEnrichmentCandidate[]
 ): ProcurementRecord[] {
   const byUpstream = new Map(candidates.filter((item) => item.upstreamKey).map((item) => [item.upstreamKey as string, item]));
+  const byBin = new Map(candidates.filter((item) => validBin(item.bin)).map((item) => [validBin(item.bin) as string, item]));
   const byName = groupUniqueNames(candidates);
 
   return records.map((record) => {
-    const exact = byUpstream.get(recordKey(record));
+    const registry = record.customerBin ? byBin.get(record.customerBin) : null;
+    const withProfile: ProcurementRecord = registry ? { ...record, customerProfile: {
+      source: "goszakup", website: text(registry.website), email: text(registry.email), phone: text(registry.phone),
+      reportingAdministrator: text(registry.reportingAdministrator), fullAddress: text(registry.legalAddress),
+      directorName: text(registry.directorName)
+    } } : record;
+    const exact = byUpstream.get(recordKey(withProfile));
     if (exact) {
       const bin = validBin(exact.bin);
       const truCode = text(exact.truCode);
       if (bin || truCode) return {
-        ...record,
-        customerBin: record.customerBin ?? bin,
-        truCode: record.truCode ?? truCode,
+        ...withProfile,
+        customerBin: withProfile.customerBin ?? bin,
+        truCode: withProfile.truCode ?? truCode,
         enrichment: { source: "goszakup", confidence: "exact" }
       };
     }
 
-    if (record.customerBin || record.enrichment?.confidence === "exact") return record;
-    const name = normalizeName(record.customerName);
+    if (withProfile.customerBin || withProfile.enrichment?.confidence === "exact") return withProfile;
+    const name = normalizeName(withProfile.customerName);
     const candidate = name ? byName.get(name) : null;
-    if (!candidate) return record;
+    if (!candidate) return withProfile;
     const candidateBin = validBin(candidate.bin);
     const candidateTruCode = text(candidate.truCode);
-    if (!candidateBin && !candidateTruCode) return record;
-    return { ...record, enrichment: {
+    if (!candidateBin && !candidateTruCode) return withProfile;
+    return { ...withProfile, enrichment: {
       source: "goszakup", confidence: "candidate", candidateBin, candidateTruCode
     } };
   });

@@ -17,6 +17,7 @@
   "pageSize": 100,
   "maxPages": 500,
   "delayMs": 200,
+  "detailConcurrency": 6,
   "databasePath": "data/procurement.sqlite",
   "goszakupRegistryDatabasePath": "data/scrape2lead.db",
   "outputDirectory": "output/procurement",

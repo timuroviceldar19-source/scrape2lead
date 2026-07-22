@@ -510,6 +510,16 @@ const migrations: Migration[] = [
       const columns = new Set(getColumnNames(db, "procurement_records"));
       addColumnIfMissing(db, "procurement_records", columns, "customer_source_id", "TEXT");
     }
+  },
+  {
+    version: 21,
+    run: (db: Database.Database) => {
+      if (!tableExists(db, "procurement_records")) return;
+      const columns = new Set(getColumnNames(db, "procurement_records"));
+      addColumnIfMissing(db, "procurement_records", columns, "plan_detail_json", "TEXT");
+      addColumnIfMissing(db, "procurement_records", columns, "customer_profile_json", "TEXT");
+      addColumnIfMissing(db, "procurement_records", columns, "detail_issue", "TEXT");
+    }
   }
 ];
 

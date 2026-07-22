@@ -13,6 +13,7 @@ const schema = z.object({
   pageSize: z.number().int().min(1).max(100).default(100),
   maxPages: z.number().int().min(1).default(500),
   delayMs: z.number().int().nonnegative().default(200),
+  detailConcurrency: z.number().int().min(1).max(20).default(6),
   databasePath: z.string().min(1),
   goszakupRegistryDatabasePath: z.string().min(1).default("data/scrape2lead.db"),
   outputDirectory: z.string().min(1),

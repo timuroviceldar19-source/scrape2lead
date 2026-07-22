@@ -6,8 +6,10 @@ import type { ProcurementWorkbookModel } from "./workbookModel.js";
 const HEADER_FILL = "1F4E78";
 const HEADER_FONT = "FFFFFF";
 const TAB_COLORS: Record<string, string> = {
-  Data: "70AD47", Review: "FFC000", Rejected: "C00000", Summary: "5B9BD5"
+  "Планы": "70AD47", "Тендеры": "4472C4", Review: "FFC000", Rejected: "C00000", Summary: "5B9BD5"
 };
+const LINK_HEADERS = new Set(["Ссылка", "Ссылка на наименование", "Ссылка на заказчика", "Ссылка на пункт плана"]);
+const MONEY_HEADERS = new Set(["Сумма", "Плановая сумма", "Цена за ед.", "Цена за единицу"]);
 
 export async function writeProcurementWorkbook(targetPath: string, model: ProcurementWorkbookModel): Promise<void> {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -29,22 +31,15 @@ export async function writeProcurementWorkbook(targetPath: string, model: Procur
 
 function styleSheet(sheet: ExcelJS.Worksheet, filterable: boolean): void {
   const header = sheet.getRow(1);
-  header.height = 28;
+  header.height = 36;
   header.font = { bold: true, color: { argb: HEADER_FONT } };
   header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_FILL } };
   header.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
   header.eachCell((cell) => { cell.border = border(); });
 
-  const widthByHeader: Record<string, number> = {
-    Source: 12, Kind: 10, "Source record ID": 18, "External ID": 20, "Parent ID": 18,
-    Product: 12, Reason: 22, Status: 20, Name: 42, Description: 48, "TRU code": 22,
-    Customer: 34, BIN: 16, Amount: 17, Currency: 10, Start: 20, End: 20, Method: 24, URL: 18,
-    "Collected at": 22, "Enrichment source": 22, Confidence: 14, "Candidate BIN": 18,
-    "Candidate TRU code": 22, Metric: 42, Count: 18, Value: 18
-  };
   sheet.columns.forEach((column, index) => {
     const label = String(sheet.getCell(1, index + 1).value ?? "");
-    column.width = widthByHeader[label] ?? 16;
+    column.width = width(label);
   });
 
   for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
@@ -54,32 +49,36 @@ function styleSheet(sheet: ExcelJS.Worksheet, filterable: boolean): void {
     row.eachCell((cell) => { cell.border = border("D9E2F3"); });
   }
 
-  if (filterable && sheet.columnCount > 0) {
-    sheet.autoFilter = { from: "A1", to: `${columnLetter(sheet.columnCount)}${Math.max(1, sheet.rowCount)}` };
-    const urlColumn = findHeader(sheet, "URL");
-    if (urlColumn) {
-      for (let row = 2; row <= sheet.rowCount; row++) {
-        const cell = sheet.getCell(row, urlColumn);
-        const value = String(cell.value ?? "");
-        if (value) cell.value = { text: "Открыть", hyperlink: value };
-      }
-    }
-    const amountColumn = findHeader(sheet, "Amount");
-    if (amountColumn) sheet.getColumn(amountColumn).numFmt = "#,##0 [$₸-kk-KZ]";
+  if (!filterable || sheet.columnCount === 0) return;
+  sheet.autoFilter = { from: "A1", to: `${columnLetter(sheet.columnCount)}${Math.max(1, sheet.rowCount)}` };
+  for (let column = 1; column <= sheet.columnCount; column++) {
+    const label = String(sheet.getCell(1, column).value ?? "");
+    if (LINK_HEADERS.has(label)) applyLinks(sheet, column);
+    if (MONEY_HEADERS.has(label)) sheet.getColumn(column).numFmt = "#,##0 [$₸-kk-KZ]";
   }
 }
 
-function findHeader(sheet: ExcelJS.Worksheet, name: string): number | null {
-  for (let column = 1; column <= sheet.columnCount; column++) if (sheet.getCell(1, column).value === name) return column;
-  return null;
+function applyLinks(sheet: ExcelJS.Worksheet, column: number): void {
+  for (let row = 2; row <= sheet.rowCount; row++) {
+    const cell = sheet.getCell(row, column);
+    const value = String(cell.value ?? "").trim();
+    if (value) cell.value = { text: "Открыть", hyperlink: value };
+  }
 }
 
+function width(label: string): number {
+  if (LINK_HEADERS.has(label)) return 18;
+  if (["Описание", "Дополнительная характеристика", "Краткая характеристика", "Дополнительное описание", "Место поставки", "Места поставки"].includes(label)) return 48;
+  if (["Наименование заказчика", "Наименование", "Наименование закупаемых товаров (СТРУ)", "Наименование (каз.)"].includes(label)) return 38;
+  if (["БИН", "БИН Заказчика", "КАТО", "Количество по адресам"].includes(label)) return 18;
+  if (label === "Metric") return 48;
+  return 20;
+}
 function columnLetter(column: number): string {
   let result = "";
   for (let value = column; value > 0; value = Math.floor((value - 1) / 26)) result = String.fromCharCode(65 + ((value - 1) % 26)) + result;
   return result;
 }
-
 function border(color = "B4C6E7"): Partial<ExcelJS.Borders> {
   const side: Partial<ExcelJS.Border> = { style: "thin", color: { argb: color } };
   return { top: side, left: side, bottom: side, right: side };

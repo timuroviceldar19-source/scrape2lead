@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { collectExternalProcurement } from "../src/kz/procurement/collector.js";
 import { loadProcurementConfig } from "../src/kz/procurement/config.js";
 import { enrichEligibleEpzCustomers } from "../src/kz/procurement/enrichment.js";
+import { enrichEligibleEpzPlanDetails } from "../src/kz/procurement/planDetail.js";
 import { classifyProcurementRecords } from "../src/kz/procurement/filter.js";
 import { applyGoszakupEnrichmentCandidates, type GoszakupEnrichmentCandidate } from "../src/kz/procurement/goszakupEnrichment.js";
 import { ProcurementStorage } from "../src/kz/procurement/storage.js";
@@ -31,7 +32,11 @@ const collection = await collectExternalProcurement({
 const collectedRecords = collection.records.filter((record) => config.sources.includes(record.source));
 const filterOptions = { minAmount: config.minAmount, pkTruPrefixes: config.pkTruPrefixes,
   panelKeywords: config.panelKeywords, stopWords: config.stopWords };
-const epzEnriched = await enrichEligibleEpzCustomers(collectedRecords, { filter: filterOptions });
+const classificationBeforeDetail = classifyProcurementRecords(collectedRecords, filterOptions);
+const detailEnriched = await enrichEligibleEpzPlanDetails(collectedRecords, {
+  completeness: collection.completeness, filter: filterOptions, concurrency: config.detailConcurrency
+});
+const epzEnriched = await enrichEligibleEpzCustomers(detailEnriched.records, { filter: filterOptions });
 const records = applyGoszakupEnrichmentCandidates(epzEnriched,
   loadGoszakupCandidates(path.resolve(config.goszakupRegistryDatabasePath)));
 
@@ -44,6 +49,12 @@ try {
 }
 
 const classification = classifyProcurementRecords(records, filterOptions);
+const beforeBuckets = classificationBuckets(classificationBeforeDetail);
+const afterBuckets = classificationBuckets(classification);
+collection.completeness.detailPromotedToData = [...afterBuckets.entries()]
+  .filter(([key, bucket]) => bucket === "data" && beforeBuckets.get(key) === "review").length;
+collection.completeness.detailRejectedAfterDetail = [...afterBuckets.entries()]
+  .filter(([key, bucket]) => bucket === "rejected" && ["data", "review"].includes(beforeBuckets.get(key) ?? "")).length;
 const model = buildProcurementWorkbookModel(classification, collection.completeness);
 await writeProcurementWorkbook(xlsxPath, model);
 fs.writeFileSync(jsonPath, JSON.stringify({ generatedAt: new Date().toISOString(), config: args.config,
@@ -80,9 +91,21 @@ function loadGoszakupCandidates(databasePath: string): GoszakupEnrichmentCandida
   try {
     const table = registry.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'goszakup_registry_data'").get();
     if (!table) return [];
-    return registry.prepare("SELECT name_ru AS customerName, bin FROM goszakup_registry_data WHERE name_ru IS NOT NULL AND bin IS NOT NULL")
+    return registry.prepare(`SELECT name_ru AS customerName, bin, website, email, phone,
+      reporting_administrator AS reportingAdministrator,
+      COALESCE(full_address_ru, legal_address, location_address) AS legalAddress,
+      director_name AS directorName
+      FROM goszakup_registry_data WHERE bin IS NOT NULL`)
       .all() as GoszakupEnrichmentCandidate[];
   } finally {
     registry.close();
   }
+}
+
+function classificationBuckets(value: ReturnType<typeof classifyProcurementRecords>): Map<string, "data" | "review" | "rejected"> {
+  const result = new Map<string, "data" | "review" | "rejected">();
+  for (const bucket of ["data", "review", "rejected"] as const) {
+    for (const item of value[bucket]) result.set(`${item.record.source}:${item.record.recordKind}:${item.record.externalId}`, bucket);
+  }
+  return result;
 }
