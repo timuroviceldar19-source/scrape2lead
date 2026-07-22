@@ -51,3 +51,20 @@ One verified Samruk plan was created without `ASSIGNED_BY_ID`:
 Protected pre-existing deals `42987` and `42989` remained assigned to `2301` before
 and after the control creation. The next two naturally created deals are needed to
 observe a complete three-person rotation; no extra control deals were created.
+
+## Customer profile link correction
+
+The former customer link `/home/organizations?q=<BIN>` was reproduced as invalid in
+both Bitrix field mapping and the procurement workbook. The official EPZ registry and
+API were checked for organization `117476`; its working public profile is
+`https://zakup.gov.kz/registry/pipp/117476`.
+
+- RED: 3 expected failures proved that Bitrix and XLSX still emitted the old search URL.
+- GREEN: 2 files, 7 tests passed after switching links to the stable
+  `customerSourceId`; records without a numeric organization ID now omit the link.
+- Full verification: 72 files passed, 1 skipped; 572 tests passed, 1 skipped.
+- `npm run lint`: passed.
+- Changed-module coverage: customer-link helper 100%, deal planning 100% statements
+  and lines, workbook model 94.59% statements and lines.
+- Live deal `42995` was updated in place; stage `C1:NEW` and assignee `147` remained
+  unchanged. Clicking its customer link opened the verified EPZ profile.
