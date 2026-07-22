@@ -1,4 +1,5 @@
 import type { ClassifiedProcurement, ProcurementClassification, ProcurementCollectionCompleteness, ProcurementRecord } from "./types.js";
+import { procurementCustomerUrl } from "./links.js";
 
 export type ProcurementSheetName = "Планы" | "Тендеры" | "Review" | "Rejected" | "Summary";
 export interface ProcurementWorkbookSheet { name: ProcurementSheetName; rows: Array<Array<string | number | null>> }
@@ -120,6 +121,5 @@ function productLabel(item: ClassifiedProcurement): string | null {
   return item.product === "panel" ? "Интерактивная панель" : item.product === "pk" ? "ПК" : null;
 }
 function customerLink(row: ProcurementRecord): string | null {
-  if (!row.customerBin) return null;
-  return `https://zakup.gov.kz/home/organizations?q=${encodeURIComponent(row.customerBin)}`;
+  return procurementCustomerUrl(row) ?? null;
 }

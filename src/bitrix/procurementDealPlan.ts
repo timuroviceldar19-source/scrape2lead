@@ -1,4 +1,5 @@
 import type { ProcurementRecord } from "../kz/procurement/types.js";
+import { procurementCustomerUrl } from "../kz/procurement/links.js";
 
 export const PROCUREMENT_ORIGINATOR_ID = "scrape2lead-procurement";
 export const PROCUREMENT_CATEGORY_ID = 1;
@@ -39,9 +40,7 @@ function buildFields(record: ProcurementRecord): Record<string, unknown> {
   const detail = record.planDetail;
   const profile = record.customerProfile;
   const deliveryAddresses = joinDeliveries(record, "address");
-  const customerUrl = record.customerBin
-    ? `https://zakup.gov.kz/home/organizations?q=${encodeURIComponent(record.customerBin)}`
-    : undefined;
+  const customerUrl = procurementCustomerUrl(record);
   const plannedTerm = [detail?.financialYear, detail?.deliveryDeadline]
     .filter((value) => value !== null && value !== undefined && value !== "").join("; ") || undefined;
   return stripUndefined({
