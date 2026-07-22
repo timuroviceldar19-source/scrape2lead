@@ -17,3 +17,11 @@ export function evaluateProcurementReleaseGate(
   if ([...uniqueRuns.values()].some((run) => !run.assignmentVerified)) reasons.push("assignment_not_verified");
   return { ok: reasons.length === 0, reasons };
 }
+
+export function evaluateProcurementCollectionGate(
+  collection: ProcurementCollectionCompleteness
+): { ok: boolean; reasons: string[] } {
+  if (collection.complete) return { ok: true, reasons: [] };
+  return { ok: false, reasons: ["collection_incomplete", ...collection.incompleteReasons] };
+}
+import type { ProcurementCollectionCompleteness } from "./types.js";

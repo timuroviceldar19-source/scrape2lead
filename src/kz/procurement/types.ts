@@ -2,6 +2,21 @@ export type ProcurementSource = "mitwork" | "samruk" | "tizilim";
 export type ProcurementRecordKind = "plan" | "tender";
 export type ProcurementProduct = "panel" | "pk";
 
+export interface ProcurementEnrichment {
+  source: "epz-organization" | "epz-announcement" | "goszakup";
+  confidence: "exact" | "candidate";
+  candidateBin?: string | null;
+  candidateTruCode?: string | null;
+}
+
+export interface ProcurementCollectionCompleteness {
+  complete: boolean;
+  planYearId: number;
+  pageLimit: number;
+  pagesFetched: number;
+  incompleteReasons: string[];
+}
+
 export interface ProcurementRecord {
   source: ProcurementSource;
   recordKind: ProcurementRecordKind;
@@ -23,6 +38,7 @@ export interface ProcurementRecord {
   url: string;
   purchaseMethod: string | null;
   collectedAt: string;
+  enrichment?: ProcurementEnrichment | null;
 }
 
 export type ProcurementDropReason =
@@ -36,6 +52,7 @@ export type ProcurementDropReason =
   | "ambiguous_panel"
   | "inactive_status"
   | "missing_status"
+  | "unsupported_status"
   | "missing_bin";
 
 export interface ClassifiedProcurement {

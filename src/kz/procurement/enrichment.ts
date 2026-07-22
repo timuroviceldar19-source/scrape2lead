@@ -10,7 +10,7 @@ export async function enrichEligibleEpzCustomers(
 ): Promise<ProcurementRecord[]> {
   const fetchJson = options.fetchJson ?? fetchOrganization;
   const eligible = new Set(classifyProcurementRecords(records, options.filter).review
-    .filter((item) => item.reason === "missing_bin" && item.record.source !== "tizilim"
+    .filter((item) => ["missing_bin", "missing_tru_code", "ambiguous_panel"].includes(item.reason ?? "") && item.record.source !== "tizilim"
       && (item.record.customerSourceId || item.record.announcementSourceId))
     .map((item) => `${item.record.source}:${item.record.recordKind}:${item.record.externalId}`));
   const cache = new Map<string, Promise<{ bin: string | null; name: string | null }>>();
@@ -28,8 +28,10 @@ export async function enrichEligibleEpzCustomers(
       cache.set(lookupKey, request);
     }
     const organization = await request;
-    return { ...record, customerBin: organization.bin ?? record.customerBin,
-      customerName: organization.name ?? record.customerName };
+    if (!organization.bin) return record;
+    return { ...record, customerBin: organization.bin,
+      customerName: organization.name ?? record.customerName,
+      enrichment: { source: record.customerSourceId ? "epz-organization" : "epz-announcement", confidence: "exact" } };
   }));
 }
 

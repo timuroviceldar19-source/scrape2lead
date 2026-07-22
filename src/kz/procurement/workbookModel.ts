@@ -1,12 +1,13 @@
-import type { ClassifiedProcurement, ProcurementClassification } from "./types.js";
+import type { ClassifiedProcurement, ProcurementClassification, ProcurementCollectionCompleteness } from "./types.js";
 
 export interface ProcurementWorkbookSheet { name: "Data" | "Review" | "Rejected" | "Summary"; rows: Array<Array<string | number | null>> }
 export interface ProcurementWorkbookModel { sheets: ProcurementWorkbookSheet[]; summary: { total: number; data: number; review: number; rejected: number } }
 
 const HEADERS = ["Source", "Kind", "Source record ID", "External ID", "Parent ID", "Product", "Reason", "Status", "Name", "Description",
-  "TRU code", "Customer", "BIN", "Amount", "Currency", "Start", "End", "Method", "URL", "Collected at"];
+  "TRU code", "Customer", "BIN", "Amount", "Currency", "Start", "End", "Method", "URL", "Collected at",
+  "Enrichment source", "Confidence", "Candidate BIN", "Candidate TRU code"];
 
-export function buildProcurementWorkbookModel(input: ProcurementClassification): ProcurementWorkbookModel {
+export function buildProcurementWorkbookModel(input: ProcurementClassification, completeness?: ProcurementCollectionCompleteness): ProcurementWorkbookModel {
   const summary = { total: input.data.length + input.review.length + input.rejected.length,
     data: input.data.length, review: input.review.length, rejected: input.rejected.length };
   const reasons = new Map<string, number>();
@@ -23,6 +24,13 @@ export function buildProcurementWorkbookModel(input: ProcurementClassification):
     { name: "Rejected", rows: [HEADERS, ...input.rejected.map(toRow)] },
     { name: "Summary", rows: [["Metric", "Count"], ["total", summary.total], ["data", summary.data],
       ["review", summary.review], ["rejected", summary.rejected],
+      ...(completeness ? [
+        ["collection:complete", completeness.complete ? "yes" : "no"],
+        ["collection:plan_year_id", completeness.planYearId],
+        ["collection:pages_fetched", completeness.pagesFetched],
+        ["collection:page_limit", completeness.pageLimit],
+        ...completeness.incompleteReasons.map((reason) => [`collection:incomplete:${reason}`, 1])
+      ] : []),
       ...[...sources.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([source, count]) => [`source:${source}`, count]),
       ...[...reasons.entries()].sort(([a], [b]) => a.localeCompare(b))] }
   ], summary };
@@ -32,5 +40,7 @@ function toRow(item: ClassifiedProcurement): Array<string | number | null> {
   const row = item.record;
   return [row.source, row.recordKind, row.sourceRecordId ?? null, row.externalId, row.parentExternalId, item.product, item.reason, row.status,
     row.productName, row.description, row.truCode, row.customerName, row.customerBin, row.amount, row.currency,
-    row.startDate, row.endDate, row.purchaseMethod, row.url, row.collectedAt];
+    row.startDate, row.endDate, row.purchaseMethod, row.url, row.collectedAt,
+    row.enrichment?.source ?? null, row.enrichment?.confidence ?? null,
+    row.enrichment?.candidateBin ?? null, row.enrichment?.candidateTruCode ?? null];
 }

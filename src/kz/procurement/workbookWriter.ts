@@ -39,7 +39,8 @@ function styleSheet(sheet: ExcelJS.Worksheet, filterable: boolean): void {
     Source: 12, Kind: 10, "Source record ID": 18, "External ID": 20, "Parent ID": 18,
     Product: 12, Reason: 22, Status: 20, Name: 42, Description: 48, "TRU code": 22,
     Customer: 34, BIN: 16, Amount: 17, Currency: 10, Start: 20, End: 20, Method: 24, URL: 18,
-    "Collected at": 22, Metric: 28, Count: 14
+    "Collected at": 22, "Enrichment source": 22, Confidence: 14, "Candidate BIN": 18,
+    "Candidate TRU code": 22, Metric: 42, Count: 18, Value: 18
   };
   sheet.columns.forEach((column, index) => {
     const label = String(sheet.getCell(1, index + 1).value ?? "");

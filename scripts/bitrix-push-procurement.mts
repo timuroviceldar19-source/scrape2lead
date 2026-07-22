@@ -6,8 +6,8 @@ import { ProcurementBitrixClient } from "../src/bitrix/procurementClient.js";
 import { planProcurementPush } from "../src/bitrix/procurementPush.js";
 import { verifyProcurementAssignmentGate } from "../src/bitrix/procurementDealPlan.js";
 import { loadProcurementConfig } from "../src/kz/procurement/config.js";
-import { evaluateProcurementReleaseGate, type ProcurementManualRun } from "../src/kz/procurement/releaseGate.js";
-import type { ClassifiedProcurement } from "../src/kz/procurement/types.js";
+import { evaluateProcurementCollectionGate, evaluateProcurementReleaseGate, type ProcurementManualRun } from "../src/kz/procurement/releaseGate.js";
+import type { ClassifiedProcurement, ProcurementCollectionCompleteness } from "../src/kz/procurement/types.js";
 
 const args = parseArgs(process.argv.slice(2));
 const config = loadProcurementConfig(args.config);
@@ -15,10 +15,14 @@ const webhook = (process.env.BITRIX24_WEBHOOK_URL ?? process.env.BITRIX_WEBHOOK_
 if (!webhook) throw new Error("BITRIX24_WEBHOOK_URL is required for duplicate checks and dry-run");
 const report = JSON.parse(fs.readFileSync(path.resolve(args.report), "utf8")) as {
   classification?: { data?: ClassifiedProcurement[] };
+  collection?: ProcurementCollectionCompleteness;
 };
 const records = (report.classification?.data ?? []).map((item) => item.record);
 
 if (args.execute) {
+  if (!report.collection) throw new Error("Production gate failed: collection completeness is missing");
+  const collectionGate = evaluateProcurementCollectionGate(report.collection);
+  if (!collectionGate.ok) throw new Error(`Production gate failed: ${collectionGate.reasons.join(", ")}`);
   if (!config.bitrix.executeEnabled) throw new Error("Production push is disabled in procurement config");
   const runs = readManualRuns(args.gateFile);
   const gate = evaluateProcurementReleaseGate(runs, config.manualRunsRequired);

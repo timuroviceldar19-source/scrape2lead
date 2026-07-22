@@ -39,10 +39,7 @@ function classify(record: ProcurementRecord, config: Required<ProcurementFilterO
 
   if (record.recordKind === "plan") {
     const status = normalize(record.status ?? "");
-    if (!status) return review(record, null, "missing_status");
-    const inactive = ["исключ", "чернов", "исполн", "заверш", "перенес", "договор утвержден",
-      "excluded", "draft", "executed", "completed", "transferred"].some((word) => status.includes(word));
-    if (inactive) return rejected(record, null, "inactive_status");
+    if (status !== "утвержден") return rejected(record, null, "unsupported_status");
   }
 
   const haystack = normalize(`${record.productName} ${record.description}`);
@@ -58,7 +55,7 @@ function classify(record: ProcurementRecord, config: Required<ProcurementFilterO
   } else {
     const normalizedCode = normalizeTru(record.truCode);
     const codeAllowed = config.pkTruPrefixes.some((prefix) => normalizedCode.startsWith(normalizeTru(prefix)));
-    const pkNamed = PK_NAME_WORDS.some((word) => haystack.includes(word));
+    const pkNamed = PK_NAME_WORDS.some((word) => containsTerm(haystack, normalize(word)));
     if (codeAllowed) product = "pk";
     else if (pkNamed && !normalizedCode) return review(record, "pk", "missing_tru_code");
     else if (pkNamed) return rejected(record, "pk", "irrelevant_tru_code");
@@ -77,3 +74,7 @@ function review(record: ProcurementRecord, product: ProcurementProduct | null, r
 }
 function normalize(value: string): string { return value.normalize("NFKC").toLocaleLowerCase("ru").replace(/\s+/g, " ").trim(); }
 function normalizeTru(value: string | null): string { return (value ?? "").replace(/\s+/g, "").replace(/,+/g, "."); }
+function containsTerm(text: string, term: string): boolean {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u").test(text);
+}
