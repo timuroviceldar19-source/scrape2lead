@@ -60,13 +60,25 @@ describe("procurement product and CRM eligibility filters", () => {
     expect(result.data.map((item) => item.record.externalId)).toContain("interactive");
   });
 
-  it("rejects inactive plans and reviews plans without a normalized status", () => {
+  it("accepts only approved plans regardless of case/spacing and rejects every other or missing status", () => {
     const result = classifyProcurementRecords([
-      row({ externalId: "excluded", status: "Excluded" }),
+      row({ externalId: "approved", status: "  УТВЕРЖДЕН  " }),
+      row({ externalId: "cancelled", status: "Отменен" }),
+      row({ externalId: "contract", status: "Договор создан" }),
       row({ externalId: "unknown", status: null })
     ]);
-    expect(result.rejected.map((item) => [item.record.externalId, item.reason])).toContainEqual(["excluded", "inactive_status"]);
-    expect(result.review.map((item) => [item.record.externalId, item.reason])).toContainEqual(["unknown", "missing_status"]);
+    expect(result.data.map((item) => item.record.externalId)).toContain("approved");
+    expect(result.rejected.map((item) => [item.record.externalId, item.reason])).toEqual([
+      ["cancelled", "unsupported_status"], ["contract", "unsupported_status"], ["unknown", "unsupported_status"]
+    ]);
+  });
+
+  it("does not treat monitoring services as computer monitors", () => {
+    const result = classifyProcurementRecords([
+      row({ recordKind: "tender", externalId: "service", status: "Опубликован", productName: "Услуги онлайн мониторинга транспорта", truCode: null })
+    ]);
+    expect(result.review).toHaveLength(0);
+    expect(result.rejected[0]).toMatchObject({ reason: "irrelevant_product" });
   });
 });
 

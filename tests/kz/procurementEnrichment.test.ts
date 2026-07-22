@@ -9,6 +9,7 @@ describe("EPZ customer enrichment", () => {
     const enriched = await enrichEligibleEpzCustomers(records, { fetchJson });
     expect(fetchJson).toHaveBeenCalledTimes(1);
     expect(enriched[0]?.customerBin).toBe("981240001604");
+    expect(enriched[0]?.enrichment).toMatchObject({ source: "epz-organization", confidence: "exact" });
     expect(enriched[1]?.customerBin).toBe("981240001604");
     expect(enriched[2]?.customerBin).toBeNull();
   });
@@ -20,6 +21,7 @@ describe("EPZ customer enrichment", () => {
     const [enriched] = await enrichEligibleEpzCustomers([tender], { fetchJson });
     expect(fetchJson.mock.calls[0]?.[0]).toContain("/announcements/40179226/");
     expect(enriched?.customerBin).toBe("050540000581");
+    expect(enriched?.enrichment).toMatchObject({ source: "epz-announcement", confidence: "exact" });
   });
 });
 

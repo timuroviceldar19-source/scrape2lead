@@ -13,11 +13,16 @@ describe("procurement workbook model", () => {
       data: [item("data", null)],
       review: [item("review", "missing_bin")],
       rejected: [item("rejected", "stop_word")]
-    });
+    }, { complete: true, planYearId: 9, pageLimit: 500, pagesFetched: 17, incompleteReasons: [] });
     expect(model.sheets.map((sheet) => sheet.name)).toEqual(["Data", "Review", "Rejected", "Summary"]);
     expect(model.summary).toMatchObject({ total: 3, data: 1, review: 1, rejected: 1 });
     expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["stop_word", 1]);
     expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["source:mitwork", 3]);
+    expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["collection:complete", "yes"]);
+    expect(model.sheets.find((sheet) => sheet.name === "Summary")?.rows).toContainEqual(["collection:plan_year_id", 9]);
+    expect(model.sheets.find((sheet) => sheet.name === "Data")?.rows[0]).toEqual(expect.arrayContaining([
+      "Enrichment source", "Confidence", "Candidate BIN", "Candidate TRU code"
+    ]));
   });
 
   it("writes a styled, filterable workbook with all four sheets", async () => {
@@ -28,7 +33,7 @@ describe("procurement workbook model", () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(target);
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["Data", "Review", "Rejected", "Summary"]);
-    expect(workbook.getWorksheet("Data")?.autoFilter).toBe("A1:T2");
+    expect(workbook.getWorksheet("Data")?.autoFilter).toBe("A1:X2");
     expect(workbook.getWorksheet("Summary")?.getCell("B2").value).toBe(2);
   });
 });

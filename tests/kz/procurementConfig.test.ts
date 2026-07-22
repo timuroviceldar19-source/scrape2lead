@@ -12,5 +12,7 @@ describe("external procurement configuration", () => {
     expect(config.minAmount).toBe(500_000);
     expect(config.bitrix).toMatchObject({ categoryId: 1, stageId: "C1:NEW", executeEnabled: false });
     expect(config.manualRunsRequired).toBe(7);
+    expect(config.planYearId).toBe(9);
+    expect(config.maxPages).toBe(500);
   });
 });
