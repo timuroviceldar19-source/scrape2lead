@@ -12,7 +12,7 @@ describe("external procurement configuration", () => {
     expect(config.pkTruPrefixes).toEqual(["262011.", "262013.", "262017.100."]);
     expect(config.minAmount).toBe(500_000);
     expect(config.bitrix).toMatchObject({ categoryId: 1, stageId: "C1:NEW", executeEnabled: false });
-    expect(config.bitrix.managerIds).toEqual(["205", "147", "1751", "725"]);
+    expect(config.bitrix.managerIds).toEqual(["147", "1751", "725"]);
     expect(config.manualRunsRequired).toBe(7);
     expect(config.planYearId).toBe(9);
     expect(config.maxPages).toBe(500);

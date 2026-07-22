@@ -105,17 +105,17 @@ describe("procurement Bitrix lifecycle", () => {
       .toBe(procurementOpportunityOriginId(row({ recordKind: "tender", externalId: "lot-9", parentExternalId: "42" })));
 
     expect(verifyProcurementAssignmentGate([
-      { ID: "1", ASSIGNED_BY_ID: "205" },
-      { ID: "2", ASSIGNED_BY_ID: "147" },
-      { ID: "3", ASSIGNED_BY_ID: "1751" },
-      { ID: "4", ASSIGNED_BY_ID: "725" }
+      { ID: "1", ASSIGNED_BY_ID: "147" },
+      { ID: "2", ASSIGNED_BY_ID: "1751" },
+      { ID: "3", ASSIGNED_BY_ID: "725" }
     ])).toEqual({ ok: true, invalidDealIds: [] });
     expect(verifyProcurementAssignmentGate([
       { ID: "1", ASSIGNED_BY_ID: "2015" },
       { ID: "2", ASSIGNED_BY_ID: "2209" },
       { ID: "3", ASSIGNED_BY_ID: "2255" },
-      { ID: "4", ASSIGNED_BY_ID: "2301" }
-    ])).toEqual({ ok: false, invalidDealIds: ["1", "2", "3", "4"] });
+      { ID: "4", ASSIGNED_BY_ID: "2301" },
+      { ID: "5", ASSIGNED_BY_ID: "205" }
+    ])).toEqual({ ok: false, invalidDealIds: ["1", "2", "3", "4", "5"] });
   });
 });
 

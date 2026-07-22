@@ -5,10 +5,10 @@ describe("procurement assignment control", () => {
   it("waits until every newly-created deal is assigned to the sales pool", async () => {
     const readDeal = vi.fn()
       .mockResolvedValueOnce({ ID: "10", ASSIGNED_BY_ID: "2301" })
-      .mockResolvedValueOnce({ ID: "10", ASSIGNED_BY_ID: "205" });
+      .mockResolvedValueOnce({ ID: "10", ASSIGNED_BY_ID: "147" });
 
     const result = await waitForProcurementAssignments(["10"], readDeal, {
-      managerIds: ["205", "147", "1751", "725"], timeoutMs: 10, pollIntervalMs: 0
+      managerIds: ["147", "1751", "725"], timeoutMs: 10, pollIntervalMs: 0
     });
 
     expect(result).toEqual({ ok: true, invalidDealIds: [] });
@@ -21,7 +21,7 @@ describe("procurement assignment control", () => {
       : null);
 
     const result = await waitForProcurementAssignments(["10", "11"], readDeal, {
-      managerIds: ["205", "147", "1751", "725"], timeoutMs: 0, pollIntervalMs: 0
+      managerIds: ["147", "1751", "725"], timeoutMs: 0, pollIntervalMs: 0
     });
 
     expect(result).toEqual({ ok: false, invalidDealIds: ["10", "11"] });
