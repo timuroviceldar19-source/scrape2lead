@@ -14,5 +14,6 @@ describe("external procurement configuration", () => {
     expect(config.manualRunsRequired).toBe(7);
     expect(config.planYearId).toBe(9);
     expect(config.maxPages).toBe(500);
+    expect(config.goszakupRegistryDatabasePath).toBe("data/scrape2lead.db");
   });
 });
