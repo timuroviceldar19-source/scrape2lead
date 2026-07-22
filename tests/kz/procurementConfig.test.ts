@@ -6,8 +6,9 @@ describe("external procurement configuration", () => {
     const config = loadProcurementConfig("config/procurement-sources.json");
     expect(config.sources).toEqual(["mitwork", "samruk", "tizilim"]);
     expect(config.keywords).toEqual(expect.arrayContaining([
-      "Компьютер персональный", "Монитор", "Моноблок", "Ноутбук", "Интерактивная панель"
+      "Компьютер", "Монитор", "Моноблок", "Ноутбук", "Интерактивная панель"
     ]));
+    expect(config.keywords).not.toContain("Компьютер персональный");
     expect(config.pkTruPrefixes).toEqual(["262011.", "262013.", "262017.100."]);
     expect(config.minAmount).toBe(500_000);
     expect(config.bitrix).toMatchObject({ categoryId: 1, stageId: "C1:NEW", executeEnabled: false });
