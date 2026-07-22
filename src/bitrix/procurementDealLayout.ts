@@ -49,7 +49,7 @@ export function buildProcurementDealConfiguration(): ProcurementDealLayoutSectio
     },
     {
       name: "procurement_delivery", title: "Поставка", type: "section", elements: [
-        element("UF_CRM_DELIVERY_ADDRESSES"), element("UF_CRM_6A436D5AD0A2B")
+        element("UF_CRM_DELIVERY_ADDRESSES")
       ]
     },
     {
