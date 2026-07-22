@@ -4,7 +4,7 @@ import path from "node:path";
 import { BitrixClient } from "../src/bitrix/client.js";
 import { ProcurementBitrixClient } from "../src/bitrix/procurementClient.js";
 import { planProcurementPush } from "../src/bitrix/procurementPush.js";
-import { verifyProcurementAssignmentGate } from "../src/bitrix/procurementDealPlan.js";
+import { waitForProcurementAssignments } from "../src/bitrix/procurementAssignmentControl.js";
 import { loadProcurementConfig } from "../src/kz/procurement/config.js";
 import { evaluateProcurementCollectionGate, evaluateProcurementReleaseGate, type ProcurementManualRun } from "../src/kz/procurement/releaseGate.js";
 import type { ClassifiedProcurement, ProcurementCollectionCompleteness } from "../src/kz/procurement/types.js";
@@ -32,15 +32,21 @@ if (args.execute) {
 const transport = new BitrixClient(webhook, { requestDelayMs: 550, maxRetries: 5 });
 const client = new ProcurementBitrixClient(transport);
 const result = await planProcurementPush(records, client, { execute: args.execute });
-let assignmentGate: ReturnType<typeof verifyProcurementAssignmentGate> | null = null;
-if (args.verifyDealIds.length) {
-  const deals = [];
-  for (const id of args.verifyDealIds) {
-    const deal = await transport.findFirst("deal", { ID: id }, ["ID", "ASSIGNED_BY_ID"]);
-    if (deal) deals.push(deal);
-  }
-  assignmentGate = verifyProcurementAssignmentGate(deals);
-}
+const createdDealIds = args.execute
+  ? result.items.filter((item) => item.action === "create" && item.dealId).map((item) => String(item.dealId))
+  : [];
+const dealIdsToVerify = [...new Set([...createdDealIds, ...args.verifyDealIds])];
+const assignmentGate = dealIdsToVerify.length
+  ? await waitForProcurementAssignments(
+    dealIdsToVerify,
+    async (id) => await transport.findFirst("deal", { ID: id }, ["ID", "ASSIGNED_BY_ID"]),
+    {
+      managerIds: config.bitrix.managerIds,
+      timeoutMs: args.execute ? args.assignmentTimeoutMs : 0,
+      pollIntervalMs: 3_000
+    }
+  )
+  : null;
 
 const outputPath = `${path.resolve(args.report).replace(/\.json$/i, "")}.bitrix-${args.execute ? "push" : "dry-run"}.json`;
 fs.writeFileSync(outputPath, JSON.stringify({ generatedAt: new Date().toISOString(), execute: args.execute,
@@ -54,17 +60,24 @@ function readManualRuns(filePath: string): ProcurementManualRun[] {
   const value = JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
   return Array.isArray(value) ? value as ProcurementManualRun[] : [];
 }
-function parseArgs(argv: string[]): { report: string; config: string; execute: boolean; gateFile: string; verifyDealIds: string[] } {
+function parseArgs(argv: string[]): { report: string; config: string; execute: boolean; gateFile: string;
+  verifyDealIds: string[]; assignmentTimeoutMs: number } {
   const result = { report: "", config: "config/procurement-sources.json", execute: false,
-    gateFile: "data/procurement-manual-runs.json", verifyDealIds: [] as string[] };
+    gateFile: "data/procurement-manual-runs.json", verifyDealIds: [] as string[], assignmentTimeoutMs: 30_000 };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]; const value = argv[index + 1];
     if (arg === "--report" && value) { result.report = value; index++; }
     else if (arg === "--config" && value) { result.config = value; index++; }
     else if (arg === "--gate-file" && value) { result.gateFile = value; index++; }
     else if (arg === "--verify-deal-ids" && value) { result.verifyDealIds = value.split(",").map((id) => id.trim()).filter(Boolean); index++; }
+    else if (arg === "--assignment-timeout-ms" && value) {
+      result.assignmentTimeoutMs = Number(value); index++;
+      if (!Number.isFinite(result.assignmentTimeoutMs) || result.assignmentTimeoutMs < 0) {
+        throw new Error("--assignment-timeout-ms must be a non-negative number");
+      }
+    }
     else if (arg === "--execute") result.execute = true;
-    else if (arg === "--help") { console.log("tsx scripts/bitrix-push-procurement.mts --report file.json [--verify-deal-ids 1,2] [--execute]"); process.exit(0); }
+    else if (arg === "--help") { console.log("tsx scripts/bitrix-push-procurement.mts --report file.json [--verify-deal-ids 1,2] [--assignment-timeout-ms 30000] [--execute]"); process.exit(0); }
     else throw new Error(`Unknown or incomplete argument: ${arg}`);
   }
   if (!result.report) throw new Error("--report is required");

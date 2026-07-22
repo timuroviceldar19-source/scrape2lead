@@ -21,7 +21,7 @@ const schema = z.object({
   bitrix: z.object({
     categoryId: z.literal(1),
     stageId: z.literal("C1:NEW"),
-    managerIds: z.tuple([z.literal("2015"), z.literal("2209"), z.literal("2255")]),
+    managerIds: z.tuple([z.literal("205"), z.literal("147"), z.literal("1751"), z.literal("725")]),
     executeEnabled: z.boolean().default(false)
   })
 });

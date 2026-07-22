@@ -25,7 +25,7 @@
   "bitrix": {
     "categoryId": 1,
     "stageId": "C1:NEW",
-    "managerIds": ["2015", "2209", "2255"],
+    "managerIds": ["205", "147", "1751", "725"],
     "executeEnabled": false
   }
 }
