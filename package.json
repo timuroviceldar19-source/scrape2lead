@@ -28,6 +28,7 @@
     "bitrix:import": "tsx scripts/bitrix-import.mts",
     "bitrix:report": "tsx scripts/bitrix-report.mts",
     "bitrix:activity-audit": "tsx scripts/bitrix-activity-audit.mts",
+    "bitrix:apply-procurement-layout": "tsx scripts/bitrix-apply-procurement-layout.mts",
     "bitrix:backfill-gz-origin": "tsx scripts/bitrix-backfill-gz-origin.mts",
     "bitrix:backfill-gz-plan-number": "tsx scripts/bitrix-backfill-gz-plan-number.mts",
     "bitrix:correct-gz-plan-number": "tsx scripts/bitrix-correct-gz-plan-number.mts",

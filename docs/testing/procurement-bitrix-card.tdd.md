@@ -36,6 +36,16 @@ Improve category `1` (`F3-B2B тендеры`) so enriched procurement data is w
 - REST read-back confirmed customer BIN, plan status/link, ЕНС ТРУ, descriptions, quantity, unit price and delivery addresses.
 - Chrome inspection confirmed the six intended sections and absence of `Техническое заключение`, `Тестовый раздел`, payment controls and duplicate delivery fields.
 
-## Known gap
+## 2026-07-23 regression fix
 
-- The existing round-robin robot still leaves the webhook user `2301` responsible; assignment is a separate Bitrix automation issue and was not hidden by this card-layout change.
+- RED: the card layout test failed because `UF_CRM_1782386293000_IU_XLS` was absent; the
+  assignment/config tests failed because the old manager pool was still active.
+- GREEN: 10 targeted tests passed after exposing “№ пункта плана” and changing the only allowed
+  assignee to Саматбек Нурматов (`2255`).
+- Full suite: 572 tests passed, one optional E2E test skipped; `npm run lint` passed.
+- Changed source modules reached 100% statement/line coverage.
+- Live layout read-back confirmed six sections, visible plan-point number and plan link, and no
+  duplicate technical `UF_CRM_PLAN_ID` field.
+- Chrome confirmed deal `43001` displays “№ пункта плана” with value `19760324`.
+- The category-1 robot now uses one concrete responsible user, `2255`, with both absence and
+  completed-workday skipping disabled. Existing deals were not reassigned.

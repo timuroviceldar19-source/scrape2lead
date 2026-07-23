@@ -18,17 +18,25 @@ npx tsx scripts/bitrix-push-procurement.mts --report output/procurement/<run>.js
 
 This checks existing origins and cross-source duplicate candidates but does not write deals.
 
-## Category-1 robot
+## Category-1 card and robot
+
+Apply and verify the common procurement card layout:
+
+```powershell
+npm run bitrix:apply-procurement-layout
+npm run bitrix:apply-procurement-layout -- --execute
+```
 
 In Bitrix automation for pipeline `F3-B2B тендеры` (`CATEGORY_ID=1`), stage `C1:NEW`, configure
-a round-robin assignment action with users `2015`, `2209`, and `2255`. The integration does not
-set `ASSIGNED_BY_ID`; `OPENED=Y` is set on every new or updated deal.
+the “Изменить ответственного” robot with the concrete user `2255` (Саматбек Нурматов). Both
+absence and completed-workday skipping must be disabled so every new deal is assigned to him.
+The integration does not set `ASSIGNED_BY_ID`; `OPENED=Y` is set on every new or updated deal.
 
-Create controlled test deals and verify that:
+Create a controlled test deal and verify that:
 
-1. the responsible user changes away from the webhook user;
-2. distribution covers all three configured managers;
-3. every assigned deal appears under the respective manager's “Мои” filter.
+1. the responsible user changes from the webhook user to `2255`;
+2. the deal appears under Саматбек Нурматов’s “Мои” filter;
+3. “№ пункта плана” and “Ссылка на План” are visible in the card.
 
 Record each clean manual run in `data/procurement-manual-runs.json`:
 

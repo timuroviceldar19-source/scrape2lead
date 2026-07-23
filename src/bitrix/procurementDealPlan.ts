@@ -4,7 +4,7 @@ import { procurementCustomerUrl } from "../kz/procurement/links.js";
 export const PROCUREMENT_ORIGINATOR_ID = "scrape2lead-procurement";
 export const PROCUREMENT_CATEGORY_ID = 1;
 export const PROCUREMENT_NEW_STAGE_ID = "C1:NEW";
-export const PROCUREMENT_MANAGER_IDS = ["147", "1751", "725"] as const;
+export const PROCUREMENT_MANAGER_IDS = ["2255"] as const;
 
 export interface ExistingProcurementDeal {
   ID: string | number;

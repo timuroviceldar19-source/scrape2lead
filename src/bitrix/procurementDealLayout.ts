@@ -36,7 +36,7 @@ export function buildProcurementDealConfiguration(): ProcurementDealLayoutSectio
       name: "procurement_parameters", title: "Параметры закупки", type: "section", elements: [
         element("SOURCE_DESCRIPTION"), element("UF_CRM_POINT_TYPE"), element("UF_CRM_PLAN_STATUS"),
         element("UF_CRM_6627AEBD4503E"), element("UF_CRM_TRADE_METHOD"), element("BEGINDATE"),
-        element("UF_CRM_PLAN_ID"), element("UF_CRM_6A436D5A3614C"), element("UF_CRM_PLAN_LINK")
+        element("UF_CRM_1782386293000_IU_XLS"), element("UF_CRM_6A436D5A3614C"), element("UF_CRM_PLAN_LINK")
       ]
     },
     {

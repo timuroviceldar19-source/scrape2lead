@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { waitForProcurementAssignments } from "../../src/bitrix/procurementAssignmentControl.js";
 
 describe("procurement assignment control", () => {
-  it("waits until every newly-created deal is assigned to the sales pool", async () => {
+  it("waits until every newly-created deal is assigned to Samatbek", async () => {
     const readDeal = vi.fn()
       .mockResolvedValueOnce({ ID: "10", ASSIGNED_BY_ID: "2301" })
-      .mockResolvedValueOnce({ ID: "10", ASSIGNED_BY_ID: "147" });
+      .mockResolvedValueOnce({ ID: "10", ASSIGNED_BY_ID: "2255" });
 
     const result = await waitForProcurementAssignments(["10"], readDeal, {
-      managerIds: ["147", "1751", "725"], timeoutMs: 10, pollIntervalMs: 0
+      managerIds: ["2255"], timeoutMs: 10, pollIntervalMs: 0
     });
 
     expect(result).toEqual({ ok: true, invalidDealIds: [] });
@@ -21,7 +21,7 @@ describe("procurement assignment control", () => {
       : null);
 
     const result = await waitForProcurementAssignments(["10", "11"], readDeal, {
-      managerIds: ["147", "1751", "725"], timeoutMs: 0, pollIntervalMs: 0
+      managerIds: ["2255"], timeoutMs: 0, pollIntervalMs: 0
     });
 
     expect(result).toEqual({ ok: false, invalidDealIds: ["10", "11"] });
@@ -30,7 +30,7 @@ describe("procurement assignment control", () => {
   it("does nothing when the push created no new deals", async () => {
     const readDeal = vi.fn();
     await expect(waitForProcurementAssignments([], readDeal, {
-      managerIds: ["205"], timeoutMs: 0, pollIntervalMs: 0
+      managerIds: ["2255"], timeoutMs: 0, pollIntervalMs: 0
     })).resolves.toEqual({ ok: true, invalidDealIds: [] });
     expect(readDeal).not.toHaveBeenCalled();
   });
