@@ -29,4 +29,22 @@ describe("procurement deal reassignment", () => {
       fields: { ASSIGNED_BY_ID: "2255" }
     }]);
   });
+
+  it("handles numeric ids and missing assignee or stage values", () => {
+    expect(planProcurementReassignments([
+      {
+        ID: 77, CATEGORY_ID: 1, ORIGINATOR_ID: "scrape2lead-procurement",
+        ASSIGNED_BY_ID: null, STAGE_ID: null
+      },
+      {
+        ID: 78, CATEGORY_ID: null, ORIGINATOR_ID: "scrape2lead-procurement",
+        ASSIGNED_BY_ID: null, STAGE_ID: null
+      }
+    ], "999")).toEqual([{
+      dealId: "77",
+      previousAssigneeId: "",
+      stageId: null,
+      fields: { ASSIGNED_BY_ID: "999" }
+    }]);
+  });
 });
