@@ -15,7 +15,7 @@
     "automation:approve": "tsx scripts/automation.mts approve",
     "automation:status": "tsx scripts/automation.mts status",
     "automation:install-task": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-automation-task.ps1",
-    "automation:install-pk-task": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-automation-task.ps1 -TaskName \"Scrape2Lead Daily PK Plans\" -At 11:00 -ConfigPath config/automation.pk.json -LogPath runs/pk/scheduler.log -Description \"Prepare and push Scrape2Lead PK GZ plans to Bitrix (no lots, no AI)\"",
+    "automation:install-pk-task": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-automation-task.ps1 -TaskName \"Scrape2Lead Daily PK Plans\" -At 08:40 -ConfigPath config/automation.pk.json -LogPath runs/pk/scheduler.log -Description \"Prepare and push Scrape2Lead PK GZ plans to Bitrix (no lots, no AI)\"",
     "kz:export-gz-plans": "tsx scripts/kz-export-gz-plans.mts",
     "kz:export-lots-nstru": "tsx scripts/kz-export-goszakup-lots-by-nstru.mts",
     "kz:export-lots-computers": "tsx scripts/kz-export-goszakup-lots-by-nstru.mts --config config/gz-lots-computers.json",
