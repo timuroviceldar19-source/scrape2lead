@@ -32,14 +32,21 @@ export function createRealAutomationDependencies(): AutomationDependencies {
 async function exportPlansForPeriods(configPath: string, outputPath: string, periods: RollingPeriod[]): Promise<AutomationExportResult> {
   const base = loadGzPlansConfig(configPath);
   const parts: Array<{ path: string; rows: number }> = [];
+  const cache = { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 };
   for (const period of periods) {
     const partPath = partName(outputPath, period.year);
     const options = mergeGzPlansExportOptions(base, { year: period.year, months: period.months, outPath: partPath });
     const result = await exportGzPlansReport({ ...options, token: process.env.GOSZAKUP_TOKEN ?? null });
     parts.push({ path: result.xlsxPath, rows: result.rows });
+    cache.cacheHit += result.cacheStats.cacheHit; cache.cacheMiss += result.cacheStats.cacheMiss;
+    cache.fetched += result.cacheStats.fetched; cache.fetchFailed += result.cacheStats.fetchFailed;
   }
   await mergeWorkbooks(parts.map((part) => part.path), outputPath); cleanupParts(parts.map((part) => part.path));
-  return { path: outputPath, rows: parts.reduce((sum, part) => sum + part.rows, 0) };
+  return {
+    path: outputPath,
+    rows: parts.reduce((sum, part) => sum + part.rows, 0),
+    cacheHit: cache.cacheHit, cacheMiss: cache.cacheMiss, fetched: cache.fetched, fetchFailed: cache.fetchFailed
+  };
 }
 
 async function exportLotsForPeriods(configPath: string, outputPath: string, periods: RollingPeriod[]): Promise<AutomationExportResult> {

@@ -520,6 +520,16 @@ const migrations: Migration[] = [
       addColumnIfMissing(db, "procurement_records", columns, "customer_profile_json", "TEXT");
       addColumnIfMissing(db, "procurement_records", columns, "detail_issue", "TEXT");
     }
+  },
+  {
+    version: 22,
+    sql: `
+      CREATE TABLE IF NOT EXISTS goszakup_plan_details (
+        plan_point_id TEXT PRIMARY KEY,
+        detail_json TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      );
+    `
   }
 ];
 

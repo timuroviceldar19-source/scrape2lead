@@ -60,3 +60,47 @@ export function buildGzDuplicateSearches(input: GzDuplicateSearchInput): GzDupli
 
   return searches;
 }
+
+export interface GzDuplicateCandidateDeal {
+  ID?: string | number;
+  ORIGINATOR_ID?: string | null;
+  ORIGIN_ID?: string | null;
+}
+
+export interface GzDuplicateEvaluation<T extends GzDuplicateCandidateDeal> {
+  deal: T;
+  reason: string;
+  blocking: boolean;
+}
+
+/**
+ * Picks a duplicate from pre-fetched per-search result sets, mirroring the
+ * sequential lookup semantics exactly: searches are evaluated in build order,
+ * the first previously unseen deal wins, and a deal that carries the row's own
+ * canonical originator/origin pair is never a duplicate of itself.
+ */
+export function evaluateGzDuplicateSearchResults<T extends GzDuplicateCandidateDeal>(
+  searches: readonly GzDuplicateSearch[],
+  resultsBySearch: ReadonlyArray<readonly T[]>,
+  currentOrigin: { originatorId: string; originId: string }
+): GzDuplicateEvaluation<T> | null {
+  const seen = new Set<string>();
+
+  for (let index = 0; index < searches.length; index++) {
+    const search = searches[index];
+    for (const deal of resultsBySearch[index] ?? []) {
+      const id = String(deal.ID ?? "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      if (
+        String(deal.ORIGINATOR_ID ?? "") === currentOrigin.originatorId
+        && String(deal.ORIGIN_ID ?? "") === currentOrigin.originId
+      ) {
+        continue;
+      }
+      return { deal, reason: search.reason, blocking: search.blocking };
+    }
+  }
+
+  return null;
+}

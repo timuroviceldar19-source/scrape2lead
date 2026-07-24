@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { acquireRunLock, cleanupSuccessfulRuns, computeRollingPeriod, createRunId, fileSha256, manifestWorkflow, readManifest, releaseRunLock, writeManifestAtomic } from "./core.js";
-import type { AutomationArtifact, AutomationConfig, AutomationDependencies, AutomationManifest, AutomationStage, AutomationStatus, AutomationStepResult } from "./types.js";
+import type { AutomationArtifact, AutomationConfig, AutomationDependencies, AutomationExportResult, AutomationManifest, AutomationStage, AutomationStatus, AutomationStepResult } from "./types.js";
 
 export async function prepareAutomationRun(config: AutomationConfig, deps: AutomationDependencies, now = new Date()): Promise<AutomationManifest> {
   const runId = createRunId(now);
@@ -127,19 +127,27 @@ export async function pushAutomationRun(config: AutomationConfig, runId: string,
   writeSummary(path.join(runDir, "summary.txt"), manifest); return manifest;
 }
 
-async function runStage<T extends AutomationStepResult | { path: string; rows: number }>(
+async function runStage<T extends AutomationStepResult | AutomationExportResult>(
   manifest: AutomationManifest, manifestPath: string, name: string, operation: () => Promise<T>, log: (message: string) => void
 ): Promise<T> {
   manifest.stages[name] = { status: "running", startedAt: new Date().toISOString() }; save(manifestPath, manifest); log(`START ${name}`);
   try {
     const result = await operation();
-    const counts = "counts" in result ? result.counts : { rows: result.rows };
+    const counts = "counts" in result ? result.counts : exportCounts(result);
     manifest.stages[name] = { ...manifest.stages[name], status: "succeeded", finishedAt: new Date().toISOString(), counts }; save(manifestPath, manifest); log(`DONE ${name}`); return result;
   } catch (error) {
     manifest.stages[name] = { ...manifest.stages[name], status: "failed", finishedAt: new Date().toISOString(), error: errorMessage(error) }; save(manifestPath, manifest); throw error;
   }
 }
 
+function exportCounts(result: AutomationExportResult): Record<string, number> {
+  const counts: Record<string, number> = { rows: result.rows };
+  if (result.cacheHit !== undefined) counts.cache_hit = result.cacheHit;
+  if (result.cacheMiss !== undefined) counts.cache_miss = result.cacheMiss;
+  if (result.fetched !== undefined) counts.fetched = result.fetched;
+  if (result.fetchFailed !== undefined) counts.fetch_failed = result.fetchFailed;
+  return counts;
+}
 function artifact(filePath: string, rows?: number): AutomationArtifact { return { path: path.resolve(filePath), sha256: fileSha256(filePath), ...(rows === undefined ? {} : { rows }) }; }
 function verifyRunArtifacts(manifest: AutomationManifest): void {
   verifyArtifact(manifest.artifacts.plans, "plans");

@@ -12,7 +12,8 @@ import type {
   GzPlanExportResult,
   GzPlanExportRow,
   GoszakupPlanDetail,
-  GoszakupPlanListItem
+  GoszakupPlanListItem,
+  PlanDetailCacheStats
 } from "./goszakupPlanTypes.js";
 import { MONTH_NAMES_RU as MONTH_MAP } from "./goszakupPlanTypes.js";
 
@@ -52,7 +53,9 @@ const EXPORT_COLUMNS: Array<{ header: string; key: keyof GzPlanExportRow; width:
 const HYPERLINK_KEYS = new Set<keyof GzPlanExportRow>(["item_link", "customer_link", "plan_link"]);
 
 export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Promise<GzPlanExportResult> {
-  const collectResult = await collectGzPlans(options);
+  // Safe because exportCollectedPlans re-applies the same minAmount/excludeKeywords
+  // filters post-detail (filterPlanRowsWithStats), so the final rows are identical.
+  const collectResult = await collectGzPlans({ ...options, prefilterDetails: true });
   const truFilterResult = filterCollectedPlansByTruCode(
     collectResult.items,
     options.includeTruCodePrefixes ?? []
@@ -60,13 +63,15 @@ export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Pr
   const databasePath = options.databasePath ?? process.env.KZ_DATABASE_PATH ?? "data/scrape2lead.db";
   const storage = new KzStorage({ databasePath });
 
+  const cacheStats = collectResult.cacheStats ?? { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 };
   try {
     return await exportCollectedPlans(
       truFilterResult.items,
       options,
       storage,
       databasePath,
-      truFilterResult.droppedByTruCode
+      truFilterResult.droppedByTruCode,
+      cacheStats
     );
   } finally {
     storage.close();
@@ -78,7 +83,8 @@ async function exportCollectedPlans(
   options: GzPlanExportOptions,
   storage: KzStorage,
   databasePath: string,
-  droppedByTruCode: number
+  droppedByTruCode: number,
+  cacheStats: PlanDetailCacheStats
 ): Promise<GzPlanExportResult> {
 
   const customerBins = [...new Set(
@@ -145,7 +151,8 @@ async function exportCollectedPlans(
     xlsxPath,
     rows: rows.length,
     customers: customerBins.length,
-    registryHits
+    registryHits,
+    cacheStats
   };
 }
 

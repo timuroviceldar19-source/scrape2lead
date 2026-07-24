@@ -49,6 +49,14 @@ describe("automation orchestrator",()=>{
     const applied=await approveAutomationRun(config(runs),prepared.runId,d); expect(applied.status).toBe("applied");
     await expect(approveAutomationRun(config(runs),prepared.runId,d)).rejects.toThrow(/already applied/);
   });
+  it("persists exportPlans cache metrics into the manifest stage counts",async()=>{
+    const runs=root(), d=deps();
+    vi.mocked(d.exportPlans).mockImplementation(async(_cfg,out)=>{fs.writeFileSync(out,"plans");return {path:out,rows:2,cacheHit:5,cacheMiss:3,fetched:2,fetchFailed:1};});
+    const result=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
+    expect(result.stages.exportPlans.counts).toEqual({rows:2,cache_hit:5,cache_miss:3,fetched:2,fetch_failed:1});
+    // Lots export has no detail cache: only rows is recorded.
+    expect(result.stages.exportLots.counts).toEqual({rows:3});
+  });
   it("records AI failure and resumes only AI",async()=>{
     const runs=root(), d=deps(); const prepared=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
     vi.mocked(d.analyzeLots).mockRejectedValueOnce(new Error("AI down"));

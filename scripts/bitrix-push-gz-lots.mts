@@ -2,6 +2,11 @@ import dotenv from "dotenv";
 import ExcelJS from "exceljs";
 import { chromium, type Browser, type Page } from "playwright";
 import { parseAnnounceCustomer, type AnnounceCustomer } from "../src/kz/goszakupAnnounceCustomer.js";
+import {
+  callBitrixBatch,
+  chunkBatchCommands,
+  type BitrixBatchCommand
+} from "../src/bitrix/batch.js";
 
 dotenv.config();
 
@@ -93,8 +98,14 @@ async function main(): Promise<void> {
   const resolver = args.enrichCompany ? new CustomerResolver(args.delayMs) : null;
   const stats = { created: 0, updated: 0, companyLinked: 0, existing: 0, skipped: 0, failed: 0, binMissing: 0 };
 
+  // Batch the existing-deal lookups (1 crm.deal.list per row → 50 per request)
+  // before the sequential enrichment loop. Company/browser enrichment and the
+  // create/link flow stay per-row and untouched.
+  const existingDeals = await resolveLotExistingDeals(client, args.webhookUrl, rows);
+
   try {
-    for (const row of rows) {
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      const row = rows[rowIndex];
       const issues = validateRequired(row);
       if (issues.length > 0) {
         stats.skipped += 1;
@@ -110,7 +121,7 @@ async function main(): Promise<void> {
           console.warn(`[bin-missing] ${dealOriginId}: no organizer BIN on ${row.announceUrl || "-"}`);
         }
 
-        const existingDeal = await client.findDeal(ORIGINATOR_ID, dealOriginId);
+        const existingDeal = existingDeals[rowIndex];
         const companyId = customer ? await resolveCompanyId(client, customer, args, args.execute) : null;
 
         if (existingDeal) {
@@ -147,6 +158,69 @@ async function main(): Promise<void> {
   console.log(
     `done: created=${stats.created} company_linked=${stats.companyLinked} existing=${stats.existing} skipped=${stats.skipped} bin_missing=${stats.binMissing} failed=${stats.failed}`
   );
+}
+
+/**
+ * Batches existing-deal lookups for all valid rows. Rows whose batch command
+ * fails fall back to the original per-row findDeal, so the classification and
+ * counters are identical to the sequential path. Invalid rows are left null
+ * (the loop skips them before the value is read) and never enrich anything.
+ */
+async function resolveLotExistingDeals(
+  client: BitrixClient,
+  webhookUrl: string,
+  rows: GzLotRow[]
+): Promise<Array<ExistingDeal | null>> {
+  const existing: Array<ExistingDeal | null> = rows.map(() => null);
+  const needsSequential = new Set<number>();
+
+  const entries: Array<{ index: number; command: BitrixBatchCommand }> = [];
+  for (let index = 0; index < rows.length; index++) {
+    if (validateRequired(rows[index]).length > 0) continue;
+    entries.push({
+      index,
+      command: {
+        key: `lot_find_${index}`,
+        method: "crm.deal.list",
+        params: {
+          filter: { ORIGINATOR_ID, ORIGIN_ID: originId(rows[index]) },
+          select: ["ID", "COMPANY_ID"]
+        }
+      }
+    });
+  }
+
+  for (const chunk of chunkBatchCommands(entries)) {
+    let results;
+    try {
+      results = await callBitrixBatch(webhookUrl, chunk.map((entry) => entry.command));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[batch] ${chunk.length} lot lookups failed, falling back to sequential: ${message}`);
+      for (const entry of chunk) needsSequential.add(entry.index);
+      continue;
+    }
+    for (const entry of chunk) {
+      const outcome = results.get(entry.command.key);
+      if (!outcome || outcome.error) {
+        needsSequential.add(entry.index);
+        continue;
+      }
+      const deals = Array.isArray(outcome.result) ? outcome.result as Array<{ ID?: string | number; COMPANY_ID?: string | number | null }> : [];
+      existing[entry.index] = mapLotExistingDeal(deals[0]);
+    }
+  }
+
+  for (const index of needsSequential) {
+    existing[index] = await client.findDeal(ORIGINATOR_ID, originId(rows[index]));
+  }
+
+  return existing;
+}
+
+function mapLotExistingDeal(first: { ID?: string | number; COMPANY_ID?: string | number | null } | undefined): ExistingDeal | null {
+  if (!first?.ID) return null;
+  return { ID: String(first.ID), COMPANY_ID: first.COMPANY_ID != null ? String(first.COMPANY_ID) : null };
 }
 
 async function resolveCompanyId(
