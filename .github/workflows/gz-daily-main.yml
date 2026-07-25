@@ -1,0 +1,21 @@
+name: GZ daily plans and lots
+
+# Замена задачи Task Scheduler "Scrape2Lead Daily Prepare" (10:00 Алматы).
+# 05:00 UTC = 10:00 в UTC+5. Общая concurrency-группа с gz-daily-pk.yml не даёт
+# двум прогонам пересечься — это тот же инвариант, который на Windows держал
+# общий runs/prepare.lock.
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  plans-and-lots:
+    uses: ./.github/workflows/gz-automation.yml
+    with:
+      config: config/automation.json
+      runs-dir: runs
+      log-path: runs/scheduler.log
+    secrets:
+      BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}

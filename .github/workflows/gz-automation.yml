@@ -1,0 +1,107 @@
+name: GZ automation (reusable)
+
+# Общее тело ежедневной автоматизации. Вызывается из gz-daily-pk.yml и
+# gz-daily-main.yml — заменяет две задачи Windows Task Scheduler, которые
+# работали только когда пользователь залогинен на конкретном компьютере.
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: Путь к конфигу automation (config/automation*.json)
+        required: true
+        type: string
+      runs-dir:
+        description: Каталог прогонов, должен совпадать с runsDir из конфига
+        required: true
+        type: string
+      log-path:
+        description: Путь к логу планировщика
+        required: true
+        type: string
+    secrets:
+      BITRIX24_WEBHOOK_URL:
+        required: true
+
+# Раннеры эфемерные, поэтому runs/prepare.lock из конфига здесь ничего не
+# сериализует — файла на чистой машине никогда нет. Взаимное исключение двух
+# задач держится ТОЛЬКО на этой группе.
+concurrency:
+  group: gz-automation
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # Холодный кэш деталей планов даёт ~65 мин (см. runs/pk/20260724-084004),
+    # plans-and-lots вхолодную дольше. Запас до потолка GitHub в 6 часов.
+    timeout-minutes: 180
+
+    env:
+      # createRunId() в src/automation/core.ts берёт локальное время, поэтому
+      # без TZ идентификаторы прогонов уехали бы на 5 часов назад от казахстанских.
+      TZ: Asia/Almaty
+      BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Read playwright version
+        id: pw
+        run: echo "version=$(node -p "require('./node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install chromium
+        run: npx playwright install --with-deps chromium
+
+      # Кэш деталей планов и реестра контрагентов. Это ускоритель, а не источник
+      # правды: дедупликация сделок живёт в Bitrix (UF_CRM_PLAN_ID / ORIGINATOR_ID),
+      # так что потеря кэша делает прогон медленным, но не ломает его.
+      # Ключи в GHA неизменяемы, поэтому restore по префиксу + save под новым ключом.
+      - name: Restore plan cache
+        id: db-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/scrape2lead.db
+          key: gz-db-${{ github.run_id }}
+          restore-keys: gz-db-
+
+      - name: Run automation
+        run: sh scripts/run-automation.sh '${{ inputs.config }}' '${{ inputs.log-path }}'
+
+      # Лог раннера дублируется в вывод job — иначе он виден только в артефакте.
+      - name: Show run log
+        if: always()
+        run: cat '${{ inputs.log-path }}' || true
+
+      - name: Save plan cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/scrape2lead.db
+          key: gz-db-${{ github.run_id }}
+
+      # Заменяет локальный каталог runs/ для аудита: manifest.json, xlsx,
+      # результаты dry-run и summary.txt.
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gz-run-${{ github.run_id }}
+          path: |
+            ${{ inputs.runs-dir }}/**
+            !${{ inputs.runs-dir }}/**/*.part.xlsx
+          retention-days: 30
+          if-no-files-found: warn

@@ -14,6 +14,7 @@
     "automation:push": "tsx scripts/automation.mts push",
     "automation:approve": "tsx scripts/automation.mts approve",
     "automation:status": "tsx scripts/automation.mts status",
+    "automation:run:sh": "sh scripts/run-automation.sh",
     "automation:install-task": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-automation-task.ps1",
     "automation:install-pk-task": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-automation-task.ps1 -TaskName \"Scrape2Lead Daily PK Plans\" -At 08:40 -ConfigPath config/automation.pk.json -LogPath runs/pk/scheduler.log -Description \"Prepare and push Scrape2Lead PK GZ plans to Bitrix (no lots, no AI)\"",
     "kz:export-gz-plans": "tsx scripts/kz-export-gz-plans.mts",

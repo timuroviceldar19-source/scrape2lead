@@ -1,0 +1,85 @@
+name: GZ probe (goszakup reachability)
+
+# Одноразовая проверка: отвечает ли goszakup.gov.kz на IP раннеров GitHub.
+# Это блокирующий гейт для переноса ежедневных задач в Actions — если портал
+# геоблокирует или таймаутит, автоматизацию придётся ставить на VPS в KZ.
+# Секреты не нужны: это чистый скрейп, Bitrix здесь не задействован.
+
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: Месяцы для узкого окна поиска (через запятую)
+        required: false
+        default: "8"
+      max-pages:
+        description: Максимум страниц на ключевое слово
+        required: false
+        default: "1"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Almaty
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Read playwright version
+        id: pw
+        run: echo "version=$(node -p "require('./node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install chromium
+        run: npx playwright install --with-deps chromium
+
+      # Узкое окно: один месяц, одна страница на ключевое слово, без обогащения
+      # из реестра — нас интересует только, отдаёт ли портал результаты поиска.
+      - name: Probe goszakup plan search
+        # Входы workflow_dispatch идут через env, а не через прямую подстановку
+        # в тело run: — иначе это была бы точка инъекции в shell.
+        env:
+          PROBE_MONTHS: ${{ inputs.months }}
+          PROBE_MAX_PAGES: ${{ inputs.max-pages }}
+        run: |
+          set -o pipefail
+          mkdir -p runs/probe
+          npx tsx scripts/kz-export-gz-plans.mts \
+            --config config/gz-plans.pk.json \
+            --year 2026 \
+            --months "$PROBE_MONTHS" \
+            --max-pages "$PROBE_MAX_PAGES" \
+            --skip-registry \
+            --out runs/probe/probe.xlsx 2>&1 | tee runs/probe/probe.log
+
+      # Скрейп может «успешно» отработать и вернуть ноль строк, если портал
+      # отдаёт заглушку вместо выдачи, поэтому проверяем непустой результат.
+      - name: Assert non-empty result
+        run: |
+          if grep -qE '^rows=[1-9]' runs/probe/probe.log; then
+            echo "PROBE PASS: goszakup отвечает с раннеров GitHub"
+          else
+            echo "PROBE FAIL: пустая выдача — см. лог выше, вероятен геоблок"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gz-probe
+          path: runs/probe/
+          retention-days: 7

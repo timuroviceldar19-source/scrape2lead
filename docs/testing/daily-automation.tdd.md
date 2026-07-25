@@ -47,13 +47,19 @@
 | A successful push returns exit code 0 even though npm writes to stderr | `tests/automation/schedulerRunner.test.ts` | PASS |
 | A failed push propagates its exit code to Task Scheduler | `tests/automation/schedulerRunner.test.ts` | PASS |
 | Every PK collector keyword routes to Bitrix category 9 / stage `C9:NEW` | `tests/bitrix/gzDealRouting.test.ts` | PASS |
-| Daily PK Windows task runs the plans-only workflow at 11:00 | `Get-ScheduledTask` | PASS |
+| Daily PK Windows task runs the plans-only workflow at 08:40 | `Get-ScheduledTask` | PASS |
+| The POSIX runner returns 0 when npm exits 0 after writing to stderr | `tests/automation/runAutomationShell.test.ts` | PASS (skipped on Windows) |
+| The POSIX runner propagates a failed npm exit code to cron | `tests/automation/runAutomationShell.test.ts` | PASS (skipped on Windows) |
+| The POSIX runner resolves a relative log path against the repo root, not cwd | `tests/automation/runAutomationShell.test.ts` | PASS (skipped on Windows) |
 
 ## Verification
 
 - `npm run build`: PASS.
 - `npm run lint`: PASS.
-- `npm test`: PASS, 441/441 tests (automation suites 43/43, including 10 plans-only cases and 3 scheduler-runner cases).
+- `npm test`: PASS, 607 passed / 4 skipped of 611 tests. The three POSIX-runner cases skip on
+  Windows (`describe.skipIf(process.platform === "win32")`) the same way the three PowerShell
+  cases skip on Linux — each platform runs its own scheduler runner, and the GitHub Actions
+  Ubuntu runner is where the POSIX ones execute.
 - Targeted coverage of the changed modules (`src/automation/config.ts`, `core.ts`, `orchestrator.ts`): 96.93% statements, 89.28% branches, 100% functions — above the 80% floor.
 - The scheduled push path is exercised through the injected `AutomationDependencies`; live network adapters (`realDependencies.ts`) remain the main coverage gap.
 
@@ -89,3 +95,31 @@ despite stderr) and failure (exit code propagated) paths.
 pushes it by run ID.
 
 Real Goszakup collection, Bitrix writes and AI calls were intentionally not executed during tests; the scheduler-runner tests drive `run-automation.ps1` against a fake `npm.cmd` on `PATH` and never reach the network. Both Windows tasks must be re-registered with `npm run automation:install-task` and `npm run automation:install-pk-task` after these changes; neither was run live during the test pass.
+
+## Move to GitHub Actions
+
+The two Windows tasks were registered without `-User`/`-RunLevel`, so they only fired
+while that account stayed logged on, and the action hard-coded `F:\scrape2lead-main`.
+Both now run as scheduled workflows instead.
+
+`scripts/run-automation.sh` is the POSIX counterpart of `run-automation.ps1` and keeps
+the same log line and exit-code contract, so `runs/scheduler.log` reads identically on
+either platform. It resolves a relative log path against the repo root rather than the
+caller's cwd — cron and systemd invoke it from an arbitrary directory. Verified against a
+fake `npm` on `PATH` for the success, failure and foreign-cwd cases.
+
+Two invariants needed a different mechanism on ephemeral runners:
+
+- **Mutual exclusion.** `runs/prepare.lock` never exists on a clean runner, so
+  `acquireRunLock` always succeeds and cannot serialize the two jobs. The shared
+  `concurrency: group: gz-automation` (`cancel-in-progress: false`) does it instead.
+- **Run IDs.** `createRunId` in `src/automation/core.ts` uses local time, so the
+  workflows set `TZ: Asia/Almaty`. Kazakhstan is UTC+5 with no DST, so the cron
+  offset (03:40 and 05:00 UTC) is constant year-round.
+
+Open risk, deliberately gated rather than assumed away: goszakup.gov.kz may not serve
+GitHub's Azure runner IPs. `.github/workflows/gz-probe.yml` tests exactly that against a
+one-month, one-page window and fails when the search returns zero rows. It must pass
+before the daily workflows are trusted; if it fails, the fallback is a VPS in a
+Kazakhstan region — an EU or US host would hit the same geo restriction. The probe had
+not been run at the time of writing.
