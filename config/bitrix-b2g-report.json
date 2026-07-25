@@ -1,6 +1,6 @@
 {
-  "currentPeriod": { "from": "2026-01-01", "to": "2026-07-17" },
-  "previousPeriod": { "from": "2025-01-01", "to": "2025-07-17" },
+  "currentPeriod": { "from": "2026-01-01", "to": "2026-07-19" },
+  "previousPeriod": { "from": "2025-01-01", "to": "2025-07-19" },
   "salesPipelineIds": [9, 41, 43],
   "routingPipelineIds": [29],
   "servicePipelineIds": [17],
@@ -8,5 +8,5 @@
   "attentionAfterDays": 30,
   "criticalAfterDays": 60,
   "ageBuckets": ["0-7", "8-14", "15-30", "31-60", "61+"],
-  "referenceCounts": { "deals": 15968, "pipelines": 14, "stageHistory": 34248 }
+  "referenceCounts": { "deals": 16030, "pipelines": 14, "stageHistory": 34326 }
 }

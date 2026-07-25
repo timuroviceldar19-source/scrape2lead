@@ -75,22 +75,44 @@ export interface GzPlanCollectOptions {
   pageLoadRetries?: number;
   keepDuplicates?: boolean;
   token?: string | null;
-  onProgress?: (message: string) => void;
-}
-
-export interface GzPlanCollectResult {
-  items: Array<GoszakupPlanListItem & { detail: GoszakupPlanDetail | null }>;
-}
-
-export interface GzPlanExportOptions extends GzPlanCollectOptions {
-  outPath?: string;
-  databasePath?: string;
-  skipRegistry?: boolean;
-  forceRegistryRefresh?: boolean;
   /** Drop plan rows with planned amount below this value (KZT). 0 disables. */
   minAmount?: number;
   /** Stop-list: drop plan rows whose item name matches any of these. */
   excludeKeywords?: string[];
+  /**
+   * Apply minAmount/excludeKeywords to list rows before fetching details.
+   * Only safe when the caller re-applies the same filters post-detail (the
+   * exporter does); other consumers (e.g. the published monitor) leave it off
+   * so their output is unchanged.
+   */
+  prefilterDetails?: boolean;
+  /** SQLite path for the plan-detail cache. Must match the exporter database. */
+  databasePath?: string;
+  /** Plan detail cache TTL in days. Falls back to GOSZAKUP_PLAN_DETAIL_CACHE_TTL_DAYS, then 3. */
+  detailCacheTtlDays?: number;
+  /** Ignore cached details and re-fetch. Falls back to GOSZAKUP_PLAN_DETAIL_FORCE_REFRESH=1. */
+  forceDetailRefresh?: boolean;
+  onProgress?: (message: string) => void;
+}
+
+export interface PlanDetailCacheStats {
+  cacheHit: number;
+  cacheMiss: number;
+  fetched: number;
+  fetchFailed: number;
+}
+
+export interface GzPlanCollectResult {
+  items: Array<GoszakupPlanListItem & { detail: GoszakupPlanDetail | null }>;
+  cacheStats?: PlanDetailCacheStats;
+}
+
+export interface GzPlanExportOptions extends GzPlanCollectOptions {
+  outPath?: string;
+  skipRegistry?: boolean;
+  forceRegistryRefresh?: boolean;
+  /** Allow-list: keep only plan rows whose ESTRU code starts with one of these prefixes. Empty disables. */
+  includeTruCodePrefixes?: string[];
 }
 
 export interface GzPlanExportResult {
@@ -98,6 +120,7 @@ export interface GzPlanExportResult {
   rows: number;
   customers: number;
   registryHits: number;
+  cacheStats: PlanDetailCacheStats;
 }
 
 export const DEFAULT_GZ_PLAN_KEYWORDS = [
@@ -111,7 +134,7 @@ export const DEFAULT_GZ_PLAN_KEYWORDS = [
   "Персональный Компьютер"
 ] as const;
 
-export const DEFAULT_GZ_PLAN_STATUSES = ["Утвержден"] as const;
+export const DEFAULT_GZ_PLAN_STATUSES = ["Утвержден", "На проверке камерального контроля"] as const;
 
 /** Status IDs from goszakup plan search form filter[status][] */
 export const GZ_PLAN_STATUS_BY_NAME: Record<string, number> = {
@@ -131,6 +154,7 @@ export const GZ_PLAN_STATUS_BY_NAME: Record<string, number> = {
   "Заявка подтверждена": 26,
   "Исполнен": 19,
   "На обжаловании": 22,
+  "На проверке камерального контроля": 444,
   "Опубликован": 5,
   "Отменен": 7,
   "Отменен. Изменен": 21,

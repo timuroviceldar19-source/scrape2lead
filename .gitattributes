@@ -1,0 +1,6 @@
+# Файлы, которые исполняются на Linux (GitHub Actions, cron на VPS), обязаны
+# лежать с LF независимо от core.autocrlf у конкретного разработчика: с CRLF
+# shebang превращается в "/usr/bin/env sh\r" и sh падает на bad interpreter.
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

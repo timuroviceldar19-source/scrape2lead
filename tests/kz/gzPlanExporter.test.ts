@@ -187,10 +187,10 @@ describe("registry coverage preflight", () => {
 });
 
 describe("filterPlanRows", () => {
-  function row(planned_amount: string, stru_name: string) {
+  function row(planned_amount: string, stru_name: string, struCode: string | null = null) {
     return buildExportRow(
       listItem({ planned_amount, item_name: stru_name }),
-      detail({ name_ru: stru_name }),
+      detail({ name_ru: stru_name, ref_enstru_code: struCode }),
       registry()
     )!;
   }
@@ -212,5 +212,28 @@ describe("filterPlanRows", () => {
   it("keeps everything when no filters are configured", () => {
     const rows = [row("1", "Уголок"), row("900000", "Панель интерактивная")];
     expect(filterPlanRows(rows, 0, [])).toHaveLength(2);
+  });
+
+  it("keeps only configured PK TRU families and rejects missing codes", () => {
+    const rows = [
+      row("900000", "Ноутбук", "262011.100.000002"),
+      row("900000", "Компьютер", "262013.000.000011"),
+      row("900000", "Монитор", "262017.100.000001"),
+      row("900000", "Станция рабочая", "262013.000.000024"),
+      row("900000", "Устройство многофункциональное", "262018.900.000006"),
+      row("900000", "Принтер", "262016.300.000016"),
+      row("900000", "Монитор медицинский", "266012.900.000004"),
+      row("900000", "Транспондер", "262030.100.000051"),
+      row("900000", "Неизвестный товар", null)
+    ];
+
+    const kept = filterPlanRows(rows, 0, [], ["262011.", "262013.", "262017.100."]);
+
+    expect(kept.map((item) => item.stru_name)).toEqual([
+      "Ноутбук",
+      "Компьютер",
+      "Монитор",
+      "Станция рабочая"
+    ]);
   });
 });

@@ -1,0 +1,21 @@
+name: GZ daily PK plans
+
+# Замена задачи Task Scheduler "Scrape2Lead Daily PK Plans" (08:40 Алматы).
+# Казахстан живёт в UTC+5 без перехода на летнее время, поэтому 03:40 UTC
+# соответствует 08:40 круглый год. GitHub может задержать запуск scheduled
+# workflow на десятки минут под нагрузкой — для этой задачи это допустимо.
+
+on:
+  schedule:
+    - cron: "40 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  pk-plans:
+    uses: ./.github/workflows/gz-automation.yml
+    with:
+      config: config/automation.pk.json
+      runs-dir: runs/pk
+      log-path: runs/pk/scheduler.log
+    secrets:
+      BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}

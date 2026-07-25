@@ -12,7 +12,8 @@ import type {
   GzPlanExportResult,
   GzPlanExportRow,
   GoszakupPlanDetail,
-  GoszakupPlanListItem
+  GoszakupPlanListItem,
+  PlanDetailCacheStats
 } from "./goszakupPlanTypes.js";
 import { MONTH_NAMES_RU as MONTH_MAP } from "./goszakupPlanTypes.js";
 
@@ -52,12 +53,26 @@ const EXPORT_COLUMNS: Array<{ header: string; key: keyof GzPlanExportRow; width:
 const HYPERLINK_KEYS = new Set<keyof GzPlanExportRow>(["item_link", "customer_link", "plan_link"]);
 
 export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Promise<GzPlanExportResult> {
-  const collectResult = await collectGzPlans(options);
+  // Safe because exportCollectedPlans re-applies the same minAmount/excludeKeywords
+  // filters post-detail (filterPlanRowsWithStats), so the final rows are identical.
+  const collectResult = await collectGzPlans({ ...options, prefilterDetails: true });
+  const truFilterResult = filterCollectedPlansByTruCode(
+    collectResult.items,
+    options.includeTruCodePrefixes ?? []
+  );
   const databasePath = options.databasePath ?? process.env.KZ_DATABASE_PATH ?? "data/scrape2lead.db";
   const storage = new KzStorage({ databasePath });
 
+  const cacheStats = collectResult.cacheStats ?? { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 };
   try {
-    return await exportCollectedPlans(collectResult.items, options, storage, databasePath);
+    return await exportCollectedPlans(
+      truFilterResult.items,
+      options,
+      storage,
+      databasePath,
+      truFilterResult.droppedByTruCode,
+      cacheStats
+    );
   } finally {
     storage.close();
   }
@@ -67,7 +82,9 @@ async function exportCollectedPlans(
   items: Array<GoszakupPlanListItem & { detail: GoszakupPlanDetail | null }>,
   options: GzPlanExportOptions,
   storage: KzStorage,
-  databasePath: string
+  databasePath: string,
+  droppedByTruCode: number,
+  cacheStats: PlanDetailCacheStats
 ): Promise<GzPlanExportResult> {
 
   const customerBins = [...new Set(
@@ -108,8 +125,11 @@ async function exportCollectedPlans(
     .filter((row): row is GzPlanExportRow => row !== null);
   const filterResult = filterPlanRowsWithStats(builtRows, options.minAmount ?? 0, options.excludeKeywords ?? []);
   const rows = filterResult.items.sort(compareExportRows);
-  if (filterResult.droppedBelowMinAmount > 0 || filterResult.droppedByName > 0) {
-    console.log(`gz plan export: dropped below_min=${filterResult.droppedBelowMinAmount} stop_list=${filterResult.droppedByName}`);
+  if (filterResult.droppedBelowMinAmount > 0 || filterResult.droppedByName > 0 || droppedByTruCode > 0) {
+    console.log(
+      `gz plan export: dropped below_min=${filterResult.droppedBelowMinAmount}`
+      + ` stop_list=${filterResult.droppedByName} tru_code=${droppedByTruCode}`
+    );
   }
 
   const xlsxPath = options.outPath ?? defaultOutputPath();
@@ -131,7 +151,8 @@ async function exportCollectedPlans(
     xlsxPath,
     rows: rows.length,
     customers: customerBins.length,
-    registryHits
+    registryHits,
+    cacheStats
   };
 }
 
@@ -289,17 +310,51 @@ function compareExportRows(a: GzPlanExportRow, b: GzPlanExportRow): number {
 export function filterPlanRows(
   rows: GzPlanExportRow[],
   minAmount: number,
-  excludeKeywords: string[]
+  excludeKeywords: string[],
+  includeTruCodePrefixes: string[] = []
 ): GzPlanExportRow[] {
-  return filterPlanRowsWithStats(rows, minAmount, excludeKeywords).items;
+  return filterPlanRowsWithStats(rows, minAmount, excludeKeywords, includeTruCodePrefixes).items;
 }
 
-function filterPlanRowsWithStats(rows: GzPlanExportRow[], minAmount: number, excludeKeywords: string[]) {
-  return filterGzItems(rows, {
+function filterPlanRowsWithStats(
+  rows: GzPlanExportRow[],
+  minAmount: number,
+  excludeKeywords: string[],
+  includeTruCodePrefixes: string[] = []
+) {
+  const baseResult = filterGzItems(rows, {
     minAmount, excludeKeywords,
     getAmount: (row) => parseAmount(row.planned_amount),
     getName: (row) => row.stru_name
   });
+
+  const truFilterResult = filterByTruCode(
+    baseResult.items,
+    includeTruCodePrefixes,
+    (row) => row.stru_code
+  );
+  return { ...baseResult, ...truFilterResult };
+}
+
+type CollectedPlan = GoszakupPlanListItem & { detail: GoszakupPlanDetail | null };
+
+export function filterCollectedPlansByTruCode(
+  items: readonly CollectedPlan[],
+  includeTruCodePrefixes: readonly string[]
+): { items: CollectedPlan[]; droppedByTruCode: number } {
+  return filterByTruCode(items, includeTruCodePrefixes, (item) => item.detail?.ref_enstru_code ?? "");
+}
+
+function filterByTruCode<T>(
+  items: readonly T[],
+  includeTruCodePrefixes: readonly string[],
+  getTruCode: (item: T) => string
+): { items: T[]; droppedByTruCode: number } {
+  const prefixes = includeTruCodePrefixes.map((prefix) => prefix.trim()).filter(Boolean);
+  if (prefixes.length === 0) return { items: [...items], droppedByTruCode: 0 };
+
+  const kept = items.filter((item) => prefixes.some((prefix) => getTruCode(item).trim().startsWith(prefix)));
+  return { items: kept, droppedByTruCode: items.length - kept.length };
 }
 
 function parseAmount(value: string): number {

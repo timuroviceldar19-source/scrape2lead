@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { runMigrations } from "../storage/migrations.js";
+import type { GoszakupPlanDetail } from "./goszakupPlanTypes.js";
 import type { GoszakupRegistryRecord } from "./registryTypes.js";
 
 export interface KzStorageOptions {
@@ -86,6 +87,47 @@ export class KzStorage {
       updated_at: record.updated_at ?? new Date().toISOString(),
       raw_snapshot_path: record.raw_snapshot_path ?? null
     });
+  }
+
+  /**
+   * Returns a cached plan detail only when it is fresh and structurally valid.
+   * Corrupt JSON, a mismatched plan_point_id or an unparseable fetched_at all
+   * count as a cache miss so the caller re-fetches from the source.
+   */
+  getFreshGoszakupPlanDetail(
+    planPointId: string,
+    ttlDays: number,
+    now = new Date()
+  ): GoszakupPlanDetail | null {
+    const row = this.db.prepare(
+      "SELECT detail_json, fetched_at FROM goszakup_plan_details WHERE plan_point_id = ?"
+    ).get(planPointId) as { detail_json: string; fetched_at: string } | undefined;
+    if (!row) return null;
+
+    const fetchedAt = new Date(row.fetched_at);
+    if (Number.isNaN(fetchedAt.getTime())) return null;
+    if (now.getTime() - fetchedAt.getTime() > ttlDays * 24 * 60 * 60 * 1000) return null;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.detail_json);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    const detail = parsed as GoszakupPlanDetail;
+    if (detail.plan_point_id !== planPointId) return null;
+    return detail;
+  }
+
+  upsertGoszakupPlanDetail(detail: GoszakupPlanDetail, fetchedAt?: string): void {
+    this.db.prepare(`
+      INSERT INTO goszakup_plan_details (plan_point_id, detail_json, fetched_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(plan_point_id) DO UPDATE SET
+        detail_json = excluded.detail_json,
+        fetched_at = excluded.fetched_at
+    `).run(detail.plan_point_id, JSON.stringify(detail), fetchedAt ?? new Date().toISOString());
   }
 
   recordEnrichError(bin: string, stage: string, message: string): void {

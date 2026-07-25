@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { chromium, type Page } from "playwright";
+import { chromium } from "playwright";
 import { sleep } from "./csv.js";
 import { buildGoszakupHtmlPageUrl } from "./goszakupHtmlCollector.js";
+import { isExcludedByName } from "./gzItemFilter.js";
+import { KzStorage } from "./kzStorage.js";
 import {
   fetchPlanDetailFromApi,
   loadAbpRefs,
@@ -20,7 +22,8 @@ import type {
   GoszakupPlanDetail,
   GoszakupPlanListItem,
   GzPlanCollectOptions,
-  GzPlanCollectResult
+  GzPlanCollectResult,
+  PlanDetailCacheStats
 } from "./goszakupPlanTypes.js";
 import { DEFAULT_GZ_PLAN_KEYWORDS as DEFAULT_KEYWORDS } from "./goszakupPlanTypes.js";
 
@@ -29,6 +32,7 @@ const MAX_PAGES_DEFAULT = 50;
 const DEFAULT_PAGE_LOAD_TIMEOUT_MS = 90_000;
 const SEARCH_PAGE_RETRIES = 2;
 const DETAIL_RETRIES = 2;
+const DEFAULT_DETAIL_CACHE_TTL_DAYS = 3;
 
 export interface PlanSearchPage {
   goto(url: string, options: { waitUntil: "domcontentloaded"; timeout: number }): Promise<unknown>;
@@ -92,48 +96,219 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
       if (delayMs > 0) await sleep(delayMs);
     }
 
-    const results: GzPlanCollectResult["items"] = [];
-    let index = 0;
-    const collectedItems = options.keepDuplicates ? listItems : [...listById.values()];
-    const total = collectedItems.length;
+    const dedupedItems = options.keepDuplicates ? listItems : [...listById.values()];
+    const detailItems = options.prefilterDetails
+      ? runDetailPrefilter(dedupedItems, options.minAmount ?? 0, options.excludeKeywords ?? [])
+      : dedupedItems;
 
-    for (const listItem of collectedItems) {
-      index++;
-      options.onProgress?.(`detail ${index}/${total}: ${listItem.plan_point_id}`);
-
-      let detail: GoszakupPlanDetail | null = null;
-
-      if (token) {
-        detail = await fetchPlanDetailFromApi(listItem.plan_point_id, { token });
-        if (detail) {
-          detail.abp_name = resolveAbpName(detail, abpRefs);
-        }
-      }
-
-      if (!detail) {
-        detail = await fetchPlanDetailHtml(page, listItem, {
-          debugDir,
-          pageLoadTimeoutMs,
-          delayMs
-        });
-      }
-
-      if (detail && !detail.name_ru) {
-        detail.name_ru = listItem.item_name;
-      }
-      if (detail && !detail.customer_name) {
-        detail.customer_name = listItem.customer_name;
-      }
-
-      results.push({ ...listItem, detail });
-      if (delayMs > 0) await sleep(delayMs);
+    const storage = new KzStorage({
+      databasePath: options.databasePath ?? process.env.KZ_DATABASE_PATH ?? undefined
+    });
+    try {
+      const detailResult = await collectPlanDetails(page, detailItems, {
+        debugDir,
+        pageLoadTimeoutMs,
+        delayMs,
+        token,
+        abpRefs,
+        storage,
+        cacheTtlDays: resolveDetailCacheTtlDays(options.detailCacheTtlDays),
+        forceRefresh: resolveDetailForceRefresh(options.forceDetailRefresh),
+        onProgress: options.onProgress
+      });
+      return { items: detailResult.items, cacheStats: detailResult.stats };
+    } finally {
+      storage.close();
     }
-
-    return { items: results };
   } finally {
     await context.close();
     await browser.close();
   }
+}
+
+function runDetailPrefilter(
+  items: GoszakupPlanListItem[],
+  minAmount: number,
+  excludeKeywords: readonly string[]
+): GoszakupPlanListItem[] {
+  const prefilter = prefilterPlanListItems(items, minAmount, excludeKeywords);
+  console.log(
+    `goszakup plan prefilter: prefiltered=${items.length - prefilter.items.length}`
+    + ` total=${items.length}`
+    + ` below_min=${prefilter.droppedBelowMinAmount}`
+    + ` stop_list=${prefilter.droppedByName}`
+  );
+  return prefilter.items;
+}
+
+export interface PlanPrefilterResult {
+  items: GoszakupPlanListItem[];
+  droppedBelowMinAmount: number;
+  droppedByName: number;
+}
+
+/**
+ * Conservative pre-detail filter: drops only rows the post-detail filters
+ * would drop anyway. Amounts that are missing, zero or unparseable are kept
+ * for the detail fetch; empty names are never treated as stop-list matches.
+ */
+export function prefilterPlanListItems(
+  items: readonly GoszakupPlanListItem[],
+  minAmount: number,
+  excludeKeywords: readonly string[]
+): PlanPrefilterResult {
+  const kept: GoszakupPlanListItem[] = [];
+  let droppedBelowMinAmount = 0;
+  let droppedByName = 0;
+
+  for (const item of items) {
+    const amount = parseListAmount(item.planned_amount);
+    if (minAmount > 0 && amount !== null && amount > 0 && amount < minAmount) {
+      droppedBelowMinAmount++;
+      continue;
+    }
+    if (item.item_name && isExcludedByName(item.item_name, excludeKeywords)) {
+      droppedByName++;
+      continue;
+    }
+    kept.push(item);
+  }
+
+  return { items: kept, droppedBelowMinAmount, droppedByName };
+}
+
+function parseListAmount(value: string | null): number | null {
+  if (!value) return null;
+  const normalized = value.replace(/[\s ]/g, "").replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export interface PlanDetailCollectOptions {
+  debugDir: string;
+  pageLoadTimeoutMs: number;
+  delayMs: number;
+  token?: string | null;
+  abpRefs?: Map<string, string>;
+  storage?: KzStorage | null;
+  cacheTtlDays?: number;
+  forceRefresh?: boolean;
+  /** Per-item delay after a real goszakup request. Injectable for tests. */
+  sleepImpl?: (ms: number) => Promise<void>;
+  onProgress?: (message: string) => void;
+}
+
+/**
+ * Resolves details for list items: fresh cache -> API (when token) -> HTML.
+ * Only successfully parsed details are cached; the synthetic fallback is not.
+ * delayMs applies after every real goszakup request (API or HTML) but never
+ * after a cache hit.
+ */
+export interface PlanDetailCollectOutput {
+  items: GzPlanCollectResult["items"];
+  stats: PlanDetailCacheStats;
+}
+
+export async function collectPlanDetails(
+  page: PlanSearchPage,
+  items: readonly GoszakupPlanListItem[],
+  options: PlanDetailCollectOptions
+): Promise<PlanDetailCollectOutput> {
+  const token = options.token ?? null;
+  const abpRefs = options.abpRefs ?? new Map<string, string>();
+  const storage = options.storage ?? null;
+  const cacheTtlDays = options.cacheTtlDays ?? DEFAULT_DETAIL_CACHE_TTL_DAYS;
+  const forceRefresh = options.forceRefresh ?? false;
+  const doSleep = options.sleepImpl ?? sleep;
+
+  const results: GzPlanCollectResult["items"] = [];
+  const stats: PlanDetailCacheStats = { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 };
+  let index = 0;
+
+  for (const listItem of items) {
+    index++;
+    options.onProgress?.(`detail ${index}/${items.length}: ${listItem.plan_point_id}`);
+
+    let detail = forceRefresh
+      ? null
+      : storage?.getFreshGoszakupPlanDetail(listItem.plan_point_id, cacheTtlDays) ?? null;
+    let fetchedFromNetwork = false;
+
+    if (detail) {
+      stats.cacheHit++;
+    } else {
+      stats.cacheMiss++;
+      if (token) {
+        detail = await fetchPlanDetailFromApi(listItem.plan_point_id, { token });
+        fetchedFromNetwork = true;
+        if (detail) {
+          detail.abp_name = resolveAbpName(detail, abpRefs);
+        }
+      }
+      if (!detail) {
+        detail = await fetchPlanDetailHtml(page, listItem, {
+          debugDir: options.debugDir,
+          pageLoadTimeoutMs: options.pageLoadTimeoutMs,
+          delayMs: options.delayMs
+        });
+        fetchedFromNetwork = true;
+      }
+      if (detail) {
+        stats.fetched++;
+        storage?.upsertGoszakupPlanDetail(detail);
+      } else {
+        stats.fetchFailed++;
+        detail = buildFallbackPlanDetail(listItem);
+      }
+    }
+
+    if (!detail.name_ru) {
+      detail.name_ru = listItem.item_name;
+    }
+    if (!detail.customer_name) {
+      detail.customer_name = listItem.customer_name;
+    }
+
+    results.push({ ...listItem, detail });
+    if (fetchedFromNetwork && options.delayMs > 0) await doSleep(options.delayMs);
+  }
+
+  console.log(
+    `goszakup plan detail: cache_hit=${stats.cacheHit} cache_miss=${stats.cacheMiss}`
+    + ` fetched=${stats.fetched} fetch_failed=${stats.fetchFailed}`
+  );
+  return { items: results, stats };
+}
+
+/** Placeholder detail used when the plan page could not be fetched or parsed. Never cached. */
+export function buildFallbackPlanDetail(listItem: GoszakupPlanListItem): GoszakupPlanDetail {
+  return {
+    plan_point_id: listItem.plan_point_id,
+    customer_bin: null,
+    customer_name: listItem.customer_name,
+    name_ru: listItem.item_name,
+    ref_enstru_code: null,
+    desc_ru: null,
+    extra_desc_ru: null,
+    date_approved: null,
+    ref_abp_code: null,
+    abp_name: null,
+    delivery_address: null,
+    plan_act_number: null
+  };
+}
+
+function resolveDetailCacheTtlDays(explicit?: number): number {
+  if (explicit !== undefined && Number.isFinite(explicit) && explicit >= 0) return explicit;
+  const fromEnv = Number(process.env.GOSZAKUP_PLAN_DETAIL_CACHE_TTL_DAYS);
+  if (Number.isFinite(fromEnv) && fromEnv >= 0) return fromEnv;
+  return DEFAULT_DETAIL_CACHE_TTL_DAYS;
+}
+
+function resolveDetailForceRefresh(explicit?: boolean): boolean {
+  if (explicit !== undefined) return explicit;
+  return process.env.GOSZAKUP_PLAN_DETAIL_FORCE_REFRESH === "1";
 }
 
 export async function collectPlanSearch(
@@ -223,7 +398,7 @@ async function gotoPlanSearchPage(
 }
 
 async function fetchPlanDetailHtml(
-  page: Page,
+  page: PlanSearchPage,
   listItem: GoszakupPlanListItem,
   options: {
     debugDir: string;
@@ -263,20 +438,7 @@ async function fetchPlanDetailHtml(
     }
   }
 
-  return {
-    plan_point_id: listItem.plan_point_id,
-    customer_bin: null,
-    customer_name: listItem.customer_name,
-    name_ru: listItem.item_name,
-    ref_enstru_code: null,
-    desc_ru: null,
-    extra_desc_ru: null,
-    date_approved: null,
-    ref_abp_code: null,
-    abp_name: null,
-    delivery_address: null,
-    plan_act_number: null
-  };
+  return null;
 }
 
 function slug(input: string): string {

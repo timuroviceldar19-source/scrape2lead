@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGzDuplicateSearches,
+  evaluateGzDuplicateSearchResults,
+  type GzDuplicateSearch,
   type GzDuplicateSearchInput
 } from "../../src/bitrix/gzDuplicateSearch.js";
 
@@ -85,5 +87,58 @@ describe("buildGzDuplicateSearches", () => {
     expect(reasons(alakolRow({ planNumber: "" }))).not.toContain("plan number");
     expect(reasons(alakolRow({ planUrl: "" }))).not.toContain("plan url");
     expect(reasons(alakolRow({ planUrl: "" }))).not.toContain("plan url alt");
+  });
+});
+
+interface TestDeal {
+  ID?: string | number;
+  ORIGINATOR_ID?: string | null;
+  ORIGIN_ID?: string | null;
+}
+
+const CURRENT_ORIGIN = { originatorId: "scrape2lead-gz-plans", originId: "gz-plan:87359412" };
+
+function searches(): GzDuplicateSearch[] {
+  return buildGzDuplicateSearches(alakolRow());
+}
+
+describe("evaluateGzDuplicateSearchResults", () => {
+  it("returns the first match in search priority order", () => {
+    const all = searches();
+    const results: TestDeal[][] = all.map(() => []);
+    // Populate both the plan-number search (index 1) and BIN+amount (last).
+    results[1] = [{ ID: "555", ORIGINATOR_ID: "manual", ORIGIN_ID: "x" }];
+    results[all.length - 1] = [{ ID: "777", ORIGINATOR_ID: "manual", ORIGIN_ID: "y" }];
+
+    const match = evaluateGzDuplicateSearchResults(all, results, CURRENT_ORIGIN);
+    expect(match?.deal.ID).toBe("555");
+    expect(match?.reason).toBe("plan number");
+    expect(match?.blocking).toBe(true);
+  });
+
+  it("never treats the row's own canonical deal as a duplicate", () => {
+    const all = searches();
+    const results: TestDeal[][] = all.map(() => []);
+    results[0] = [{ ID: "900", ORIGINATOR_ID: CURRENT_ORIGIN.originatorId, ORIGIN_ID: CURRENT_ORIGIN.originId }];
+
+    expect(evaluateGzDuplicateSearchResults(all, results, CURRENT_ORIGIN)).toBeNull();
+  });
+
+  it("skips a deal already seen in an earlier search", () => {
+    const all = searches();
+    const results: TestDeal[][] = all.map(() => []);
+    const sibling: TestDeal = { ID: "40687", ORIGINATOR_ID: "manual", ORIGIN_ID: "z" };
+    results[0] = [{ ID: "900", ORIGINATOR_ID: CURRENT_ORIGIN.originatorId, ORIGIN_ID: CURRENT_ORIGIN.originId }];
+    results[all.length - 1] = [sibling];
+
+    const match = evaluateGzDuplicateSearchResults(all, results, CURRENT_ORIGIN);
+    expect(match?.deal.ID).toBe("40687");
+    expect(match?.blocking).toBe(false); // advisory BIN + amount
+  });
+
+  it("returns null when no search produced a foreign deal", () => {
+    const all = searches();
+    const results: TestDeal[][] = all.map(() => []);
+    expect(evaluateGzDuplicateSearchResults(all, results, CURRENT_ORIGIN)).toBeNull();
   });
 });

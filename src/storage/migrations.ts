@@ -466,6 +466,70 @@ const migrations: Migration[] = [
       addColumnIfMissing(db, "goszakup_registry_data", columns, "full_address_ru", "TEXT");
       addColumnIfMissing(db, "goszakup_registry_data", columns, "reporting_administrator", "TEXT");
     }
+  },
+  {
+    version: 18,
+    sql: `
+      CREATE TABLE IF NOT EXISTS procurement_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        record_kind TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        parent_external_id TEXT,
+        status TEXT,
+        product_name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        tru_code TEXT,
+        customer_name TEXT,
+        customer_bin TEXT,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'KZT',
+        start_date TEXT,
+        end_date TEXT,
+        url TEXT NOT NULL,
+        purchase_method TEXT,
+        collected_at TEXT NOT NULL,
+        UNIQUE(source, record_kind, external_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_procurement_records_parent ON procurement_records(source, parent_external_id);
+      CREATE INDEX IF NOT EXISTS idx_procurement_records_bin ON procurement_records(customer_bin);
+    `
+  },
+  {
+    version: 19,
+    run: (db: Database.Database) => {
+      if (!tableExists(db, "procurement_records")) return;
+      const columns = new Set(getColumnNames(db, "procurement_records"));
+      addColumnIfMissing(db, "procurement_records", columns, "source_record_id", "TEXT");
+    }
+  },
+  {
+    version: 20,
+    run: (db: Database.Database) => {
+      if (!tableExists(db, "procurement_records")) return;
+      const columns = new Set(getColumnNames(db, "procurement_records"));
+      addColumnIfMissing(db, "procurement_records", columns, "customer_source_id", "TEXT");
+    }
+  },
+  {
+    version: 21,
+    run: (db: Database.Database) => {
+      if (!tableExists(db, "procurement_records")) return;
+      const columns = new Set(getColumnNames(db, "procurement_records"));
+      addColumnIfMissing(db, "procurement_records", columns, "plan_detail_json", "TEXT");
+      addColumnIfMissing(db, "procurement_records", columns, "customer_profile_json", "TEXT");
+      addColumnIfMissing(db, "procurement_records", columns, "detail_issue", "TEXT");
+    }
+  },
+  {
+    version: 22,
+    sql: `
+      CREATE TABLE IF NOT EXISTS goszakup_plan_details (
+        plan_point_id TEXT PRIMARY KEY,
+        detail_json TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      );
+    `
   }
 ];
 

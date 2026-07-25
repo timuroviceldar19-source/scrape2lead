@@ -12,7 +12,16 @@ import {
   getGzPlanDealIdentity,
   legacyDealMatchesRow
 } from "../src/bitrix/gzPlanDealIdentity.js";
-import { buildGzDuplicateSearches } from "../src/bitrix/gzDuplicateSearch.js";
+import {
+  buildGzDuplicateSearches,
+  evaluateGzDuplicateSearchResults,
+  type GzDuplicateSearch
+} from "../src/bitrix/gzDuplicateSearch.js";
+import {
+  callBitrixBatch,
+  chunkBatchCommands,
+  type BitrixBatchCommand
+} from "../src/bitrix/batch.js";
 
 dotenv.config();
 
@@ -94,6 +103,11 @@ interface PreflightItem {
 const DEFAULT_INPUT = "exports/gz-plans-latest.xlsx";
 const DEFAULT_ROUTING_CONFIG = "config/bitrix-gz-routing.json";
 const ORIGINATOR_ID = "scrape2lead-gz-plans";
+const DEAL_SELECT_FIELDS = [
+  "ID", "TITLE", "COMPANY_ID", "ORIGINATOR_ID", "ORIGIN_ID", "OPPORTUNITY",
+  "UF_CRM_PLAN_ID", "UF_CRM_PLAN_LINK",
+  "UF_CRM_1782386293000_IU_XLS", "UF_CRM_1782386571874_IU_XLS"
+];
 const DEFAULT_ASSIGNED_BY_ID = 2301;
 const COMPANY_BIN_FIELD = "UF_CRM_666171B20E9E3";
 // Plan line items priced at 1 tg (or below) are placeholders, not real budgets. Skip them by default.
@@ -169,13 +183,14 @@ async function main(): Promise<void> {
   const rows = args.limit ? allRows.slice(0, args.limit) : allRows;
   const preflight: PreflightItem[] = [];
 
-  for (const row of rows) {
-    const identity = getGzPlanDealIdentity(row);
-    let existingDeal = await client.findDeal(ORIGINATOR_ID, identity.originId);
-    if (!existingDeal && identity.legacyOriginId) {
-      existingDeal = await client.findMatchingLegacyDeal(row, identity.legacyOriginId);
-    }
-    const duplicateDeal = existingDeal?.ID ? null : await client.findPotentialDuplicateDeal(row);
+  const identities = rows.map((row) => getGzPlanDealIdentity(row));
+  const lookups = await resolveRowLookups(client, args.webhookUrl, rows, identities);
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex];
+    const identity = identities[rowIndex];
+    const existingDeal = lookups[rowIndex].existingDeal;
+    const duplicateDeal = existingDeal?.ID ? null : lookups[rowIndex].duplicateDeal;
     const issues = validateRequired(row, args.minAmount);
     const warnings = validateWarnings(row);
     if (duplicateDeal && !duplicateDeal.blocking) {
@@ -239,6 +254,169 @@ async function main(): Promise<void> {
   }
 }
 
+interface RowLookup {
+  existingDeal: ExistingDeal | null;
+  duplicateDeal: DuplicateMatch | null;
+}
+
+interface RowIdentity {
+  originId: string;
+  legacyOriginId?: string | null;
+}
+
+/**
+ * Preflight lookups via batch.json (50 commands per request) instead of 1-6
+ * sequential crm.deal.list calls per row. Phase A resolves canonical
+ * originator/origin matches; phase B (only for unmatched rows) fetches legacy
+ * and duplicate-search candidates. Rows whose batch commands fail fall back to
+ * the original sequential lookup, so classification semantics are unchanged.
+ */
+async function resolveRowLookups(
+  client: BitrixClient,
+  webhookUrl: string,
+  rows: GzPlanRow[],
+  identities: RowIdentity[]
+): Promise<RowLookup[]> {
+  const lookups: RowLookup[] = rows.map(() => ({ existingDeal: null, duplicateDeal: null }));
+  const needsSequential = new Set<number>();
+
+  type BatchEntry = {
+    command: BitrixBatchCommand;
+    onResult: (deals: ExistingDeal[]) => void;
+    onError: () => void;
+  };
+
+  const runBatches = async (entries: BatchEntry[]): Promise<void> => {
+    for (const chunk of chunkBatchCommands(entries)) {
+      let results;
+      try {
+        results = await callBitrixBatch(webhookUrl, chunk.map((entry) => entry.command));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[batch] ${chunk.length} commands failed, falling back to sequential: ${message}`);
+        for (const entry of chunk) entry.onError();
+        continue;
+      }
+      for (const entry of chunk) {
+        const outcome = results.get(entry.command.key);
+        if (!outcome || outcome.error) {
+          if (outcome?.error) {
+            console.warn(`[batch] ${entry.command.key} error ${outcome.error.error}: ${outcome.error.error_description ?? ""}`);
+          }
+          entry.onError();
+          continue;
+        }
+        entry.onResult(Array.isArray(outcome.result) ? outcome.result as ExistingDeal[] : []);
+      }
+    }
+  };
+
+  // Phase A: canonical originator/origin lookups for every row.
+  await runBatches(rows.map((_row, index) => ({
+    command: {
+      key: `find_${index}`,
+      method: "crm.deal.list",
+      params: {
+        filter: { ORIGINATOR_ID, ORIGIN_ID: identities[index].originId },
+        select: DEAL_SELECT_FIELDS
+      }
+    },
+    onResult: (deals) => {
+      lookups[index].existingDeal = deals[0] ?? null;
+    },
+    onError: () => needsSequential.add(index)
+  })));
+
+  // Phase B: legacy + duplicate candidates for rows without a canonical match.
+  const pendingIndexes = rows
+    .map((_row, index) => index)
+    .filter((index) => !needsSequential.has(index) && !lookups[index].existingDeal);
+
+  const legacyResults = new Map<number, ExistingDeal[]>();
+  const duplicateSearchesByRow = new Map<number, GzDuplicateSearch[]>();
+  const duplicateResultsByRow = new Map<number, ExistingDeal[][]>();
+
+  const phaseB: BatchEntry[] = [];
+  for (const index of pendingIndexes) {
+    const row = rows[index];
+    if (identities[index].legacyOriginId) {
+      phaseB.push({
+        command: {
+          key: `legacy_${index}`,
+          method: "crm.deal.list",
+          params: {
+            filter: { ORIGINATOR_ID, ORIGIN_ID: identities[index].legacyOriginId },
+            select: DEAL_SELECT_FIELDS
+          }
+        },
+        onResult: (deals) => legacyResults.set(index, deals),
+        onError: () => needsSequential.add(index)
+      });
+    }
+
+    const searches = buildGzDuplicateSearches({
+      planPointId: canonicalPlanId(row),
+      planNumber: row.planNumber,
+      planUrl: row.planUrl,
+      bin: normalizeBin(row.bin),
+      amount: parseMoney(row.amount)
+    });
+    duplicateSearchesByRow.set(index, searches);
+    duplicateResultsByRow.set(index, searches.map(() => []));
+    searches.forEach((search, searchIndex) => {
+      phaseB.push({
+        command: {
+          key: `dup_${index}_${searchIndex}`,
+          method: "crm.deal.list",
+          params: { filter: search.filter, select: DEAL_SELECT_FIELDS }
+        },
+        onResult: (deals) => {
+          duplicateResultsByRow.get(index)![searchIndex] = deals;
+        },
+        onError: () => needsSequential.add(index)
+      });
+    });
+  }
+  await runBatches(phaseB);
+
+  for (const index of pendingIndexes) {
+    if (needsSequential.has(index)) continue;
+    const row = rows[index];
+
+    const legacyCandidates = legacyResults.get(index);
+    if (legacyCandidates) {
+      lookups[index].existingDeal = legacyCandidates.find((deal) => legacyDealMatchesRow(row, deal)) ?? null;
+    }
+    if (lookups[index].existingDeal?.ID) continue;
+
+    lookups[index].duplicateDeal = evaluateGzDuplicateSearchResults(
+      duplicateSearchesByRow.get(index) ?? [],
+      duplicateResultsByRow.get(index) ?? [],
+      { originatorId: ORIGINATOR_ID, originId: identities[index].originId }
+    );
+  }
+
+  for (const index of needsSequential) {
+    lookups[index] = await sequentialRowLookup(client, rows[index], identities[index]);
+  }
+
+  return lookups;
+}
+
+/** Original per-row lookup path, kept as the fallback for failed batch commands. */
+async function sequentialRowLookup(
+  client: BitrixClient,
+  row: GzPlanRow,
+  identity: RowIdentity
+): Promise<RowLookup> {
+  let existingDeal = await client.findDeal(ORIGINATOR_ID, identity.originId);
+  if (!existingDeal && identity.legacyOriginId) {
+    existingDeal = await client.findMatchingLegacyDeal(row, identity.legacyOriginId);
+  }
+  const duplicateDeal = existingDeal?.ID ? null : await client.findPotentialDuplicateDeal(row);
+  return { existingDeal, duplicateDeal };
+}
+
 class BitrixClient {
   private readonly baseUrl: string;
 
@@ -262,11 +440,7 @@ class BitrixClient {
         ORIGINATOR_ID: originatorId,
         ORIGIN_ID: dealOriginId
       },
-      select: [
-        "ID", "TITLE", "COMPANY_ID", "ORIGINATOR_ID", "ORIGIN_ID", "OPPORTUNITY",
-        "UF_CRM_PLAN_ID", "UF_CRM_PLAN_LINK",
-        "UF_CRM_1782386293000_IU_XLS", "UF_CRM_1782386571874_IU_XLS"
-      ]
+      select: DEAL_SELECT_FIELDS
     });
     return Array.isArray(result) ? result as ExistingDeal[] : [];
   }
@@ -284,11 +458,7 @@ class BitrixClient {
     for (const search of searches) {
       const result = await this.call("crm.deal.list", {
         filter: search.filter,
-        select: [
-          "ID", "TITLE", "COMPANY_ID", "ORIGINATOR_ID", "ORIGIN_ID", "OPPORTUNITY",
-          "UF_CRM_PLAN_ID", "UF_CRM_PLAN_LINK",
-          "UF_CRM_1782386293000_IU_XLS", "UF_CRM_1782386571874_IU_XLS"
-        ]
+        select: DEAL_SELECT_FIELDS
       });
       const rows = Array.isArray(result) ? result as ExistingDeal[] : [];
       for (const deal of rows) {

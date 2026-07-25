@@ -145,6 +145,36 @@ describe("KZ v16 outreach retention ledger", () => {
   });
 });
 
+describe("KZ v22 plan detail cache", () => {
+  it("creates goszakup_plan_details on a fresh database", () => {
+    const db = new Database(":memory:");
+    runMigrations(db);
+
+    const cols = columns(db, "goszakup_plan_details");
+    expect(cols).toContain("plan_point_id");
+    expect(cols).toContain("detail_json");
+    expect(cols).toContain("fetched_at");
+
+    db.close();
+  });
+
+  it("upgrades a v21 database without touching existing tables", () => {
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_version (version, applied_at) VALUES (21, '2026-07-01T00:00:00.000Z');
+    `);
+
+    runMigrations(db);
+
+    const version = (db.prepare("SELECT MAX(version) AS version FROM schema_version").get() as { version: number }).version;
+    expect(version).toBe(22);
+    expect(columns(db, "goszakup_plan_details")).toContain("detail_json");
+
+    db.close();
+  });
+});
+
 function columns(db: Database.Database, tableName: string): string[] {
   return (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((col) => col.name);
 }

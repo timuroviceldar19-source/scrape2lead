@@ -65,7 +65,15 @@ export interface AutomationStepResult {
   output?: string;
 }
 
-export interface AutomationExportResult { path: string; rows: number }
+export interface AutomationExportResult {
+  path: string;
+  rows: number;
+  /** Plan-detail cache metrics, summed across periods. Absent for stages without a detail cache (lots). */
+  cacheHit?: number;
+  cacheMiss?: number;
+  fetched?: number;
+  fetchFailed?: number;
+}
 
 export interface AutomationDependencies {
   exportPlans: (configPath: string, outputPath: string, periods: RollingPeriod[]) => Promise<AutomationExportResult>;

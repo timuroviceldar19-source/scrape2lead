@@ -31,6 +31,15 @@ describe("loadGzPlansConfig", () => {
     const config = loadGzPlansConfig("config/gz-plans.pk.json");
 
     expect(config.minAmount).toBe(500000);
+    expect(config.statuses).toEqual(["Утвержден", "На проверке камерального контроля"]);
+    expect(config.keywords).toEqual([
+      "Компьютер персональный",
+      "Монитор",
+      "Моноблок",
+      "Ноутбук"
+    ]);
+    expect(config.keywords).not.toContain("Устройство многофункциональное");
+    expect(config.includeTruCodePrefixes).toEqual(["262011.", "262013.", "262017.100."]);
     expect(config.excludeKeywords).toEqual([
       "Уголок",
       "Стойка",
@@ -39,8 +48,18 @@ describe("loadGzPlansConfig", () => {
       "Плинтус",
       "Источник бесперебойного питания",
       "Услуги",
-      "Коммутационная панель"
+      "Коммутационная панель",
+      "МФУ",
+      "Принтер",
+      "Устройство многофункциональное"
     ]);
+  });
+
+  it("loads both collection statuses without a TRU allow-list from the panels config", () => {
+    const config = loadGzPlansConfig("config/gz-plans.json");
+
+    expect(config.statuses).toEqual(["Утвержден", "На проверке камерального контроля"]);
+    expect(config.includeTruCodePrefixes).toEqual([]);
   });
 
   it("loads and validates config from JSON file", () => {
@@ -89,6 +108,10 @@ describe("resolvePlanStatusIds", () => {
     expect(resolvePlanStatusIds(["Утвержден"])).toEqual([2]);
   });
 
+  it("resolves the cadastral control status to goszakup ID 444", () => {
+    expect(resolvePlanStatusIds(["  на ПРОВЕРКЕ камерального контроля  "])).toEqual([444]);
+  });
+
   it("accepts numeric IDs", () => {
     expect(resolvePlanStatusIds(["2", "5"])).toEqual([2, 5]);
   });
@@ -105,6 +128,10 @@ describe("resolvePlanStatusIds", () => {
 describe("resolvePlanStatusNames", () => {
   it("resolves ID to canonical status name", () => {
     expect(resolvePlanStatusNames(["2"])).toEqual(["Утвержден"]);
+  });
+
+  it("resolves ID 444 to the canonical cadastral control status", () => {
+    expect(resolvePlanStatusNames(["444"])).toEqual(["На проверке камерального контроля"]);
   });
 });
 
@@ -165,6 +192,13 @@ describe("matchesPlanStatus", () => {
   it("matches status case-insensitively", () => {
     expect(matchesPlanStatus("утвержден", ["Утвержден"])).toBe(true);
     expect(matchesPlanStatus("Опубликован", ["Утвержден"])).toBe(false);
+  });
+
+  it("accepts the cadastral control status regardless of case and padding", () => {
+    expect(matchesPlanStatus(
+      "  НА ПРОВЕРКЕ КАМЕРАЛЬНОГО КОНТРОЛЯ ",
+      ["Утвержден", "На проверке камерального контроля"]
+    )).toBe(true);
   });
 
   it("allows all when filter list is empty", () => {

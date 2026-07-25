@@ -5,11 +5,13 @@ import ExcelJS from "exceljs";
 import { goszakupGetJson } from "../src/kz/goszakupClient.js";
 import { parseGoszakupPlanSearchHtml } from "../src/kz/goszakupPlanHtmlParser.js";
 import { GZ_PLAN_STATUS_BY_NAME } from "../src/kz/goszakupPlanTypes.js";
+import { loadGzPlansConfig } from "../src/kz/gzPlansConfig.js";
 import { extractGzPlanPointIdFromUrl } from "../src/kz/gzPlanIdentity.js";
 import {
   buildPublishedDealUpdate,
   applyPublishedDealUpdate,
-  selectPublishedDealBatch,
+  isPanelsGzPlanDeal,
+  selectPanelsPublishedDealBatch,
   type PublishedDealAction
 } from "../src/bitrix/gzPublishedDealStatus.js";
 
@@ -42,6 +44,8 @@ interface BitrixDeal {
   UF_CRM_6627AEBD85B4D?: string | null;
   UF_CRM_6A436D5A3614C?: string | null;
   UF_CRM_S2L_GZ_PUBLISHED_AT?: string | null;
+  UF_CRM_1713874845756?: string | null;
+  UF_CRM_S2L_GZ_KEYWORD?: string | null;
   CATEGORY_ID?: string | number | null;
 }
 
@@ -155,8 +159,10 @@ async function main(): Promise<void> {
 
   if (args.execute) await client.ensurePublishedAtField();
 
-  const deals = await client.listRecentGzDeals(args.since);
-  const limitedDeals = selectPublishedDealBatch(deals, args.offset, args.limit);
+  const panelKeywords = loadGzPlansConfig().keywords;
+  const sourceDeals = await client.listRecentGzDeals(args.since);
+  const deals = sourceDeals.filter((deal) => isPanelsGzPlanDeal(deal, panelKeywords));
+  const limitedDeals = selectPanelsPublishedDealBatch(sourceDeals, panelKeywords, args.offset, args.limit);
 
   const report: Report = {
     mode: args.execute ? "execute" : "dry-run",
@@ -186,7 +192,7 @@ async function main(): Promise<void> {
     skippedInvalidOrigin: []
   };
 
-  console.log(`gz deals published monitor: mode=${report.mode} since=${args.since} total=${deals.length} offset=${args.offset} deals=${limitedDeals.length}`);
+  console.log(`gz deals published monitor: mode=${report.mode} since=${args.since} source_total=${sourceDeals.length} panels_total=${deals.length} offset=${args.offset} deals=${limitedDeals.length}`);
 
   for (const deal of limitedDeals) {
     const originId = stringOrNull(deal.ORIGIN_ID);
@@ -306,6 +312,8 @@ class BitrixClient {
         "UF_CRM_PLAN_STATUS",
         "UF_CRM_6627AEBD85B4D",
         "UF_CRM_6A436D5A3614C",
+        "UF_CRM_1713874845756",
+        "UF_CRM_S2L_GZ_KEYWORD",
         PUBLISHED_AT_FIELD
       ]
     });

@@ -1,0 +1,45 @@
+{
+  "id": 18121209,
+  "external_id": 4128263137,
+  "extra_description": "LCD сыртқы бет",
+  "description": "LCD поверхность",
+  "count": 4,
+  "unit_price": 1475000,
+  "total_price": 5900000,
+  "prepayment": null,
+  "timestamp": 1776236804,
+  "organization": {
+    "id": 45697,
+    "external_id": 207850,
+    "iin_bin": "970940002871",
+    "name": "ТОО \"АЭС Шульбинская ГЭС\""
+  },
+  "enstru": {
+    "name": "Панель интерактивная",
+    "name_ru": "Панель интерактивная",
+    "name_kk": "Интерактивтік панель",
+    "code": "262030.100.000021",
+    "short_description": "LCD поверхность",
+    "short_description_ru": "LCD поверхность",
+    "short_description_kk": "LCD сыртқы бет",
+    "purchase_item_type": { "name": "Товар" }
+  },
+  "purchase_method": { "name": "Запрос ценовых предложений" },
+  "measure": { "name": "Штука" },
+  "system": { "id": 3, "name": "SKK" },
+  "status": { "name": "Утвержден" },
+  "month": null,
+  "delivery_deadline": null,
+  "deliveries": [
+    {
+      "kato": { "code": "101065100", "full_name_ru": "область Абай, г.Семей, п.Шульбинск" },
+      "count": 4,
+      "full_delivery_place_name": "микрорайон Промзона, дом 1."
+    },
+    {
+      "kato": { "code": "551610000", "full_name_ru": "Павлодарская область, г.Аксу" },
+      "count": 5,
+      "full_delivery_place_name": "г.Аксу ул.Камзина, 1"
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+import { chromium } from "playwright";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { Browser } from "playwright";
+import { discoverRecaptchaSiteKey, injectRecaptchaToken, runAutomaticCaptchaAttempts } from "../../src/kz/kgdCaptchaAutomation.js";
+import { waitForKgdOutcome } from "../../src/kz/kgdInteractiveClient.js";
+
+describe("KGD CAPTCHA browser integration", () => {
+  let browser: Browser;
+  beforeAll(async () => { browser = await chromium.launch({ headless: true }); });
+  afterAll(async () => { await browser.close(); });
+
+  it("discovers the site key, fills response fields and invokes the matching callback", async () => {
+    const page = await browser.newPage();
+    await page.setContent('<iframe src="https://www.google.com/recaptcha/api2/anchor?k=site-key-1"></iframe><textarea name="g-recaptcha-response"></textarea>');
+    await page.evaluate(() => { (globalThis as any).__callbackToken = ""; (globalThis as any).___grecaptcha_cfg = { clients: { 0: { a: { sitekey: "site-key-1", callback: (token: string) => (globalThis as any).__callbackToken = token } } } }; });
+    expect(await discoverRecaptchaSiteKey(page)).toBe("site-key-1");
+    expect(await injectRecaptchaToken(page, "solution-token", "site-key-1")).toBe(true);
+    expect(await page.locator('textarea[name="g-recaptcha-response"]').inputValue()).toBe("solution-token");
+    expect(await page.evaluate(() => (globalThis as any).__callbackToken)).toBe("solution-token");
+    await page.close();
+  });
+
+  it("treats the rendered no-data message as a successful negative result", async () => {
+    const page = await browser.newPage();
+    await page.setContent("<main></main>");
+    const outcomePromise = waitForKgdOutcome(page, "100740005402", 2_000);
+    await page.locator("main").evaluate((element) => { element.textContent = "Данные не найдены"; });
+
+    await expect(outcomePromise).resolves.toEqual({
+      kind: "success",
+      payload: { data: { isLiquidated: false } }
+    });
+    await page.close();
+  });
+
+  it("fails fast when KGD renders a data retrieval error", async () => {
+    const page = await browser.newPage();
+    await page.setContent("<main></main>");
+    const outcomePromise = waitForKgdOutcome(page, "100740005402", 2_000);
+    await page.locator("main").evaluate((element) => { element.textContent = "Ошибка при получении данных"; });
+
+    await expect(outcomePromise).rejects.toThrow("KGD portal error");
+    await page.close();
+  });
+});
+
+describe("automatic CAPTCHA attempts", () => {
+  it("retries once, then fails without entering a manual fallback", async () => {
+    const solveToken = vi.fn().mockRejectedValueOnce(new Error("first failed")).mockResolvedValueOnce("token");
+    const reset = vi.fn(async () => undefined);
+    await expect(runAutomaticCaptchaAttempts({ attempts: 2, solveToken, applyToken: async () => true, submit: async () => undefined, waitForOutcome: async () => ({ kind: "invalid" }), reset })).rejects.toThrow("Automatic CAPTCHA failed after 2 attempts");
+    expect(solveToken).toHaveBeenCalledTimes(2); expect(reset).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the first successful payload without another paid attempt", async () => {
+    const solveToken = vi.fn(async () => "token"); const payload = { bin: "160640003364" };
+    await expect(runAutomaticCaptchaAttempts({ attempts: 2, solveToken, applyToken: async () => true, submit: async () => undefined, waitForOutcome: async () => ({ kind: "success", payload }), reset: async () => undefined })).resolves.toEqual(payload);
+    expect(solveToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles an outcome rejection that arrives while submit is still pending", async () => {
+    let rejectOutcome!: (error: Error) => void;
+    const outcome = new Promise<never>((_resolve, reject) => { rejectOutcome = reject; });
+    const onAttemptError = vi.fn();
+
+    await expect(runAutomaticCaptchaAttempts({
+      attempts: 1,
+      solveToken: async () => "token",
+      applyToken: async () => true,
+      submit: async () => { rejectOutcome(new Error("KGD portal error")); await new Promise((resolve) => setTimeout(resolve, 20)); },
+      waitForOutcome: () => outcome,
+      reset: async () => undefined,
+      onAttemptError
+    })).rejects.toThrow("Automatic CAPTCHA failed after 1 attempts");
+    expect(onAttemptError).toHaveBeenCalledWith(expect.objectContaining({ message: "KGD portal error" }), 1);
+  });
+});
