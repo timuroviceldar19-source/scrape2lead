@@ -1,0 +1,26 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "scrape2lead-github-dispatch",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-26",
+  "workers_dev": false,
+  "triggers": {
+    "crons": [
+      "40 3 * * *",
+      "0 5 * * *",
+      "0 8 * * *"
+    ]
+  },
+  "secrets": {
+    "required": [
+      "GITHUB_ACTIONS_TOKEN"
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  }
+}
