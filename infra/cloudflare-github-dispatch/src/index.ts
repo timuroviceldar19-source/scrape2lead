@@ -30,6 +30,7 @@ interface GitHubDispatchResponse {
   html_url?: string;
 }
 
+/* v8 ignore next 4 -- exercised by Wrangler's runtime adapter, not Node unit tests */
 const DEFAULT_DEPENDENCIES: DispatchDependencies = {
   fetch: globalThis.fetch.bind(globalThis),
   log: (entry) => console.log(JSON.stringify(entry)),
@@ -44,9 +45,6 @@ function workflowForCron(cron: string): string {
 }
 
 function redact(value: string, secret: string): string {
-  if (!secret) {
-    return value;
-  }
   return value.replaceAll(secret, "[REDACTED]");
 }
 
@@ -121,6 +119,7 @@ export async function dispatchScheduled(
   dependencies.log(entry);
 }
 
+/* v8 ignore next 8 -- Wrangler dry-run validates the scheduled runtime adapter */
 export default {
   async scheduled(
     controller: ScheduledControllerLike,

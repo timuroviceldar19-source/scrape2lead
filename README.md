@@ -151,31 +151,57 @@ applyLots=succeeded
 бессмысленно: backstop едет в той же очереди, что и основной триггер, и опаздывает
 вместе с ним.
 
-Поэтому расписание задаётся снаружи, а Actions только выполняет работу.
+Поэтому расписание задаёт версионируемый Cloudflare Worker из
+`infra/cloudflare-github-dispatch`, а Actions только выполняет работу. Worker не имеет
+публичного HTTP endpoint и вызывается только через три Cron Trigger:
+
+| Время UTC | Алматы | Workflow |
+|---|---|---|
+| 03:40 | 08:40 | `gz-daily-pk.yml` |
+| 05:00 | 10:00 | `gz-daily-main.yml` |
+| 08:00 | 13:00 | `gz-watchdog.yml` |
+
+### Первичная настройка Cloudflare Worker
 
 1. Создать **fine-grained PAT**: Settings → Developer settings → Personal access tokens →
    Fine-grained tokens. Repository access — **только** `scrape2lead`. Permissions —
    `Actions: Read and write`, больше ничего. Поставить срок жизни и завести напоминание
    на ротацию.
-2. Завести три задания в любом внешнем планировщике (cron-job.org, Cloudflare Worker
-   Cron Triggers, cron на любой машине). Каждое — POST со своим `<workflow>`:
+2. Установить зависимости и авторизовать Wrangler:
 
    ```bash
-   curl -sS -X POST \
-     -H "Accept: application/vnd.github+json" \
-     -H "Authorization: Bearer $GH_PAT" \
-     -H "X-GitHub-Api-Version: 2022-11-28" \
-     https://api.github.com/repos/timuroviceldar19-source/scrape2lead/actions/workflows/<workflow>/dispatches \
-     -d '{"ref":"main"}'
+   npm ci
+   npx wrangler login
    ```
 
-   | Время UTC | Алматы | `<workflow>` |
-   |---|---|---|
-   | 03:40 | 08:40 | `gz-daily-pk.yml` |
-   | 05:00 | 10:00 | `gz-daily-main.yml` |
-   | 08:00 | 13:00 | `gz-watchdog.yml` |
+3. Проверить сборку без публикации, загрузить PAT в зашифрованный Cloudflare secret и
+   развернуть Worker:
 
-Успешный вызов возвращает `204 No Content` — тела ответа нет, это норма.
+   ```bash
+   npm run cloudflare:check
+   npm run cloudflare:secret
+   npm run cloudflare:deploy
+   ```
+
+   `cloudflare:secret` запросит значение интерактивно. Не передавайте PAT аргументом
+   командной строки и не записывайте его в `.env` или `.dev.vars`.
+
+4. Открыть поток боевых логов:
+
+   ```bash
+   npm run cloudflare:tail
+   ```
+
+   После ближайшего слота в логе должна появиться запись
+   `event=github_workflow_dispatch`, а в GitHub Actions — run с
+   `event=workflow_dispatch`. Worker считает успехом любой ответ GitHub `2xx`: текущий
+   API возвращает `200` с идентификатором run, прежний вариант `204 No Content` также
+   поддерживается. Изменения Cron Trigger могут распространяться в Cloudflare до
+   15 минут, поэтому первый замер делают после этого окна.
+
+Worker отправляет один запрос и намеренно не повторяет его при неоднозначной сетевой
+ошибке: повторный `workflow_dispatch` мог бы запустить полный сбор второй раз. Ошибка
+остаётся в Workers Logs, а внутренний GHA-cron служит запасным путём.
 
 Cron-записи в самих workflow трогать не нужно: они бесплатны и остаются вторым путём.
 Когда задержанное событие всё-таки приходит, guard видит уже выполненный внешним
@@ -183,7 +209,7 @@ Cron-записи в самих workflow трогать не нужно: они 
 занял 8 секунд и ничего не собирал.
 
 Токен нигде в репозитории не хранится и в секреты GitHub не добавляется — он живёт
-только во внешнем планировщике.
+только в зашифрованном Cloudflare secret `GITHUB_ACTIONS_TOKEN`.
 
 Требуется один секрет репозитория — `BITRIX24_WEBHOOK_URL`. `GOSZAKUP_TOKEN` не нужен:
 сбор идёт по HTML-порталу.

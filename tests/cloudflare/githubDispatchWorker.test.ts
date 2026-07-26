@@ -5,7 +5,7 @@ import {
   type DispatchDependencies,
 } from "../../infra/cloudflare-github-dispatch/src/index.js";
 
-const TOKEN = "github_pat_secret-value";
+const TOKEN = "test-token-do-not-use";
 const SCHEDULED_TIME = Date.parse("2026-07-26T03:40:00Z");
 
 function dependencies(response: Response) {
@@ -98,6 +98,38 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
       scheduledTime: "2026-07-26T03:40:00.000Z",
       status: 204,
     });
+  });
+
+  it("accepts a 2xx response whose body is not JSON", async () => {
+    const deps = dependencies(new Response("accepted", { status: 202 }));
+
+    await dispatchScheduled(
+      { cron: "0 8 * * *", scheduledTime: SCHEDULED_TIME },
+      { GITHUB_ACTIONS_TOKEN: TOKEN },
+      deps,
+    );
+
+    expect(deps.log).toHaveBeenCalledWith({
+      event: "github_workflow_dispatch",
+      cron: "0 8 * * *",
+      workflow: "gz-watchdog.yml",
+      scheduledTime: "2026-07-26T03:40:00.000Z",
+      status: 202,
+    });
+  });
+
+  it("rejects a missing secret before contacting GitHub", async () => {
+    const deps = dependencies(new Response(null, { status: 204 }));
+
+    await expect(
+      dispatchScheduled(
+        { cron: "0 8 * * *", scheduledTime: SCHEDULED_TIME },
+        { GITHUB_ACTIONS_TOKEN: "" },
+        deps,
+      ),
+    ).rejects.toThrow("GITHUB_ACTIONS_TOKEN is not configured");
+
+    expect(deps.fetch).not.toHaveBeenCalled();
   });
 
   it.each([401, 403, 404, 500, 503])(
