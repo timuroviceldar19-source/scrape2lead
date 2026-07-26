@@ -25,7 +25,7 @@ jobs:
     permissions:
       actions: read
     steps:
-      - name: Assert both daily workflows succeeded today
+      - name: Assert both daily workflows actually collected today
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -34,17 +34,47 @@ jobs:
           midnight=$(date -u +%Y-%m-%dT00:00:00Z)
           failed=0
 
-          for workflow in gz-daily-pk.yml gz-daily-main.yml; do
-            count=$(gh run list --workflow "$workflow" --status success \
-              --limit 20 --json createdAt \
-              --jq "[.[] | select(.createdAt >= \"$midnight\")] | length")
-            if [ "$count" -gt 0 ]; then
-              echo "OK: $workflow — успешных прогонов сегодня: $count"
-            else
-              echo "ПРОПУСК: $workflow не отработал успешно с $midnight"
-              failed=1
+          # Успех на уровне run сюда не годится. Прогон, где guard пропустил
+          # работу, тоже завершается с conclusion=success — оба задержанных
+          # события 2026-07-26 были именно такими. На одном лишь run-статусе
+          # сторож обманывался бы так: основной стартует в 05:00, backstop в
+          # 06:00 видит его активным и пропускает себя с success, основной
+          # затем падает в 06:30 — и сторож рапортует «всё хорошо», хотя не
+          # собрано ничего.
+          #
+          # Поэтому спускаемся до job'а, который делает работу. Реальный сбор
+          # даёт job "<name> / run" (вложенный вызов gz-automation.yml) с
+          # conclusion=success; пропуск guard'ом — job "<name>" с
+          # conclusion=skipped. Префикс имени ловит оба, фильтр по success
+          # оставляет только настоящую работу.
+          check() {
+            workflow="$1"; job="$2"; work_ok=0
+            for run_id in $(gh run list --workflow "$workflow" --limit 20 \
+                --json databaseId,createdAt,conclusion \
+                --jq "[.[]
+                       | select(.createdAt >= \"$midnight\")
+                       | select(.conclusion == \"success\")
+                      ] | .[].databaseId"); do
+              hit=$(gh api "repos/$GH_REPO/actions/runs/$run_id/jobs" \
+                --jq "[.jobs[]
+                       | select(.name | startswith(\"$job\"))
+                       | select(.conclusion == \"success\")
+                      ] | length")
+              if [ "$hit" -gt 0 ]; then
+                echo "OK: $workflow — сбор выполнен, run $run_id"
+                work_ok=1
+                break
+              fi
+            done
+            if [ "$work_ok" -eq 0 ]; then
+              echo "ПРОПУСК: $workflow не выполнил сбор с $midnight"
+              return 1
             fi
-          done
+            return 0
+          }
+
+          check gz-daily-pk.yml   pk-plans       || failed=1
+          check gz-daily-main.yml plans-and-lots || failed=1
 
           if [ "$failed" -ne 0 ]; then
             echo
@@ -52,4 +82,4 @@ jobs:
             echo "Повторный прогон безопасен — дедупликация идёт в Bitrix по UF_CRM_PLAN_ID."
             exit 1
           fi
-          echo "Обе ежедневные задачи отработали."
+          echo "Обе ежедневные задачи выполнили сбор."

@@ -157,6 +157,34 @@ alarmed while a legitimately delayed run was still in flight. It remains cron-dr
 so shares the same unreliability, which is why it is listed as the second line and should
 also be triggered externally.
 
+### Watchdog counted the wrong thing
+
+Its first version asserted that each daily workflow had a *run* with
+`conclusion == success` today. That is not the same as the work having happened: a run
+whose `guard` skipped the collection also completes as `success`, and both delayed events
+on 2026-07-26 were exactly that shape. The failure it would have missed: the primary
+starts at 05:00 and is still active at 06:00, so the backstop's guard skips and records
+`success`; the primary then fails at 06:30; the watchdog sees a successful run and
+reports healthy while nothing was collected.
+
+The check now descends to the job that does the work. Real collection produces a job
+named `<name> / run` — the nested `gz-automation.yml` call — with `conclusion: success`,
+while a guard skip produces `<name>` with `conclusion: skipped`. Matching the name by
+prefix catches both and filtering on `success` keeps only genuine work.
+
+Verified against live data containing both shapes on the same day: for `gz-daily-pk.yml`
+the delayed guard-skip run 30190963247 scored 0 and the real run 30188460475 scored 1;
+for `gz-daily-main.yml`, 30193028083 scored 0 and 30192768614 scored 1. The failure path
+was exercised separately with a job name that matches nothing, confirming the non-zero
+exit propagates through `|| failed=1` under `set -e`.
+
+The same day's `plans-and-lots` run also settled the remaining question about the shared
+plan-detail cache. It reported `cache_hit: 0, cache_miss: 110` despite `gz-daily-pk.yml`
+having populated the cache hours earlier — not a restore failure, but a different plan
+set: this workflow collects interactive panels, PK collects personal computers. The two
+workflows share one `gz-db-` cache and append to the same SQLite file, and the
+`gz-automation` concurrency group is what keeps their writes from racing.
+
 Two mitigations, both in `.github/workflows/`:
 
 - **Backstop cron.** Each daily workflow gained a second trigger an hour after the
