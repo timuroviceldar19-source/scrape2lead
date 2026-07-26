@@ -45,6 +45,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${TOKEN}`,
           "Content-Type": "application/json",
+          "User-Agent": "scrape2lead-cloudflare-dispatch/1.0",
           "X-GitHub-Api-Version": "2026-03-10",
         },
         body: JSON.stringify({ ref: "main" }),
