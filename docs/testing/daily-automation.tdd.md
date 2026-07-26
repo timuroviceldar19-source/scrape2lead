@@ -122,13 +122,40 @@ it cleared: goszakup.gov.kz serves GitHub's runner IPs (71 rows on 2026-07-25, r
 30161923368). The first live PK run followed at ~50 minutes with counters matching the
 Windows baseline exactly — 345 rows, 299 existing, 46 duplicate, 0 create.
 
-### Undelivered scheduled event
+### Unreliable scheduled events
 
-The first scheduled trigger, 2026-07-26 03:40 UTC, never produced a run. Verified rather
-than inferred: the repository held zero runs with `event=schedule`, while the workflow
-was `active` and present on the default branch at `66198c8` since 2026-07-25T14:34:50Z —
-13 hours before the fire time, so registration was not the cause. GitHub documents that
-scheduled events may be delayed or dropped under load.
+The first scheduled trigger, 2026-07-26 03:40 UTC, produced no run at its slot. Verified
+rather than inferred: the repository held zero runs with `event=schedule`, while the
+workflow was `active` and present on the default branch at `66198c8` since
+2026-07-25T14:34:50Z — 13 hours before the fire time, so registration was not the cause.
+
+The initial reading was that GitHub had dropped the event. Later the same day that turned
+out to be the wrong failure model, and the correction matters because it invalidates the
+first mitigation. Run 30190963247 arrived with `event=schedule` at 06:23:15Z for the
+04:40 slot — **103 minutes late**, not lost. The 05:00 slot for `gz-daily-main.yml` was
+still absent 2.5 hours later. Meanwhile `workflow_dispatch` was delivered instantly on
+every one of four attempts across two days.
+
+Ruled out by inspection, not assumption: the repository is not a fork (scheduled
+workflows are disabled in forks — the leading hypothesis), not archived, public, default
+branch `main`, and githubstatus.com reported all systems operational throughout.
+
+So the failure mode is severe delay in `schedule` delivery specifically, while
+`workflow_dispatch` is unaffected. A backstop cron inside Actions cannot fix that: it
+rides the same delayed queue as the primary and slips by the same amount. The scheduling
+authority therefore moves outside GitHub — an external cron calling the
+`workflow_dispatch` API, documented in the README. The in-repo crons stay as a free
+second path, and the guard makes their late arrival a no-op.
+
+That behaviour was confirmed in production rather than reasoned about: when the delayed
+04:40 event landed at 06:23, the guard found the already-successful run from 04:52,
+logged `Сегодня уже есть успешный или активный прогон (1) — backstop пропускаем`, and
+the `pk-plans` job was skipped. Total run time 8 seconds, no collection, no CRM traffic.
+
+The watchdog moved from 07:30 to 08:00 UTC as a consequence: at 07:30 it would have
+alarmed while a legitimately delayed run was still in flight. It remains cron-driven and
+so shares the same unreliability, which is why it is listed as the second line and should
+also be triggered externally.
 
 Two mitigations, both in `.github/workflows/`:
 

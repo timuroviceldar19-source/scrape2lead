@@ -130,7 +130,7 @@ applyLots=succeeded
 | `gz-daily-pk.yml` | `40 3` и `40 4` UTC = 08:40 и 09:40 Алматы | `config/automation.pk.json` |
 | `gz-daily-main.yml` | `0 5` и `0 6` UTC = 10:00 и 11:00 Алматы | `config/automation.json` |
 | `gz-automation.yml` | — | Общее тело, вызывается двумя предыдущими |
-| `gz-watchdog.yml` | `30 7 * * *` UTC = 12:30 Алматы | Падает, если сегодня не отработала хотя бы одна из задач |
+| `gz-watchdog.yml` | `0 8 * * *` UTC = 13:00 Алматы | Падает, если сегодня не отработала хотя бы одна из задач |
 | `gz-probe.yml` | вручную | Проверяет, отвечает ли goszakup с раннеров GitHub |
 
 Второй cron у каждой задачи — backstop. Он спрашивает через API, есть ли сегодня
@@ -141,6 +141,49 @@ applyLots=succeeded
 Казахстан живёт в UTC+5 без перехода на летнее время, поэтому смещение постоянное.
 Оба workflow можно запустить вручную кнопкой **Run workflow** или через
 `gh workflow run gz-daily-pk.yml`.
+
+### Внешний триггер (основной способ запуска)
+
+**Cron внутри GitHub Actions ненадёжен и здесь используется только как запасной путь.**
+Замерено 2026-07-26: событие для слота 04:40 UTC пришло в 06:23 — опоздание 103 минуты;
+слот 05:00 не пришёл вовсе за 2.5 часа. При этом `workflow_dispatch` доставляется
+мгновенно — трижды подряд без единой задержки. Добавлять новые cron внутри Actions
+бессмысленно: backstop едет в той же очереди, что и основной триггер, и опаздывает
+вместе с ним.
+
+Поэтому расписание задаётся снаружи, а Actions только выполняет работу.
+
+1. Создать **fine-grained PAT**: Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens. Repository access — **только** `scrape2lead`. Permissions —
+   `Actions: Read and write`, больше ничего. Поставить срок жизни и завести напоминание
+   на ротацию.
+2. Завести три задания в любом внешнем планировщике (cron-job.org, Cloudflare Worker
+   Cron Triggers, cron на любой машине). Каждое — POST со своим `<workflow>`:
+
+   ```bash
+   curl -sS -X POST \
+     -H "Accept: application/vnd.github+json" \
+     -H "Authorization: Bearer $GH_PAT" \
+     -H "X-GitHub-Api-Version: 2022-11-28" \
+     https://api.github.com/repos/timuroviceldar19-source/scrape2lead/actions/workflows/<workflow>/dispatches \
+     -d '{"ref":"main"}'
+   ```
+
+   | Время UTC | Алматы | `<workflow>` |
+   |---|---|---|
+   | 03:40 | 08:40 | `gz-daily-pk.yml` |
+   | 05:00 | 10:00 | `gz-daily-main.yml` |
+   | 08:00 | 13:00 | `gz-watchdog.yml` |
+
+Успешный вызов возвращает `204 No Content` — тела ответа нет, это норма.
+
+Cron-записи в самих workflow трогать не нужно: они бесплатны и остаются вторым путём.
+Когда задержанное событие всё-таки приходит, guard видит уже выполненный внешним
+триггером прогон и пропускает себя — именно так и произошло 2026-07-26 в 06:23, run
+занял 8 секунд и ничего не собирал.
+
+Токен нигде в репозитории не хранится и в секреты GitHub не добавляется — он живёт
+только во внешнем планировщике.
 
 Требуется один секрет репозитория — `BITRIX24_WEBHOOK_URL`. `GOSZAKUP_TOKEN` не нужен:
 сбор идёт по HTML-порталу.
