@@ -4,14 +4,53 @@ name: GZ daily plans and lots
 # 05:00 UTC = 10:00 в UTC+5. Общая concurrency-группа с gz-daily-pk.yml не даёт
 # двум прогонам пересечься — это тот же инвариант, который на Windows держал
 # общий runs/prepare.lock.
+#
+# Второй триггер в 06:00 UTC — страховка на случай недоставленного scheduled
+# события (см. комментарий в gz-daily-pk.yml). Backstop пропускает себя сам,
+# если сегодня уже был успешный прогон.
 
 on:
   schedule:
     - cron: "0 5 * * *"
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - name: Skip if this workflow already succeeded today
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -eu
+          if [ "$EVENT" != "schedule" ]; then
+            echo "Ручной запуск — выполняем безусловно."
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          midnight=$(date -u +%Y-%m-%dT00:00:00Z)
+          done_today=$(gh run list --workflow gz-daily-main.yml --status success \
+            --limit 20 --json createdAt \
+            --jq "[.[] | select(.createdAt >= \"$midnight\")] | length")
+          if [ "$done_today" -gt 0 ]; then
+            echo "Сегодня уже был успешный прогон ($done_today) — backstop пропускаем."
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Успешных прогонов сегодня нет — запускаем."
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   plans-and-lots:
+    needs: guard
+    if: needs.guard.outputs.should-run == 'true'
     uses: ./.github/workflows/gz-automation.yml
     with:
       config: config/automation.json

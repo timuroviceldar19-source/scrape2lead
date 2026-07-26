@@ -117,9 +117,35 @@ Two invariants needed a different mechanism on ephemeral runners:
   workflows set `TZ: Asia/Almaty`. Kazakhstan is UTC+5 with no DST, so the cron
   offset (03:40 and 05:00 UTC) is constant year-round.
 
-Open risk, deliberately gated rather than assumed away: goszakup.gov.kz may not serve
-GitHub's Azure runner IPs. `.github/workflows/gz-probe.yml` tests exactly that against a
-one-month, one-page window and fails when the search returns zero rows. It must pass
-before the daily workflows are trusted; if it fails, the fallback is a VPS in a
-Kazakhstan region — an EU or US host would hit the same geo restriction. The probe had
-not been run at the time of writing.
+The geo risk was gated by `.github/workflows/gz-probe.yml` rather than assumed away, and
+it cleared: goszakup.gov.kz serves GitHub's runner IPs (71 rows on 2026-07-25, run
+30161923368). The first live PK run followed at ~50 minutes with counters matching the
+Windows baseline exactly — 345 rows, 299 existing, 46 duplicate, 0 create.
+
+### Undelivered scheduled event
+
+The first scheduled trigger, 2026-07-26 03:40 UTC, never produced a run. Verified rather
+than inferred: the repository held zero runs with `event=schedule`, while the workflow
+was `active` and present on the default branch at `66198c8` since 2026-07-25T14:34:50Z —
+13 hours before the fire time, so registration was not the cause. GitHub documents that
+scheduled events may be delayed or dropped under load.
+
+Two mitigations, both in `.github/workflows/`:
+
+- **Backstop cron.** Each daily workflow gained a second trigger an hour after the
+  first (`40 4` and `0 6` UTC). A `guard` job queries the Actions API for a successful
+  run of the same workflow since midnight UTC and skips the backstop when one exists, so
+  the collector still hits goszakup once per day in the normal case. Both daily triggers
+  fall in the morning UTC, so the midnight boundary separates them unambiguously; a
+  manual run does not suppress the next morning's schedule. `workflow_dispatch` bypasses
+  the guard entirely. The `gh run list --workflow <file> --status success` query was
+  verified against live repository data before shipping.
+- **Watchdog.** `gz-watchdog.yml` runs at 07:30 UTC (12:30 Almaty, after both backstops
+  plus cold-run headroom) and exits non-zero if either daily workflow has no success
+  today, converting a silent miss into a failure email. It is itself cron-driven and so
+  subject to the same unreliability — the gain is that two independent schedules are
+  less likely to be dropped together than one, not that delivery is guaranteed.
+
+A run producing zero new deals is not evidence of a miss. The 6-month rolling window
+re-collects the same plans daily, so `create: 0` with `existing: 299` is the expected
+steady state; `status: pushed` with an empty `errors` array is the health signal.
