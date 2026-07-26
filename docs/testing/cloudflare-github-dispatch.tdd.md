@@ -121,6 +121,13 @@ Cloudflare login, secret upload and the first production deployment were perform
 but GitHub rejected the request because the Worker omitted `User-Agent`; that is the
 production regression covered by checkpoints `59804bc` and `04e824a`.
 
-End-to-end acceptance requires repeating the one-off watchdog-only smoke event with
-the fixed Worker and observing both a successful Workers Log entry and a GitHub run
-with `event=workflow_dispatch`.
+End-to-end acceptance passed on the repeated watchdog-only smoke event:
+
+- Cloudflare cron `40 10 26 7 *` was delivered at `2026-07-26T10:40:53Z`.
+- Worker version `0493fdca-70ee-4298-961c-d70477d6cc16` completed with
+  `outcome: ok`, no exceptions and GitHub HTTP `200`.
+- GitHub created run `30198698959` with `event=workflow_dispatch`; the watchdog job
+  completed successfully.
+- The temporary smoke crons were then removed. Production version
+  `a8180034-7874-4d28-946d-336d7a19b0ff` retains only the three documented daily
+  schedules.
