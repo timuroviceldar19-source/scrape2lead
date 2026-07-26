@@ -149,3 +149,12 @@ Two mitigations, both in `.github/workflows/`:
 A run producing zero new deals is not evidence of a miss. The 6-month rolling window
 re-collects the same plans daily, so `create: 0` with `existing: 299` is the expected
 steady state; `status: pushed` with an empty `errors` array is the health signal.
+
+The manual catch-up run for the missed slot (30188460475, run `20260726-095235`) settles
+both questions. Its counters are identical to the previous day's — 345 rows, 299
+existing, 46 duplicate, 0 create, 0 update, 0 issues — so the undelivered schedule cost
+no CRM records: goszakup had published nothing new in the interval, and the 03:40 run
+would have produced the same zero. It also confirms the cache design end to end:
+`cache_hit: 376, cache_miss: 0, fetched: 0` means `actions/cache` restored
+`data/scrape2lead.db` intact across runs, and the job finished in 6m54s against roughly
+50 minutes for the cold first run.
