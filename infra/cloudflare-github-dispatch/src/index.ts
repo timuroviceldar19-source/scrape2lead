@@ -85,6 +85,7 @@ export async function dispatchScheduled(
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      "User-Agent": "scrape2lead-cloudflare-dispatch/1.0",
       "X-GitHub-Api-Version": GITHUB_API_VERSION,
     },
     body: JSON.stringify({ ref: GITHUB_REF }),
