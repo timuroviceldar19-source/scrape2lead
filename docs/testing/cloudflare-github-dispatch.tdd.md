@@ -21,6 +21,16 @@ The source plan was supplied in the implementation request on 2026-07-26.
 - Final focused suite: 13 tests passed after adding missing-secret and non-JSON `2xx`
   coverage.
 
+### Production regression: required User-Agent
+
+- Production smoke test on 2026-07-26 reached GitHub from the scheduled Cloudflare
+  handler but received HTTP `403`: GitHub rejected the request because it did not
+  contain a `User-Agent` header.
+- RED checkpoint `59804bc`: the three request-contract cases failed after adding
+  `User-Agent: scrape2lead-cloudflare-dispatch/1.0` to the expected GitHub request.
+- GREEN checkpoint `04e824a`: the same 13-test suite passed after the Worker added
+  that header. The change does not add retries or expose the token.
+
 ## Test specification
 
 | Guarantee | Evidence | Result |
@@ -66,7 +76,7 @@ exactly 2026-03-10 — the date `GITHUB_API_VERSION` pins. So the pin is current
 `2022-11-28` is the deprecated one; a review suggestion to "revert" to it would have been
 a regression.
 
-## Final verification
+## Initial verification
 
 - `npx vitest run tests/cloudflare/githubDispatchWorker.test.ts --coverage --coverage.include=infra/cloudflare-github-dispatch/src/index.ts`
   — 13 passed; statements 97.56%, branches 90.9%, functions 100%, lines 97.56%.
@@ -80,7 +90,18 @@ a regression.
   returned a gzip payload that the installed npm client rejected as invalid JSON.
   This is an external validation gap, not a reported vulnerability result.
 
-## Deployment gap
+## Regression verification
+
+- Focused suite: 13 passed.
+- Focused coverage: statements 97.59%, branches 90.9%, functions 100%, lines 97.59%.
+- Full suite: 620 passed, 4 skipped.
+- `npm run lint`, `npm run build` and `npm run cloudflare:check`: passed.
+- `npm audit --audit-level=high`: failed with 19 dependency findings (17 high,
+  1 moderate, 1 low). Suggested full remediation includes breaking upgrades to
+  Wrangler, Vitest coverage and ExcelJS, so it is not bundled into this one-line
+  production fix.
+
+## Initial deployment gap
 
 No Cloudflare login, secret upload, or production deployment was performed. Production
 acceptance requires the operator-owned PAT and the next complete scheduled cycle
@@ -92,3 +113,14 @@ the watchdog only reads the Actions API and writes nothing to the CRM. It produc
 30194181540 and the `204` measurement above. What remains unexercised is the Cloudflare
 side — cron trigger delivery, secret binding, and Workers Logs — none of which this
 review could reach without deploying.
+
+## Production follow-up
+
+Cloudflare login, secret upload and the first production deployment were performed on
+2026-07-26. A one-off scheduled smoke event proved cron delivery and secret binding,
+but GitHub rejected the request because the Worker omitted `User-Agent`; that is the
+production regression covered by checkpoints `59804bc` and `04e824a`.
+
+End-to-end acceptance requires repeating the one-off watchdog-only smoke event with
+the fixed Worker and observing both a successful Workers Log entry and a GitHub run
+with `event=workflow_dispatch`.
