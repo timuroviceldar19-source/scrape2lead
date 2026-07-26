@@ -133,13 +133,36 @@ scheduled events may be delayed or dropped under load.
 Two mitigations, both in `.github/workflows/`:
 
 - **Backstop cron.** Each daily workflow gained a second trigger an hour after the
-  first (`40 4` and `0 6` UTC). A `guard` job queries the Actions API for a successful
-  run of the same workflow since midnight UTC and skips the backstop when one exists, so
-  the collector still hits goszakup once per day in the normal case. Both daily triggers
-  fall in the morning UTC, so the midnight boundary separates them unambiguously; a
-  manual run does not suppress the next morning's schedule. `workflow_dispatch` bypasses
-  the guard entirely. The `gh run list --workflow <file> --status success` query was
-  verified against live repository data before shipping.
+  first (`40 4` and `0 6` UTC). A `guard` job queries the Actions API and skips the
+  backstop when the same workflow already has a run that is either successful today or
+  still active, so the collector still hits goszakup once per day in the normal case.
+  `workflow_dispatch` bypasses the guard entirely.
+
+  Counting successes alone was not enough. The guard sits in the *calling* workflow,
+  which carries no concurrency group — only the called `gz-automation.yml` does — so the
+  guard is never queued and evaluates at its scheduled minute regardless of what is
+  running. A cold primary run (~65 min) is therefore still in flight when the backstop
+  fires 60 minutes later: a success-only guard would see zero, let the backstop through,
+  and the called workflow would queue behind the primary and repeat the whole collection
+  — duplicating portal load in exactly the slow scenario where it costs most. The
+  predicate now treats any non-`completed` run as blocking.
+
+  Two asymmetries in that predicate are deliberate. An active run blocks regardless of
+  when it started, since a job begun before midnight UTC and still going is the same
+  reason not to launch a second; a *success* only counts when it is today's, so
+  yesterday's does not suppress this morning's schedule. The workflow's own run is
+  excluded by `github.run_id` — it is itself `in_progress` while querying, and would
+  otherwise block every backstop unconditionally.
+
+  A failed or cancelled run does not block: that is precisely what the backstop is for.
+  The residual gap is a primary that fails *after* the guard has already checked — the
+  backstop will not pick it up, and `gz-watchdog.yml` is what catches that.
+
+  Verified before shipping: the `gh run list --jq` expression against live repository
+  data, and the decision table across nine cases (own run only, primary in progress,
+  primary queued, primary failed, primary cancelled, primary succeeded, success from
+  yesterday, overnight run still going, and yesterday's success alongside today's active
+  run).
 - **Watchdog.** `gz-watchdog.yml` runs at 07:30 UTC (12:30 Almaty, after both backstops
   plus cold-run headroom) and exits non-zero if either daily workflow has no success
   today, converting a silent miss into a failure email. It is itself cron-driven and so

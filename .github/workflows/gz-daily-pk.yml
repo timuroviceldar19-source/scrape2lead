@@ -7,7 +7,7 @@ name: GZ daily PK plans
 # Второй триггер в 04:40 UTC — страховка: 2026-07-26 GitHub не доставил
 # запланированное событие вообще (в репозитории не появилось ни одного run с
 # event=schedule), и пропуск заметили только по отсутствию записей в CRM.
-# Backstop пропускает себя сам, если сегодня уже был успешный прогон.
+# Backstop пропускает себя сам, если сегодняшний прогон уже успешен или ещё идёт.
 
 on:
   schedule:
@@ -23,12 +23,13 @@ jobs:
     outputs:
       should-run: ${{ steps.check.outputs.should-run }}
     steps:
-      - name: Skip if this workflow already succeeded today
+      - name: Skip if a run today already succeeded or is still going
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
+          SELF_RUN_ID: ${{ github.run_id }}
         run: |
           set -eu
           if [ "$EVENT" != "schedule" ]; then
@@ -36,17 +37,34 @@ jobs:
             echo "should-run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Оба триггера этого workflow приходятся на утро UTC, поэтому граница
-          # «сегодня по UTC» однозначно разделяет основной запуск и backstop.
+          # Блокирует не только успех, но и ещё идущий прогон. Guard живёт в
+          # вызывающем workflow и потому НЕ стоит в concurrency-очереди: без
+          # проверки активности он в 04:40 увидел бы ноль успехов, пропустил
+          # себя дальше, и вызванный workflow встал бы в очередь и отработал
+          # повторно после основного — ровно в холодном сценарии (~65 мин против
+          # зазора в 60), где дублировать нагрузку на портал дороже всего.
+          #
+          # Активность блокирует независимо от даты старта: прогон, начатый до
+          # полуночи UTC и всё ещё идущий, — та же причина не запускать второй.
+          # Успех же засчитывается только сегодняшний. Свой собственный run
+          # исключаем — на момент запроса он сам in_progress.
+          #
+          # Упавший или отменённый прогон не блокирует: backstop для того и
+          # нужен. Если основной падает уже ПОСЛЕ проверки, backstop его не
+          # подхватит — этот случай ловит gz-watchdog.yml.
           midnight=$(date -u +%Y-%m-%dT00:00:00Z)
-          done_today=$(gh run list --workflow gz-daily-pk.yml --status success \
-            --limit 20 --json createdAt \
-            --jq "[.[] | select(.createdAt >= \"$midnight\")] | length")
-          if [ "$done_today" -gt 0 ]; then
-            echo "Сегодня уже был успешный прогон ($done_today) — backstop пропускаем."
+          blocking=$(gh run list --workflow gz-daily-pk.yml --limit 30 \
+            --json databaseId,status,conclusion,createdAt \
+            --jq "[.[]
+                   | select(.databaseId != (env.SELF_RUN_ID | tonumber))
+                   | select(.status != \"completed\"
+                            or (.conclusion == \"success\" and .createdAt >= \"$midnight\"))
+                  ] | length")
+          if [ "$blocking" -gt 0 ]; then
+            echo "Сегодня уже есть успешный или активный прогон ($blocking) — backstop пропускаем."
             echo "should-run=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Успешных прогонов сегодня нет — запускаем."
+            echo "Успешных и активных прогонов нет — запускаем."
             echo "should-run=true" >> "$GITHUB_OUTPUT"
           fi
 
