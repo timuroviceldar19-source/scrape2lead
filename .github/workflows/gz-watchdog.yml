@@ -1,0 +1,53 @@
+name: GZ watchdog
+
+# Сторож на случай, когда обе ежедневные задачи молча не отработали.
+# 2026-07-26 GitHub не доставил scheduled событие для gz-daily-pk.yml, и это
+# заметили только по отсутствию записей в CRM — то есть постфактум и косвенно.
+# Сторож превращает такой пропуск в явное падение с письмом.
+#
+# Честное ограничение: сторож сам работает по cron и в принципе подвержен той же
+# ненадёжности. Но одновременная потеря двух независимых расписаний заметно
+# менее вероятна, чем потеря одного, поэтому чистый выигрыш есть.
+#
+# 07:30 UTC = 12:30 Алматы — после того, как отработали и основные триггеры,
+# и оба backstop-а (04:40 и 06:00 UTC) с запасом на холодный прогон.
+
+on:
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Assert both daily workflows succeeded today
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          midnight=$(date -u +%Y-%m-%dT00:00:00Z)
+          failed=0
+
+          for workflow in gz-daily-pk.yml gz-daily-main.yml; do
+            count=$(gh run list --workflow "$workflow" --status success \
+              --limit 20 --json createdAt \
+              --jq "[.[] | select(.createdAt >= \"$midnight\")] | length")
+            if [ "$count" -gt 0 ]; then
+              echo "OK: $workflow — успешных прогонов сегодня: $count"
+            else
+              echo "ПРОПУСК: $workflow не отработал успешно с $midnight"
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo
+            echo "Запустить вручную: gh workflow run <workflow> --ref main"
+            echo "Повторный прогон безопасен — дедупликация идёт в Bitrix по UF_CRM_PLAN_ID."
+            exit 1
+          fi
+          echo "Обе ежедневные задачи отработали."
