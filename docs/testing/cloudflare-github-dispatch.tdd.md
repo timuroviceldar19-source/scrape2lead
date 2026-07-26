@@ -27,13 +27,44 @@ The source plan was supplied in the implementation request on 2026-07-26.
 |---|---|---|
 | All three UTC cron expressions select the intended workflow and `main` ref | Parameterized fetch-mock test | PASS |
 | Dispatch uses the GitHub media type, API version, bearer token and JSON body | Request contract assertions | PASS |
-| Current `200` responses and legacy empty `204` responses are accepted | Response tests | PASS |
+| The real `204 No Content` response is accepted | Response test | PASS |
+| A hypothetical `2xx` carrying a JSON body is accepted and its run ids logged | Response test | PASS (speculative — see below) |
 | Other successful `2xx` bodies may be empty or non-JSON | `202` response test | PASS |
 | Unknown cron and missing secret fail before any network request | Guard tests | PASS |
 | `401`, `403`, `404` and `5xx` cause one attempt only | Parameterized error test | PASS |
 | A token echoed in an error body is redacted from the thrown error | Secret-redaction assertion | PASS |
 | Success logs contain schedule/run metadata but not the token | Structured-log assertions | PASS |
 | Wrangler can bundle the scheduled handler and parse its configuration | `npm run cloudflare:check` | PASS |
+
+## Measured response shape
+
+The first draft of this document described `200` with a run identifier as the current
+behaviour and `204` as legacy. That was backwards. Measured against the live API on
+2026-07-26 with a real dispatch of `gz-watchdog.yml`:
+
+```
+HTTP/2.0 204 No Content
+```
+
+No body. `responseData()` returns `{}` for it, so a successful log entry carries
+`status: 204` and no `workflowRunId` — a Cloudflare invocation is matched to its Actions
+run by timestamp and the `workflow` field, not by an id. The branch that parses a JSON
+body and logs `workflow_run_id` / `run_url` / `html_url` is therefore speculative: it is
+correct if GitHub ever starts returning one, but nothing exercises it against reality,
+and its tests assert a response GitHub does not currently send.
+
+The same measurement settled the pinned API version. The response carried:
+
+```
+Deprecation: Tue, 10 Mar 2026 00:00:00 GMT
+Sunset:      Fri, 10 Mar 2028 00:00:00 GMT
+X-Github-Api-Version-Selected: 2022-11-28
+```
+
+`gh` had sent its default `2022-11-28`, and GitHub marked that version deprecated as of
+exactly 2026-03-10 — the date `GITHUB_API_VERSION` pins. So the pin is current and
+`2022-11-28` is the deprecated one; a review suggestion to "revert" to it would have been
+a regression.
 
 ## Final verification
 
@@ -51,6 +82,13 @@ The source plan was supplied in the implementation request on 2026-07-26.
 
 ## Deployment gap
 
-No Cloudflare login, secret upload, production deployment, or real GitHub dispatch was
-performed. Production acceptance requires the operator-owned PAT and the next complete
-scheduled cycle described in `README.md`.
+No Cloudflare login, secret upload, or production deployment was performed. Production
+acceptance requires the operator-owned PAT and the next complete scheduled cycle
+described in `README.md`.
+
+A real GitHub dispatch *was* performed during review, outside Cloudflare: a direct
+`POST /actions/workflows/gz-watchdog.yml/dispatches` against the live API, chosen because
+the watchdog only reads the Actions API and writes nothing to the CRM. It produced run
+30194181540 and the `204` measurement above. What remains unexercised is the Cloudflare
+side — cron trigger delivery, secret binding, and Workers Logs — none of which this
+review could reach without deploying.
