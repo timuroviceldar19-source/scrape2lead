@@ -1,0 +1,11 @@
+{
+  "workflow": "f3-b2b",
+  "deliveryMode": "push",
+  "runsDir": "runs/f3",
+  "keepSuccessfulRuns": 30,
+  "lockPath": "runs/f3/prepare.lock",
+  "staleLockMinutes": 180,
+  "procurementConfig": "config/procurement-sources.f3.json",
+  "periodMonths": 7,
+  "approvalLimit": null
+}

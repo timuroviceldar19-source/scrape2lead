@@ -168,8 +168,37 @@ describe("KZ v22 plan detail cache", () => {
     runMigrations(db);
 
     const version = (db.prepare("SELECT MAX(version) AS version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(22);
+    expect(version).toBe(23);
     expect(columns(db, "goszakup_plan_details")).toContain("detail_json");
+
+    db.close();
+  });
+});
+
+describe("KZ v23 procurement plan period", () => {
+  it("adds plan period columns to an existing v22 procurement table without dropping rows", () => {
+    const db = new Database(":memory:");
+    // A pre-v23 database: procurement_records exists and holds rows, but has no plan period columns.
+    db.exec(`
+      CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_version (version, applied_at) VALUES (22, '2026-07-01T00:00:00.000Z');
+      CREATE TABLE procurement_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, record_kind TEXT NOT NULL,
+        external_id TEXT NOT NULL, status TEXT, product_name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+        amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'KZT', url TEXT NOT NULL, collected_at TEXT NOT NULL,
+        UNIQUE(source, record_kind, external_id)
+      );
+      INSERT INTO procurement_records (source, record_kind, external_id, status, product_name, amount, url, collected_at)
+      VALUES ('samruk', 'plan', 'legacy-1', 'Утвержден', 'Ноутбук', 900000, 'https://x', '2026-07-01');
+    `);
+    expect(columns(db, "procurement_records")).not.toContain("plan_year");
+
+    runMigrations(db);
+
+    const cols = columns(db, "procurement_records");
+    expect(cols).toEqual(expect.arrayContaining(["plan_year", "plan_month", "plan_year_id", "approved_at"]));
+    const row = db.prepare("SELECT external_id, plan_year FROM procurement_records").get() as Record<string, unknown>;
+    expect(row).toEqual({ external_id: "legacy-1", plan_year: null });
 
     db.close();
   });

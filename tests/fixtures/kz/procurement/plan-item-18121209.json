@@ -1,20 +1,45 @@
 {
   "id": 18121209,
   "external_id": 4128263137,
+  "decree_date": null,
   "extra_description": "LCD сыртқы бет",
   "description": "LCD поверхность",
   "count": 4,
-  "unit_price": 1475000,
-  "total_price": 5900000,
+  "unit_price": 1475000.0,
+  "total_price": 5900000.0,
+  "total_price_year_1": 0.0,
+  "total_price_year_2": 0.0,
+  "total_price_year_3": 0.0,
   "prepayment": null,
+  "purchase_limitation_sign": null,
+  "is_externally_deleted": null,
+  "is_externally_active": null,
+  "is_quasi_sector": false,
   "timestamp": 1776236804,
   "organization": {
     "id": 45697,
     "external_id": 207850,
     "iin_bin": "970940002871",
-    "name": "ТОО \"АЭС Шульбинская ГЭС\""
+    "name": "ТОО \"АЭС Шульбинская ГЭС\"",
+    "name_ru": "ТОО \"АЭС Шульбинская ГЭС\"",
+    "name_kk": "\"АЭС Шульбинская ГЭС\" ЖШС",
+    "full_name": "Товарищество с ограниченной ответственностью \"АЭС Шульбинская ГЭС\"",
+    "full_name_ru": "Товарищество с ограниченной ответственностью \"АЭС Шульбинская ГЭС\"",
+    "full_name_kk": "\"АЭС Шульбинская ГЭС\" жауапкершілігі шектеулі серіктестігі",
+    "is_resident": true
   },
   "enstru": {
+    "id": 29624,
+    "purchase_item_type": {
+      "id": 1,
+      "code": "G",
+      "name": "Товар",
+      "egz_code": "G",
+      "mtw_code": "G",
+      "skk_code": "GOODS"
+    },
+    "created": "2026-02-02T10:17:13.462451+05:00",
+    "modified": "2026-02-02T10:17:13.462451+05:00",
     "name": "Панель интерактивная",
     "name_ru": "Панель интерактивная",
     "name_kk": "Интерактивтік панель",
@@ -22,24 +47,131 @@
     "short_description": "LCD поверхность",
     "short_description_ru": "LCD поверхность",
     "short_description_kk": "LCD сыртқы бет",
-    "purchase_item_type": { "name": "Товар" }
+    "is_krbs": false,
+    "is_disabled_people": false,
+    "is_smr": false
   },
-  "purchase_method": { "name": "Запрос ценовых предложений" },
-  "measure": { "name": "Штука" },
-  "system": { "id": 3, "name": "SKK" },
-  "status": { "name": "Утвержден" },
-  "month": null,
+  "purchase_method": {
+    "id": 12,
+    "code": null,
+    "name": "Запрос ценовых предложений",
+    "is_active": true,
+    "is_quasi": true,
+    "name_kk": "Бағалы ұсыныныстарға сұраным",
+    "name_ru": "Запрос ценовых предложений",
+    "plan_type": null,
+    "egz_code": "3",
+    "mtw_code": null,
+    "skk_code": "CP"
+  },
+  "measure": {
+    "id": 3525,
+    "code": null,
+    "code2": "7.213",
+    "alpha_code": "шт",
+    "name": "Штука",
+    "short_name": null,
+    "egz_code": "796",
+    "mtw_code": "796",
+    "skk_code": "796"
+  },
+  "system": {
+    "id": 3,
+    "name": "SKK"
+  },
+  "delivery_address": {
+    "id": 234,
+    "code": "101065100",
+    "level": 4,
+    "name": "п.Шульбинск",
+    "name_ru": "п.Шульбинск",
+    "name_kk": "Шүлбі к.",
+    "full_name": "область Абай, г.Семей, п.Шульбинск",
+    "full_name_ru": "область Абай, г.Семей, п.Шульбинск",
+    "full_name_kk": "Абай облысы, Семей қ., Шүлбі к.",
+    "not_have_child": true
+  },
+  "delivery_condition": null,
+  "funding_source": null,
+  "budget_type": null,
   "delivery_deadline": null,
+  "delivery_deadline_ru": null,
+  "delivery_deadline_kk": null,
+  "extra_info": null,
+  "status": {
+    "id": 2,
+    "code": null,
+    "name": "Утвержден",
+    "is_active": true,
+    "egz_code": "2",
+    "mtw_code": "2",
+    "skk_code": "APPROVED"
+  },
+  "month": null,
+  "year": {
+    "id": 9,
+    "code": null,
+    "year": 2024,
+    "egz_code": "2024",
+    "mtw_code": "2024",
+    "skk_code": "2024"
+  },
+  "gu": null,
+  "plan": null,
+  "purchase_subject": {
+    "id": 1,
+    "code": "G",
+    "name": "Товар",
+    "egz_code": "G",
+    "mtw_code": "G",
+    "skk_code": "GOODS"
+  },
+  "item_type": null,
+  "budget_planning_admin": null,
+  "purchase_method_justification": null,
+  "transfer_type": null,
+  "additional_contract_type": null,
   "deliveries": [
     {
-      "kato": { "code": "101065100", "full_name_ru": "область Абай, г.Семей, п.Шульбинск" },
-      "count": 4,
-      "full_delivery_place_name": "микрорайон Промзона, дом 1."
+      "kato": {
+        "id": 234,
+        "code": "101065100",
+        "level": 4,
+        "name": "п.Шульбинск",
+        "name_ru": "п.Шульбинск",
+        "name_kk": "Шүлбі к.",
+        "full_name": "область Абай, г.Семей, п.Шульбинск",
+        "full_name_ru": "область Абай, г.Семей, п.Шульбинск",
+        "full_name_kk": "Абай облысы, Семей қ., Шүлбі к.",
+        "not_have_child": true
+      },
+      "city": null,
+      "district": null,
+      "count": 4.0,
+      "full_delivery_place_name": "микрорайон Промзона, дом 1.",
+      "kato_full_name": null,
+      "additional_delivery_place_name": "микрорайон Промзона, дом 1."
     },
     {
-      "kato": { "code": "551610000", "full_name_ru": "Павлодарская область, г.Аксу" },
-      "count": 5,
-      "full_delivery_place_name": "г.Аксу ул.Камзина, 1"
+      "kato": {
+        "id": 15988,
+        "code": "551610000",
+        "level": 3,
+        "name": "Аксу",
+        "name_ru": "Аксу",
+        "name_kk": "Аксу",
+        "full_name": "Павлодарская область, г.Аксу",
+        "full_name_ru": "Павлодарская область, г.Аксу",
+        "full_name_kk": "Павлодар облысы, Ақсу қ.",
+        "not_have_child": true
+      },
+      "city": null,
+      "district": null,
+      "count": 5.0,
+      "full_delivery_place_name": "Павлодарская область, Аксу Г.А., г.Аксу ул.Камзина, 1",
+      "kato_full_name": "Павлодарская область, Аксу Г.А., г.Аксу",
+      "additional_delivery_place_name": "ул.Камзина, 1"
     }
-  ]
+  ],
+  "specifics": []
 }

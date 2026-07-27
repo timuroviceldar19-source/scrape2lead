@@ -2,11 +2,14 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { collectExternalProcurement } from "../src/kz/procurement/collector.js";
+import { collectExternalProcurement, markWarning } from "../src/kz/procurement/collector.js";
 import { loadProcurementConfig } from "../src/kz/procurement/config.js";
 import { enrichEligibleEpzCustomers } from "../src/kz/procurement/enrichment.js";
 import { enrichEligibleEpzPlanDetails } from "../src/kz/procurement/planDetail.js";
 import { classifyProcurementRecords } from "../src/kz/procurement/filter.js";
+import { buildPlanPeriodWindow } from "../src/kz/procurement/planPeriod.js";
+import { resolveEpzPlanYearIds } from "../src/kz/procurement/planYears.js";
+import { fetchProcurementJson, withRetry } from "../src/kz/procurement/http.js";
 import { applyGoszakupEnrichmentCandidates, type GoszakupEnrichmentCandidate } from "../src/kz/procurement/goszakupEnrichment.js";
 import { ProcurementStorage } from "../src/kz/procurement/storage.js";
 import { buildProcurementWorkbookModel } from "../src/kz/procurement/workbookModel.js";
@@ -22,23 +25,42 @@ const databasePath = path.resolve(config.databasePath);
 fs.mkdirSync(path.dirname(databasePath), { recursive: true });
 fs.mkdirSync(outputDirectory, { recursive: true });
 
+const now = new Date();
+const planPeriodWindow = buildPlanPeriodWindow(now, config.rollingMonths);
+const targetYears = args.years ?? planPeriodWindow.years;
+const fetchJson = (url: string) => withRetry(() => fetchProcurementJson(url), { maxAttempts: 4, delayMs: 500 });
+
+const planYears = await resolveEpzPlanYearIds(targetYears, {
+  fetchJson, overrides: config.planYearIds, probeRange: config.planYearProbeRange
+});
+const availableStatuses = config.planStatuses.filter((status) => status.id !== null);
+if (!availableStatuses.length) throw new Error("no plan status from config resolves to an EPZ status id");
+
 const collection = await collectExternalProcurement({
   keywords: config.keywords,
-  planYearId: config.planYearId,
+  planYears: planYears.resolved,
+  planStatusIds: availableStatuses.map((status) => status.id as number),
   pageSize: args.pageSize ?? config.pageSize,
   maxPages: args.maxPages ?? config.maxPages,
-  delayMs: args.delayMs ?? config.delayMs
+  delayMs: args.delayMs ?? config.delayMs,
+  now
 });
+applyPlanYearResolution(collection.completeness, planYears, targetYears);
+applyUnavailableStatuses(collection.completeness, config.planStatuses);
+
 const collectedRecords = collection.records.filter((record) => config.sources.includes(record.source));
 const filterOptions = { minAmount: config.minAmount, pkTruPrefixes: config.pkTruPrefixes,
-  panelKeywords: config.panelKeywords, stopWords: config.stopWords };
+  panelKeywords: config.panelKeywords, stopWords: config.stopWords,
+  planStatuses: config.planStatuses.map((status) => status.name), planPeriodWindow };
 const classificationBeforeDetail = classifyProcurementRecords(collectedRecords, filterOptions);
 const detailEnriched = await enrichEligibleEpzPlanDetails(collectedRecords, {
   completeness: collection.completeness, filter: filterOptions, concurrency: config.detailConcurrency
 });
 const epzEnriched = await enrichEligibleEpzCustomers(detailEnriched.records, { filter: filterOptions });
 const records = applyGoszakupEnrichmentCandidates(epzEnriched,
-  loadGoszakupCandidates(path.resolve(config.goszakupRegistryDatabasePath)));
+  config.goszakupRegistryDatabasePath ? loadGoszakupCandidates(path.resolve(config.goszakupRegistryDatabasePath)) : []);
+collection.completeness.monthUnknown = records
+  .filter((record) => record.recordKind === "plan" && record.planMonth === null).length;
 
 const database = new Database(databasePath);
 try {
@@ -63,10 +85,77 @@ fs.writeFileSync(jsonPath, JSON.stringify({ generatedAt: new Date().toISOString(
 console.log(JSON.stringify({ mode: "xlsx-only", recordsCollected: records.length, ...model.summary,
   collection: collection.completeness, xlsxPath, jsonPath, databasePath }, null, 2));
 
-function parseArgs(argv: string[]): { config: string; outputDirectory?: string; maxPages?: number; pageSize?: number; delayMs?: number } {
-  const result: { config: string; outputDirectory?: string; maxPages?: number; pageSize?: number; delayMs?: number } = {
-    config: "config/procurement-sources.json"
-  };
+// Единственная машинно-читаемая строка для оркестратора: пути и счётчики не выскребаются из pretty JSON.
+console.log(`AUTOMATION_RESULT_JSON=${JSON.stringify({
+  stage: "f3-collect",
+  xlsxPath, jsonPath,
+  counts: {
+    collected: records.length, data: model.summary.data, review: model.summary.review,
+    rejected: model.summary.rejected, yearConflicts: collection.completeness.yearConflicts ?? 0,
+    monthUnknown: collection.completeness.monthUnknown ?? 0, pagesFetched: collection.completeness.pagesFetched
+  },
+  planYears: collection.completeness.planYears,
+  complete: collection.completeness.complete,
+  criticalErrors: collection.completeness.complete ? [] : collection.completeness.incompleteReasons,
+  warnings: collection.completeness.warnings
+})}`);
+
+interface ExportArgs {
+  config: string;
+  outputDirectory?: string;
+  maxPages?: number;
+  pageSize?: number;
+  delayMs?: number;
+  years?: number[];
+}
+
+/**
+ * Переносит результат резолвинга годов в отчёт о полноте сбора.
+ *
+ * Сбой пробы блокирует: из него не следует, что года нет. Опровергнутый конфигом id блокирует тоже.
+ * Ненайденный будущий год — предупреждение: в EPZ он открывается не сразу.
+ */
+function applyPlanYearResolution(
+  completeness: Parameters<typeof markWarning>[0],
+  resolution: Awaited<ReturnType<typeof resolveEpzPlanYearIds>>,
+  targetYears: number[]
+): void {
+  for (const error of resolution.probeErrors) {
+    completeness.complete = false;
+    completeness.incompleteReasons.push(error);
+  }
+  for (const conflict of resolution.conflicts) {
+    completeness.complete = false;
+    completeness.incompleteReasons.push(conflict);
+  }
+  completeness.unresolvedFutureYears = resolution.unresolvedFutureYears;
+  const currentYear = new Date().getFullYear();
+  for (const year of resolution.unresolvedFutureYears) {
+    if (year <= currentYear && !resolution.probeErrors.length) {
+      completeness.complete = false;
+      completeness.incompleteReasons.push(`plan-year:${year}:unresolved_current_year`);
+    } else {
+      markWarning(completeness, `plan-year:${year}:not_open_yet`);
+    }
+  }
+  if (!resolution.resolved.length) {
+    completeness.complete = false;
+    completeness.incompleteReasons.push(`plan-year:none_resolved_for:${targetYears.join(",")}`);
+  }
+}
+
+/** Статус, заявленный в конфиге, но отсутствующий в источнике: видно в каждом отчёте, но не блокирует. */
+function applyUnavailableStatuses(
+  completeness: Parameters<typeof markWarning>[0],
+  planStatuses: Array<{ name: string; id: number | null }>
+): void {
+  const unavailable = planStatuses.filter((status) => status.id === null).map((status) => status.name);
+  completeness.unavailablePlanStatuses = unavailable;
+  for (const name of unavailable) markWarning(completeness, `plan-status:${name}:unavailable`);
+}
+
+function parseArgs(argv: string[]): ExportArgs {
+  const result: ExportArgs = { config: "config/procurement-sources.json" };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     const value = argv[index + 1];
@@ -75,8 +164,9 @@ function parseArgs(argv: string[]): { config: string; outputDirectory?: string; 
     else if (arg === "--max-pages" && value) { result.maxPages = positive(value, arg); index++; }
     else if (arg === "--page-size" && value) { result.pageSize = positive(value, arg); index++; }
     else if (arg === "--delay-ms" && value) { result.delayMs = nonnegative(value, arg); index++; }
+    else if (arg === "--years" && value) { result.years = value.split(",").map((year) => positive(year.trim(), arg)); index++; }
     else if (arg === "--help") {
-      console.log("tsx scripts/kz-export-procurement.mts [--config path] [--output dir] [--max-pages n] [--page-size n] [--delay-ms n]");
+      console.log("tsx scripts/kz-export-procurement.mts [--config path] [--output dir] [--years 2026,2027] [--max-pages n] [--page-size n] [--delay-ms n]");
       process.exit(0);
     } else throw new Error(`Unknown or incomplete argument: ${arg}`);
   }

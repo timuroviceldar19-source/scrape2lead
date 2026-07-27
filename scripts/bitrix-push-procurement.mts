@@ -17,7 +17,8 @@ const report = JSON.parse(fs.readFileSync(path.resolve(args.report), "utf8")) as
   classification?: { data?: ClassifiedProcurement[] };
   collection?: ProcurementCollectionCompleteness;
 };
-const records = (report.classification?.data ?? []).map((item) => item.record);
+const allRecords = (report.classification?.data ?? []).map((item) => item.record);
+const records = args.limit === null ? allRecords : allRecords.slice(0, args.limit);
 
 if (args.execute) {
   if (!report.collection) throw new Error("Production gate failed: collection completeness is missing");
@@ -48,12 +49,25 @@ const assignmentGate = dealIdsToVerify.length
   )
   : null;
 
-const outputPath = `${path.resolve(args.report).replace(/\.json$/i, "")}.bitrix-${args.execute ? "push" : "dry-run"}.json`;
+const outputPath = args.output
+  ? path.resolve(args.output)
+  : `${path.resolve(args.report).replace(/\.json$/i, "")}.bitrix-${args.execute ? "push" : "dry-run"}.json`;
+fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 fs.writeFileSync(outputPath, JSON.stringify({ generatedAt: new Date().toISOString(), execute: args.execute,
   inputRecords: records.length, counts: result.counts, assignmentGate, items: result.items }, null, 2), "utf8");
 console.log(JSON.stringify({ mode: args.execute ? "execute" : "dry-run", inputRecords: records.length,
   counts: result.counts, assignmentGate, outputPath }, null, 2));
-if (result.counts.failed > 0 || assignmentGate?.ok === false) process.exitCode = 1;
+
+const criticalErrors = [
+  ...(result.counts.failed > 0 ? [`push_failed:${result.counts.failed}`] : []),
+  ...(assignmentGate?.ok === false ? [`assignment_gate_failed:${assignmentGate.invalidDealIds.join(",")}`] : [])
+];
+// Единственная машинно-читаемая строка для оркестратора.
+console.log(`AUTOMATION_RESULT_JSON=${JSON.stringify({
+  stage: args.execute ? "f3-apply" : "f3-dry-run",
+  outputPath, inputRecords: records.length, counts: result.counts, criticalErrors, warnings: []
+})}`);
+if (criticalErrors.length) process.exitCode = 1;
 
 function readManualRuns(filePath: string): ProcurementManualRun[] {
   if (!fs.existsSync(filePath)) return [];
@@ -61,13 +75,19 @@ function readManualRuns(filePath: string): ProcurementManualRun[] {
   return Array.isArray(value) ? value as ProcurementManualRun[] : [];
 }
 function parseArgs(argv: string[]): { report: string; config: string; execute: boolean; gateFile: string;
-  verifyDealIds: string[]; assignmentTimeoutMs: number } {
+  output: string; verifyDealIds: string[]; assignmentTimeoutMs: number; limit: number | null } {
   const result = { report: "", config: "config/procurement-sources.json", execute: false,
-    gateFile: "data/procurement-manual-runs.json", verifyDealIds: [] as string[], assignmentTimeoutMs: 30_000 };
+    gateFile: "data/procurement-manual-runs.json", output: "", verifyDealIds: [] as string[],
+    assignmentTimeoutMs: 30_000, limit: null as number | null };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]; const value = argv[index + 1];
     if (arg === "--report" && value) { result.report = value; index++; }
     else if (arg === "--config" && value) { result.config = value; index++; }
+    else if (arg === "--output" && value) { result.output = value; index++; }
+    else if (arg === "--limit" && value) {
+      result.limit = Number(value); index++;
+      if (!Number.isInteger(result.limit) || result.limit < 1) throw new Error("--limit must be a positive integer");
+    }
     else if (arg === "--gate-file" && value) { result.gateFile = value; index++; }
     else if (arg === "--verify-deal-ids" && value) { result.verifyDealIds = value.split(",").map((id) => id.trim()).filter(Boolean); index++; }
     else if (arg === "--assignment-timeout-ms" && value) {
@@ -77,7 +97,7 @@ function parseArgs(argv: string[]): { report: string; config: string; execute: b
       }
     }
     else if (arg === "--execute") result.execute = true;
-    else if (arg === "--help") { console.log("tsx scripts/bitrix-push-procurement.mts --report file.json [--verify-deal-ids 1,2] [--assignment-timeout-ms 30000] [--execute]"); process.exit(0); }
+    else if (arg === "--help") { console.log("tsx scripts/bitrix-push-procurement.mts --report file.json [--output file.json] [--limit n] [--verify-deal-ids 1,2] [--assignment-timeout-ms 30000] [--execute]"); process.exit(0); }
     else throw new Error(`Unknown or incomplete argument: ${arg}`);
   }
   if (!result.report) throw new Error("--report is required");

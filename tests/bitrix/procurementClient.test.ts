@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BitrixClient } from "../../src/bitrix/client.js";
 import { ProcurementBitrixClient } from "../../src/bitrix/procurementClient.js";
 import type { ProcurementRecord } from "../../src/kz/procurement/types.js";
+import { EMPTY_PLAN_PERIOD } from "../../src/kz/procurement/planPeriod.js";
 
 describe("ProcurementBitrixClient duplicate checks", () => {
   it("finds cross-source duplicates by BIN, amount and similar title", async () => {
@@ -38,5 +39,6 @@ function row(): ProcurementRecord {
   return { source: "mitwork", recordKind: "plan", externalId: "MTW-1", parentExternalId: null, status: "Утвержден",
     productName: "Ноутбук", description: "", truCode: "262011.100.000002", customerName: "ТОО Заказчик",
     customerBin: "123456789012", amount: 1_000_000, currency: "KZT", startDate: null, endDate: null,
-    url: "https://example.kz/1", purchaseMethod: null, collectedAt: "2026-07-21T00:00:00Z" };
+    url: "https://example.kz/1", purchaseMethod: null, ...EMPTY_PLAN_PERIOD,
+    collectedAt: "2026-07-21T00:00:00Z" };
 }

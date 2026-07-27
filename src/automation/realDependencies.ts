@@ -10,6 +10,7 @@ import { loadGzPlansConfig, mergeGzPlansExportOptions } from "../kz/gzPlansConfi
 import type { AutomationDependencies, AutomationExportResult, AutomationStepResult, RollingPeriod } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+export const AUTOMATION_RESULT_PREFIX = "AUTOMATION_RESULT_JSON=";
 const LotsConfigSchema = z.object({
   keywords: z.array(z.string()).default([]), nstruCodes: z.array(z.string()).default([]), inputPath: z.string().optional(),
   statuses: z.array(z.string()).default([]), minAmount: z.number().nonnegative().optional(), excludeKeywords: z.array(z.string()).default([]),
@@ -25,8 +26,70 @@ export function createRealAutomationDependencies(): AutomationDependencies {
     dryRunLots: (input) => runTsx("scripts/bitrix-push-gz-lots.mts", ["--input", input, "--no-company"]),
     applyPlans: (input, limit) => runTsx("scripts/bitrix-push-gz-deals.mts", withLimit(["--input", input, "--execute"], limit)),
     applyLots: (input, limit) => runTsx("scripts/bitrix-push-gz-lots.mts", withLimit(["--input", input, "--execute"], limit)),
-    analyzeLots: (input, limit) => runTsx("scripts/analyze-gz-specs.mts", withLimit(["--input", input, "--execute"], limit))
+    analyzeLots: (input, limit) => runTsx("scripts/analyze-gz-specs.mts", withLimit(["--input", input, "--execute"], limit)),
+    procurement: {
+      collect: async (configPath, outputDir, years) => {
+        const result = await runTsx("scripts/kz-export-procurement.mts",
+          ["--config", configPath, "--output", outputDir, "--years", years.join(",")]);
+        const payload = readAutomationResult(result.output ?? "", "scripts/kz-export-procurement.mts");
+        return {
+          counts: numberRecord(payload.counts),
+          criticalErrors: stringArray(payload.criticalErrors),
+          warnings: stringArray(payload.warnings),
+          output: result.output,
+          xlsxPath: requireString(payload.xlsxPath, "xlsxPath"),
+          jsonPath: requireString(payload.jsonPath, "jsonPath")
+        };
+      },
+      dryRun: (reportPath, outputPath) =>
+        runProcurementPush(["--report", reportPath, "--output", outputPath]),
+      apply: (reportPath, limit) =>
+        runProcurementPush(withLimit(["--report", reportPath, "--execute"], limit))
+    }
   };
+}
+
+async function runProcurementPush(args: string[]): Promise<AutomationStepResult> {
+  const result = await runTsx("scripts/bitrix-push-procurement.mts", args);
+  const payload = readAutomationResult(result.output ?? "", "scripts/bitrix-push-procurement.mts");
+  return {
+    counts: numberRecord(payload.counts),
+    criticalErrors: stringArray(payload.criticalErrors),
+    warnings: stringArray(payload.warnings),
+    output: result.output
+  };
+}
+
+/**
+ * Читает единственную машинно-читаемую строку скрипта.
+ *
+ * Общий `parseCounts` скребёт стдаут регуляркой `слово=цифры` и на pretty-JSON даёт ложные
+ * совпадения, поэтому пути и счётчики берём только отсюда.
+ */
+export function readAutomationResult(output: string, script: string): Record<string, unknown> {
+  const line = output.split(/\r?\n/).reverse().find((row) => row.startsWith(AUTOMATION_RESULT_PREFIX));
+  if (!line) throw new Error(`${script} did not emit ${AUTOMATION_RESULT_PREFIX}`);
+  try {
+    const parsed = JSON.parse(line.slice(AUTOMATION_RESULT_PREFIX.length)) as unknown;
+    if (!parsed || typeof parsed !== "object") throw new Error("payload is not an object");
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(`${script} emitted an unreadable ${AUTOMATION_RESULT_PREFIX}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function numberRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => Number.isFinite(Number(item)))
+    .map(([key, item]) => [key, Number(item)]));
+}
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${AUTOMATION_RESULT_PREFIX} is missing ${field}`);
+  return value;
 }
 
 async function exportPlansForPeriods(configPath: string, outputPath: string, periods: RollingPeriod[]): Promise<AutomationExportResult> {

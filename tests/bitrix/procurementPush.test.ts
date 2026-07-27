@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { planProcurementPush } from "../../src/bitrix/procurementPush.js";
 import type { ProcurementRecord } from "../../src/kz/procurement/types.js";
+import { EMPTY_PLAN_PERIOD } from "../../src/kz/procurement/planPeriod.js";
 
 describe("planProcurementPush", () => {
   it("plans creates, linked updates and duplicate blocks without writing", async () => {
@@ -44,5 +45,6 @@ function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
   return { source: "mitwork", recordKind: "plan", externalId: "42", parentExternalId: null, status: "Утвержден",
     productName: "Ноутбук", description: "", truCode: "262011.100.000002", customerName: "Buyer",
     customerBin: "123456789012", amount: 1_000_000, currency: "KZT", startDate: null, endDate: null,
-    url: "https://example.kz/42", purchaseMethod: null, collectedAt: "2026-07-21T00:00:00Z", ...overrides };
+    url: "https://example.kz/42", purchaseMethod: null, ...EMPTY_PLAN_PERIOD,
+    collectedAt: "2026-07-21T00:00:00Z", ...overrides };
 }

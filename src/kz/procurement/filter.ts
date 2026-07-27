@@ -1,3 +1,4 @@
+import { evaluatePlanPeriod, type PlanPeriodWindow } from "./planPeriod.js";
 import type { ClassifiedProcurement, ProcurementClassification, ProcurementProduct, ProcurementRecord } from "./types.js";
 
 export interface ProcurementFilterOptions {
@@ -5,11 +6,16 @@ export interface ProcurementFilterOptions {
   pkTruPrefixes?: string[];
   panelKeywords?: string[];
   stopWords?: string[];
+  /** Разрешённые статусы плана; по умолчанию — только «Утвержден». */
+  planStatuses?: string[];
+  /** Окно сбора. Без него проверка периода не выполняется. */
+  planPeriodWindow?: PlanPeriodWindow | null;
 }
 
 const DEFAULT_PK_PREFIXES = ["262011.", "262013.", "262017.100."];
 const DEFAULT_PANEL_KEYWORDS = ["доска специальная", "панель интерактивная", "панель жидкокристаллическая"];
 const DEFAULT_STOP_WORDS = ["мфу", "принтер", "устройство многофункциональное"];
+const DEFAULT_PLAN_STATUSES = ["Утвержден"];
 const PK_NAME_WORDS = ["компьютер", "моноблок", "ноутбук", "монитор", "рабочая станция"];
 
 export function classifyProcurementRecords(records: ProcurementRecord[], options: ProcurementFilterOptions = {}): ProcurementClassification {
@@ -17,7 +23,9 @@ export function classifyProcurementRecords(records: ProcurementRecord[], options
     minAmount: options.minAmount ?? 500_000,
     pkTruPrefixes: options.pkTruPrefixes ?? DEFAULT_PK_PREFIXES,
     panelKeywords: options.panelKeywords ?? DEFAULT_PANEL_KEYWORDS,
-    stopWords: options.stopWords ?? DEFAULT_STOP_WORDS
+    stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
+    planStatuses: options.planStatuses ?? DEFAULT_PLAN_STATUSES,
+    planPeriodWindow: options.planPeriodWindow ?? null
   };
   const result: ProcurementClassification = { data: [], review: [], rejected: [] };
   for (const record of records) {
@@ -31,7 +39,8 @@ export function classifyProcurementRecords(records: ProcurementRecord[], options
 
 export function isPlanDetailCandidate(record: ProcurementRecord, options: ProcurementFilterOptions = {}): boolean {
   if (record.recordKind !== "plan" || record.source === "tizilim") return false;
-  if (normalize(record.status ?? "") !== "утвержден") return false;
+  const allowedStatuses = (options.planStatuses ?? DEFAULT_PLAN_STATUSES).map(normalize);
+  if (!allowedStatuses.includes(normalize(record.status ?? ""))) return false;
   if (record.amount < (options.minAmount ?? 500_000)) return false;
   const haystack = normalize(`${record.productName} ${record.description}`);
   const stopWords = options.stopWords ?? DEFAULT_STOP_WORDS;
@@ -54,10 +63,19 @@ function classify(record: ProcurementRecord, config: Required<ProcurementFilterO
 
   if (record.recordKind === "plan") {
     const status = normalize(record.status ?? "");
-    if (status !== "утвержден") return rejected(record, null, "unsupported_status");
+    const allowed = config.planStatuses.map(normalize);
+    if (!allowed.includes(status)) return rejected(record, null, "unsupported_status");
   }
 
   if (record.detailIssue) return review(record, null, record.detailIssue);
+
+  if (config.planPeriodWindow) {
+    const period = evaluatePlanPeriod(record, config.planPeriodWindow);
+    // Конфликт года — повод для ручного разбора, а не тихой отбраковки.
+    if (period.status === "year_conflict") return review(record, null, "plan_year_conflict");
+    if (period.status === "year_outside_window") return rejected(record, null, "plan_year_outside_window");
+    if (period.status === "period_outside_window") return rejected(record, null, "plan_period_outside_window");
+  }
 
   const haystack = normalize(`${record.productName} ${record.description}`);
   if (config.stopWords.some((word) => haystack.includes(normalize(word)))) return rejected(record, null, "stop_word");

@@ -1,19 +1,23 @@
 import { parseEpzLot, parseEpzPlan } from "./epz.js";
+import { fetchProcurementJson, withRetry, type ProcurementJsonFetcher } from "./http.js";
 import { parseTizilimTender } from "./tizilim.js";
-import type { ProcurementCollectionCompleteness, ProcurementRecord } from "./types.js";
+import type { EpzPlanYear, ProcurementCollectionCompleteness, ProcurementRecord } from "./types.js";
 
 const EPZ_API = "https://zakup.gov.kz/api/core/api/public";
 const TIZILIM_API = "https://public.tizilim.gov.kz/api/public/tenders";
 const ACTIVE_TENDER_STATUSES = new Set(["опубликован", "опубликовано торги", "published", "published trades"]);
+const DEFAULT_PLAN_STATUS_IDS = [2];
 
 export interface ProcurementCollectorOptions {
   keywords: string[];
-  planYearId?: number;
+  /** Годы плана, под которые ведётся сбор, с их `plan_year_id` из справочника EPZ. */
+  planYears: EpzPlanYear[];
+  planStatusIds?: number[];
   pageSize?: number;
   maxPages?: number;
   delayMs?: number;
   now?: Date;
-  fetchJson?: (url: string) => Promise<unknown>;
+  fetchJson?: ProcurementJsonFetcher;
 }
 
 export interface ProcurementCollectionResult {
@@ -24,25 +28,28 @@ export interface ProcurementCollectionResult {
 export async function collectExternalProcurement(options: ProcurementCollectorOptions): Promise<ProcurementCollectionResult> {
   const pageSize = options.pageSize ?? 100;
   const maxPages = options.maxPages ?? 500;
-  const planYearId = options.planYearId ?? 9;
+  const planYears = options.planYears;
+  const planStatusIds = options.planStatusIds?.length ? options.planStatusIds : DEFAULT_PLAN_STATUS_IDS;
   const fetchJson = options.fetchJson ?? fetchJsonWithRetry;
   const now = options.now ?? new Date();
   const collectedAt = now.toISOString();
   const records = new Map<string, ProcurementRecord>();
   const completeness: ProcurementCollectionCompleteness = {
-    complete: true, planYearId, pageLimit: maxPages, pagesFetched: 0, incompleteReasons: []
+    complete: true, planYears, pageLimit: maxPages, pagesFetched: 0, incompleteReasons: [], warnings: []
   };
 
   for (const keyword of uniqueKeywords(options.keywords)) {
-    await safelyCollect("plan-items", keyword, completeness, async () => collectEpzKind({
-      kind: "plan-items", keyword, pageSize, maxPages, planYearId, now, fetchJson,
-      delayMs: options.delayMs ?? 0, completeness, onRow: (raw) => {
-        const record = parseEpzPlan(raw, collectedAt);
-        if (record) records.set(key(record), record);
-      }
-    }));
+    for (const planYear of planYears) {
+      await safelyCollect(`plan-items:${planYear.year}`, keyword, completeness, async () => collectEpzKind({
+        kind: "plan-items", keyword, pageSize, maxPages, planYear, planStatusIds, now, fetchJson,
+        delayMs: options.delayMs ?? 0, completeness, onRow: (raw) => {
+          const record = parseEpzPlan(raw, collectedAt, planYear);
+          if (record) records.set(key(record), record);
+        }
+      }));
+    }
     await safelyCollect("lots", keyword, completeness, async () => collectEpzKind({
-      kind: "lots", keyword, pageSize, maxPages, planYearId, now, fetchJson,
+      kind: "lots", keyword, pageSize, maxPages, planYear: null, planStatusIds, now, fetchJson,
       delayMs: options.delayMs ?? 0, completeness, onRow: (raw) => {
         const record = parseEpzLot(raw, collectedAt);
         if (record && isActivePublished(record, now)) records.set(key(record), record);
@@ -64,9 +71,11 @@ interface EpzCollectionOptions {
   keyword: string;
   pageSize: number;
   maxPages: number;
-  planYearId: number;
+  /** Год плана для `plan-items`; для лотов не применяется — они отбираются по дедлайну. */
+  planYear: EpzPlanYear | null;
+  planStatusIds: number[];
   now: Date;
-  fetchJson: (url: string) => Promise<unknown>;
+  fetchJson: ProcurementJsonFetcher;
   delayMs: number;
   completeness: ProcurementCollectionCompleteness;
   onRow: (row: unknown) => void;
@@ -79,8 +88,8 @@ async function collectEpzKind(options: EpzCollectionOptions): Promise<void> {
       system_id__in: "2__3"
     });
     if (options.kind === "plan-items") {
-      params.set("plan_year_id", String(options.planYearId));
-      params.set("status_id__in", "2");
+      if (options.planYear) params.set("plan_year_id", String(options.planYear.planYearId));
+      params.set("status_id__in", options.planStatusIds.join("__"));
     } else {
       params.set("status_id__in", "6");
       params.set("offer_end_date__gte", options.now.toISOString());
@@ -103,7 +112,7 @@ interface TizilimCollectionOptions {
   pageSize: number;
   maxPages: number;
   now: Date;
-  fetchJson: (url: string) => Promise<unknown>;
+  fetchJson: ProcurementJsonFetcher;
   delayMs: number;
   completeness: ProcurementCollectionCompleteness;
   onRow: (row: unknown) => void;
@@ -147,6 +156,11 @@ function markIncomplete(completeness: ProcurementCollectionCompleteness, reason:
   if (!completeness.incompleteReasons.includes(reason)) completeness.incompleteReasons.push(reason);
 }
 
+/** Наблюдение, не ставящее под сомнение полноту сбора: видно в отчёте, но не блокирует production. */
+export function markWarning(completeness: ProcurementCollectionCompleteness, warning: string): void {
+  if (!completeness.warnings.includes(warning)) completeness.warnings.push(warning);
+}
+
 function isActivePublished(record: ProcurementRecord, now: Date): boolean {
   const status = normalize(record.status ?? "");
   if (!ACTIVE_TENDER_STATUSES.has(status)) return false;
@@ -156,19 +170,8 @@ function isActivePublished(record: ProcurementRecord, now: Date): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.getTime() >= now.getTime();
 }
 
-async function fetchJsonWithRetry(url: string): Promise<unknown> {
-  let lastError: Error | null = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      const response = await fetch(url, { headers: { accept: "application/json", "user-agent": "scrape2lead/1.7" } });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt < 3) await wait(500 * 2 ** attempt);
-    }
-  }
-  throw new Error(`procurement request failed for ${url}: ${lastError?.message ?? "unknown error"}`);
+function fetchJsonWithRetry(url: string): Promise<unknown> {
+  return withRetry(() => fetchProcurementJson(url), { maxAttempts: 4, delayMs: 500 });
 }
 
 function normalize(value: string): string { return value.normalize("NFKC").toLocaleLowerCase("ru").replace(/\s+/g, " ").trim(); }

@@ -4,13 +4,15 @@ import { hasBrokenEncoding } from "./core.js";
 import type { AutomationConfig } from "./types.js";
 
 const AutomationConfigSchema = z.object({
-  workflow: z.enum(["plans-and-lots", "plans-only"]).default("plans-and-lots"),
+  workflow: z.enum(["plans-and-lots", "plans-only", "f3-b2b"]).default("plans-and-lots"),
+  deliveryMode: z.enum(["prepare", "push"]).default("push"),
   runsDir: z.string().min(1).default("runs"),
   keepSuccessfulRuns: z.number().int().positive().default(30),
   lockPath: z.string().min(1).default("runs/prepare.lock"),
   staleLockMinutes: z.number().int().positive().default(180),
   plansConfig: z.string().min(1).default("config/gz-plans.json"),
   lotsConfig: z.string().min(1).default("config/gz-lots-computers.json"),
+  procurementConfig: z.string().min(1).default("config/procurement-sources.json"),
   periodMonths: z.number().int().min(1).max(24).default(6),
   approvalLimit: z.number().int().positive().nullable().default(null)
 });
@@ -18,9 +20,38 @@ const AutomationConfigSchema = z.object({
 export function loadAutomationConfig(filePath = "config/automation.json"): AutomationConfig {
   if (!fs.existsSync(filePath)) throw new Error(`automation config not found: ${filePath}`);
   const config = AutomationConfigSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
-  validateCollectorConfig(config.plansConfig, "plans");
-  if (config.workflow === "plans-and-lots") validateCollectorConfig(config.lotsConfig, "lots");
+  // Каждый workflow валидирует только свой коллектор: F3 не должен требовать конфиги GZ, и наоборот.
+  if (config.workflow === "f3-b2b") {
+    validateProcurementCollectorConfig(config.procurementConfig);
+  } else {
+    validateCollectorConfig(config.plansConfig, "plans");
+    if (config.workflow === "plans-and-lots") validateCollectorConfig(config.lotsConfig, "lots");
+  }
   return { ...config, sourcePath: filePath };
+}
+
+export function validateProcurementCollectorConfig(filePath: string): void {
+  if (!fs.existsSync(filePath)) throw new Error(`procurement config not found: ${filePath}`);
+  const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as {
+    keywords?: unknown; panelKeywords?: unknown; stopWords?: unknown; planStatuses?: unknown;
+  };
+  const values = [
+    ...stringArray(raw.keywords, "procurement.keywords"),
+    ...stringArray(raw.panelKeywords, "procurement.panelKeywords"),
+    ...stringArray(raw.stopWords, "procurement.stopWords"),
+    ...planStatusNames(raw.planStatuses)
+  ];
+  validateCollectorText("procurement", values);
+}
+
+function planStatusNames(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error("procurement.planStatuses must be an array");
+  return value.map((item) => {
+    const name = (item as { name?: unknown })?.name;
+    if (typeof name !== "string") throw new Error("procurement.planStatuses[].name must be a string");
+    return name;
+  });
 }
 
 export function validateCollectorConfig(filePath: string, name: string): void {

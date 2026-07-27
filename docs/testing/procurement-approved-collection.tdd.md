@@ -14,7 +14,7 @@ The journeys were derived from the user-approved implementation plan in the Code
 
 | Guarantee | Test target | RED evidence | GREEN evidence |
 |---|---|---|---|
-| EPZ requests include `plan_year_id=9`, approved/published status filters, active deadline and full pagination metadata | `tests/kz/procurementCollector.test.ts` | Targeted run: 3 intended failures because collector returned a plain array | Targeted run: 3/3 passed |
+| EPZ requests include `plan_year_id` (then a hardcoded `9`, since corrected — see Known constraints), approved/published status filters, active deadline and full pagination metadata | `tests/kz/procurementCollector.test.ts` | Targeted run: 3 intended failures because collector returned a plain array | Targeted run: 3/3 passed |
 | Only normalized `Утвержден` plans are accepted; `мониторинг` is not a monitor | `tests/kz/procurementFilter.test.ts` | Targeted run: 2 intended failures | Targeted run: 7/7 passed |
 | Stable EPZ enrichment records exact provenance | `tests/kz/procurementEnrichment.test.ts` | Targeted run: 2 intended failures | Targeted run: 2/2 passed |
 | Goszakup stable-key matches can fill fields while exact-name matches remain candidates | `tests/kz/procurementGoszakupEnrichment.test.ts` | Module missing and config field absent | Targeted run: 3/3 passed |
@@ -33,6 +33,10 @@ The journeys were derived from the user-approved implementation plan in the Code
 
 ## Known constraints
 
-- `planYearId=9` is the explicit 2026 EPZ identifier and must be updated for a future plan year.
+- ~~`planYearId=9` is the explicit 2026 EPZ identifier and must be updated for a future plan year.~~
+  **Superseded and factually wrong.** `plan_year_id=9` is **2024**; 2026 is id `12`, and the dictionary
+  is not contiguous. The collection described in this document therefore ran against the 2024 plan year.
+  The year is now resolved by probing the source each run — see
+  [f3-b2b-rolling-window.tdd.md](f3-b2b-rolling-window.tdd.md).
 - Rows without a confirmed PK code remain in `Review`; Goszakup name matches never make a row CRM-eligible.
 - The first diagnostic control run was intentionally retained as incomplete evidence after EPZ returned HTTP 400 at offset 10,000.

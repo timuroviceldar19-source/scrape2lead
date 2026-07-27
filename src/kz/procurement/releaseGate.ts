@@ -18,10 +18,19 @@ export function evaluateProcurementReleaseGate(
   return { ok: reasons.length === 0, reasons };
 }
 
+/**
+ * Допуск сбора до production-отправки.
+ *
+ * Конфликт года блокирует: он означает, что запись пришла не из того периода, под который её запросили.
+ * Неразрешённый будущий год и недоступный статус — предупреждения: во втором полугодии следующий
+ * год ещё не открыт в справочнике EPZ, и это нормальное состояние источника, а не сбой сбора.
+ */
 export function evaluateProcurementCollectionGate(
   collection: ProcurementCollectionCompleteness
 ): { ok: boolean; reasons: string[] } {
-  if (collection.complete) return { ok: true, reasons: [] };
-  return { ok: false, reasons: ["collection_incomplete", ...collection.incompleteReasons] };
+  const reasons: string[] = [];
+  if (!collection.complete) reasons.push("collection_incomplete", ...collection.incompleteReasons);
+  if ((collection.yearConflicts ?? 0) > 0) reasons.push(`plan_year_conflicts:${collection.yearConflicts}`);
+  return { ok: reasons.length === 0, reasons };
 }
 import type { ProcurementCollectionCompleteness } from "./types.js";

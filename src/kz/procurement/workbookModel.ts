@@ -99,15 +99,21 @@ function toControlRow(item: ClassifiedProcurement): Array<string | number | null
 function completenessRows(value: ProcurementCollectionCompleteness): Array<Array<string | number>> {
   return [
     ["collection:complete", value.complete ? "yes" : "no"],
-    ["collection:plan_year_id", value.planYearId],
+    ...value.planYears.map((planYear) => [`collection:plan_year:${planYear.year}`, planYear.planYearId]),
+    ["collection:year_conflicts", value.yearConflicts ?? 0],
+    ["collection:month_unknown", value.monthUnknown ?? 0],
     ["collection:pages_fetched", value.pagesFetched],
     ["collection:page_limit", value.pageLimit],
     ["detail:requested", value.detailRequested ?? 0],
     ["detail:succeeded", value.detailSucceeded ?? 0],
     ["detail:failed", value.detailFailed ?? 0],
+    ["detail:empty", value.detailEmpty ?? 0],
     ["detail:identity_mismatches", value.detailIdentityMismatches ?? 0],
     ["detail:promoted_to_data", value.detailPromotedToData ?? 0],
     ["detail:rejected_after_detail", value.detailRejectedAfterDetail ?? 0],
+    ...(value.unresolvedFutureYears ?? []).map((year) => [`collection:plan_year_unresolved:${year}`, 1]),
+    ...(value.unavailablePlanStatuses ?? []).map((status) => [`collection:plan_status_unavailable:${status}`, 1]),
+    ...value.warnings.map((warning) => [`collection:warning:${warning}`, 1]),
     ...value.incompleteReasons.map((reason) => [`collection:incomplete:${reason}`, 1])
   ];
 }

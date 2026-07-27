@@ -1,3 +1,4 @@
+import { EMPTY_PLAN_PERIOD } from "./planPeriod.js";
 import type { ProcurementRecord } from "./types.js";
 
 export function parseTizilimTender(input: unknown, collectedAt = new Date().toISOString()): ProcurementRecord {
@@ -11,7 +12,8 @@ export function parseTizilimTender(input: unknown, collectedAt = new Date().toIS
     productName: text(row.name_ru), description: text(row.description_ru),
     truCode: nullableText(row.tru_code ?? row.enstru_code),
     customerName: nullableText(customer.name_ru ?? row.customer_name), customerBin: normalizeBin(customer.bin ?? row.customer_bin),
-    amount: number(row.amount), currency: "KZT", startDate: nullableText(row.start_date), endDate: nullableText(row.end_date),
+    amount: number(row.amount), currency: "KZT", ...EMPTY_PLAN_PERIOD,
+    startDate: nullableText(row.start_date), endDate: nullableText(row.end_date),
     url: externalId ? `https://public.tizilim.gov.kz/ru/common/tender?search=${encodeURIComponent(externalId)}` : "",
     purchaseMethod: nullableText(object(row.type).name_ru ?? row.type_name), collectedAt
   };

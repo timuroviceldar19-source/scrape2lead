@@ -16,8 +16,14 @@ export interface ProcurementDelivery {
 }
 
 export interface ProcurementPlanDetail {
+  /** Дата акта об утверждении плана (`decree_date`). Никогда не выводится из `timestamp`. */
   approvedAt: string | null;
+  /** Год плана из `year.year`. */
   financialYear: number | null;
+  /** Идентификатор года в справочнике EPZ (`year.id`), он же `plan_year_id`. */
+  planYearId: number | null;
+  /** Месяц плана: `month.id`, либо `month_id`, либо null — EPZ отдаёт его далеко не всегда. */
+  planMonth: number | null;
   nameRu: string | null;
   nameKk: string | null;
   shortDescriptionRu: string | null;
@@ -42,15 +48,31 @@ export interface ProcurementCustomerProfile {
   directorName: string | null;
 }
 
+export interface EpzPlanYear {
+  year: number;
+  planYearId: number;
+}
+
 export interface ProcurementCollectionCompleteness {
   complete: boolean;
-  planYearId: number;
+  /** Годы плана, под которые реально выполнялся сбор. */
+  planYears: EpzPlanYear[];
   pageLimit: number;
   pagesFetched: number;
+  /** Причины, делающие сбор неполным: блокируют production. */
   incompleteReasons: string[];
+  /** Наблюдения, не ставящие под сомнение полноту: не блокируют production. */
+  warnings: string[];
+  /** Запрошенные годы, которым не нашлось `plan_year_id`. */
+  unresolvedFutureYears?: number[];
+  /** Статусы плана из конфига, отсутствующие в источнике. */
+  unavailablePlanStatuses?: string[];
+  yearConflicts?: number;
+  monthUnknown?: number;
   detailRequested?: number;
   detailSucceeded?: number;
   detailFailed?: number;
+  detailEmpty?: number;
   detailIdentityMismatches?: number;
   detailPromotedToData?: number;
   detailRejectedAfterDetail?: number;
@@ -72,6 +94,14 @@ export interface ProcurementRecord {
   customerBin: string | null;
   amount: number;
   currency: string;
+  /** Год плана по данным позиции. Для тендеров и Tizilim остаётся null. */
+  planYear: number | null;
+  planMonth: number | null;
+  planYearId: number | null;
+  approvedAt: string | null;
+  /** Год, под который запись была запрошена коллектором — основа сверки с фактическим `planYear`. */
+  collectionPlanYear: number | null;
+  collectionPlanYearId: number | null;
   startDate: string | null;
   endDate: string | null;
   url: string;
@@ -80,8 +110,14 @@ export interface ProcurementRecord {
   enrichment?: ProcurementEnrichment | null;
   planDetail?: ProcurementPlanDetail | null;
   customerProfile?: ProcurementCustomerProfile | null;
-  detailIssue?: "detail_fetch_failed" | "detail_identity_mismatch" | null;
+  detailIssue?: ProcurementDetailIssue | null;
 }
+
+export type ProcurementDetailIssue =
+  | "detail_fetch_failed"
+  | "detail_identity_mismatch"
+  | "detail_empty"
+  | "plan_year_conflict";
 
 export type ProcurementDropReason =
   | "missing_external_id"
@@ -98,7 +134,11 @@ export type ProcurementDropReason =
   | "missing_bin"
   | "missing_source_record_id"
   | "detail_fetch_failed"
-  | "detail_identity_mismatch";
+  | "detail_identity_mismatch"
+  | "detail_empty"
+  | "plan_year_conflict"
+  | "plan_year_outside_window"
+  | "plan_period_outside_window";
 
 export interface ClassifiedProcurement {
   record: ProcurementRecord;

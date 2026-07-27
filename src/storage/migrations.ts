@@ -530,6 +530,17 @@ const migrations: Migration[] = [
         fetched_at TEXT NOT NULL
       );
     `
+  },
+  {
+    version: 23,
+    run: (db: Database.Database) => {
+      if (!tableExists(db, "procurement_records")) return;
+      const columns = new Set(getColumnNames(db, "procurement_records"));
+      addColumnIfMissing(db, "procurement_records", columns, "plan_year", "INTEGER");
+      addColumnIfMissing(db, "procurement_records", columns, "plan_month", "INTEGER");
+      addColumnIfMissing(db, "procurement_records", columns, "plan_year_id", "INTEGER");
+      addColumnIfMissing(db, "procurement_records", columns, "approved_at", "TEXT");
+    }
   }
 ];
 

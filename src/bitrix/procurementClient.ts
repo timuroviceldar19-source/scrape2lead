@@ -7,13 +7,14 @@ export class ProcurementBitrixClient implements ProcurementPushClient {
   constructor(private readonly client: BitrixClient) {}
 
   async findByOrigin(originatorId: string, originId: string): Promise<ExistingProcurementDeal | null> {
+    // BEGINDATE нужен, чтобы понять, несёт ли карточка ложную дату, оставшуюся от прежней схемы.
     const row = await this.client.findFirst("deal", { ORIGINATOR_ID: originatorId, ORIGIN_ID: originId },
-      ["ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID"]);
+      ["ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID", "BEGINDATE"]);
     return row?.ID === undefined ? null : toExistingDeal(row);
   }
 
   async findPotentialDuplicate(record: ProcurementRecord): Promise<ExistingProcurementDeal | null> {
-    const select = ["ID", "TITLE", "COMMENTS", "ORIGIN_ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID"];
+    const select = ["ID", "TITLE", "COMMENTS", "ORIGIN_ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID", "BEGINDATE"];
     let rows: Record<string, unknown>[];
     try {
       rows = await this.client.listAll("deal", { "=OPPORTUNITY": record.amount }, select, 4);
@@ -57,7 +58,7 @@ export class ProcurementBitrixClient implements ProcurementPushClient {
 
 function toExistingDeal(row: Record<string, unknown>): ExistingProcurementDeal {
   return { ID: String(row.ID), CATEGORY_ID: scalar(row.CATEGORY_ID), STAGE_ID: textScalar(row.STAGE_ID),
-    ASSIGNED_BY_ID: scalar(row.ASSIGNED_BY_ID) };
+    ASSIGNED_BY_ID: scalar(row.ASSIGNED_BY_ID), BEGINDATE: textScalar(row.BEGINDATE) };
 }
 function textScalar(value: unknown): string | null { return value === undefined || value === null ? null : String(value); }
 function scalar(value: unknown): string | number | null {
