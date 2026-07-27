@@ -1,0 +1,32 @@
+{
+  "measure_short_name": null,
+  "purchase_method_name": "Из одного источника путем прямого заключения договора",
+  "organization_name": "АО \"Экспортно-кредитное агентство Казахстана\"",
+  "id": 157758796,
+  "purchase_subject_id": null,
+  "external_id": "682101",
+  "purchase_method_id": 10,
+  "status_id": 2,
+  "is_quasi_sector": null,
+  "delivery_address_id": 23248,
+  "status_name": "Утвержден",
+  "month_id": null,
+  "month_name": null,
+  "total_price": 0.0,
+  "system_id": 2,
+  "organization_id": 34651,
+  "enstru": {
+    "name_ru": "Монитор",
+    "name_kk": "Монитор",
+    "name_text_ru": "Монитор",
+    "name_text_kk": "Монитор"
+  },
+  "count": 30,
+  "unit_price": 0.0,
+  "plan_id": null,
+  "extra_description": "Монитор",
+  "delivery_region_id": null,
+  "plan_year_id": [
+    12
+  ]
+}

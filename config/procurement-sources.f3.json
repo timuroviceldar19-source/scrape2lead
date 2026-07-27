@@ -1,0 +1,67 @@
+{
+  "sources": [
+    "mitwork",
+    "samruk",
+    "tizilim"
+  ],
+  "keywords": [
+    "Компьютер",
+    "Монитор",
+    "Моноблок",
+    "Ноутбук",
+    "Доска специальная",
+    "Интерактивная панель",
+    "Панель жидкокристаллическая"
+  ],
+  "minAmount": 500000,
+  "pkTruPrefixes": [
+    "262011.",
+    "262013.",
+    "262017.100."
+  ],
+  "panelKeywords": [
+    "доска специальная",
+    "интерактивная панель",
+    "панель интерактивная",
+    "панель жидкокристаллическая"
+  ],
+  "stopWords": [
+    "мфу",
+    "принтер",
+    "устройство многофункциональное"
+  ],
+  "rollingMonths": 7,
+  "planYearIds": {
+    "2026": 12
+  },
+  "planYearProbeRange": [
+    1,
+    32
+  ],
+  "planStatuses": [
+    {
+      "name": "Утвержден",
+      "id": 2
+    },
+    {
+      "name": "На проверке камерального контроля",
+      "id": null
+    }
+  ],
+  "pageSize": 100,
+  "maxPages": 500,
+  "delayMs": 200,
+  "detailConcurrency": 6,
+  "databasePath": "data/procurement.sqlite",
+  "goszakupRegistryDatabasePath": null,
+  "outputDirectory": "runs/f3",
+  "manualRunsRequired": 7,
+  "bitrix": {
+    "categoryId": 1,
+    "stageId": "C1:NEW",
+    "managerIds": [
+      "2255"
+    ],
+    "executeEnabled": true
+  }
+}

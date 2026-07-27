@@ -1,6 +1,72 @@
 import { describe, expect, it } from "vitest";
 import { classifyProcurementRecords } from "../../src/kz/procurement/filter.js";
 import type { ProcurementRecord } from "../../src/kz/procurement/types.js";
+import { buildPlanPeriodWindow, EMPTY_PLAN_PERIOD } from "../../src/kz/procurement/planPeriod.js";
+
+describe("procurement plan period filtering", () => {
+  const planPeriodWindow = buildPlanPeriodWindow(new Date(2026, 6, 27), 7); // июль 2026 -> янв 2027
+
+  it("rejects a plan from a year outside the collection window", () => {
+    const result = classifyProcurementRecords([
+      row({ externalId: "old", planYear: 2024, collectionPlanYear: 2024 }),
+      row({ externalId: "current", planYear: 2026, collectionPlanYear: 2026 })
+    ], { planPeriodWindow });
+
+    expect(result.rejected.map((x) => [x.record.externalId, x.reason])).toEqual([["old", "plan_year_outside_window"]]);
+    expect(result.data.map((x) => x.record.externalId)).toEqual(["current"]);
+  });
+
+  it("keeps a plan whose month the source never published", () => {
+    const result = classifyProcurementRecords([
+      row({ externalId: "no-month", planYear: 2026, planMonth: null, collectionPlanYear: 2026 })
+    ], { planPeriodWindow });
+    expect(result.data.map((x) => x.record.externalId)).toEqual(["no-month"]);
+  });
+
+  it("rejects a known month outside the window but keeps one inside it", () => {
+    const result = classifyProcurementRecords([
+      row({ externalId: "february", planYear: 2026, planMonth: 2, collectionPlanYear: 2026 }),
+      row({ externalId: "september", planYear: 2026, planMonth: 9, collectionPlanYear: 2026 })
+    ], { planPeriodWindow });
+
+    expect(result.rejected.map((x) => [x.record.externalId, x.reason])).toEqual([["february", "plan_period_outside_window"]]);
+    expect(result.data.map((x) => x.record.externalId)).toEqual(["september"]);
+  });
+
+  it("sends a year conflict to Review instead of dropping it silently", () => {
+    const result = classifyProcurementRecords([
+      row({ externalId: "conflict", planYear: 2024, collectionPlanYear: 2026 })
+    ], { planPeriodWindow });
+
+    expect(result.data).toHaveLength(0);
+    expect(result.rejected).toHaveLength(0);
+    expect(result.review.map((x) => [x.record.externalId, x.reason])).toEqual([["conflict", "plan_year_conflict"]]);
+  });
+
+  it("skips period checks entirely when no window is configured", () => {
+    expect(classifyProcurementRecords([row({ externalId: "old", planYear: 2024 })]).data.map((x) => x.record.externalId))
+      .toEqual(["old"]);
+  });
+});
+
+describe("procurement plan status allow-list", () => {
+  it("accepts every configured status and rejects the rest", () => {
+    const planStatuses = ["Утвержден", "На проверке камерального контроля"];
+    const result = classifyProcurementRecords([
+      row({ externalId: "approved", status: "Утвержден" }),
+      row({ externalId: "cameral", status: "На проверке камерального контроля" }),
+      row({ externalId: "draft", status: "Черновик" })
+    ], { planStatuses });
+
+    expect(result.data.map((x) => x.record.externalId)).toEqual(["approved", "cameral"]);
+    expect(result.rejected.map((x) => [x.record.externalId, x.reason])).toEqual([["draft", "unsupported_status"]]);
+  });
+
+  it("falls back to approved-only when the config does not list statuses", () => {
+    const result = classifyProcurementRecords([row({ externalId: "cameral", status: "На проверке камерального контроля" })]);
+    expect(result.rejected.map((x) => x.reason)).toEqual(["unsupported_status"]);
+  });
+});
 
 describe("procurement product and CRM eligibility filters", () => {
   it("accepts the four PK families only by an allowed code", () => {
@@ -112,7 +178,7 @@ function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
     endDate: null,
     url: "https://zakup.gov.kz/home/plan-items?q=1&system_id__in=2",
     purchaseMethod: null,
-    collectedAt: "2026-07-21T00:00:00.000Z",
+    ...EMPTY_PLAN_PERIOD, collectedAt: "2026-07-21T00:00:00.000Z",
     ...overrides
   };
 }

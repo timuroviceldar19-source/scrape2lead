@@ -20,4 +20,12 @@ describe("F3-B2B procurement deal layout", () => {
     expect(sections[0]?.elements.find((element) => element.name === "OPPORTUNITY_WITH_CURRENCY")?.options)
       .toEqual({ isPayButtonVisible: "false", isPaymentDocumentsVisible: "false" });
   });
+
+  it("shows the plan approval date next to the tender offer window", () => {
+    const parameters = buildProcurementDealConfiguration().find((section) => section.name === "procurement_parameters");
+    const fieldNames = parameters?.elements.map((element) => element.name) ?? [];
+    expect(fieldNames).toEqual(expect.arrayContaining([
+      "UF_CRM_PLAN_APPROVED_AT", "BEGINDATE", "CLOSEDATE", "UF_CRM_MONTH"
+    ]));
+  });
 });

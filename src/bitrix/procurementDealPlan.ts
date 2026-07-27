@@ -11,6 +11,7 @@ export interface ExistingProcurementDeal {
   CATEGORY_ID?: string | number | null;
   STAGE_ID?: string | null;
   ASSIGNED_BY_ID?: string | number | null;
+  BEGINDATE?: string | null;
 }
 
 export function procurementOpportunityOriginId(record: ProcurementRecord): string {
@@ -22,7 +23,7 @@ export function procurementOpportunityOriginId(record: ProcurementRecord): strin
 export function buildProcurementDealDecision(record: ProcurementRecord, existing: ExistingProcurementDeal | null): {
   action: "create" | "update"; dealId: string | null; fields: Record<string, unknown>;
 } {
-  const fields = buildFields(record);
+  const fields = buildFields(record, existing);
   if (!existing) return { action: "create", dealId: null, fields: { ...fields, STAGE_ID: PROCUREMENT_NEW_STAGE_ID } };
   return { action: "update", dealId: String(existing.ID), fields };
 }
@@ -36,19 +37,20 @@ export function verifyProcurementAssignmentGate(
   return { ok: invalidDealIds.length === 0, invalidDealIds };
 }
 
-function buildFields(record: ProcurementRecord): Record<string, unknown> {
+function buildFields(record: ProcurementRecord, existing: ExistingProcurementDeal | null): Record<string, unknown> {
   const detail = record.planDetail;
   const profile = record.customerProfile;
   const deliveryAddresses = joinDeliveries(record, "address");
   const customerUrl = procurementCustomerUrl(record);
-  const plannedTerm = [detail?.financialYear, detail?.deliveryDeadline]
+  const plannedTerm = [detail?.financialYear ?? record.planYear, detail?.deliveryDeadline]
     .filter((value) => value !== null && value !== undefined && value !== "").join("; ") || undefined;
   return stripUndefined({
+    ...offerWindowFields(record, existing),
     TITLE: `[${record.source.toUpperCase()} ${record.externalId}] ${record.customerName ?? "Заказчик"} — ${detail?.nameRu ?? record.productName}`,
     CATEGORY_ID: PROCUREMENT_CATEGORY_ID, OPENED: "Y", TYPE_ID: "SALE", SOURCE_ID: "WEB",
     SOURCE_DESCRIPTION: record.source, ORIGINATOR_ID: PROCUREMENT_ORIGINATOR_ID,
     ORIGIN_ID: procurementOpportunityOriginId(record), OPPORTUNITY: record.amount, CURRENCY_ID: record.currency,
-    BEGINDATE: normalizeBitrixDate(detail?.approvedAt),
+    UF_CRM_PLAN_APPROVED_AT: normalizeBitrixDate(detail?.approvedAt ?? record.approvedAt),
     COMMENTS: buildComments(record),
     UF_CRM_1711518716644: detail?.unitName,
     UF_CRM_6627AEBD4503E: record.purchaseMethod,
@@ -68,7 +70,7 @@ function buildFields(record: ProcurementRecord): Record<string, unknown> {
     UF_CRM_1782386433277_IU_XLS: plannedTerm,
     UF_CRM_1782386571874_IU_XLS: record.url,
     UF_CRM_PLAN_ID: record.sourceRecordId ?? record.externalId,
-    UF_CRM_TRADE_METHOD: scalarText(detail?.financialYear),
+    UF_CRM_TRADE_METHOD: scalarText(record.planYear ?? detail?.financialYear),
     UF_CRM_POINT_TYPE: record.recordKind,
     UF_CRM_REF_ENSTRU_CODE: record.truCode,
     UF_CRM_REF_SUBJECT_TYPE_NAME: detail?.itemType,
@@ -81,7 +83,7 @@ function buildFields(record: ProcurementRecord): Record<string, unknown> {
     UF_CRM_PRICE_PER_UNIT: detail?.unitPrice === null || detail?.unitPrice === undefined
       ? undefined : `${detail.unitPrice}|${record.currency}`,
     UF_CRM_PREPAYMENT: scalarText(detail?.prepaymentPercent),
-    UF_CRM_MONTH: plannedTerm,
+    UF_CRM_MONTH: scalarText(record.planMonth ?? detail?.planMonth),
     UF_CRM_SUPPLY_DATE: detail?.deliveryDeadline,
     UF_CRM_DELIVERY_ADDRESSES: deliveryAddresses,
     UF_CRM_PLAN_STATUS: record.status,
@@ -98,12 +100,35 @@ function buildFields(record: ProcurementRecord): Record<string, unknown> {
   });
 }
 
+/**
+ * `BEGINDATE`/`CLOSEDATE` описывают приём заявок и осмысленны только у опубликованного тендера.
+ *
+ * У плана дата утверждения живёт в `UF_CRM_PLAN_APPROVED_AT`. Карточки, созданные до этого правила,
+ * несут ложный `BEGINDATE`, выведенный из штампа загрузки, — при обновлении его нужно явно стереть,
+ * потому что Bitrix не очищает поле от `undefined`.
+ */
+function offerWindowFields(
+  record: ProcurementRecord,
+  existing: ExistingProcurementDeal | null
+): Record<string, unknown> {
+  if (record.recordKind === "tender") {
+    return {
+      BEGINDATE: normalizeBitrixDate(record.startDate),
+      CLOSEDATE: normalizeBitrixDate(record.endDate)
+    };
+  }
+  return existing && String(existing.BEGINDATE ?? "").trim() ? { BEGINDATE: "" } : {};
+}
+
 function buildComments(record: ProcurementRecord): string {
   const detail = record.planDetail;
   const profile = record.customerProfile;
   const deliveries = (detail?.deliveries ?? []).map((delivery, index) =>
     `Поставка ${index + 1}: ${delivery.address ?? "-"}; КАТО: ${delivery.kato ?? "-"}; количество: ${delivery.quantity ?? "-"}`
   );
+  const approvedAt = detail?.approvedAt ?? record.approvedAt;
+  const planYear = record.planYear ?? detail?.financialYear;
+  const planMonth = record.planMonth ?? detail?.planMonth;
   return [
     `Источник: ${record.source}`,
     `Тип: ${record.recordKind}`,
@@ -115,8 +140,12 @@ function buildComments(record: ProcurementRecord): string {
     profile?.website ? `Веб-сайт: ${profile.website}` : null,
     profile?.email ? `E-mail: ${profile.email}` : null,
     profile?.phone ? `Телефон: ${profile.phone}` : null,
-    detail?.approvedAt ? `Дата утверждения: ${detail.approvedAt}` : null,
-    detail?.financialYear ? `Финансовый год: ${detail.financialYear}` : null,
+    approvedAt ? `Дата утверждения: ${approvedAt}` : null,
+    planYear ? `Год плана: ${planYear}` : null,
+    planMonth ? `Месяц плана: ${planMonth}` : null,
+    record.recordKind === "tender" && (record.startDate || record.endDate)
+      ? `Приём заявок: ${normalizeBitrixDate(record.startDate) ?? "-"} — ${normalizeBitrixDate(record.endDate) ?? "-"}`
+      : null,
     `Код ЕНС ТРУ: ${record.truCode ?? "-"}`,
     `Наименование RU: ${detail?.nameRu ?? record.productName}`,
     detail?.nameKk ? `Наименование KZ: ${detail.nameKk}` : null,
@@ -148,8 +177,12 @@ function scalarText(value: string | number | null | undefined): string | undefin
 
 function normalizeBitrixDate(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
-  const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(value.trim());
-  return match ? `${match[3]}-${match[2]}-${match[1]}` : value;
+  const text = value.trim();
+  const dotted = /^(\d{2})-(\d{2})-(\d{4})$/.exec(text);
+  if (dotted) return `${dotted[3]}-${dotted[2]}-${dotted[1]}`;
+  // Даты приёма заявок приходят полным ISO-таймстампом (`2026-07-23T00:00:00+00:00`).
+  const iso = /^(\d{4}-\d{2}-\d{2})(?:[T ]|$)/.exec(text);
+  return iso ? iso[1] : text;
 }
 function stripUndefined(fields: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));

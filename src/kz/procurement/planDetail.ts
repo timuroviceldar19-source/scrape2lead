@@ -1,8 +1,10 @@
 import { sourceFromSystem } from "./epz.js";
 import { isPlanDetailCandidate, type ProcurementFilterOptions } from "./filter.js";
+import { fetchProcurementJson, isNotFound, withRetry, type ProcurementJsonFetcher } from "./http.js";
 import type {
   ProcurementCollectionCompleteness,
   ProcurementDelivery,
+  ProcurementDetailIssue,
   ProcurementPlanDetail,
   ProcurementRecord,
   ProcurementSource
@@ -25,7 +27,7 @@ export interface ParsedEpzPlanDetail extends ProcurementPlanDetail {
 }
 
 export interface PlanDetailEnrichmentOptions {
-  fetchJson?: (url: string) => Promise<unknown>;
+  fetchJson?: ProcurementJsonFetcher;
   completeness: ProcurementCollectionCompleteness;
   filter?: ProcurementFilterOptions;
   concurrency?: number;
@@ -48,46 +50,73 @@ export async function enrichEligibleEpzPlanDetails(
   completeness.detailRequested = groups.size;
   completeness.detailSucceeded = 0;
   completeness.detailFailed = 0;
+  completeness.detailEmpty = 0;
   completeness.detailIdentityMismatches = 0;
+  completeness.yearConflicts = completeness.yearConflicts ?? 0;
 
-  const results = new Map<string, ParsedEpzPlanDetail | "failed">();
-  const fetchJson = options.fetchJson ?? fetchDetailJson;
+  const results = new Map<string, DetailOutcome>();
+  const fetchJson = options.fetchJson ?? fetchProcurementJson;
   const entries = [...groups.entries()];
   await mapConcurrent(entries, Math.max(1, options.concurrency ?? 6), async ([key, grouped]) => {
     const id = grouped[0]?.sourceRecordId as string;
+    let raw: unknown;
     try {
-      const raw = await withRetry(
-        () => fetchJson(`${EPZ_PLAN_ITEMS}/${encodeURIComponent(id)}/`),
-        options.maxAttempts ?? 4,
-        options.retryDelayMs ?? 250
-      );
-      const parsed = parseEpzPlanDetail(raw);
-      if (!parsed || parsed.sourceRecordId !== id || grouped.some((record) => parsed.source !== record.source || parsed.externalId !== record.externalId)) {
-        results.set(key, parsed ?? "failed");
-        completeness.detailIdentityMismatches = (completeness.detailIdentityMismatches ?? 0) + 1;
-        markIncomplete(completeness, `plan-detail:${id}:identity_mismatch`);
+      raw = await withRetry(() => fetchJson(`${EPZ_PLAN_ITEMS}/${encodeURIComponent(id)}/`), {
+        maxAttempts: options.maxAttempts ?? 4,
+        delayMs: options.retryDelayMs ?? 250
+      });
+    } catch (error) {
+      // 404 — источник отвечает «нет такой записи»; это не сбой сбора и не требует повторов.
+      if (isNotFound(error)) {
+        results.set(key, { kind: "issue", issue: "detail_empty" });
+        completeness.detailEmpty = (completeness.detailEmpty ?? 0) + 1;
         return;
       }
-      results.set(key, parsed);
-      completeness.detailSucceeded = (completeness.detailSucceeded ?? 0) + 1;
-    } catch {
-      results.set(key, "failed");
+      results.set(key, { kind: "issue", issue: "detail_fetch_failed" });
       completeness.detailFailed = (completeness.detailFailed ?? 0) + 1;
       markIncomplete(completeness, `plan-detail:${id}:fetch_failed`);
+      return;
     }
+
+    const parsed = parseEpzPlanDetail(raw);
+    if (!parsed) {
+      // EPZ отдаёт `{}` на часть идентификаторов: тело валидное, записи нет.
+      results.set(key, { kind: "issue", issue: "detail_empty" });
+      completeness.detailEmpty = (completeness.detailEmpty ?? 0) + 1;
+      return;
+    }
+    if (parsed.sourceRecordId !== id
+      || grouped.some((record) => parsed.source !== record.source || parsed.externalId !== record.externalId)) {
+      results.set(key, { kind: "issue", issue: "detail_identity_mismatch" });
+      completeness.detailIdentityMismatches = (completeness.detailIdentityMismatches ?? 0) + 1;
+      markIncomplete(completeness, `plan-detail:${id}:identity_mismatch`);
+      return;
+    }
+
+    const expectedYear = grouped.find((record) => record.collectionPlanYear !== null)?.collectionPlanYear ?? null;
+    if (expectedYear !== null && parsed.financialYear !== null && parsed.financialYear !== expectedYear) {
+      results.set(key, { kind: "issue", issue: "plan_year_conflict" });
+      completeness.yearConflicts = (completeness.yearConflicts ?? 0) + 1;
+      markIncomplete(completeness, `plan-detail:${id}:plan_year_conflict:${expectedYear}!=${parsed.financialYear}`);
+      return;
+    }
+
+    results.set(key, { kind: "ok", detail: parsed });
+    completeness.detailSucceeded = (completeness.detailSucceeded ?? 0) + 1;
   });
 
   return { records: records.map((record) => {
     if (!isPlanDetailCandidate(record, options.filter) || !record.sourceRecordId?.trim()) return record;
-    const detail = results.get(`${record.source}:${record.sourceRecordId}`);
-    if (detail === "failed") return { ...record, detailIssue: completeness.incompleteReasons.includes(
-      `plan-detail:${record.sourceRecordId}:identity_mismatch`) ? "detail_identity_mismatch" : "detail_fetch_failed" };
-    if (!detail || detail.source !== record.source || detail.externalId !== record.externalId) {
-      return { ...record, detailIssue: "detail_identity_mismatch" };
-    }
-    return mergeDetail(record, detail);
+    const outcome = results.get(`${record.source}:${record.sourceRecordId}`);
+    if (!outcome) return { ...record, detailIssue: "detail_fetch_failed" };
+    if (outcome.kind === "issue") return { ...record, detailIssue: outcome.issue };
+    return mergeDetail(record, outcome.detail);
   }) };
 }
+
+type DetailOutcome =
+  | { kind: "ok"; detail: ParsedEpzPlanDetail }
+  | { kind: "issue"; issue: ProcurementDetailIssue };
 
 export function parseEpzPlanDetail(input: unknown): ParsedEpzPlanDetail | null {
   const row = object(input);
@@ -98,9 +127,7 @@ export function parseEpzPlanDetail(input: unknown): ParsedEpzPlanDetail | null {
   const organization = object(row.organization);
   const enstru = object(row.enstru);
   const measure = object(row.measure);
-  const timestamp = finiteNumber(row.timestamp);
-  const approved = timestamp === null ? null : new Date(timestamp * 1000);
-  const approvedAt = approved && !Number.isNaN(approved.getTime()) ? approved.toISOString().slice(0, 10) : null;
+  const year = object(row.year);
   const deliveries = Array.isArray(row.deliveries) ? row.deliveries.map(parseDelivery) : [];
   return {
     sourceRecordId,
@@ -113,8 +140,12 @@ export function parseEpzPlanDetail(input: unknown): ParsedEpzPlanDetail | null {
     truCode: nullableText(enstru.code),
     amount: finiteNumber(row.total_price) ?? 0,
     purchaseMethod: nullableText(object(row.purchase_method).name),
-    approvedAt,
-    financialYear: approvedAt ? Number(approvedAt.slice(0, 4)) : null,
+    // `row.timestamp` — общий штамп загрузки: позиции разных лет несут одно и то же значение,
+    // поэтому ни год, ни дата утверждения из него не выводятся.
+    approvedAt: normalizeIsoDate(row.decree_date),
+    financialYear: finiteNumber(year.year),
+    planYearId: finiteNumber(year.id),
+    planMonth: finiteNumber(object(row.month).id ?? row.month_id),
     nameRu: nullableText(enstru.name_ru ?? enstru.name),
     nameKk: nullableText(enstru.name_kk),
     shortDescriptionRu: nullableText(enstru.short_description_ru ?? enstru.short_description),
@@ -134,6 +165,8 @@ function mergeDetail(record: ProcurementRecord, detail: ParsedEpzPlanDetail): Pr
   const planDetail: ProcurementPlanDetail = {
     approvedAt: detail.approvedAt,
     financialYear: detail.financialYear,
+    planYearId: detail.planYearId,
+    planMonth: detail.planMonth,
     nameRu: detail.nameRu,
     nameKk: detail.nameKk,
     shortDescriptionRu: detail.shortDescriptionRu,
@@ -158,6 +191,10 @@ function mergeDetail(record: ProcurementRecord, detail: ParsedEpzPlanDetail): Pr
     customerBin: detail.customerBin,
     amount: detail.amount,
     purchaseMethod: detail.purchaseMethod ?? record.purchaseMethod,
+    planYear: detail.financialYear,
+    planMonth: detail.planMonth,
+    planYearId: detail.planYearId,
+    approvedAt: detail.approvedAt,
     url: `${EPZ_PLAN_PAGE}/${encodeURIComponent(detail.sourceRecordId)}`,
     planDetail,
     detailIssue: null,
@@ -174,23 +211,6 @@ function parseDelivery(input: unknown): ProcurementDelivery {
     kato: nullableText(kato.code),
     quantity: finiteNumber(row.count)
   };
-}
-
-async function withRetry<T>(action: () => Promise<T>, maxAttempts: number, delayMs: number): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= Math.max(1, maxAttempts); attempt++) {
-    try { return await action(); } catch (error) {
-      lastError = error;
-      if (attempt < maxAttempts && delayMs > 0) await wait(delayMs * 2 ** (attempt - 1));
-    }
-  }
-  throw lastError;
-}
-
-async function fetchDetailJson(url: string): Promise<unknown> {
-  const response = await fetch(url, { headers: { accept: "application/json", "user-agent": "scrape2lead/1.7" } });
-  if (!response.ok) throw new Error(`Plan detail enrichment failed: HTTP ${response.status}`);
-  return await response.json();
 }
 
 async function mapConcurrent<T>(values: T[], concurrency: number, action: (value: T) => Promise<void>): Promise<void> {
@@ -211,4 +231,11 @@ function object(value: unknown): Record<string, unknown> { return value !== null
 function nullableText(value: unknown): string | null { const result = value === null || value === undefined ? "" : String(value).trim(); return result || null; }
 function finiteNumber(value: unknown): number | null { if (value === null || value === undefined || value === "") return null; const parsed = Number(value); return Number.isFinite(parsed) ? parsed : null; }
 function normalizeBin(value: unknown): string | null { const digits = nullableText(value)?.replace(/\D/g, "") ?? ""; return digits.length === 12 ? digits : null; }
-function wait(ms: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, ms)); }
+function normalizeIsoDate(value: unknown): string | null {
+  const text = nullableText(value);
+  if (!text) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dotted = /^(\d{2})[.-](\d{2})[.-](\d{4})$/.exec(text);
+  return dotted ? `${dotted[3]}-${dotted[2]}-${dotted[1]}` : text;
+}

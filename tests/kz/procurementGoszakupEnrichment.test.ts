@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyGoszakupEnrichmentCandidates } from "../../src/kz/procurement/goszakupEnrichment.js";
 import type { ProcurementRecord } from "../../src/kz/procurement/types.js";
+import { EMPTY_PLAN_PERIOD } from "../../src/kz/procurement/planPeriod.js";
 
 describe("strict Goszakup enrichment", () => {
   it("fills values only when a stable upstream key matches exactly", () => {
@@ -45,5 +46,5 @@ function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
     status: "Утвержден", productName: "Ноутбук", description: "", truCode: null,
     customerName: "ТОО Покупатель", customerBin: null, amount: 1_000_000, currency: "KZT",
     startDate: null, endDate: null, url: "https://example.kz/42", purchaseMethod: null,
-    collectedAt: "2026-07-22T00:00:00Z", ...overrides };
+    ...EMPTY_PLAN_PERIOD, collectedAt: "2026-07-22T00:00:00Z", ...overrides };
 }

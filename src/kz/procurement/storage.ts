@@ -10,11 +10,13 @@ export class ProcurementStorage {
       INSERT INTO procurement_records (
         source, record_kind, source_record_id, external_id, parent_external_id, status, product_name, description,
         tru_code, customer_source_id, customer_name, customer_bin, amount, currency, start_date, end_date, url,
-        purchase_method, collected_at, plan_detail_json, customer_profile_json, detail_issue
+        purchase_method, collected_at, plan_detail_json, customer_profile_json, detail_issue,
+        plan_year, plan_month, plan_year_id, approved_at
       ) VALUES (
         @source, @recordKind, @sourceRecordId, @externalId, @parentExternalId, @status, @productName, @description,
         @truCode, @customerSourceId, @customerName, @customerBin, @amount, @currency, @startDate, @endDate, @url,
-        @purchaseMethod, @collectedAt, @planDetailJson, @customerProfileJson, @detailIssue
+        @purchaseMethod, @collectedAt, @planDetailJson, @customerProfileJson, @detailIssue,
+        @planYear, @planMonth, @planYearId, @approvedAt
       )
       ON CONFLICT(source, record_kind, external_id) DO UPDATE SET
         source_record_id=excluded.source_record_id, parent_external_id=excluded.parent_external_id, status=excluded.status,
@@ -23,7 +25,8 @@ export class ProcurementStorage {
         currency=excluded.currency, start_date=excluded.start_date, end_date=excluded.end_date,
         url=excluded.url, purchase_method=excluded.purchase_method, collected_at=excluded.collected_at,
         plan_detail_json=excluded.plan_detail_json, customer_profile_json=excluded.customer_profile_json,
-        detail_issue=excluded.detail_issue
+        detail_issue=excluded.detail_issue, plan_year=excluded.plan_year, plan_month=excluded.plan_month,
+        plan_year_id=excluded.plan_year_id, approved_at=excluded.approved_at
     `).run({ ...record, sourceRecordId: record.sourceRecordId ?? null, customerSourceId: record.customerSourceId ?? null,
       planDetailJson: json(record.planDetail), customerProfileJson: json(record.customerProfile), detailIssue: record.detailIssue ?? null });
   }
@@ -42,11 +45,20 @@ function mapRow(row: Record<string, unknown>): ProcurementRecord {
     customerSourceId: nullable(row.customer_source_id), customerName: nullable(row.customer_name), customerBin: nullable(row.customer_bin), amount: Number(row.amount),
     currency: String(row.currency), startDate: nullable(row.start_date), endDate: nullable(row.end_date), url: String(row.url),
     purchaseMethod: nullable(row.purchase_method), collectedAt: String(row.collected_at),
+    planYear: nullableNumber(row.plan_year), planMonth: nullableNumber(row.plan_month),
+    planYearId: nullableNumber(row.plan_year_id), approvedAt: nullable(row.approved_at),
+    // Запрошенный коллектором год живёт только в рамках одного прогона и в БД не хранится.
+    collectionPlanYear: null, collectionPlanYearId: null,
     planDetail: parseJson(row.plan_detail_json), customerProfile: parseJson(row.customer_profile_json),
     detailIssue: nullable(row.detail_issue) as ProcurementRecord["detailIssue"]
   };
 }
 function nullable(value: unknown): string | null { return value === null || value === undefined || value === "" ? null : String(value); }
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 function json(value: unknown): string | null { return value === null || value === undefined ? null : JSON.stringify(value); }
 function parseJson<T>(value: unknown): T | null {
   if (typeof value !== "string" || !value) return null;

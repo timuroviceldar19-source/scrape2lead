@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -17,6 +18,7 @@ function dependencies(response: Response) {
 describe("Cloudflare GitHub workflow dispatcher", () => {
   it.each([
     ["40 3 * * *", "gz-daily-pk.yml"],
+    ["10 4 * * *", "f3-daily.yml"],
     ["0 5 * * *", "gz-daily-main.yml"],
     ["30 6 * * *", "gz-watchdog.yml"],
     ["0 8 * * *", "gz-daily-pk.yml"],
@@ -170,5 +172,44 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
 
     expect(deps.fetch).not.toHaveBeenCalled();
     expect(JSON.stringify(deps.log.mock.calls)).not.toContain(TOKEN);
+  });
+});
+
+describe("Cloudflare cron wiring", () => {
+  const wranglerCrons: string[] = JSON.parse(
+    fs.readFileSync("infra/cloudflare-github-dispatch/wrangler.jsonc", "utf8")
+      .replace(/^\s*\/\/.*$/gm, ""),
+  ).triggers.crons;
+
+  it("keeps wrangler.jsonc and WORKFLOW_BY_CRON in sync in both directions", async () => {
+    // workflowForCron бросает на неизвестном кроне, поэтому расхождение этих двух
+    // рукописных списков падает только в рантайме Worker.
+    for (const cron of wranglerCrons) {
+      const deps = dependencies(new Response(null, { status: 204 }));
+      await expect(
+        dispatchScheduled({ cron, scheduledTime: SCHEDULED_TIME }, { GITHUB_ACTIONS_TOKEN: TOKEN }, deps),
+      ).resolves.toBeUndefined();
+    }
+
+    const dispatched = new Set<string>();
+    for (const cron of wranglerCrons) {
+      const deps = dependencies(new Response(null, { status: 204 }));
+      await dispatchScheduled({ cron, scheduledTime: SCHEDULED_TIME }, { GITHUB_ACTIONS_TOKEN: TOKEN }, deps);
+      dispatched.add(String(deps.fetch.mock.calls[0]?.[0]).split("/workflows/")[1]?.split("/")[0] ?? "");
+    }
+    expect([...dispatched].sort()).toEqual(
+      ["f3-daily.yml", "gz-daily-main.yml", "gz-daily-pk.yml", "gz-watchdog.yml"],
+    );
+  });
+
+  it("dispatches only the primary F3 slot, leaving the backstop to GitHub's own schedule", () => {
+    // Диспетч приходит как workflow_dispatch, а guard пропускает такие запуски
+    // безусловно: backstop-слот в Worker обесценил бы проверку «сегодня уже собрано».
+    expect(wranglerCrons).toContain("10 4 * * *");
+    expect(wranglerCrons).not.toContain("10 5 * * *");
+
+    const daily = fs.readFileSync(".github/workflows/f3-daily.yml", "utf8");
+    expect(daily).toContain('cron: "10 4 * * *"');
+    expect(daily).toContain('cron: "10 5 * * *"');
   });
 });

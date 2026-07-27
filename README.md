@@ -123,15 +123,22 @@ applyLots=succeeded
 
 ### Запуск в GitHub Actions
 
-Обе ежедневные задачи живут в `.github/workflows/`:
+Ежедневные задачи живут в `.github/workflows/`:
 
 | Workflow | Расписание | Конфиг |
 |---|---|---|
 | `gz-daily-pk.yml` | `40 3` и `40 4` UTC = 08:40 и 09:40 Алматы | `config/automation.pk.json` |
+| `f3-daily.yml` | `10 4` и `10 5` UTC = 09:10 и 10:10 Алматы | `config/automation.f3.json` |
 | `gz-daily-main.yml` | `0 5` и `0 6` UTC = 10:00 и 11:00 Алматы | `config/automation.json` |
-| `gz-automation.yml` | — | Общее тело, вызывается двумя предыдущими |
-| `gz-watchdog.yml` | `30 6 * * *` UTC = 11:30 Алматы | Падает, если сегодня не отработала хотя бы одна из задач |
+| `gz-automation.yml` | — | Общее тело GZ, вызывается двумя GZ-задачами |
+| `f3-automation.yml` | — | Тело F3, вызывается `f3-daily.yml` |
+| `gz-watchdog.yml` | `30 6 * * *` UTC = 11:30 Алматы | Падает, если сегодня не отработала хотя бы одна из GZ-задач |
 | `gz-probe.yml` | вручную | Проверяет, отвечает ли goszakup с раннеров GitHub |
+
+F3 — отдельный процесс со своей concurrency-группой `f3-automation` и своим локом
+`runs/f3/prepare.lock`: зависший или упавший сбор GZ его не блокирует, и наоборот.
+Ни одна стадия GZ при этом не затрагивается. Сторож пока следит только за GZ —
+расширять его на F3 до появления истории прогонов значит добавить источник ложных тревог.
 
 Второй cron у каждой задачи — backstop. Он спрашивает через API, есть ли сегодня
 успешный **или ещё идущий** прогон этого же workflow, и пропускает себя, если есть;
@@ -162,10 +169,15 @@ Guard пропускает повтор **только для `event=schedule`**
 | Время UTC | Алматы | Workflow | Роль |
 |---|---|---|---|
 | 03:40 | 08:40 | `gz-daily-pk.yml` | утренний сбор |
+| 04:10 | 09:10 | `f3-daily.yml` | сбор F3 B2B |
 | 05:00 | 10:00 | `gz-daily-main.yml` | утренний сбор |
 | 06:30 | 11:30 | `gz-watchdog.yml` | проверка утренней пары |
 | 08:00 | 13:00 | `gz-daily-pk.yml` | дневной повтор |
 | 09:30 | 14:30 | `gz-daily-main.yml` | дневной повтор |
+
+Backstop-слот F3 (`10 5` UTC) намеренно **отсутствует** в Worker: диспетч приходит как
+`workflow_dispatch`, а guard пропускает такие запуски безусловно — добавив его сюда, мы бы
+обесценили проверку «сегодня уже собрано». Backstop живёт только в `schedule` самого workflow.
 
 Дневная пара — не дубль ради надёжности, а второй заход за планами, опубликованными
 после утреннего прогона. Повтор безопасен: дедупликация идёт в Bitrix по
@@ -283,6 +295,25 @@ Cron-записи в самих workflow трогать не нужно: они 
 | `npm run kz:export-gz-contracts -- --config config/gz-contracts-panels.json` | Выгружает договоры из публичного реестра |
 | `npm run kz:dedupe-gz-plans -- --input exports/input.xlsx` | Чистит дубликаты в Excel-отчёте |
 
+### F3 B2B (Samruk, MITWORK, Tizilim)
+
+Отдельный от GZ ежедневный процесс, воронка Bitrix `F3-B2B тендеры` (категория 1).
+Скользящее окно — текущий месяц плюс следующие шесть.
+
+| Команда | Что делает |
+|---|---|
+| `npm run automation:f3` | Полный прогон: сбор → dry-run Bitrix → `f3-report.txt` |
+| `npm run f3:export` | Только сбор: XLSX + JSON |
+| `npm run f3:push -- --report runs/f3/<run>/procurement-*.json` | Dry-run отправки; `--execute` закрыт гейтом |
+| `npm run f3:audit` | Аудит существующих карточек категории 1. **Только чтение** |
+| `npm run f3:remediate -- --audit <файл>` | План исправления карточек; `--execute` требует `--plan` из предыдущего dry-run |
+
+> **Отправка включена после cutover 2026-07-27.** `deliveryMode: "push"` в
+> `config/automation.f3.json` и `executeEnabled: true` в
+> `config/procurement-sources.f3.json`. Gate подтверждён семью чистыми dry-run, проверкой
+> назначения на пользователя `2255` и первым production execute; подробности в
+> [docs/runbooks/procurement-rollout.md](docs/runbooks/procurement-rollout.md).
+
 <details>
 <summary><b>Подробности экспорта договоров</b></summary>
 
@@ -360,3 +391,5 @@ docs/           документация и скриншоты
 
 - [Импорт Bitrix24](docs/bitrix-import.md) — универсальный конфигурируемый импорт Excel → CRM
 - [AI-анализ спецификаций](docs/ai-spec-analysis.md) — настройка vision-провайдеров и промптов
+- [Рантбук F3 B2B](docs/runbooks/procurement-rollout.md) — источники, гейты, включение отправки
+- [Скользящее окно F3 B2B](docs/testing/f3-b2b-rolling-window.tdd.md) — почему год плана больше не берётся из `timestamp`

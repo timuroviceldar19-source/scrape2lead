@@ -21,6 +21,7 @@ coverage/
 
 # Runtime data
 data/*
+!data/procurement-manual-runs.json
 !data/.gitkeep
 exports/*
 !exports/.gitkeep

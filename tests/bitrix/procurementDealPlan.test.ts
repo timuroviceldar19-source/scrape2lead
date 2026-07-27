@@ -4,7 +4,64 @@ import {
   procurementOpportunityOriginId,
   verifyProcurementAssignmentGate
 } from "../../src/bitrix/procurementDealPlan.js";
-import type { ProcurementRecord } from "../../src/kz/procurement/types.js";
+import type { ProcurementPlanDetail, ProcurementRecord } from "../../src/kz/procurement/types.js";
+import { EMPTY_PLAN_PERIOD } from "../../src/kz/procurement/planPeriod.js";
+
+describe("procurement deal dates", () => {
+  it("does not put a plan approval date into BEGINDATE on a new plan", () => {
+    const result = buildProcurementDealDecision(row({
+      planYear: 2026, planMonth: 9, approvedAt: "2026-02-11",
+      planDetail: planDetail({ approvedAt: "2026-02-11" })
+    }), null);
+
+    expect(result.action).toBe("create");
+    expect(result.fields).not.toHaveProperty("BEGINDATE");
+    expect(result.fields).not.toHaveProperty("CLOSEDATE");
+    expect(result.fields).toMatchObject({ UF_CRM_PLAN_APPROVED_AT: "2026-02-11" });
+  });
+
+  it("clears a legacy BEGINDATE when updating a plan that already carries one", () => {
+    const result = buildProcurementDealDecision(row({ planYear: 2026 }), {
+      ID: "43001", CATEGORY_ID: "1", STAGE_ID: "C1:UC_XMKT7F", BEGINDATE: "2026-04-15"
+    });
+
+    expect(result.action).toBe("update");
+    expect(result.fields.BEGINDATE).toBe("");
+    expect(result.fields).not.toHaveProperty("STAGE_ID");
+  });
+
+  it("leaves BEGINDATE alone when updating a plan that never had one", () => {
+    const result = buildProcurementDealDecision(row({ planYear: 2026 }), {
+      ID: "43002", CATEGORY_ID: "1", STAGE_ID: "C1:NEW", BEGINDATE: ""
+    });
+    expect(result.fields).not.toHaveProperty("BEGINDATE");
+  });
+
+  it("uses the offer window for a published tender", () => {
+    const result = buildProcurementDealDecision(row({
+      recordKind: "tender", externalId: "lot-9", parentExternalId: "42", status: "Опубликован",
+      startDate: "2026-07-23T00:00:00+00:00", endDate: "2026-07-29T00:00:00+00:00"
+    }), null);
+
+    expect(result.fields).toMatchObject({ BEGINDATE: "2026-07-23", CLOSEDATE: "2026-07-29" });
+    expect(String(result.fields.COMMENTS)).toContain("Приём заявок: 2026-07-23 — 2026-07-29");
+  });
+
+  it("reports the plan year and month from the plan item, never from a load timestamp", () => {
+    const result = buildProcurementDealDecision(row({
+      planYear: 2026, planMonth: 9, planDetail: planDetail({ financialYear: 2026 })
+    }), null);
+
+    expect(result.fields).toMatchObject({ UF_CRM_TRADE_METHOD: "2026", UF_CRM_MONTH: "9" });
+    expect(String(result.fields.COMMENTS)).toContain("Год плана: 2026");
+    expect(String(result.fields.COMMENTS)).toContain("Месяц плана: 9");
+  });
+
+  it("omits the month field entirely when the source did not publish one", () => {
+    const result = buildProcurementDealDecision(row({ planYear: 2026, planMonth: null }), null);
+    expect(result.fields).not.toHaveProperty("UF_CRM_MONTH");
+  });
+});
 
 describe("procurement Bitrix lifecycle", () => {
   it("creates plans in F3-B2B tenders without hardcoded assignee", () => {
@@ -38,7 +95,7 @@ describe("procurement Bitrix lifecycle", () => {
         directorName: "Руководитель"
       },
       planDetail: {
-        approvedAt: "15-04-2026", financialYear: 2026, nameRu: "Панель интерактивная", nameKk: "Интерактивті панель",
+        approvedAt: "15-04-2026", financialYear: 2026, planYearId: 12, planMonth: null, nameRu: "Панель интерактивная", nameKk: "Интерактивті панель",
         shortDescriptionRu: "LCD поверхность", shortDescriptionKk: "LCD сыртқы бет", extraDescription: "Диагональ 75 дюймов",
         unitName: "Штука", quantity: 4, unitPrice: 1_475_000, prepaymentPercent: 0,
         deliveryDeadline: "30 календарных дней", itemType: "Товар",
@@ -47,7 +104,6 @@ describe("procurement Bitrix lifecycle", () => {
     }), null);
 
     expect(result.fields).toMatchObject({
-      BEGINDATE: "2026-04-15",
       UF_CRM_6627AEBD4503E: "Запрос ценовых предложений",
       UF_CRM_6627AEBD54B8D: "Панель интерактивная",
       UF_CRM_6627AEBD5E68B: "1475000",
@@ -125,12 +181,21 @@ describe("procurement Bitrix lifecycle", () => {
   });
 });
 
+function planDetail(overrides: Partial<ProcurementPlanDetail> = {}): ProcurementPlanDetail {
+  return {
+    approvedAt: null, financialYear: 2026, planYearId: 12, planMonth: null,
+    nameRu: "Ноутбук", nameKk: null, shortDescriptionRu: null, shortDescriptionKk: null,
+    extraDescription: null, unitName: "Штука", quantity: 4, unitPrice: 250_000,
+    prepaymentPercent: null, deliveryDeadline: null, itemType: "Товар", deliveries: [], ...overrides
+  };
+}
+
 function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
   return {
     source: "mitwork", recordKind: "plan", sourceRecordId: null, externalId: "42", parentExternalId: null,
     status: "Утвержден", productName: "Ноутбук", description: "16 GB", truCode: "262011.100.000002",
     customerName: "Customer", customerBin: "123456789012", amount: 1_000_000, currency: "KZT",
     startDate: null, endDate: null, url: "https://example.kz/42", purchaseMethod: "ЗЦП",
-    collectedAt: "2026-07-21T00:00:00.000Z", ...overrides
+    ...EMPTY_PLAN_PERIOD, collectedAt: "2026-07-21T00:00:00.000Z", ...overrides
   };
 }

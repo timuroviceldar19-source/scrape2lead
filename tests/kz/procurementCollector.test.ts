@@ -20,16 +20,16 @@ describe("collectExternalProcurement", () => {
     });
 
     const result = await collectExternalProcurement({
-      keywords: ["Ноутбук", "Компьютер"], pageSize: 1, maxPages: 3, planYearId: 9,
+      keywords: ["Ноутбук", "Компьютер"], pageSize: 1, maxPages: 3, planYears: [{ year: 2026, planYearId: 12 }],
       now: new Date("2026-07-21T00:00:00Z"), fetchJson
     });
 
     expect(result.records).toHaveLength(2);
-    expect(result.completeness).toMatchObject({ complete: true, planYearId: 9, pageLimit: 3 });
+    expect(result.completeness).toMatchObject({ complete: true, planYears: [{ year: 2026, planYearId: 12 }], pageLimit: 3 });
     const epzUrls = urls.filter((url) => url.includes("zakup.gov.kz"));
     expect(epzUrls).not.toHaveLength(0);
     expect(epzUrls.every((url) => url.includes("system_id__in=2__3"))).toBe(true);
-    expect(epzUrls.filter((url) => url.includes("plan-items")).every((url) => url.includes("plan_year_id=9") && url.includes("status_id__in=2"))).toBe(true);
+    expect(epzUrls.filter((url) => url.includes("plan-items")).every((url) => url.includes("plan_year_id=12") && url.includes("status_id__in=2"))).toBe(true);
     expect(epzUrls.filter((url) => url.includes("/lots/")).every((url) => url.includes("status_id__in=6") && url.includes("offer_end_date__gte="))).toBe(true);
   });
 
@@ -43,7 +43,7 @@ describe("collectExternalProcurement", () => {
       ], meta: { current_page: 1, last_page: 1 } };
     });
     const result = await collectExternalProcurement({
-      keywords: ["Панель"], maxPages: 1, planYearId: 9,
+      keywords: ["Панель"], maxPages: 1, planYears: [{ year: 2026, planYearId: 12 }],
       now: new Date("2026-07-21T00:00:00Z"), fetchJson
     });
     expect(result.records.filter((row) => row.source === "tizilim").map((row) => row.externalId)).toEqual(["active"]);
@@ -55,7 +55,7 @@ describe("collectExternalProcurement", () => {
       if (url.includes("/lots/")) return { results: [], next: null };
       return { results: [{ system_id: 2, id: 1, external_id: "p1", status_name: "Утвержден" }], next: "https://zakup.gov.kz/next" };
     });
-    const result = await collectExternalProcurement({ keywords: ["Ноутбук"], maxPages: 1, planYearId: 9, fetchJson });
+    const result = await collectExternalProcurement({ keywords: ["Ноутбук"], maxPages: 1, planYears: [{ year: 2026, planYearId: 12 }], fetchJson });
     expect(result.completeness.complete).toBe(false);
     expect(result.completeness.incompleteReasons).toContainEqual(expect.stringContaining("page_limit"));
   });

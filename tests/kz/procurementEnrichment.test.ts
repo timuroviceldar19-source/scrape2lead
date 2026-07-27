@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { enrichEligibleEpzCustomers } from "../../src/kz/procurement/enrichment.js";
 import type { ProcurementRecord } from "../../src/kz/procurement/types.js";
+import { EMPTY_PLAN_PERIOD } from "../../src/kz/procurement/planPeriod.js";
 
 describe("EPZ customer enrichment", () => {
   it("loads BIN only for product-eligible rows and caches organizations", async () => {
@@ -30,5 +31,5 @@ function row(id: string, overrides: Partial<ProcurementRecord> = {}): Procuremen
     status: "Утвержден", productName: "Ноутбук", description: "", truCode: "262011.100.000002",
     customerSourceId: "39114", customerName: "Покупатель", customerBin: null, amount: 1_000_000, currency: "KZT",
     startDate: null, endDate: null, url: `https://example.kz/${id}`, purchaseMethod: null,
-    collectedAt: "2026-07-21T00:00:00Z", ...overrides };
+    ...EMPTY_PLAN_PERIOD, collectedAt: "2026-07-21T00:00:00Z", ...overrides };
 }

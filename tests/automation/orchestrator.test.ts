@@ -8,8 +8,20 @@ import type { AutomationConfig, AutomationDependencies, AutomationManifest, Auto
 
 const dirs: string[]=[]; afterEach(()=>{for(const d of dirs.splice(0))fs.rmSync(d,{recursive:true,force:true});});
 function root(){const d=fs.mkdtempSync(path.join(os.tmpdir(),"s2l-orch-"));dirs.push(d);return d;}
-function config(runsDir:string,workflow:AutomationWorkflow="plans-and-lots"):AutomationConfig{return {runsDir,keepSuccessfulRuns:30,lockPath:path.join(runsDir,"prepare.lock"),staleLockMinutes:180,plansConfig:"plans.json",lotsConfig:"lots.json",periodMonths:6,approvalLimit:null,workflow};}
+function config(runsDir:string,workflow:AutomationWorkflow="plans-and-lots"):AutomationConfig{return {runsDir,keepSuccessfulRuns:30,lockPath:path.join(runsDir,"prepare.lock"),staleLockMinutes:180,plansConfig:"plans.json",lotsConfig:"lots.json",procurementConfig:"procurement.json",periodMonths:6,approvalLimit:null,deliveryMode:"push",workflow};}
 function pkConfig(runsDir:string):AutomationConfig{return config(runsDir,"plans-only");}
+function f3Config(runsDir:string,deliveryMode:AutomationConfig["deliveryMode"]="push"):AutomationConfig{return {...config(runsDir,"f3-b2b"),deliveryMode,periodMonths:7};}
+function f3Deps():AutomationDependencies{
+  return {...deps(),procurement:{
+    collect: vi.fn(async(_cfg,outDir)=>{
+      const xlsxPath=path.join(outDir,"f3.xlsx"), jsonPath=path.join(outDir,"f3.json");
+      fs.writeFileSync(xlsxPath,"xlsx"); fs.writeFileSync(jsonPath,"json");
+      return {xlsxPath,jsonPath,counts:{collected:7,data:3,review:2,rejected:2,yearConflicts:0,monthUnknown:5},criticalErrors:[],warnings:["plan-year:2027:not_open_yet"]};
+    }),
+    dryRun: vi.fn(async()=>({counts:{create:3,update:0,duplicate:0,failed:0},criticalErrors:[]})),
+    apply: vi.fn(async()=>({counts:{create:3,update:0,duplicate:0,failed:0}}))
+  }};
+}
 function deps():AutomationDependencies {
   return {
     exportPlans: vi.fn(async (_cfg,out)=>{fs.writeFileSync(out,"plans");return {path:out,rows:2};}),
@@ -176,6 +188,83 @@ describe("automation plans-only workflow",()=>{
     const runs=root(), d=deps(); const prepared=await prepareAutomationRun(pkConfig(runs),d,new Date("2026-07-12T11:00:00Z"));
     await expect(approveAutomationRun(pkConfig(runs),prepared.runId,d)).rejects.toThrow(/plans-only/);
     expect(d.applyPlans).not.toHaveBeenCalled(); expect(d.analyzeLots).not.toHaveBeenCalled();
+  });
+});
+
+describe("f3-b2b workflow",()=>{
+  it("collects, dry-runs and reports without touching any GZ stage",async()=>{
+    const runs=root(), d=f3Deps();
+    const result=await prepareAutomationRun(f3Config(runs),d,new Date("2026-07-27T10:00:00Z"));
+
+    expect(result.status).toBe("ready");
+    expect(result.schemaVersion).toBe(4);
+    expect(Object.keys(result.artifacts).sort()).toEqual(["procurementDryRun","procurementReport","procurementXlsx"]);
+    for(const fn of [d.exportPlans,d.exportLots,d.dryRunPlans,d.dryRunLots,d.applyPlans,d.applyLots,d.analyzeLots]){
+      expect(fn).not.toHaveBeenCalled();
+    }
+    expect(d.procurement!.collect).toHaveBeenCalledWith("procurement.json",path.join(runs,result.runId),[2026,2027]);
+  });
+
+  it("writes a run report with the counts an operator needs",async()=>{
+    const runs=root(), d=f3Deps();
+    const result=await prepareAutomationRun(f3Config(runs),d,new Date("2026-07-27T10:00:00Z"));
+    const report=fs.readFileSync(path.join(runs,result.runId,"f3-report.txt"),"utf8");
+
+    expect(report).toContain("collected=7"); expect(report).toContain("accepted=3");
+    expect(report).toContain("rejected=2"); expect(report).toContain("year_conflicts=0");
+    expect(report).toContain("month_unknown=5"); expect(report).toContain("new=3");
+    expect(report).toContain("updates=0"); expect(report).toContain("duplicates=0");
+    expect(report).toContain("warning=plan-year:2027:not_open_yet");
+  });
+
+  it("fails prepare when the collection reports a blocking problem",async()=>{
+    const runs=root(), d=f3Deps();
+    vi.mocked(d.procurement!.collect).mockResolvedValue({
+      xlsxPath:path.join(runs,"x.xlsx"),jsonPath:path.join(runs,"x.json"),
+      counts:{},criticalErrors:["plan_year_conflicts:3"]
+    });
+    const result=await prepareAutomationRun(f3Config(runs),d,new Date("2026-07-27T10:00:00Z"));
+
+    expect(result.status).toBe("failed");
+    expect(d.procurement!.dryRun).not.toHaveBeenCalled();
+  });
+
+  it("stops a scheduled run at ready while delivery stays in prepare mode",async()=>{
+    const runs=root(), d=f3Deps();
+    const result=await runScheduledAutomation(f3Config(runs,"prepare"),d,new Date("2026-07-27T10:00:00Z"));
+
+    expect(result.status).toBe("ready");
+    expect(d.procurement!.apply).not.toHaveBeenCalled();
+  });
+
+  it("pushes from the verified report once delivery mode is push",async()=>{
+    const runs=root(), d=f3Deps();
+    const result=await runScheduledAutomation(f3Config(runs,"push"),d,new Date("2026-07-27T10:00:00Z"));
+
+    expect(result.status).toBe("pushed");
+    expect(d.procurement!.apply).toHaveBeenCalledWith(result.artifacts.procurementReport!.path,null);
+  });
+
+  it("refuses to push a report that changed after the dry-run",async()=>{
+    const runs=root(), d=f3Deps();
+    const prepared=await prepareAutomationRun(f3Config(runs),d,new Date("2026-07-27T10:00:00Z"));
+    fs.appendFileSync(prepared.artifacts.procurementReport!.path,"tamper");
+
+    await expect(pushAutomationRun(f3Config(runs),prepared.runId,d)).rejects.toThrow(/procurement report artifact hash mismatch/);
+    expect(d.procurement!.apply).not.toHaveBeenCalled();
+  });
+
+  it("rejects approve the same way plans-only does",async()=>{
+    const runs=root(), d=f3Deps();
+    const prepared=await prepareAutomationRun(f3Config(runs),d,new Date("2026-07-27T10:00:00Z"));
+    await expect(approveAutomationRun(f3Config(runs),prepared.runId,d)).rejects.toThrow(/f3-b2b/);
+  });
+
+  it("fails loudly when the procurement adapter is absent",async()=>{
+    const runs=root();
+    const result=await prepareAutomationRun(f3Config(runs),deps(),new Date("2026-07-27T10:00:00Z"));
+    expect(result.status).toBe("failed");
+    expect(result.errors[0]?.message).toMatch(/requires the procurement dependency adapter/);
   });
 });
 

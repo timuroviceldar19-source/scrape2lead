@@ -1,0 +1,61 @@
+{
+  "name_ru": "Ноутбук",
+  "purchase_method_name": "Запрос ценовых предложений на понижение",
+  "lot_number": "4496006",
+  "description_ru": "мультимедийный",
+  "organization_name": "АО \"Мойнакская ГЭС им. У.Д.Кантаева\"",
+  "purchase_subject_id": [
+    1
+  ],
+  "id": 60108769,
+  "external_id": 4496006,
+  "purchase_method_id": 63,
+  "dumping_price": 0.0,
+  "status": {
+    "name": "Опубликован",
+    "is_active": true,
+    "code": null,
+    "id": 6
+  },
+  "announcement_id": 40242401,
+  "description_kk": "мультимедиялық",
+  "plan_items": [
+    {
+      "id": 99352200
+    }
+  ],
+  "system": {
+    "name": "SKK",
+    "id": 3
+  },
+  "status_name": "Опубликован",
+  "quantity": 5.0,
+  "offer_end_date": "2026-07-29T00:00:00+00:00",
+  "name_kk": "Ноутбук",
+  "announcement_number_key": "1241533",
+  "total_price": 2850000.0,
+  "announcement_number": "1241533",
+  "announcement_publish_date": "2026-07-22T18:01:39.831000+00:00",
+  "delivery_addresses": [
+    {
+      "id": 4063,
+      "code": "190000000",
+      "name_ru": "Алматинская область",
+      "name_kk": "Алматы облысы"
+    }
+  ],
+  "enstru_key": "262011.100.000002",
+  "enstrus": [
+    {
+      "id": 29184,
+      "code": "262011.100.000002",
+      "name_ru": "Ноутбук",
+      "name_kk": "Ноутбук",
+      "short_description_ru": "мультимедийный",
+      "short_description_kk": "мультимедиялық"
+    }
+  ],
+  "offer_start_date": "2026-07-23T00:00:00+00:00",
+  "plan_year_id": 12,
+  "lot_number_key": "4496006"
+}
