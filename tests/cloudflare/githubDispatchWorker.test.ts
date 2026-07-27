@@ -18,7 +18,9 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
   it.each([
     ["40 3 * * *", "gz-daily-pk.yml"],
     ["0 5 * * *", "gz-daily-main.yml"],
-    ["0 8 * * *", "gz-watchdog.yml"],
+    ["30 6 * * *", "gz-watchdog.yml"],
+    ["0 8 * * *", "gz-daily-pk.yml"],
+    ["30 9 * * *", "gz-daily-main.yml"],
   ])("maps %s to %s and sends one authenticated dispatch", async (cron, workflow) => {
     const deps = dependencies(
       Response.json({
@@ -105,14 +107,14 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     const deps = dependencies(new Response("accepted", { status: 202 }));
 
     await dispatchScheduled(
-      { cron: "0 8 * * *", scheduledTime: SCHEDULED_TIME },
+      { cron: "30 6 * * *", scheduledTime: SCHEDULED_TIME },
       { GITHUB_ACTIONS_TOKEN: TOKEN },
       deps,
     );
 
     expect(deps.log).toHaveBeenCalledWith({
       event: "github_workflow_dispatch",
-      cron: "0 8 * * *",
+      cron: "30 6 * * *",
       workflow: "gz-watchdog.yml",
       scheduledTime: "2026-07-26T03:40:00.000Z",
       status: 202,
@@ -124,7 +126,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
 
     await expect(
       dispatchScheduled(
-        { cron: "0 8 * * *", scheduledTime: SCHEDULED_TIME },
+        { cron: "30 6 * * *", scheduledTime: SCHEDULED_TIME },
         { GITHUB_ACTIONS_TOKEN: "" },
         deps,
       ),
@@ -141,7 +143,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
       );
 
       const error = await dispatchScheduled(
-        { cron: "0 8 * * *", scheduledTime: SCHEDULED_TIME },
+        { cron: "30 6 * * *", scheduledTime: SCHEDULED_TIME },
         { GITHUB_ACTIONS_TOKEN: TOKEN },
         deps,
       ).catch((caught: unknown) => caught);
