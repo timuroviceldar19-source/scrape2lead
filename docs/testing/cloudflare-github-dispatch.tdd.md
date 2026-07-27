@@ -35,7 +35,7 @@ The source plan was supplied in the implementation request on 2026-07-26.
 
 | Guarantee | Evidence | Result |
 |---|---|---|
-| All three UTC cron expressions select the intended workflow and `main` ref | Parameterized fetch-mock test | PASS |
+| All five UTC cron expressions select the intended workflow and `main` ref, including the two afternoon slots that repeat a morning workflow | Parameterized fetch-mock test | PASS |
 | Dispatch uses the GitHub media type, API version, bearer token and JSON body | Request contract assertions | PASS |
 | The real `204 No Content` response is accepted | Response test | PASS |
 | A hypothetical `2xx` carrying a JSON body is accepted and its run ids logged | Response test | PASS (speculative — see below) |

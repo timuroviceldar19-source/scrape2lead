@@ -157,6 +157,15 @@ alarmed while a legitimately delayed run was still in flight. It remains cron-dr
 so shares the same unreliability, which is why it is listed as the second line and should
 also be triggered externally.
 
+It moved again on 2026-07-27, to 06:30 UTC (11:30 Almaty), when an afternoon repeat pair
+was added at 13:00 and 14:30 Almaty. Those repeats arrive as `workflow_dispatch` from the
+Cloudflare Worker, so the guard runs them unconditionally and they collect for real. That
+makes a watchdog placed after them useless: an afternoon success would mask a morning
+miss before anyone heard about it. Placing it between the pairs restores the signal at
+the cost of headroom — 90 minutes after the morning `gz-daily-main.yml` slot instead of
+180. The headroom only matters when the external trigger fails and the in-Actions
+backstop has to carry the run, since that path is the delayed one.
+
 ### Watchdog counted the wrong thing
 
 Its first version asserted that each daily workflow had a *run* with
@@ -218,11 +227,11 @@ Two mitigations, both in `.github/workflows/`:
   primary queued, primary failed, primary cancelled, primary succeeded, success from
   yesterday, overnight run still going, and yesterday's success alongside today's active
   run).
-- **Watchdog.** `gz-watchdog.yml` runs at 07:30 UTC (12:30 Almaty, after both backstops
-  plus cold-run headroom) and exits non-zero if either daily workflow has no success
-  today, converting a silent miss into a failure email. It is itself cron-driven and so
-  subject to the same unreliability — the gain is that two independent schedules are
-  less likely to be dropped together than one, not that delivery is guaranteed.
+- **Watchdog.** `gz-watchdog.yml` runs at 06:30 UTC (11:30 Almaty) and exits non-zero if
+  either daily workflow has no success today, converting a silent miss into a failure
+  email. It is itself cron-driven and so subject to the same unreliability — the gain is
+  that two independent schedules are less likely to be dropped together than one, not
+  that delivery is guaranteed.
 
 A run producing zero new deals is not evidence of a miss. The 6-month rolling window
 re-collects the same plans daily, so `create: 0` with `existing: 299` is the expected
