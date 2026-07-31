@@ -62,6 +62,27 @@ describe("goszakup lead selection", () => {
     expect(result.callLeads.map((item) => item.bin)).toEqual(["222222222222"]);
     expect(result.otherCityLeads.map((item) => item.bin)).toEqual(["444444444444"]);
   });
+
+  it("does not impose a call-list limit unless the CLI explicitly supplies one", () => {
+    const contracts = Array.from({ length: 101 }, (_, index) => {
+      const bin = String(700_000_000_000 + index);
+      return [
+        contract(bin, `Supplier ${index}`, "2026-07-10", `${index}-1`, "Customer"),
+        contract(bin, `Supplier ${index}`, "2026-06-10", `${index}-2`, "Customer"),
+        contract(bin, `Supplier ${index}`, "2026-05-10", `${index}-3`, "Customer")
+      ];
+    }).flat();
+    const registryByBin = new Map(Array.from({ length: 101 }, (_, index) => {
+      const bin = String(700_000_000_000 + index);
+      return [bin, registry(bin, `+7 701 ${String(index).padStart(3, "0")} 12 34`, "Astana")] as const;
+    }));
+
+    const result = buildGoszakupLeadCandidates({
+      now: new Date("2026-08-01T00:00:00Z"), currentFrom: "2026-05-01", historyFrom: "2026-05-01", contracts, registryByBin
+    });
+
+    expect(result.callLeads).toHaveLength(101);
+  });
 });
 
 function contract(bin: string, supplierName: string, signedAt: string, contractId: string, customerName: string) {

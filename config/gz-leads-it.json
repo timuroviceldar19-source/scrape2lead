@@ -1,13 +1,9 @@
 {
-  "codes": [
-    "279020.100.000001",
-    "262030.100.000021",
-    "262030.100.000043"
-  ],
-  "historyMonths": 18,
+  "includePrefixes": ["2620", "2630"],
+  "excludePrefixes": ["33", "95", "62", "63", "74", "71"],
+  "historyMonths": 3,
   "currentMonths": 3,
   "cities": ["Астана", "Алматы"],
-  "limit": 100,
   "maxPages": 500,
   "delayMs": 350,
   "registryDelayMs": 1000,

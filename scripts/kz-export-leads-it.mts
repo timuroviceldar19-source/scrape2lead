@@ -1,18 +1,20 @@
 import "dotenv/config";
 import path from "node:path";
 import { z } from "zod";
-import { exportGoszakupContracts, type GoszakupCollectedContract } from "../src/kz/goszakupContractExporter.js";
 import { buildGoszakupLeadCandidates, type LeadContract, type LeadRegistryRecord } from "../src/kz/goszakupLeads.js";
 import { writeGoszakupLeadWorkbook } from "../src/kz/goszakupLeadWorkbook.js";
 import { collectGoszakupRegistryForBins } from "../src/kz/goszakupRegistryCollector.js";
 import { KzStorage } from "../src/kz/kzStorage.js";
+import { chromium } from "playwright";
+import { parseContractGeneralHtml, parseContractPartiesHtml, parseContractSearchHtml, parseContractUnitNamesHtml } from "../src/kz/goszakupContractParser.js";
 
 const ConfigSchema = z.object({
-  codes: z.array(z.string().regex(/^\d{6}\.\d{3}\.\d{6}$/)).min(1),
+  includePrefixes: z.array(z.string().regex(/^\d+$/)).min(1),
+  excludePrefixes: z.array(z.string().regex(/^\d+$/)).default([]),
   historyMonths: z.number().int().positive().default(18),
   currentMonths: z.number().int().positive().default(3),
   cities: z.array(z.enum(["Астана", "Алматы"])).default(["Астана", "Алматы"]),
-  limit: z.number().int().positive().default(100),
+  limit: z.number().int().positive().optional(),
   maxPages: z.number().int().positive().default(500),
   delayMs: z.number().int().nonnegative().default(350),
   registryDelayMs: z.number().int().nonnegative().default(1000),
@@ -38,20 +40,8 @@ async function main(): Promise<void> {
   const currentFrom = isoMonthsAgo(now, config.currentMonths);
   if (historyFrom > localIsoDate(now)) throw new Error("--from must not be after --to");
 
-  const contracts: LeadContract[] = [];
+  const contracts = await collectContractsByPrefixes(config.includePrefixes, config.excludePrefixes, historyFrom, localIsoDate(now));
   const outputPath = path.join("exports", `gz-leads-it-${localIsoDate(now)}.xlsx`);
-  await exportGoszakupContracts({
-    codes: config.codes,
-    from: historyFrom,
-    to: localIsoDate(now),
-    outPath: outputPath,
-    writeWorkbook: false,
-    maxPages: config.maxPages,
-    delayMs: config.delayMs,
-    headless: args.headless ?? config.headless,
-    onProgress: (message) => console.log(`gz-leads: ${message}`),
-    onContract: (contract) => contracts.push(toLeadContract(contract))
-  });
 
   const preliminary = buildGoszakupLeadCandidates({
     now, currentFrom, historyFrom, contracts, registryByBin: new Map(), callLimit: args.limit ?? config.limit
@@ -85,18 +75,19 @@ async function main(): Promise<void> {
   console.log(`файл=${outputPath}`);
 }
 
-function toLeadContract(contract: GoszakupCollectedContract): LeadContract {
-  return {
-    bin: contract.supplierBinIin,
-    supplierName: contract.supplierName,
-    signedAt: contract.signedAt,
-    contractId: contract.contractId,
-    contractNumber: contract.contractNumber,
-    customerName: contract.customerName,
-    customerBin: contract.customerBin,
-    amount: contract.amount,
-    searchCode: contract.searchCode
-  };
+async function collectContractsByPrefixes(include: string[], exclude: string[], from: string, to: string): Promise<LeadContract[]> {
+  const browser = await chromium.launch({ headless: true }); const rows: LeadContract[] = [];
+  try { const page = await browser.newPage({ locale: "ru-RU" });
+    const url = (pageNo: number) => { const p = new URLSearchParams({ "filter[start_date_from]": from, "filter[start_date_to]": to, count_record: "50" }); if (pageNo > 1) p.set("page", String(pageNo)); return `https://www.goszakup.gov.kz/ru/registry/contract?${p}`; };
+    await page.goto(url(1), { waitUntil: "domcontentloaded", timeout: 45_000 }); let search = parseContractSearchHtml(await page.content(), 50); const total = search.pagination.totalPages;
+    for (let pageNo = 1; pageNo <= total; pageNo++) { if (pageNo > 1) { await page.goto(url(pageNo), { waitUntil: "domcontentloaded", timeout: 45_000 }); search = parseContractSearchHtml(await page.content(), 50); } console.log(`gz-leads: contracts page=${pageNo}/${total}`);
+      for (const item of search.items) { await page.goto(`https://www.goszakup.gov.kz/ru/egzcontract/cpublic/show/${item.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 }); const signedAt = parseContractGeneralHtml(await page.content()).signedAt?.slice(0, 10); if (!signedAt) continue;
+        await page.goto(`https://www.goszakup.gov.kz/ru/egzcontract/cpublic/units/${item.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 }); const units = parseContractUnitNamesHtml(await page.content()).filter((unit) => include.some((prefix) => unit.code.startsWith(prefix)) && !exclude.some((prefix) => unit.code.startsWith(prefix))); if (!units.length) continue;
+        await page.goto(`https://www.goszakup.gov.kz/ru/egzcontract/cpublic/customer_n_supplier/${item.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 }); const parties = parseContractPartiesHtml(await page.content());
+        for (const unit of units) rows.push({ bin: parties.supplierBinIin, supplierName: parties.supplierName, signedAt, contractId: item.contractId, contractNumber: item.contractNumber, customerName: parties.customerName, customerBin: parties.customerBin, amount: item.amount, searchCode: unit.code });
+      }
+    } return rows;
+  } finally { await browser.close(); }
 }
 
 function loadRegistry(databasePath: string, bins: string[]): Map<string, LeadRegistryRecord> {

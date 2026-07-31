@@ -120,7 +120,8 @@ export function buildGoszakupLeadCandidates(input: {
 
   const sorted = candidates.sort(compareCandidates);
   const phoneLeads = dedupeByPhone(sorted.filter((candidate) => candidate.phoneOk));
-  const callLeads = phoneLeads.filter((candidate) => candidate.city !== "Другой город").slice(0, input.callLimit ?? 100);
+  const priorityCityLeads = phoneLeads.filter((candidate) => candidate.city !== "Другой город");
+  const callLeads = input.callLimit === undefined ? priorityCityLeads : priorityCityLeads.slice(0, input.callLimit);
   return {
     candidates: sorted,
     phoneLeads,
