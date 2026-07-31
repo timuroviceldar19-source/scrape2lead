@@ -63,6 +63,18 @@ export function parseContractUnitsHtml(html: string): string[] {
   return [...seen];
 }
 
+export function parseContractUnitNamesHtml(html: string): Array<{ code: string; name: string }> {
+  const result: Array<{ code: string; name: string }> = [];
+  for (const row of extractRows(html)) {
+    const cells = extractCells(row).map(cleanText);
+    const code = cells.find((cell) => /^\d{6}\.\d{3}\.\d{6}$/.test(cell));
+    if (!code) continue;
+    const codeIndex = cells.indexOf(code);
+    result.push({ code, name: cells[codeIndex + 1] || "" });
+  }
+  return result;
+}
+
 export function parseContractPartiesHtml(html: string): ContractParties {
   const customer = extractHeadingSection(html, "Заказчик", "Поставщик");
   const supplier = extractHeadingSection(html, "Поставщик");
