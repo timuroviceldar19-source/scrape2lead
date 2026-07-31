@@ -22,7 +22,7 @@ try {
     if (pageNo > 1) params.set("page", String(pageNo));
     await page.goto(`${base}/ru/registry/contract?${params}`, { waitUntil: "domcontentloaded", timeout: 45_000 });
     const search = parseContractSearchHtml(await page.content(), 50);
-    totalPages = search.pagination.totalPages;
+    if (pageNo === 1) totalPages = search.pagination.totalPages;
     console.log(`contracts page=${pageNo}/${totalPages}`);
     for (const contract of search.items) {
       await page.goto(`${base}/ru/egzcontract/cpublic/show/${contract.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 });
