@@ -10,9 +10,8 @@ describe("lead code proposal", () => {
       { code: "d", name: "Картридж", contracts: 0 },
       { code: "e", name: "Монитор", contracts: 0 }
     ]);
-    expect(proposal.nonZero.map((row) => row.code)).toEqual(["a", "c", "b"]);
-    expect(proposal.nonZero[1]?.note).toMatch(/ПО/);
-    expect(proposal.zero.map((row) => row.code)).toEqual(["d", "e"]);
+    expect(proposal.nonZero.map((row) => row.code)).toEqual(["a", "b"]);
+    expect(proposal.zero.map((row) => row.code)).toEqual(["e"]);
     expect(renderLeadCodeProposal(proposal)).toContain("Коды с 0 контрактов");
   });
 

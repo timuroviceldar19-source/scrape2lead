@@ -15,7 +15,9 @@ export function buildLeadCodeProposal(rows: LeadCodeInput[]): LeadCodeProposal {
   for (const item of rows) {
     const existing = unique.get(item.code);
     if (existing) { existing.contracts += item.contracts; continue; }
-    unique.set(item.code, { ...item, category: category(item.name), note: note(item.name) });
+    const itemCategory = category(item.name);
+    if (!itemCategory) continue;
+    unique.set(item.code, { ...item, category: itemCategory, note: note(item.name) });
   }
   const sorted = [...unique.values()].sort((a, b) => b.contracts - a.contracts || a.code.localeCompare(b.code));
   return { nonZero: sorted.filter((row) => row.contracts > 0).slice(0, 80), zero: sorted.filter((row) => row.contracts === 0).slice(0, 15) };
@@ -38,12 +40,13 @@ function renderTable(title: string, rows: LeadCodeRow[]): string {
 }
 
 function note(name: string): string { return excluded.find(([pattern]) => pattern.test(name))?.[1] ?? ""; }
-function category(name: string): string {
+function category(name: string): string | null {
   if (/(?:ноутбук|компьютер|моноблок)/i.test(name)) return "Компьютеры и ноутбуки";
   if (/монитор/i.test(name)) return "Мониторы";
   if (/(?:сервер|схд|хранилищ)/i.test(name)) return "Серверы и СХД";
   if (/(?:маршрутизатор|коммутатор|сетев|wifi|wi-fi)/i.test(name)) return "Сетевое оборудование";
   if (/(?:принтер|мфу|многофункцион)/i.test(name)) return "Печать";
   if (/(?:ибп|бесперебойн)/i.test(name)) return "ИБП";
-  return "Комплектующие";
+  if (/(?:процессор|материнск|оперативн.*памят|жестк.*диск|твердотельн|\bssd\b|видеокарт|блок питани|клавиатур|мышь компьютер|сетев.*карт|адаптер)/i.test(name)) return "Комплектующие";
+  return null;
 }

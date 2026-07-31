@@ -41,7 +41,7 @@ try {
   }
   const stats = { rows: dates.length, minDate: [...dates].sort()[0] ?? null, maxDate: [...dates].sort().at(-1) ?? null };
   console.log(`sample cards=${stats.rows} min=${stats.minDate ?? "-"} max=${stats.maxDate ?? "-"} cache=${cacheDir}`);
-  console.log(renderLeadCodeProposal(buildLeadCodeProposal(rows), stats));
+  console.log(renderLeadCodeProposal(buildLeadCodeProposal(rows), { cards: stats.rows, minDate: stats.minDate, maxDate: stats.maxDate }));
 } finally { await browser.close(); }
 
 function iso(date: Date): string { return date.toISOString().slice(0, 10); }
