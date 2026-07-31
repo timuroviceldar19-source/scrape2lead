@@ -14,6 +14,7 @@ export interface GoszakupRegistryRecord {
   kopf: string | null;
   ownership_form: string | null;
   economic_sector: string | null;
+  oked_list?: string | null;
   director_name: string | null;
   director_iin: string | null;
   legal_address: string | null;

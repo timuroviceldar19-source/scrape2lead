@@ -4,6 +4,7 @@ export interface ContractSearchItem {
   contractId: string;
   contractNumber: string;
   url: string;
+  amount: number;
 }
 
 export interface ContractSearchResult {
@@ -30,7 +31,8 @@ export function parseContractSearchHtml(html: string, recordsPerPage: number): C
     items.push({
       contractId,
       contractNumber: cleanText(cells[1]) || contractId,
-      url: normalizeUrl(href)
+      url: normalizeUrl(href),
+      amount: parseAmount(cleanText(cells[6] ?? ""))
     });
   }
 
@@ -43,6 +45,12 @@ export function parseContractSearchHtml(html: string, recordsPerPage: number): C
       totalPages: Math.max(1, Math.ceil(totalCount / recordsPerPage))
     }
   };
+}
+
+function parseAmount(value: string): number {
+  const normalized = value.replace(/\s/g, "").replace(",", ".").replace(/[^0-9.]/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export function parseContractGeneralHtml(html: string): { signedAt: string | null } {

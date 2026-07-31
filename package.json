@@ -31,6 +31,7 @@
     "kz:export-lots-nstru": "tsx scripts/kz-export-goszakup-lots-by-nstru.mts",
     "kz:export-lots-computers": "tsx scripts/kz-export-goszakup-lots-by-nstru.mts --config config/gz-lots-computers.json",
     "kz:export-gz-contracts": "tsx scripts/kz-export-goszakup-contracts.mts",
+    "kz:export-leads-it": "tsx scripts/kz-export-leads-it.mts",
     "kz:dedupe-gz-plans": "tsx scripts/dedupe-gz-plans-xlsx.mts",
     "kz:bitrix-push-gz-plans": "tsx scripts/bitrix-push-gz-plans.mts",
     "kz:monitor-gz-published": "tsx scripts/check-gz-deals-published.mts",

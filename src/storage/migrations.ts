@@ -541,6 +541,14 @@ const migrations: Migration[] = [
       addColumnIfMissing(db, "procurement_records", columns, "plan_year_id", "INTEGER");
       addColumnIfMissing(db, "procurement_records", columns, "approved_at", "TEXT");
     }
+  },
+  {
+    version: 24,
+    run: (db: Database.Database) => {
+      if (!tableExists(db, "goszakup_registry_data")) return;
+      const columns = new Set(getColumnNames(db, "goszakup_registry_data"));
+      addColumnIfMissing(db, "goszakup_registry_data", columns, "oked_list", "TEXT");
+    }
   }
 ];
 

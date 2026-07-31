@@ -168,7 +168,7 @@ describe("KZ v22 plan detail cache", () => {
     runMigrations(db);
 
     const version = (db.prepare("SELECT MAX(version) AS version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(23);
+    expect(version).toBe(24);
     expect(columns(db, "goszakup_plan_details")).toContain("detail_json");
 
     db.close();

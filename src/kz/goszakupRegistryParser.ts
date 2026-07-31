@@ -52,6 +52,7 @@ export function parseRegistryProfileHtml(html: string, bin: string): GoszakupReg
   const kopf = findFieldValue(fields, ["КОПФ", "Организационно-правовая форма"]);
   const ownershipForm = findFieldValue(fields, ["Форма собственности"]);
   const economicSector = findFieldValue(fields, ["Сектор экономики"]);
+  const okedList = findFieldValue(fields, ["ОКЭД", "ОКЭД(ы)", "Виды экономической деятельности"]);
 
   const directorName = findSectionValue(html, "Руководитель", ["ФИО", "Фамилия, имя, отчество", "Ф.И.О"]);
   const directorIin = findSectionValue(html, "Руководитель", ["ИИН", "ИИН руководителя"]);
@@ -87,6 +88,7 @@ export function parseRegistryProfileHtml(html: string, bin: string): GoszakupReg
     kopf: nullable(kopf),
     ownership_form: nullable(ownershipForm),
     economic_sector: nullable(economicSector),
+    oked_list: nullable(okedList),
     director_name: nullable(directorName),
     director_iin: nullable(directorIin),
     legal_address: nullable(legalAddress),

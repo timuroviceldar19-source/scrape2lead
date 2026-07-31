@@ -1,0 +1,16 @@
+{
+  "codes": [
+    "279020.100.000001",
+    "262030.100.000021",
+    "262030.100.000043"
+  ],
+  "historyMonths": 18,
+  "currentMonths": 3,
+  "cities": ["Астана", "Алматы"],
+  "limit": 100,
+  "maxPages": 500,
+  "delayMs": 350,
+  "registryDelayMs": 1000,
+  "headless": true,
+  "databasePath": "data/scrape2lead.db"
+}

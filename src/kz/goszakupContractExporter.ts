@@ -23,6 +23,7 @@ export interface GoszakupContractExportOptions {
   from: string;
   to: string;
   outPath: string;
+  writeWorkbook?: boolean;
   maxPages?: number;
   limit?: number;
   delayMs?: number;
@@ -32,7 +33,20 @@ export interface GoszakupContractExportOptions {
   pageLoadTimeoutMs?: number;
   retries?: number;
   pageLoader?: ContractPageLoader;
+  onContract?: (contract: GoszakupCollectedContract) => void | Promise<void>;
   onProgress?: (message: string) => void;
+}
+
+export interface GoszakupCollectedContract {
+  contractId: string;
+  contractNumber: string;
+  signedAt: string;
+  amount: number;
+  customerBin: string;
+  customerName: string;
+  supplierBinIin: string;
+  supplierName: string;
+  searchCode: string;
 }
 
 export interface GoszakupContractExportResult {
@@ -131,6 +145,15 @@ export async function exportGoszakupContracts(
               missingIdentifiers++;
               warnings.push(`${item.contractId}: customer or supplier identifier is missing`);
             }
+            const collected: GoszakupCollectedContract = {
+              contractId: item.contractId,
+              contractNumber: item.contractNumber,
+              signedAt: signedDate,
+              amount: item.amount,
+              ...parties,
+              searchCode: code
+            };
+            await options.onContract?.(collected);
             rows.push({ contractId: item.contractId, ...parties, searchCode: code });
             seen.add(key);
             if (delayMs > 0) await sleep(delayMs);
@@ -144,7 +167,7 @@ export async function exportGoszakupContracts(
     await browserLoader?.close();
   }
 
-  await writeContractWorkbook(options.outPath, rows);
+  if (options.writeWorkbook ?? true) await writeContractWorkbook(options.outPath, rows);
   return {
     xlsxPath: options.outPath,
     rows: rows.length,

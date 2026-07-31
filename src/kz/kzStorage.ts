@@ -60,13 +60,13 @@ export class KzStorage {
       INSERT INTO goszakup_registry_data (
         bin, participant_id, name_ru, name_kz, rnn, role, residency,
         phone, email, website, registration_date, last_update_date,
-        kopf, ownership_form, economic_sector, director_name, director_iin,
+        kopf, ownership_form, economic_sector, oked_list, director_name, director_iin,
         legal_address, location_address, full_address_ru, reporting_administrator,
         registry_url, updated_at, raw_snapshot_path
       ) VALUES (
         @bin, @participant_id, @name_ru, @name_kz, @rnn, @role, @residency,
         @phone, @email, @website, @registration_date, @last_update_date,
-        @kopf, @ownership_form, @economic_sector, @director_name, @director_iin,
+        @kopf, @ownership_form, @economic_sector, @oked_list, @director_name, @director_iin,
         @legal_address, @location_address, @full_address_ru, @reporting_administrator,
         @registry_url, @updated_at, @raw_snapshot_path
       )
@@ -76,7 +76,7 @@ export class KzStorage {
         residency = excluded.residency, phone = excluded.phone, email = excluded.email,
         website = excluded.website, registration_date = excluded.registration_date,
         last_update_date = excluded.last_update_date, kopf = excluded.kopf,
-        ownership_form = excluded.ownership_form, economic_sector = excluded.economic_sector,
+        ownership_form = excluded.ownership_form, economic_sector = excluded.economic_sector, oked_list = excluded.oked_list,
         director_name = excluded.director_name, director_iin = excluded.director_iin,
         legal_address = excluded.legal_address, location_address = excluded.location_address,
         full_address_ru = excluded.full_address_ru, reporting_administrator = excluded.reporting_administrator,
@@ -84,6 +84,7 @@ export class KzStorage {
         raw_snapshot_path = excluded.raw_snapshot_path
     `).run({
       ...record,
+      oked_list: record.oked_list ?? null,
       updated_at: record.updated_at ?? new Date().toISOString(),
       raw_snapshot_path: record.raw_snapshot_path ?? null
     });
@@ -163,6 +164,7 @@ function mapRegistry(row: Record<string, unknown>): GoszakupRegistryRecord {
     kopf: stringOrNull(row.kopf),
     ownership_form: stringOrNull(row.ownership_form),
     economic_sector: stringOrNull(row.economic_sector),
+    oked_list: stringOrNull(row.oked_list),
     director_name: stringOrNull(row.director_name),
     director_iin: stringOrNull(row.director_iin),
     legal_address: stringOrNull(row.legal_address),
