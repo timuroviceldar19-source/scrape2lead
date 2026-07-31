@@ -27,8 +27,9 @@ export function validateContractSourceCoverage(stats: { rows: number; minDate: s
   }
 }
 
-export function renderLeadCodeProposal(proposal: LeadCodeProposal): string {
-  return [renderTable("Коды с контрактами", proposal.nonZero), renderTable("Коды с 0 контрактов", proposal.zero)].join("\n\n");
+export function renderLeadCodeProposal(proposal: LeadCodeProposal, sample?: { cards: number; minDate: string | null; maxDate: string | null }): string {
+  const header = sample ? `# Черновик ЕНС ТРУ — выборка\n\nВыборка: обработано карточек договоров: ${sample.cards}; диапазон дат: ${sample.minDate ?? "-"}—${sample.maxDate ?? "-"}. Это не полный рынок.` : "";
+  return [header, renderTable("Коды с контрактами", proposal.nonZero), renderTable("Коды с 0 контрактов", proposal.zero)].filter(Boolean).join("\n\n");
 }
 
 function renderTable(title: string, rows: LeadCodeRow[]): string {
