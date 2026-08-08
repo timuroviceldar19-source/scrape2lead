@@ -107,8 +107,8 @@ export interface ProcurementCollectResult extends AutomationStepResult {
  */
 export interface ProcurementAutomationAdapter {
   collect: (configPath: string, outputDir: string, years: number[]) => Promise<ProcurementCollectResult>;
-  dryRun: (reportPath: string, outputPath: string) => Promise<AutomationStepResult>;
-  apply: (reportPath: string, limit: number | null) => Promise<AutomationStepResult>;
+  dryRun: (reportPath: string, outputPath: string, configPath: string) => Promise<AutomationStepResult>;
+  apply: (reportPath: string, limit: number | null, configPath: string) => Promise<AutomationStepResult>;
 }
 
 export interface AutomationDependencies {
