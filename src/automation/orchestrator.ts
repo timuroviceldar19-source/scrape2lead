@@ -130,7 +130,7 @@ export async function pushAutomationRun(config: AutomationConfig, runId: string,
       if (!adapter) throw new Error('workflow "f3-b2b" requires the procurement dependency adapter');
       if (manifest.stages.applyProcurement?.status !== "succeeded") {
         await runStage(manifest, manifestPath, "applyProcurement",
-          () => adapter.apply(manifest.artifacts.procurementReport!.path, config.approvalLimit), log);
+          () => adapter.apply(manifest.artifacts.procurementReport!.path, config.approvalLimit, config.procurementConfig), log);
       }
     } else {
       if (manifest.stages.applyPlans?.status !== "succeeded") await runStage(manifest, manifestPath, "applyPlans", () => deps.applyPlans(manifest.artifacts.plans!.path, config.approvalLimit), log);
@@ -175,7 +175,7 @@ async function prepareProcurementRun(
 
   const dryRunPath = path.join(runDir, "f3-dry-run.json");
   const dryRun = await runStage(manifest, manifestPath, "dryRunProcurement", async () => {
-    const result = await adapter.dryRun(collected.jsonPath, dryRunPath);
+    const result = await adapter.dryRun(collected.jsonPath, dryRunPath, config.procurementConfig);
     assertNoCriticalErrors("procurement dry-run", result);
     return result;
   }, log);

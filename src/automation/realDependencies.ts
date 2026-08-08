@@ -41,12 +41,20 @@ export function createRealAutomationDependencies(): AutomationDependencies {
           jsonPath: requireString(payload.jsonPath, "jsonPath")
         };
       },
-      dryRun: (reportPath, outputPath) =>
-        runProcurementPush(["--report", reportPath, "--output", outputPath]),
-      apply: (reportPath, limit) =>
-        runProcurementPush(withLimit(["--report", reportPath, "--execute"], limit))
+      dryRun: (reportPath, outputPath, configPath) =>
+        runProcurementPush(procurementDryRunArgs(reportPath, outputPath, configPath)),
+      apply: (reportPath, limit, configPath) =>
+        runProcurementPush(procurementApplyArgs(reportPath, limit, configPath))
     }
   };
+}
+
+export function procurementDryRunArgs(reportPath: string, outputPath: string, configPath: string): string[] {
+  return ["--report", reportPath, "--output", outputPath, "--config", configPath];
+}
+
+export function procurementApplyArgs(reportPath: string, limit: number | null, configPath: string): string[] {
+  return withLimit(["--report", reportPath, "--execute", "--config", configPath], limit);
 }
 
 async function runProcurementPush(args: string[]): Promise<AutomationStepResult> {

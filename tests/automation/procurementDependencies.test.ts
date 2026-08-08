@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { AUTOMATION_RESULT_PREFIX, readAutomationResult } from "../../src/automation/realDependencies.js";
+import {
+  AUTOMATION_RESULT_PREFIX,
+  procurementApplyArgs,
+  procurementDryRunArgs,
+  readAutomationResult
+} from "../../src/automation/realDependencies.js";
+
+describe("procurement push arguments", () => {
+  it("passes the selected procurement config to dry-run and production push", () => {
+    expect(procurementDryRunArgs("report.json", "dry-run.json", "config/f3.json"))
+      .toEqual(["--report", "report.json", "--output", "dry-run.json", "--config", "config/f3.json"]);
+    expect(procurementApplyArgs("report.json", 25, "config/f3.json"))
+      .toEqual(["--report", "report.json", "--execute", "--config", "config/f3.json", "--limit", "25"]);
+  });
+});
 
 describe("AUTOMATION_RESULT_JSON parsing", () => {
   it("reads paths and counts from the machine-readable line", () => {
