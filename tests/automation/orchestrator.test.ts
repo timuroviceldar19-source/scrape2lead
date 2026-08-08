@@ -203,6 +203,11 @@ describe("f3-b2b workflow",()=>{
       expect(fn).not.toHaveBeenCalled();
     }
     expect(d.procurement!.collect).toHaveBeenCalledWith("procurement.json",path.join(runs,result.runId),[2026,2027]);
+    expect(d.procurement!.dryRun).toHaveBeenCalledWith(
+      result.artifacts.procurementReport!.path,
+      result.artifacts.procurementDryRun!.path,
+      "procurement.json"
+    );
   });
 
   it("writes a run report with the counts an operator needs",async()=>{
@@ -242,7 +247,7 @@ describe("f3-b2b workflow",()=>{
     const result=await runScheduledAutomation(f3Config(runs,"push"),d,new Date("2026-07-27T10:00:00Z"));
 
     expect(result.status).toBe("pushed");
-    expect(d.procurement!.apply).toHaveBeenCalledWith(result.artifacts.procurementReport!.path,null);
+    expect(d.procurement!.apply).toHaveBeenCalledWith(result.artifacts.procurementReport!.path,null,"procurement.json");
   });
 
   it("refuses to push a report that changed after the dry-run",async()=>{
