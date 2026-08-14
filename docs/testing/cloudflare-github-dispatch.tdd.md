@@ -179,3 +179,17 @@ configuration.
 - Final focused suite: 27 passed; statements 96.66%, branches 89.74%, functions
   100%, lines 96.66%.
 - Final full suite: 713 passed, 4 skipped; lint, build, and Wrangler dry-run passed.
+
+Production acceptance on 2026-08-14:
+
+- Worker version `109b537f-2719-4120-b0ad-ee7da17b23ae` deployed successfully with
+  exactly the five consolidated triggers.
+- The real `15 10 * * *` Cloudflare event dispatched watchdog run `31791503491` at
+  15:15 Almaty. It correctly failed while the recovery PK collection was still in
+  progress, proving the afternoon alert does not accept an unfinished job.
+- Recovery PK run `31789764101` then completed successfully. Its source searches
+  returned zero rows for the current window, but the collection job itself completed
+  and published its artifacts.
+- Repeated afternoon watchdog run `31791626332` passed, identifying PK run
+  `31789764101` and main run `31788376531` as successful collections after their
+  respective afternoon boundaries.
