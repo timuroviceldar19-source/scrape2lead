@@ -26,7 +26,17 @@ name: GZ watchdog
 on:
   schedule:
     - cron: "30 6 * * *"
+    - cron: "15 10 * * *"
   workflow_dispatch:
+    inputs:
+      window:
+        description: "Collection window to verify"
+        required: true
+        default: "morning"
+        type: choice
+        options:
+          - morning
+          - afternoon
 
 jobs:
   check:
@@ -38,9 +48,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          WINDOW: ${{ github.event_name == 'workflow_dispatch' && inputs.window || (github.event.schedule == '15 10 * * *' && 'afternoon' || 'morning') }}
         run: |
           set -eu
-          midnight=$(date -u +%Y-%m-%dT00:00:00Z)
+          day=$(date -u +%Y-%m-%d)
+          if [ "$WINDOW" = "afternoon" ]; then
+            pk_since="${day}T08:00:00Z"
+            main_since="${day}T09:30:00Z"
+          else
+            pk_since="${day}T00:00:00Z"
+            main_since="$pk_since"
+          fi
+          echo "Checking $WINDOW collection window (PK since $pk_since, main since $main_since)"
           failed=0
 
           # Успех на уровне run сюда не годится. Прогон, где guard пропустил
@@ -57,11 +76,11 @@ jobs:
           # conclusion=skipped. Префикс имени ловит оба, фильтр по success
           # оставляет только настоящую работу.
           check() {
-            workflow="$1"; job="$2"; work_ok=0
+            workflow="$1"; job="$2"; since="$3"; work_ok=0
             for run_id in $(gh run list --workflow "$workflow" --limit 20 \
                 --json databaseId,createdAt,conclusion \
                 --jq "[.[]
-                       | select(.createdAt >= \"$midnight\")
+                       | select(.createdAt >= \"$since\")
                        | select(.conclusion == \"success\")
                       ] | .[].databaseId"); do
               hit=$(gh api "repos/$GH_REPO/actions/runs/$run_id/jobs" \
@@ -76,14 +95,14 @@ jobs:
               fi
             done
             if [ "$work_ok" -eq 0 ]; then
-              echo "ПРОПУСК: $workflow не выполнил сбор с $midnight"
+              echo "ПРОПУСК: $workflow не выполнил сбор с $since"
               return 1
             fi
             return 0
           }
 
-          check gz-daily-pk.yml   pk-plans       || failed=1
-          check gz-daily-main.yml plans-and-lots || failed=1
+          check gz-daily-pk.yml   pk-plans       "$pk_since"   || failed=1
+          check gz-daily-main.yml plans-and-lots "$main_since" || failed=1
 
           if [ "$failed" -ne 0 ]; then
             echo
