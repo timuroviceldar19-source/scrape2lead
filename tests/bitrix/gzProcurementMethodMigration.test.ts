@@ -105,4 +105,33 @@ describe("procurement-method migration execution", () => {
       assigneePreserved: true
     });
   });
+
+  it("refuses to build an update for a deal outside the move set", () => {
+    const [item] = buildProcurementMethodMigrationPlan([deal({
+      [PROCUREMENT_METHOD_FIELD]: ""
+    })]);
+
+    expect(() => buildProcurementMethodCrmItemUpdate(item)).toThrow(/not eligible/i);
+  });
+
+  it("rejects an invalid deal identifier", () => {
+    const [item] = buildProcurementMethodMigrationPlan([deal({ ID: "not-a-number" })]);
+
+    expect(() => buildProcurementMethodCrmItemUpdate(item)).toThrow(/invalid deal id/i);
+  });
+
+  it("rejects a wrong stage or a changed responsible", () => {
+    const [item] = buildProcurementMethodMigrationPlan([deal({})]);
+
+    expect(() => verifyProcurementMethodMigration(item, {
+      CATEGORY_ID: "41",
+      STAGE_ID: "C41:NEW",
+      ASSIGNED_BY_ID: "725"
+    })).toThrow(/stage mismatch/i);
+    expect(() => verifyProcurementMethodMigration(item, {
+      CATEGORY_ID: "41",
+      STAGE_ID: "C41:PREPARATION",
+      ASSIGNED_BY_ID: "195"
+    })).toThrow(/responsible changed/i);
+  });
 });
