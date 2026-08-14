@@ -25,10 +25,10 @@ const RETRY_DELAYS_MS = [5_000, 20_000] as const;
 const WORKFLOW_BY_CRON = {
   "40 3 * * *": "gz-daily-pk.yml", // 08:40 Алматы
   "10 4 * * *": "f3-daily.yml", // 09:10 Алматы
-  "0 5 * * *": "gz-daily-main.yml", // 10:00 Алматы
-  "30 6 * * *": "gz-watchdog.yml", // 11:30 Алматы
-  "0 8 * * *": "gz-daily-pk.yml", // 13:00 Алматы
-  "30 9 * * *": "gz-daily-main.yml", // 14:30 Алматы
+  // Cloudflare Free allows five cron triggers per account. These two expressions
+  // each cover two exact slots; scheduledTime selects the intended workflow.
+  "0 5,8 * * *": { 5: "gz-daily-main.yml", 8: "gz-daily-pk.yml" }, // 10:00/13:00 Алматы
+  "30 6,9 * * *": { 6: "gz-watchdog.yml", 9: "gz-daily-main.yml" }, // 11:30/14:30 Алматы
   "15 10 * * *": "gz-watchdog.yml", // 15:15 Алматы
 } as const;
 
@@ -64,10 +64,19 @@ const DEFAULT_DEPENDENCIES: DispatchDependencies = {
   sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 };
 
-function workflowForCron(cron: string): string {
-  const workflow = WORKFLOW_BY_CRON[cron as keyof typeof WORKFLOW_BY_CRON];
-  if (!workflow) {
+function workflowForSchedule(cron: string, scheduledTime: number): string {
+  const target = WORKFLOW_BY_CRON[cron as keyof typeof WORKFLOW_BY_CRON];
+  if (!target) {
     throw new Error(`Unknown cron trigger: ${cron}`);
+  }
+  if (typeof target === "string") {
+    return target;
+  }
+
+  const scheduledHour = new Date(scheduledTime).getUTCHours();
+  const workflow = target[scheduledHour as keyof typeof target];
+  if (!workflow) {
+    throw new Error(`Unexpected scheduled time for cron ${cron}: ${scheduledTime}`);
   }
   return workflow;
 }
@@ -98,7 +107,7 @@ export async function dispatchScheduled(
   env: DispatchEnvironment,
   dependencies: DispatchDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<void> {
-  const workflow = workflowForCron(controller.cron);
+  const workflow = workflowForSchedule(controller.cron, controller.scheduledTime);
   const token = env.GITHUB_ACTIONS_TOKEN;
   if (!token) {
     throw new Error("GITHUB_ACTIONS_TOKEN is not configured");

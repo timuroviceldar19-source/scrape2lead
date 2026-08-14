@@ -8,6 +8,9 @@ import {
 
 const TOKEN = "test-token-do-not-use";
 const SCHEDULED_TIME = Date.parse("2026-07-26T03:40:00Z");
+const MAIN_SCHEDULED_TIME = Date.parse("2026-07-26T05:00:00Z");
+const WATCHDOG_SCHEDULED_TIME = Date.parse("2026-07-26T06:30:00Z");
+const AFTERNOON_PK_SCHEDULED_TIME = Date.parse("2026-07-26T08:00:00Z");
 
 function dependencies(...responses: Response[]) {
   const queue = [...responses];
@@ -99,7 +102,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
 
     await expect(
       dispatchScheduled(
-        { cron: "0 5 * * *", scheduledTime: SCHEDULED_TIME },
+        { cron: "0 5,8 * * *", scheduledTime: MAIN_SCHEDULED_TIME },
         { GITHUB_ACTIONS_TOKEN: TOKEN },
         deps,
       ),
@@ -107,9 +110,9 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
 
     expect(deps.log).toHaveBeenCalledWith({
       event: "github_workflow_dispatch",
-      cron: "0 5 * * *",
+      cron: "0 5,8 * * *",
       workflow: "gz-daily-main.yml",
-      scheduledTime: "2026-07-26T03:40:00.000Z",
+      scheduledTime: "2026-07-26T05:00:00.000Z",
       status: 204,
     });
   });
@@ -118,16 +121,16 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     const deps = dependencies(new Response("accepted", { status: 202 }));
 
     await dispatchScheduled(
-      { cron: "30 6 * * *", scheduledTime: SCHEDULED_TIME },
+      { cron: "30 6,9 * * *", scheduledTime: WATCHDOG_SCHEDULED_TIME },
       { GITHUB_ACTIONS_TOKEN: TOKEN },
       deps,
     );
 
     expect(deps.log).toHaveBeenCalledWith({
       event: "github_workflow_dispatch",
-      cron: "30 6 * * *",
+      cron: "30 6,9 * * *",
       workflow: "gz-watchdog.yml",
-      scheduledTime: "2026-07-26T03:40:00.000Z",
+      scheduledTime: "2026-07-26T06:30:00.000Z",
       status: 202,
     });
   });
@@ -137,7 +140,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
 
     await expect(
       dispatchScheduled(
-        { cron: "30 6 * * *", scheduledTime: SCHEDULED_TIME },
+        { cron: "30 6,9 * * *", scheduledTime: WATCHDOG_SCHEDULED_TIME },
         { GITHUB_ACTIONS_TOKEN: "" },
         deps,
       ),
@@ -154,7 +157,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
       );
 
       const error = await dispatchScheduled(
-        { cron: "30 6 * * *", scheduledTime: SCHEDULED_TIME },
+        { cron: "30 6,9 * * *", scheduledTime: WATCHDOG_SCHEDULED_TIME },
         { GITHUB_ACTIONS_TOKEN: TOKEN },
         deps,
       ).catch((caught: unknown) => caught);
@@ -177,7 +180,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     );
 
     await dispatchScheduled(
-      { cron: "0 8 * * *", scheduledTime: SCHEDULED_TIME },
+      { cron: "0 5,8 * * *", scheduledTime: AFTERNOON_PK_SCHEDULED_TIME },
       { GITHUB_ACTIONS_TOKEN: TOKEN },
       deps,
     );
@@ -187,7 +190,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     expect(deps.sleep).toHaveBeenNthCalledWith(2, 20_000);
     expect(deps.log).toHaveBeenNthCalledWith(1, {
       event: "github_workflow_dispatch_retry",
-      cron: "0 8 * * *",
+      cron: "0 5,8 * * *",
       workflow: "gz-daily-pk.yml",
       status: 503,
       attempt: 1,
@@ -195,7 +198,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     });
     expect(deps.log).toHaveBeenNthCalledWith(2, {
       event: "github_workflow_dispatch_retry",
-      cron: "0 8 * * *",
+      cron: "0 5,8 * * *",
       workflow: "gz-daily-pk.yml",
       status: 502,
       attempt: 2,
@@ -203,9 +206,9 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     });
     expect(deps.log).toHaveBeenLastCalledWith({
       event: "github_workflow_dispatch",
-      cron: "0 8 * * *",
+      cron: "0 5,8 * * *",
       workflow: "gz-daily-pk.yml",
-      scheduledTime: "2026-07-26T03:40:00.000Z",
+      scheduledTime: "2026-07-26T08:00:00.000Z",
       status: 204,
     });
   });
@@ -220,7 +223,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
       );
 
       const error = await dispatchScheduled(
-        { cron: "0 8 * * *", scheduledTime: SCHEDULED_TIME },
+        { cron: "0 5,8 * * *", scheduledTime: AFTERNOON_PK_SCHEDULED_TIME },
         { GITHUB_ACTIONS_TOKEN: TOKEN },
         deps,
       ).catch((caught: unknown) => caught);
