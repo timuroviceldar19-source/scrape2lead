@@ -25,14 +25,14 @@ function dependencies(...responses: Response[]) {
 
 describe("Cloudflare GitHub workflow dispatcher", () => {
   it.each([
-    ["40 3 * * *", "gz-daily-pk.yml", undefined],
-    ["10 4 * * *", "f3-daily.yml", undefined],
-    ["0 5 * * *", "gz-daily-main.yml", undefined],
-    ["30 6 * * *", "gz-watchdog.yml", undefined],
-    ["0 8 * * *", "gz-daily-pk.yml", undefined],
-    ["30 9 * * *", "gz-daily-main.yml", undefined],
-    ["15 10 * * *", "gz-watchdog.yml", { window: "afternoon" }],
-  ])("maps %s to %s and sends one authenticated dispatch", async (cron, workflow, inputs) => {
+    ["40 3 * * *", "2026-07-26T03:40:00Z", "gz-daily-pk.yml", undefined],
+    ["10 4 * * *", "2026-07-26T04:10:00Z", "f3-daily.yml", undefined],
+    ["0 5,8 * * *", "2026-07-26T05:00:00Z", "gz-daily-main.yml", undefined],
+    ["30 6,9 * * *", "2026-07-26T06:30:00Z", "gz-watchdog.yml", undefined],
+    ["0 5,8 * * *", "2026-07-26T08:00:00Z", "gz-daily-pk.yml", undefined],
+    ["30 6,9 * * *", "2026-07-26T09:30:00Z", "gz-daily-main.yml", undefined],
+    ["15 10 * * *", "2026-07-26T10:15:00Z", "gz-watchdog.yml", { window: "afternoon" }],
+  ])("maps %s at %s to %s and sends one authenticated dispatch", async (cron, scheduledAt, workflow, inputs) => {
     const deps = dependencies(
       Response.json({
         workflow_run_id: 30190963247,
@@ -44,7 +44,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     );
 
     await dispatchScheduled(
-      { cron, scheduledTime: SCHEDULED_TIME },
+      { cron, scheduledTime: Date.parse(scheduledAt) },
       { GITHUB_ACTIONS_TOKEN: TOKEN },
       deps,
     );
@@ -249,6 +249,20 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     expect(deps.fetch).not.toHaveBeenCalled();
     expect(JSON.stringify(deps.log.mock.calls)).not.toContain(TOKEN);
   });
+
+  it("rejects an unexpected time emitted for a grouped cron", async () => {
+    const deps = dependencies(new Response(null, { status: 204 }));
+
+    await expect(
+      dispatchScheduled(
+        { cron: "0 5,8 * * *", scheduledTime: Date.parse("2026-07-26T06:00:00Z") },
+        { GITHUB_ACTIONS_TOKEN: TOKEN },
+        deps,
+      ),
+    ).rejects.toThrow("Unexpected scheduled time");
+
+    expect(deps.fetch).not.toHaveBeenCalled();
+  });
 });
 
 describe("Cloudflare cron wiring", () => {
@@ -260,22 +274,32 @@ describe("Cloudflare cron wiring", () => {
   it("keeps wrangler.jsonc and WORKFLOW_BY_CRON in sync in both directions", async () => {
     // workflowForCron бросает на неизвестном кроне, поэтому расхождение этих двух
     // рукописных списков падает только в рантайме Worker.
+    const scheduledTimeByCron: Record<string, number> = {
+      "40 3 * * *": Date.parse("2026-07-26T03:40:00Z"),
+      "10 4 * * *": Date.parse("2026-07-26T04:10:00Z"),
+      "0 5,8 * * *": Date.parse("2026-07-26T05:00:00Z"),
+      "30 6,9 * * *": Date.parse("2026-07-26T06:30:00Z"),
+      "15 10 * * *": Date.parse("2026-07-26T10:15:00Z"),
+    };
     for (const cron of wranglerCrons) {
       const deps = dependencies(new Response(null, { status: 204 }));
       await expect(
-        dispatchScheduled({ cron, scheduledTime: SCHEDULED_TIME }, { GITHUB_ACTIONS_TOKEN: TOKEN }, deps),
+        dispatchScheduled({ cron, scheduledTime: scheduledTimeByCron[cron] }, { GITHUB_ACTIONS_TOKEN: TOKEN }, deps),
       ).resolves.toBeUndefined();
     }
 
     const dispatched = new Set<string>();
     for (const cron of wranglerCrons) {
       const deps = dependencies(new Response(null, { status: 204 }));
-      await dispatchScheduled({ cron, scheduledTime: SCHEDULED_TIME }, { GITHUB_ACTIONS_TOKEN: TOKEN }, deps);
+      await dispatchScheduled({ cron, scheduledTime: scheduledTimeByCron[cron] }, { GITHUB_ACTIONS_TOKEN: TOKEN }, deps);
       dispatched.add(String(deps.fetch.mock.calls[0]?.[0]).split("/workflows/")[1]?.split("/")[0] ?? "");
     }
     expect([...dispatched].sort()).toEqual(
       ["f3-daily.yml", "gz-daily-main.yml", "gz-daily-pk.yml", "gz-watchdog.yml"],
     );
+    expect(wranglerCrons).toHaveLength(5);
+    expect(wranglerCrons).toContain("0 5,8 * * *");
+    expect(wranglerCrons).toContain("30 6,9 * * *");
   });
 
   it("runs an afternoon watchdog after both repeat collection slots", () => {
