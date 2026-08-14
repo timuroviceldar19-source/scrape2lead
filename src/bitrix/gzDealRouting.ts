@@ -3,6 +3,8 @@ import { z } from "zod";
 
 const routingRuleSchema = z.object({
   name: z.string().min(1),
+  /** Exact procurement-method names, matched case-insensitively after trimming. */
+  purchaseMethods: z.array(z.string().min(1)).optional(),
   /** ЕНСТРУ-суффиксы (последние значащие цифры кода), например [21, 43]. */
   enstruSuffixes: z.array(z.number().int().nonnegative()).optional(),
   /** Подстроки для поиска в keyword/itemName без учёта регистра. */
@@ -10,8 +12,10 @@ const routingRuleSchema = z.object({
   categoryId: z.number().int().nonnegative(),
   stageId: z.string().min(1)
 }).refine(
-  (rule) => (rule.enstruSuffixes?.length ?? 0) > 0 || (rule.keywordsAny?.length ?? 0) > 0,
-  { message: "routing rule needs enstruSuffixes and/or keywordsAny" }
+  (rule) => (rule.purchaseMethods?.length ?? 0) > 0
+    || (rule.enstruSuffixes?.length ?? 0) > 0
+    || (rule.keywordsAny?.length ?? 0) > 0,
+  { message: "routing rule needs purchaseMethods, enstruSuffixes and/or keywordsAny" }
 );
 
 export const gzRoutingConfigSchema = z.object({
@@ -39,6 +43,7 @@ export type GzRoutingConfig = z.infer<typeof gzRoutingConfigSchema>;
 export type GzRoutingRule = z.infer<typeof routingRuleSchema>;
 
 export interface GzRoutableRow {
+  purchaseMethod?: string | null;
   truCode?: string | null;
   keyword?: string | null;
   itemName?: string | null;
@@ -62,17 +67,21 @@ export function extractEnstruSuffix(truCode: string | null | undefined): number 
 }
 
 export function resolveGzRoute(row: GzRoutableRow, config: GzRoutingConfig): GzRoute {
+  const purchaseMethod = (row.purchaseMethod ?? "").trim().toLocaleLowerCase("ru");
   const suffix = extractEnstruSuffix(row.truCode);
   const haystack = `${row.keyword ?? ""} ${row.itemName ?? ""}`.toLowerCase();
 
   for (const rule of config.rules) {
+    const purchaseMethodMatch = rule.purchaseMethods?.length
+      ? rule.purchaseMethods.some((method) => method.trim().toLocaleLowerCase("ru") === purchaseMethod)
+      : true;
     const suffixMatch = rule.enstruSuffixes?.length
       ? suffix !== null && rule.enstruSuffixes.includes(suffix)
       : true;
     const keywordMatch = rule.keywordsAny?.length
       ? rule.keywordsAny.some((needle) => haystack.includes(needle.toLowerCase()))
       : true;
-    if (suffixMatch && keywordMatch) {
+    if (purchaseMethodMatch && suffixMatch && keywordMatch) {
       return { categoryId: rule.categoryId, stageId: rule.stageId, ruleName: rule.name };
     }
   }

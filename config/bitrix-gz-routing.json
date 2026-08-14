@@ -1,6 +1,18 @@
 {
   "rules": [
     {
+      "name": "electronic-shop",
+      "purchaseMethods": ["Электронный магазин"],
+      "categoryId": 41,
+      "stageId": "C41:NEW"
+    },
+    {
+      "name": "ok-zcp",
+      "purchaseMethods": ["Открытый конкурс", "Запрос ценовых предложений"],
+      "categoryId": 9,
+      "stageId": "C9:NEW"
+    },
+    {
       "name": "pk-monitors",
       "keywordsAny": ["компьютер", "монитор", "моноблок", "ноутбук", "многофункциональн", "мфу", "принтер"],
       "categoryId": 9,
