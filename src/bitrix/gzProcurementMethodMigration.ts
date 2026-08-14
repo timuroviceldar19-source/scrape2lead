@@ -30,6 +30,21 @@ export interface ProcurementMigrationItem {
   updateFields: { CATEGORY_ID: number; STAGE_ID: string } | null;
 }
 
+export interface ProcurementMigrationAfter {
+  CATEGORY_ID?: string | number | null;
+  STAGE_ID?: string | null;
+  ASSIGNED_BY_ID?: string | number | null;
+}
+
+export interface ProcurementMigrationVerification {
+  afterCategoryId: string;
+  afterStageId: string;
+  afterAssigneeId: string;
+  categoryMatched: boolean;
+  stageMatched: boolean;
+  assigneePreserved: boolean;
+}
+
 const METHOD_TARGETS = new Map<string, number>([
   ["электронный магазин", 41],
   ["открытый конкурс", 9],
@@ -113,4 +128,63 @@ export function buildProcurementMethodMigrationPlan(
       updateFields: { CATEGORY_ID: targetCategoryId, STAGE_ID: targetStageId }
     };
   });
+}
+
+export function buildProcurementMethodCrmItemUpdate(item: ProcurementMigrationItem): {
+  entityTypeId: 2;
+  id: number;
+  fields: { categoryId: number; stageId: string };
+} {
+  if (item.decision !== "move" || item.targetCategoryId === null || item.targetStageId === null) {
+    throw new Error(`deal ${item.dealId} is not eligible for migration`);
+  }
+  const id = Number(item.dealId);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new Error(`invalid deal id: ${item.dealId}`);
+  }
+  return {
+    entityTypeId: 2,
+    id,
+    fields: {
+      categoryId: item.targetCategoryId,
+      stageId: item.targetStageId
+    }
+  };
+}
+
+export function verifyProcurementMethodMigration(
+  item: ProcurementMigrationItem,
+  after: ProcurementMigrationAfter | null
+): ProcurementMigrationVerification {
+  const afterCategoryId = text(after?.CATEGORY_ID);
+  const afterStageId = text(after?.STAGE_ID);
+  const afterAssigneeId = text(after?.ASSIGNED_BY_ID);
+  const categoryMatched = afterCategoryId === text(item.targetCategoryId);
+  const stageMatched = afterStageId === text(item.targetStageId);
+  const assigneePreserved = afterAssigneeId === item.currentAssigneeId;
+
+  if (!categoryMatched) {
+    throw new Error(
+      `category mismatch for deal ${item.dealId}: ${afterCategoryId || "missing"} != ${item.targetCategoryId}`
+    );
+  }
+  if (!stageMatched) {
+    throw new Error(
+      `stage mismatch for deal ${item.dealId}: ${afterStageId || "missing"} != ${item.targetStageId}`
+    );
+  }
+  if (!assigneePreserved) {
+    throw new Error(
+      `responsible changed for deal ${item.dealId}: ${item.currentAssigneeId} -> ${afterAssigneeId || "missing"}`
+    );
+  }
+
+  return {
+    afterCategoryId,
+    afterStageId,
+    afterAssigneeId,
+    categoryMatched,
+    stageMatched,
+    assigneePreserved
+  };
 }

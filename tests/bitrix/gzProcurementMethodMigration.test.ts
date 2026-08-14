@@ -83,7 +83,6 @@ describe("procurement-method migration execution", () => {
     const [item] = buildProcurementMethodMigrationPlan([deal({})]);
 
     expect(() => verifyProcurementMethodMigration(item, {
-      ID: "1",
       CATEGORY_ID: "9",
       STAGE_ID: "C9:UC_KQEL1P",
       ASSIGNED_BY_ID: "725"
@@ -94,7 +93,6 @@ describe("procurement-method migration execution", () => {
     const [item] = buildProcurementMethodMigrationPlan([deal({})]);
 
     expect(verifyProcurementMethodMigration(item, {
-      ID: "1",
       CATEGORY_ID: "41",
       STAGE_ID: "C41:PREPARATION",
       ASSIGNED_BY_ID: "725"

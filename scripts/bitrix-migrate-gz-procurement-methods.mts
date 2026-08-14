@@ -3,8 +3,10 @@ import path from "node:path";
 import dotenv from "dotenv";
 import { BitrixClient } from "../src/bitrix/client.js";
 import {
+  buildProcurementMethodCrmItemUpdate,
   buildProcurementMethodMigrationPlan,
   PROCUREMENT_METHOD_FIELD,
+  verifyProcurementMethodMigration,
   type ProcurementMigrationDeal,
   type ProcurementMigrationItem
 } from "../src/bitrix/gzProcurementMethodMigration.js";
@@ -92,24 +94,17 @@ async function main(): Promise<void> {
   if (args.execute) {
     for (const item of selected) {
       if (!item.updateFields) continue;
-      await client.update("deal", item.dealId, item.updateFields);
+      await client.call("crm.item.update", buildProcurementMethodCrmItemUpdate(item));
       const after = await client.findFirst("deal", { ID: item.dealId }, [
         "ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID"
       ]);
-      const afterAssignee = String(after?.ASSIGNED_BY_ID ?? "");
-      const assigneePreserved = afterAssignee === item.currentAssigneeId;
+      const verification = verifyProcurementMethodMigration(item, after);
       results.push({
         dealId: item.dealId,
         beforeAssigneeId: item.currentAssigneeId,
-        afterAssigneeId: afterAssignee,
-        afterCategoryId: String(after?.CATEGORY_ID ?? ""),
-        afterStageId: String(after?.STAGE_ID ?? ""),
-        assigneePreserved
+        ...verification
       });
-      console.log(`[moved] ${item.dealId} assignee_preserved=${assigneePreserved}`);
-      if (!assigneePreserved) {
-        throw new Error(`responsible changed for deal ${item.dealId}: ${item.currentAssigneeId} -> ${afterAssignee}`);
-      }
+      console.log(`[moved] ${item.dealId} category=${verification.afterCategoryId} stage=${verification.afterStageId} assignee_preserved=${verification.assigneePreserved}`);
     }
   }
 
