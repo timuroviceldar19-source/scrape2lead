@@ -11,6 +11,18 @@ import {
 const CONFIG: GzRoutingConfig = {
   rules: [
     {
+      name: "electronic-shop",
+      purchaseMethods: ["Электронный магазин"],
+      categoryId: 41,
+      stageId: "C41:NEW"
+    },
+    {
+      name: "ok-zcp",
+      purchaseMethods: ["Открытый конкурс", "Запрос ценовых предложений"],
+      categoryId: 9,
+      stageId: "C9:NEW"
+    },
+    {
       name: "pk-monitors",
       keywordsAny: ["компьютер", "монитор", "моноблок", "многофункциональн", "мфу"],
       categoryId: 9,
@@ -43,6 +55,28 @@ describe("extractEnstruSuffix", () => {
 });
 
 describe("resolveGzRoute", () => {
+  it("routes known purchase methods before product rules", () => {
+    expect(resolveGzRoute({
+      purchaseMethod: "  ЭЛЕКТРОННЫЙ МАГАЗИН  ",
+      keyword: "Ноутбук"
+    }, CONFIG)).toEqual({ categoryId: 41, stageId: "C41:NEW", ruleName: "electronic-shop" });
+
+    expect(resolveGzRoute({
+      purchaseMethod: "Запрос ценовых предложений",
+      itemName: "Панель интерактивная"
+    }, CONFIG)).toEqual({ categoryId: 9, stageId: "C9:NEW", ruleName: "ok-zcp" });
+
+    expect(resolveGzRoute({ purchaseMethod: "Открытый конкурс" }, CONFIG))
+      .toEqual({ categoryId: 9, stageId: "C9:NEW", ruleName: "ok-zcp" });
+  });
+
+  it("keeps legacy routing for empty or unknown purchase methods", () => {
+    expect(resolveGzRoute({ purchaseMethod: "", keyword: "Компьютер" }, CONFIG).ruleName)
+      .toBe("pk-monitors");
+    expect(resolveGzRoute({ purchaseMethod: "Аукцион", itemName: "Панель интерактивная" }, CONFIG).ruleName)
+      .toBe("default");
+  });
+
   it("routes ENSTRU suffixes 21 and 43 to the panels pipeline", () => {
     expect(resolveGzRoute({ truCode: "262030.100.000043", keyword: "Доска специальная" }, CONFIG))
       .toEqual({ categoryId: 41, stageId: "C41:NEW", ruleName: "panels-21-43" });
