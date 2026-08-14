@@ -35,13 +35,13 @@ The source plan was supplied in the implementation request on 2026-07-26.
 
 | Guarantee | Evidence | Result |
 |---|---|---|
-| All five UTC cron expressions select the intended workflow and `main` ref, including the two afternoon slots that repeat a morning workflow | Parameterized fetch-mock test | PASS |
+| All seven UTC cron expressions select the intended workflow and `main` ref, including both collection pairs and both watchdog windows | Parameterized fetch-mock test | PASS |
 | Dispatch uses the GitHub media type, API version, bearer token and JSON body | Request contract assertions | PASS |
 | The real `204 No Content` response is accepted | Response test | PASS |
 | A hypothetical `2xx` carrying a JSON body is accepted and its run ids logged | Response test | PASS (speculative — see below) |
 | Other successful `2xx` bodies may be empty or non-JSON | `202` response test | PASS |
 | Unknown cron and missing secret fail before any network request | Guard tests | PASS |
-| `401`, `403`, `404` and `5xx` cause one attempt only | Parameterized error test | PASS |
+| Permanent `4xx` responses cause one attempt; `429` and transient `5xx` responses get at most three attempts with 5/20-second backoff | Parameterized error and recovery tests | PASS |
 | A token echoed in an error body is redacted from the thrown error | Secret-redaction assertion | PASS |
 | Success logs contain schedule/run metadata but not the token | Structured-log assertions | PASS |
 | Wrangler can bundle the scheduled handler and parse its configuration | `npm run cloudflare:check` | PASS |
@@ -131,3 +131,33 @@ End-to-end acceptance passed on the repeated watchdog-only smoke event:
 - The temporary smoke crons were then removed. Production version
   `a8180034-7874-4d28-946d-336d7a19b0ff` retains only the three documented daily
   schedules.
+
+## 2026-08-14 scheduler resilience regression
+
+Cloudflare delivered the 13:00 Almaty PK cron at `2026-08-14T08:00:37Z`, but the
+Worker invocation ended with `scriptThrewException` after one GitHub subrequest. No
+GitHub Actions run was created. The same Worker successfully dispatched the other
+slots that day, so this change treats retryable GitHub HTTP responses as a bounded
+transient failure rather than changing authentication or workflow configuration.
+
+- RED checkpoint `f65b718`: 26 focused tests produced 8 intended failures. They
+  demonstrated the missing retries, missing afternoon watchdog mapping/configuration,
+  and missing window-specific dispatch input.
+- GREEN checkpoint `05504c6`: all 26 focused tests passed after adding retry handling
+  and the afternoon watchdog.
+- Retries are limited to HTTP `429`, `500`, `502`, `503`, and `504`; the Worker makes
+  at most three attempts with 5-second and 20-second delays. Permanent `4xx` errors
+  remain single-attempt failures, and any echoed token is redacted.
+- The `15 10 * * *` watchdog dispatch sends `window=afternoon`. It only accepts a PK
+  collection created since 08:00 UTC and a main collection created since 09:30 UTC,
+  preventing morning successes from masking a missed afternoon slot.
+
+Verification before publication:
+
+- Focused suite: 26 passed.
+- Focused coverage: statements 96.49%, branches 88.57%, functions 100%, lines 96.49%.
+- Full suite: 712 passed, 4 skipped.
+- `npm run lint`, `npm run build`, and `npm run cloudflare:check`: passed.
+- `npm audit --audit-level=high`: failed on 11 existing dependency findings
+  (8 high, 2 moderate, 1 low). The forced remediation includes breaking upgrades
+  to Wrangler and ExcelJS, so dependency upgrades remain outside this scheduler fix.
