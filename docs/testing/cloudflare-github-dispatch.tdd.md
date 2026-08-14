@@ -161,3 +161,21 @@ Verification before publication:
 - `npm audit --audit-level=high`: failed on 11 existing dependency findings
   (8 high, 2 moderate, 1 low). The forced remediation includes breaking upgrades
   to Wrangler and ExcelJS, so dependency upgrades remain outside this scheduler fix.
+
+### Cloudflare Free cron limit
+
+The first production deployment attempt uploaded the Worker code but Cloudflare
+rejected the seven-trigger schedule with API error `10072`: the account's Free plan
+allows five cron triggers. The existing five-trigger schedule remained the active
+configuration.
+
+- RED checkpoint `f137835`: the focused suite failed in 6 places after specifying
+  consolidated cron expressions and time-sensitive routing.
+- GREEN checkpoint `b832485`: two pairs are consolidated as `0 5,8 * * *` and
+  `30 6,9 * * *`; the event's exact UTC hour selects the intended workflow. Together
+  with the PK, F3, and afternoon-watchdog expressions, all seven daily slots fit in
+  exactly five Cloudflare triggers.
+- Unexpected times for a grouped expression fail before contacting GitHub.
+- Final focused suite: 27 passed; statements 96.66%, branches 89.74%, functions
+  100%, lines 96.66%.
+- Final full suite: 713 passed, 4 skipped; lint, build, and Wrangler dry-run passed.
