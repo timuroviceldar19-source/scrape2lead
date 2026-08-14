@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildProcurementMethodCrmItemUpdate,
   buildProcurementMethodMigrationPlan,
   PROCUREMENT_METHOD_FIELD,
+  verifyProcurementMethodMigration,
   type ProcurementMigrationDeal
 } from "../../src/bitrix/gzProcurementMethodMigration.js";
 
@@ -60,5 +62,49 @@ describe("buildProcurementMethodMigrationPlan", () => {
     ]);
 
     expect(items.map((item) => item.decision)).toEqual(["frozen-stage", "unmapped-stage"]);
+  });
+});
+
+describe("procurement-method migration execution", () => {
+  it("uses the universal CRM API shape required for cross-pipeline moves", () => {
+    const [item] = buildProcurementMethodMigrationPlan([deal({})]);
+
+    expect(buildProcurementMethodCrmItemUpdate(item)).toEqual({
+      entityTypeId: 2,
+      id: 1,
+      fields: {
+        categoryId: 41,
+        stageId: "C41:PREPARATION"
+      }
+    });
+  });
+
+  it("rejects a silent no-op even when the assignee was preserved", () => {
+    const [item] = buildProcurementMethodMigrationPlan([deal({})]);
+
+    expect(() => verifyProcurementMethodMigration(item, {
+      ID: "1",
+      CATEGORY_ID: "9",
+      STAGE_ID: "C9:UC_KQEL1P",
+      ASSIGNED_BY_ID: "725"
+    })).toThrow(/category.*9.*41/i);
+  });
+
+  it("accepts only the exact target pipeline, stage, and original assignee", () => {
+    const [item] = buildProcurementMethodMigrationPlan([deal({})]);
+
+    expect(verifyProcurementMethodMigration(item, {
+      ID: "1",
+      CATEGORY_ID: "41",
+      STAGE_ID: "C41:PREPARATION",
+      ASSIGNED_BY_ID: "725"
+    })).toEqual({
+      afterCategoryId: "41",
+      afterStageId: "C41:PREPARATION",
+      afterAssigneeId: "725",
+      categoryMatched: true,
+      stageMatched: true,
+      assigneePreserved: true
+    });
   });
 });
