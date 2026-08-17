@@ -77,6 +77,28 @@ function registry(overrides: Partial<GoszakupRegistryRecord> = {}): GoszakupRegi
 }
 
 describe("buildExportRow registry fallback", () => {
+  it("keeps a list-only row when customer BIN was intentionally not fetched", () => {
+    const row = buildExportRow(
+      listItem({
+        customer_name: "ГУ Отдел образования города Балхаш",
+        keyword: "Балхаш",
+        status: "Утвержден",
+        planned_month: "Август"
+      }),
+      detail({ customer_bin: null }),
+      null,
+      { allowMissingCustomerBin: true }
+    );
+
+    expect(row).toMatchObject({
+      customer_bin: "",
+      customer_name: "ГУ Отдел образования города Балхаш",
+      keyword: "Балхаш",
+      status: "Утвержден",
+      planned_month: "Август"
+    });
+  });
+
   it("prefers the official registry customer name", () => {
     const row = buildExportRow(
       listItem({ customer_name: "Сокращённое название" }),

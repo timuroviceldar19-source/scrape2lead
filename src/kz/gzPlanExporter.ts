@@ -36,7 +36,7 @@ const EXPORT_COLUMNS: Array<{ header: string; key: keyof GzPlanExportRow; width:
   { header: "Кол-во", key: "quantity", width: 10 },
   { header: "Цена за ед.", key: "unit_price", width: 16 },
   { header: "Дополнительная характеристика", key: "extra_characteristics", width: 48 },
-  { header: "Ключевое слово", key: "keyword", width: 28 },
+  { header: "Населённый пункт (КАТО)", key: "keyword", width: 28 },
   { header: "№ пункта плана", key: "plan_list_number", width: 16 },
   { header: "ID пункта (API)", key: "plan_point_id", width: 14 },
   { header: "Планируемый срок", key: "planned_month", width: 16 },
@@ -121,7 +121,12 @@ async function exportCollectedPlans(
   }
 
   const builtRows = items
-    .map((item) => buildExportRow(item, item.detail, registryByBin.get(item.detail?.customer_bin ?? "") ?? null))
+    .map((item) => buildExportRow(
+      item,
+      item.detail,
+      registryByBin.get(item.detail?.customer_bin ?? "") ?? null,
+      { allowMissingCustomerBin: options.skipDetails ?? false }
+    ))
     .filter((row): row is GzPlanExportRow => row !== null);
   const filterResult = filterPlanRowsWithStats(builtRows, options.minAmount ?? 0, options.excludeKeywords ?? []);
   const rows = filterResult.items.sort(compareExportRows);
@@ -216,10 +221,11 @@ function normalizeSupplierProfileUrl(value: string): string | null {
 export function buildExportRow(
   listItem: GoszakupPlanListItem,
   detail: GoszakupPlanDetail | null,
-  registry: GoszakupRegistryRecord | null
+  registry: GoszakupRegistryRecord | null,
+  options: { allowMissingCustomerBin?: boolean } = {}
 ): GzPlanExportRow | null {
   const customerBin = detail?.customer_bin;
-  if (!customerBin || !isValidBin(customerBin)) {
+  if ((!customerBin || !isValidBin(customerBin)) && !options.allowMissingCustomerBin) {
     console.warn(`gz plan export: skip plan ${listItem.plan_point_id} — missing customer BIN`);
     return null;
   }
@@ -235,7 +241,7 @@ export function buildExportRow(
   const customerLink = listItem.customer_url ?? buildRegistryCustomerUrl(registry);
 
   return {
-    customer_bin: customerBin,
+    customer_bin: customerBin && isValidBin(customerBin) ? customerBin : "",
     customer_name: registry?.name_ru ?? listItem.customer_name ?? detail?.customer_name ?? "",
     website: registry?.website ?? "",
     email: registry?.email ?? "",
