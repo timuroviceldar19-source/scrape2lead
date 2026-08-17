@@ -172,6 +172,37 @@ describe("collectPlanSearch", () => {
       allowedStatusNames: ["Утвержден"]
     })).rejects.toThrow(/maxPages.*3/i);
   });
+
+  it("uses page=2 after the first page and rejects an unexpectedly empty page", async () => {
+    const urls: string[] = [];
+    let contentCall = 0;
+    const page: PlanSearchPage = {
+      async goto(url) { urls.push(url); },
+      async waitForTimeout() {},
+      async content() {
+        contentCall++;
+        if (contentCall === 1) {
+          return `
+            <strong>Показано c 1 по 50 из 51 записей</strong>
+            <table id="search-result"><tbody>
+              <tr><td><a href="/ru/registry/show_plan/1/101">1</a></td><td>Заказчик</td><td>Товар</td><td>Конкурс</td><td>Штука</td><td>1</td><td>1</td><td>1</td><td>Август</td><td>Утвержден</td></tr>
+            </tbody></table>
+          `;
+        }
+        return emptySearchHtml;
+      }
+    };
+
+    await expect(collectPlanSearch(page, "https://example.test/registry/plan", "Балхаш", {
+      debugDir: path.join("data", "debug-test"),
+      maxPages: 5,
+      pageLoadTimeoutMs: 90_000,
+      searchPageWaitMs: 0,
+      delayMs: 0,
+      allowedStatusNames: ["Утвержден"]
+    })).rejects.toThrow(/empty page 2.*2 expected pages/i);
+    expect(new URL(urls[1]).searchParams.get("page")).toBe("2");
+  });
 });
 
 describe("parseGoszakupPlanDetailHtml", () => {

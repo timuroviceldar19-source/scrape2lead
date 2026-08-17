@@ -388,9 +388,10 @@ export async function collectPlanSearch(
 ): Promise<GoszakupPlanListItem[]> {
   const allItems: GoszakupPlanListItem[] = [];
   let pageNum = 0;
+  let expectedTotalPages = 1;
 
   while (pageNum < options.maxPages) {
-    const url = buildGoszakupHtmlPageUrl(baseUrl, pageNum);
+    const url = buildGoszakupHtmlPageUrl(baseUrl, pageNum === 0 ? 0 : pageNum + 1);
     await gotoPlanSearchPage(page, url, keyword, pageNum, options);
     await page.waitForTimeout(options.searchPageWaitMs ?? 1500);
 
@@ -407,18 +408,25 @@ export async function collectPlanSearch(
 
     const parsed = parseGoszakupPlanSearchHtml(html, keyword);
     const items = parsed.filter((item) => matchesPlanStatus(item.status, options.allowedStatusNames));
-    if (parsed.length === 0) break;
-
-    allItems.push(...items);
-
     const pagination = parseGoszakupPagination(html);
     const availablePages = pagination.totalPages > 0 ? pagination.totalPages : 1;
+    if (pageNum === 0) expectedTotalPages = availablePages;
     if (availablePages > options.maxPages) {
       throw new Error(
         `Plan search maxPages=${options.maxPages} could truncate ${availablePages} available pages for "${keyword}"`
       );
     }
-    const totalPages = availablePages;
+    const totalPages = expectedTotalPages;
+    if (parsed.length === 0) {
+      if (pageNum > 0 && pageNum < totalPages) {
+        throw new Error(
+          `Plan search returned empty page ${pageNum + 1} while ${totalPages} expected pages were reported for "${keyword}"`
+        );
+      }
+      break;
+    }
+
+    allItems.push(...items);
     if (pageNum === 0 && pagination.totalCount > 0) {
       console.log(
         `goszakup plan search: keyword="${keyword}" page=1 parsed=${parsed.length} matched=${items.length} total=${pagination.totalCount} pages=${totalPages}`
