@@ -8,6 +8,10 @@ dotenv.config();
 const GzLotsConfigSchema = z.object({
   keywords: z.array(z.string().min(1)).default([]),
   nstruCodes: z.array(z.string().min(1)).default([]),
+  katoLocations: z.array(z.object({
+    name: z.string().trim().min(1),
+    kato: z.string().regex(/^\d{9}$/)
+  })).default([]),
   inputPath: z.string().optional(),
   year: z.coerce.number().int().min(2000).max(2100).optional(),
   months: z.array(z.coerce.number().int().min(1).max(12)).optional(),
@@ -112,6 +116,7 @@ async function main(): Promise<void> {
     inputPath: args.inputPath ?? config.inputPath ?? "Nstru.txt",
     nstruCodes: config.nstruCodes.length > 0 ? config.nstruCodes : undefined,
     keywords: config.keywords,
+    katoLocations: config.katoLocations,
     outPath: args.outPath ?? config.outPath,
     year: args.year ?? config.year,
     months: args.months ?? config.months,

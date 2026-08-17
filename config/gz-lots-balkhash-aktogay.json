@@ -1,0 +1,25 @@
+{
+  "keywords": [],
+  "nstruCodes": [],
+  "katoLocations": [
+    { "name": "Балхаш", "kato": "351610000" },
+    { "name": "Саяк", "kato": "351645100" },
+    { "name": "Шашубай", "kato": "353679100" },
+    { "name": "Торангылык", "kato": "353675100" },
+    { "name": "Актогай", "kato": "353630100" }
+  ],
+  "year": 2026,
+  "months": [8, 9, 10, 11, 12],
+  "statuses": [
+    "Опубликован",
+    "Опубликован (прием заявок)",
+    "Опубликован (дополнение заявок)",
+    "Опубликован (прием ценовых предложений)"
+  ],
+  "minAmount": 0,
+  "excludeKeywords": [],
+  "maxPages": 500,
+  "delayMs": 200,
+  "headless": true,
+  "outPath": "exports/gz-lots-balkhash-aktogay-2026-aug-dec.xlsx"
+}

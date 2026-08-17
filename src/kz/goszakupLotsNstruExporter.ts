@@ -32,6 +32,7 @@ export interface GoszakupLotsNstruOptions {
   inputPath?: string;
   nstruCodes?: string[];
   keywords?: string[];
+  katoLocations?: GoszakupKatoLocation[];
   year?: number;
   months?: number[];
   statusIds?: number[];
@@ -49,8 +50,14 @@ export interface GoszakupLotsNstruOptions {
   onProgress?: (message: string) => void;
 }
 
+export interface GoszakupKatoLocation {
+  name: string;
+  kato: string;
+}
+
 export interface GoszakupLotsNstruRow {
   nstru_code: string;
+  delivery_place?: string;
   month: string;
   lot_number: string;
   lot_name: string;
@@ -74,7 +81,8 @@ export interface GoszakupLotsNstruResult {
 }
 
 const EXPORT_COLUMNS: Array<{ header: string; key: keyof GoszakupLotsNstruRow; width: number }> = [
-  { header: "Запрос (НСТРУ/слово)", key: "nstru_code", width: 24 },
+  { header: "Запрос (НСТРУ/слово/КАТО)", key: "nstru_code", width: 24 },
+  { header: "Место поставки", key: "delivery_place", width: 28 },
   { header: "Месяц", key: "month", width: 10 },
   { header: "№ лота", key: "lot_number", width: 18 },
   { header: "Наименование лота", key: "lot_name", width: 42 },
@@ -182,18 +190,21 @@ export function readNstruCodes(inputPath = DEFAULT_INPUT_PATH): string[] {
 export function buildLotsNstruSearchUrl(options: {
   nstruCode?: string;
   nameQuery?: string;
+  katoCode?: string;
   year: number;
   month: number;
   statusIds?: number[];
   pageNum?: number;
   recordsPerPage?: number;
 }): string {
-  if (Boolean(options.nstruCode) === Boolean(options.nameQuery)) {
-    throw new Error("buildLotsNstruSearchUrl requires exactly one of nstruCode or nameQuery");
+  const selectors = [options.nstruCode, options.nameQuery, options.katoCode].filter(Boolean);
+  if (selectors.length !== 1) {
+    throw new Error("buildLotsNstruSearchUrl requires exactly one of nstruCode, nameQuery or katoCode");
   }
   const params = new URLSearchParams();
   if (options.nstruCode) params.set("filter[enstru]", options.nstruCode);
   if (options.nameQuery) params.set("filter[name]", options.nameQuery);
+  if (options.katoCode) params.set("filter[kato]", options.katoCode);
   params.set("filter[year]", String(options.year));
   params.set("filter[month]", String(options.month));
   for (const statusId of options.statusIds ?? []) {
@@ -207,8 +218,9 @@ export function buildLotsNstruSearchUrl(options: {
 }
 
 interface LotSearchQuery {
-  type: "enstru" | "name";
+  type: "enstru" | "name" | "kato";
   value: string;
+  deliveryPlace: string;
 }
 
 export async function exportGoszakupLotsByNstru(
@@ -216,17 +228,23 @@ export async function exportGoszakupLotsByNstru(
 ): Promise<GoszakupLotsNstruResult> {
   const inputPath = options.inputPath ?? DEFAULT_INPUT_PATH;
   const keywords = unique(options.keywords ?? []);
+  const katoLocations = uniqueKatoLocations(options.katoLocations ?? []);
   const codes = options.nstruCodes
     ? unique(options.nstruCodes)
-    : keywords.length > 0
+    : keywords.length > 0 || katoLocations.length > 0
       ? []
       : readNstruCodes(inputPath);
   const queries: LotSearchQuery[] = [
-    ...codes.map((value): LotSearchQuery => ({ type: "enstru", value })),
-    ...keywords.map((value): LotSearchQuery => ({ type: "name", value }))
+    ...codes.map((value): LotSearchQuery => ({ type: "enstru", value, deliveryPlace: "" })),
+    ...keywords.map((value): LotSearchQuery => ({ type: "name", value, deliveryPlace: "" })),
+    ...katoLocations.map((location): LotSearchQuery => ({
+      type: "kato",
+      value: location.kato,
+      deliveryPlace: location.name
+    }))
   ];
   if (queries.length === 0) {
-    throw new Error("No search queries: provide nstruCodes, keywords or a non-empty input file");
+    throw new Error("No search queries: provide nstruCodes, keywords, katoLocations or a non-empty input file");
   }
   const year = options.year ?? DEFAULT_YEAR;
   const months = options.months?.length ? options.months : DEFAULT_MONTHS;
@@ -261,7 +279,7 @@ export async function exportGoszakupLotsByNstru(
           pageLoadTimeoutMs
         });
 
-        rows.push(...items.map((item) => buildExportRow(query.value, month, item)));
+        rows.push(...items.map((item) => buildExportRow(query.value, query.deliveryPlace, month, item)));
         options.onProgress?.(`found ${query.type}=${query.value} month=${month} rows=${items.length}`);
         if (delayMs > 0) await sleep(delayMs);
       }
@@ -323,6 +341,7 @@ async function collectLotsPageSet(
     const url = buildLotsNstruSearchUrl({
       nstruCode: options.query.type === "enstru" ? options.query.value : undefined,
       nameQuery: options.query.type === "name" ? options.query.value : undefined,
+      katoCode: options.query.type === "kato" ? options.query.value : undefined,
       year: options.year,
       month: options.month,
       statusIds: options.statusIds,
@@ -352,7 +371,8 @@ async function collectLotsPageSet(
     allItems.push(...items);
 
     const pagination = parseGoszakupPagination(html);
-    const totalPages = Math.min(pagination.totalPages > 0 ? pagination.totalPages : 1, options.maxPages);
+    const totalPages = pagination.totalPages > 0 ? pagination.totalPages : 1;
+    ensurePageLimitCoversTotal(totalPages, options.maxPages);
     if (pageNum + 1 >= totalPages) break;
 
     pageNum++;
@@ -361,9 +381,10 @@ async function collectLotsPageSet(
   return allItems;
 }
 
-function buildExportRow(code: string, month: number, item: GoszakupLotItem): GoszakupLotsNstruRow {
+function buildExportRow(code: string, deliveryPlace: string, month: number, item: GoszakupLotItem): GoszakupLotsNstruRow {
   return {
     nstru_code: code,
+    delivery_place: deliveryPlace,
     month: MONTH_NAMES_RU[month] ?? String(month),
     lot_number: item.lot_number,
     lot_name: item.lot_name ?? "",
@@ -395,12 +416,24 @@ function applyHyperlinks(sheet: ExcelJS.Worksheet, rows: GoszakupLotsNstruRow[])
   });
 }
 
-function dedupeRows(rows: GoszakupLotsNstruRow[]): GoszakupLotsNstruRow[] {
+export function dedupeRows(rows: GoszakupLotsNstruRow[]): GoszakupLotsNstruRow[] {
   const byKey = new Map<string, GoszakupLotsNstruRow>();
   for (const row of rows) {
-    if (!byKey.has(row.lot_number)) byKey.set(row.lot_number, row);
+    const existing = byKey.get(row.lot_number);
+    if (!existing) {
+      byKey.set(row.lot_number, { ...row });
+      continue;
+    }
+    existing.delivery_place = mergeLabels(existing.delivery_place, row.delivery_place);
+    existing.nstru_code = mergeLabels(existing.nstru_code, row.nstru_code);
   }
   return [...byKey.values()];
+}
+
+export function ensurePageLimitCoversTotal(totalPages: number, maxPages: number): void {
+  if (totalPages > maxPages) {
+    throw new Error(`Page limit ${maxPages} would truncate ${totalPages} result pages`);
+  }
 }
 
 function compareRows(a: GoszakupLotsNstruRow, b: GoszakupLotsNstruRow): number {
@@ -453,6 +486,25 @@ function unique(values: string[]): string[] {
     result.push(value);
   }
   return result;
+}
+
+function uniqueKatoLocations(locations: GoszakupKatoLocation[]): GoszakupKatoLocation[] {
+  const byKato = new Map<string, GoszakupKatoLocation>();
+  for (const raw of locations) {
+    const name = raw.name.trim();
+    const kato = raw.kato.trim();
+    if (!name || !kato || byKato.has(kato)) continue;
+    byKato.set(kato, { name, kato });
+  }
+  return [...byKato.values()];
+}
+
+function mergeLabels(left: string | undefined, right: string | undefined): string {
+  const values = [left, right]
+    .flatMap((value) => value?.split(";") ?? [])
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return [...new Set(values)].join("; ");
 }
 
 function sanitizeCode(code: string): string {
