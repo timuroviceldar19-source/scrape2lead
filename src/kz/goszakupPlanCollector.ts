@@ -86,6 +86,7 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
         debugDir,
         maxPages,
         pageLoadTimeoutMs,
+        searchPageWaitMs: options.searchPageWaitMs ?? 1500,
         delayMs,
         allowedStatusNames: query.allowedStatusNames,
         pageLoadRetries: options.pageLoadRetries ?? SEARCH_PAGE_RETRIES
@@ -111,6 +112,13 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
     const detailItems = options.prefilterDetails
       ? runDetailPrefilter(dedupedItems, options.minAmount ?? 0, options.excludeKeywords ?? [])
       : dedupedItems;
+
+    if (options.skipDetails) {
+      return {
+        items: detailItems.map((item) => ({ ...item, detail: buildFallbackPlanDetail(item) })),
+        cacheStats: { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 }
+      };
+    }
 
     const storage = new KzStorage({
       databasePath: options.databasePath ?? process.env.KZ_DATABASE_PATH ?? undefined
@@ -372,6 +380,7 @@ export async function collectPlanSearch(
     debugDir: string;
     maxPages: number;
     pageLoadTimeoutMs: number;
+    searchPageWaitMs?: number;
     delayMs: number;
     allowedStatusNames: string[];
     pageLoadRetries?: number;
@@ -383,7 +392,7 @@ export async function collectPlanSearch(
   while (pageNum < options.maxPages) {
     const url = buildGoszakupHtmlPageUrl(baseUrl, pageNum);
     await gotoPlanSearchPage(page, url, keyword, pageNum, options);
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(options.searchPageWaitMs ?? 1500);
 
     const html = await page.content();
     if (/технические работы/i.test(html) && !/id="search-result"/i.test(html)) {

@@ -109,6 +109,8 @@ describe("loadGzPlansConfig", () => {
     expect(config.minAmount).toBe(0);
     expect(config.excludeKeywords).toEqual([]);
     expect(config.includeTruCodePrefixes).toEqual([]);
+    expect(config.skipDetails).toBe(true);
+    expect(config.searchPageWaitMs).toBe(100);
   });
 
   it("reads minAmount and excludeKeywords from the config file", () => {
@@ -202,6 +204,18 @@ describe("mergeGzPlansExportOptions", () => {
     const merged = mergeGzPlansExportOptions(loadGzPlansConfig(configPath));
 
     expect(merged.katoLocations).toEqual([{ name: "Балхаш", kato: "351610000" }]);
+  });
+
+  it("threads fast list-only collection options", () => {
+    const configPath = writeTempConfig({
+      keywords: ["Ноутбук"],
+      skipDetails: true,
+      searchPageWaitMs: 75
+    });
+    const merged = mergeGzPlansExportOptions(loadGzPlansConfig(configPath));
+
+    expect(merged.skipDetails).toBe(true);
+    expect(merged.searchPageWaitMs).toBe(75);
   });
 });
 

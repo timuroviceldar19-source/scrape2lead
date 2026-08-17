@@ -75,6 +75,10 @@ export interface GzPlanCollectOptions {
   debugDir?: string;
   pageLoadTimeoutMs?: number;
   pageLoadRetries?: number;
+  /** Wait after each registry page load before parsing server-rendered HTML. */
+  searchPageWaitMs?: number;
+  /** Export list fields without fetching every plan detail page. */
+  skipDetails?: boolean;
   keepDuplicates?: boolean;
   token?: string | null;
   /** Drop plan rows with planned amount below this value (KZT). 0 disables. */

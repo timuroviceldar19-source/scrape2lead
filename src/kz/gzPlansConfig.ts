@@ -32,6 +32,8 @@ const GzPlansConfigSchema = z.object({
   databasePath: z.string().default("data/scrape2lead.db"),
   debugDir: z.string().default("data/debug"),
   pageLoadTimeoutMs: z.coerce.number().int().positive().default(30_000),
+  searchPageWaitMs: z.coerce.number().int().nonnegative().default(1500),
+  skipDetails: z.boolean().default(false),
   keepDuplicates: z.boolean().default(false)
 }).superRefine((config, context) => {
   if (config.keywords.length === 0 && config.katoLocations.length === 0) {
@@ -104,6 +106,8 @@ export function mergeGzPlansExportOptions(
     databasePath: fileConfig.databasePath,
     debugDir: fileConfig.debugDir,
     pageLoadTimeoutMs: merged.pageLoadTimeoutMs,
+    searchPageWaitMs: merged.searchPageWaitMs,
+    skipDetails: merged.skipDetails,
     keepDuplicates: merged.keepDuplicates
   };
 }
