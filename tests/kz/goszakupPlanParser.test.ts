@@ -149,6 +149,29 @@ describe("collectPlanSearch", () => {
     ).rejects.toThrow(/Timeout 90000ms exceeded/);
     expect(attempts).toBe(3);
   });
+
+  it("fails when maxPages could truncate available results", async () => {
+    const page: PlanSearchPage = {
+      async goto() {},
+      async waitForTimeout() {},
+      async content() {
+        return `
+          <strong>Показано c 1 по 50 из 101 записей</strong>
+          <table id="search-result"><tbody>
+            <tr><td><a href="/ru/registry/show_plan/1/101">1</a></td><td>Заказчик</td><td>Товар</td><td>Конкурс</td><td>Штука</td><td>1</td><td>1</td><td>1</td><td>Август</td><td>Утвержден</td></tr>
+          </tbody></table>
+        `;
+      }
+    };
+
+    await expect(collectPlanSearch(page, "https://example.test/registry/plan", "Балхаш", {
+      debugDir: path.join("data", "debug-test"),
+      maxPages: 2,
+      pageLoadTimeoutMs: 90_000,
+      delayMs: 0,
+      allowedStatusNames: ["Утвержден"]
+    })).rejects.toThrow(/maxPages.*3/i);
+  });
 });
 
 describe("parseGoszakupPlanDetailHtml", () => {

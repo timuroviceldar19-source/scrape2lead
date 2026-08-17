@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildFallbackPlanDetail,
+  buildPlanSearchQueries,
   collectPlanDetails,
   prefilterPlanListItems,
   type PlanSearchPage
@@ -97,6 +98,40 @@ describe("prefilterPlanListItems", () => {
   it("keeps everything when no filters are configured", () => {
     const items = [listItem({ plan_point_id: "a" }), listItem({ plan_point_id: "b" })];
     expect(prefilterPlanListItems(items, 0, []).items).toHaveLength(2);
+  });
+});
+
+describe("buildPlanSearchQueries", () => {
+  it("crosses five KATO locations with the two requested statuses", () => {
+    const queries = buildPlanSearchQueries({
+      keywords: [],
+      katoLocations: [
+        { name: "Балхаш", kato: "351610000" },
+        { name: "Саяк", kato: "351645100" },
+        { name: "Шашубай", kato: "353679100" },
+        { name: "Торангалык", kato: "353675100" },
+        { name: "Актогай", kato: "353630100" }
+      ],
+      statuses: ["Утвержден", "На проверке камерального контроля"]
+    });
+
+    expect(queries).toHaveLength(10);
+    expect(queries[0]).toEqual({
+      label: "Балхаш",
+      katoCode: "351610000",
+      statusId: 2,
+      allowedStatusNames: ["Утвержден"]
+    });
+    expect(queries[1]).toEqual({
+      label: "Балхаш",
+      katoCode: "351610000",
+      statusId: 444,
+      allowedStatusNames: ["На проверке камерального контроля"]
+    });
+    expect(new Set(queries.map((query) => query.katoCode))).toEqual(new Set([
+      "351610000", "351645100", "353679100", "353675100", "353630100"
+    ]));
+    expect(queries.every((query) => query.keyword === undefined)).toBe(true);
   });
 });
 

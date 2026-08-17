@@ -78,9 +78,37 @@ describe("loadGzPlansConfig", () => {
     expect(config.maxPages).toBe(3);
   });
 
-  it("rejects empty keywords array", () => {
-    const configPath = writeTempConfig({ keywords: [] });
-    expect(() => loadGzPlansConfig(configPath)).toThrow();
+  it("allows KATO-only search without keywords", () => {
+    const configPath = writeTempConfig({
+      keywords: [],
+      katoLocations: [{ name: "Балхаш", kato: "351610000" }]
+    });
+    const config = loadGzPlansConfig(configPath);
+    expect(config.keywords).toEqual([]);
+    expect(config.katoLocations).toEqual([{ name: "Балхаш", kato: "351610000" }]);
+  });
+
+  it("rejects a config without keywords or KATO locations", () => {
+    const configPath = writeTempConfig({ keywords: [], katoLocations: [] });
+    expect(() => loadGzPlansConfig(configPath)).toThrow(/keyword|KATO/i);
+  });
+
+  it("loads the five-place August-December plan export config", () => {
+    const config = loadGzPlansConfig("config/gz-plans-balkhash-aktogay.json");
+
+    expect(config.keywords).toEqual([]);
+    expect(config.katoLocations).toEqual([
+      { name: "Балхаш", kato: "351610000" },
+      { name: "Саяк", kato: "351645100" },
+      { name: "Шашубай", kato: "353679100" },
+      { name: "Торангалык", kato: "353675100" },
+      { name: "Актогай", kato: "353630100" }
+    ]);
+    expect(config.months).toEqual([8, 9, 10, 11, 12]);
+    expect(config.statuses).toEqual(["Утвержден", "На проверке камерального контроля"]);
+    expect(config.minAmount).toBe(0);
+    expect(config.excludeKeywords).toEqual([]);
+    expect(config.includeTruCodePrefixes).toEqual([]);
   });
 
   it("reads minAmount and excludeKeywords from the config file", () => {
@@ -165,6 +193,16 @@ describe("mergeGzPlansExportOptions", () => {
     expect(merged.minAmount).toBe(500000);
     expect(merged.excludeKeywords).toEqual(["Уголок"]);
   });
+
+  it("threads KATO locations into export options", () => {
+    const configPath = writeTempConfig({
+      keywords: [],
+      katoLocations: [{ name: "Балхаш", kato: "351610000" }]
+    });
+    const merged = mergeGzPlansExportOptions(loadGzPlansConfig(configPath));
+
+    expect(merged.katoLocations).toEqual([{ name: "Балхаш", kato: "351610000" }]);
+  });
 });
 
 describe("buildPlanSearchUrl", () => {
@@ -185,6 +223,19 @@ describe("buildPlanSearchUrl", () => {
       statusIds: [2]
     });
     expect(url).toContain("filter%5Bstatus%5D%5B%5D=2");
+  });
+
+  it("builds KATO-only URL with the singular server-side status filter", () => {
+    const url = buildPlanSearchUrl({
+      katoCode: "351610000",
+      statusId: 444,
+      year: 2026,
+      months: [8, 9, 10, 11, 12]
+    });
+    expect(url).toContain("filter%5Bkato%5D=351610000");
+    expect(url).toContain("filter%5Bstatus%5D=444");
+    expect(url).not.toContain("filter%5Bname%5D");
+    expect(url).not.toContain("filter%5Bstatus%5D%5B%5D");
   });
 });
 
