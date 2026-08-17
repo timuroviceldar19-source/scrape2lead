@@ -278,5 +278,21 @@ describe("writeLotsWorkbook", () => {
       text: row.lot_url,
       hyperlink: row.lot_url
     });
+    expect(sheet?.views).toContainEqual(expect.objectContaining({ state: "frozen", ySplit: 1 }));
+    expect(sheet?.autoFilter).toEqual({
+      from: { row: 1, column: 1 },
+      to: { row: 2, column: 15 }
+    });
+    expect(sheet?.getRow(1).fill).toMatchObject({
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF1F4E78" }
+    });
+    expect(sheet?.getRow(1).font).toMatchObject({ bold: true, color: { argb: "FFFFFFFF" } });
+    expect(sheet?.getRow(2).alignment).toMatchObject({ vertical: "top", wrapText: true });
+    expect(sheet?.getRow(2).getCell(13).font).toMatchObject({
+      color: { argb: "FF0563C1" },
+      underline: true
+    });
   });
 });
