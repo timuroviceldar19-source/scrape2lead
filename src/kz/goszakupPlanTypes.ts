@@ -63,6 +63,8 @@ export interface GzPlanExportRow {
 
 export interface GzPlanCollectOptions {
   keywords?: string[];
+  /** Delivery locations for KATO-only registry searches. */
+  katoLocations?: GoszakupPlanKatoLocation[];
   year?: number;
   months?: number[];
   /** Plan status names (e.g. "Утвержден") or numeric IDs as strings. Empty = no filter. */
@@ -93,6 +95,11 @@ export interface GzPlanCollectOptions {
   /** Ignore cached details and re-fetch. Falls back to GOSZAKUP_PLAN_DETAIL_FORCE_REFRESH=1. */
   forceDetailRefresh?: boolean;
   onProgress?: (message: string) => void;
+}
+
+export interface GoszakupPlanKatoLocation {
+  name: string;
+  kato: string;
 }
 
 export interface PlanDetailCacheStats {

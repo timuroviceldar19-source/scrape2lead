@@ -10,7 +10,7 @@ import {
   loadAbpRefs,
   resolveAbpName
 } from "./goszakupPlanClient.js";
-import { resolvePlanStatusNames } from "./gzPlansConfig.js";
+import { resolvePlanStatusIds, resolvePlanStatusNames } from "./gzPlansConfig.js";
 import {
   buildPlanSearchUrl,
   matchesPlanStatus,
@@ -23,6 +23,7 @@ import type {
   GoszakupPlanListItem,
   GzPlanCollectOptions,
   GzPlanCollectResult,
+  GoszakupPlanKatoLocation,
   PlanDetailCacheStats
 } from "./goszakupPlanTypes.js";
 import { DEFAULT_GZ_PLAN_KEYWORDS as DEFAULT_KEYWORDS } from "./goszakupPlanTypes.js";
@@ -41,11 +42,12 @@ export interface PlanSearchPage {
 }
 
 export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promise<GzPlanCollectResult> {
-  const keywords = options.keywords ?? [...DEFAULT_KEYWORDS];
+  const keywords = options.keywords ?? (options.katoLocations?.length ? [] : [...DEFAULT_KEYWORDS]);
+  const katoLocations = options.katoLocations ?? [];
   const year = options.year ?? 2026;
   const months = options.months ?? [6, 7, 8];
   const statuses = options.statuses ?? [];
-  const allowedStatusNames = resolvePlanStatusNames(statuses);
+  const searchQueries = buildPlanSearchQueries({ keywords, katoLocations, statuses });
   const maxPages = options.maxPages ?? MAX_PAGES_DEFAULT;
   const delayMs = options.delayMs ?? 2000;
   const debugDir = options.debugDir ?? DEFAULT_DEBUG_DIR;
@@ -70,29 +72,38 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
   const listById = new Map<string, GoszakupPlanListItem>();
 
   try {
-    for (const keyword of keywords) {
-      options.onProgress?.(`search: ${keyword}`);
-      // Do not pass statusIds: goszakup returns a maintenance page when filter[status][] is in the URL.
-      const baseUrl = buildPlanSearchUrl({ keyword, year, months });
-      const items = await collectPlanSearch(page, baseUrl, keyword, {
+    for (const query of searchQueries) {
+      const statusSuffix = query.allowedStatusNames.length ? ` / ${query.allowedStatusNames[0]}` : "";
+      options.onProgress?.(`search: ${query.label}${statusSuffix}`);
+      const baseUrl = buildPlanSearchUrl({
+        keyword: query.keyword,
+        katoCode: query.katoCode,
+        statusId: query.statusId,
+        year,
+        months
+      });
+      const items = await collectPlanSearch(page, baseUrl, query.label, {
         debugDir,
         maxPages,
         pageLoadTimeoutMs,
         delayMs,
-        allowedStatusNames,
+        allowedStatusNames: query.allowedStatusNames,
         pageLoadRetries: options.pageLoadRetries ?? SEARCH_PAGE_RETRIES
       });
 
       for (const item of items) {
-        if (!matchesPlanStatus(item.status, allowedStatusNames)) continue;
+        if (!matchesPlanStatus(item.status, query.allowedStatusNames)) continue;
         if (options.keepDuplicates) {
           listItems.push(item);
         } else {
-          listById.set(item.plan_point_id, item);
+          const existing = listById.get(item.plan_point_id);
+          listById.set(item.plan_point_id, existing
+            ? { ...existing, keyword: mergeSearchLabels(existing.keyword, item.keyword) }
+            : item);
         }
       }
 
-      console.log(`goszakup plan search: keyword="${keyword}" rows=${items.length}`);
+      console.log(`goszakup plan search: filter="${query.label}${statusSuffix}" rows=${items.length}`);
       if (delayMs > 0) await sleep(delayMs);
     }
 
@@ -124,6 +135,48 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
     await context.close();
     await browser.close();
   }
+}
+
+export interface PlanSearchQuery {
+  label: string;
+  keyword?: string;
+  katoCode?: string;
+  statusId?: number;
+  allowedStatusNames: string[];
+}
+
+export function buildPlanSearchQueries(options: {
+  keywords: readonly string[];
+  katoLocations: readonly GoszakupPlanKatoLocation[];
+  statuses: readonly string[];
+}): PlanSearchQuery[] {
+  const allowedStatusNames = resolvePlanStatusNames([...options.statuses]);
+  const queries: PlanSearchQuery[] = options.keywords.map((keyword) => ({
+    label: keyword,
+    keyword,
+    allowedStatusNames
+  }));
+
+  const statusIds = resolvePlanStatusIds([...options.statuses]);
+  for (const location of options.katoLocations) {
+    if (statusIds.length === 0) {
+      queries.push({ label: location.name, katoCode: location.kato, allowedStatusNames: [] });
+      continue;
+    }
+    for (const statusId of statusIds) {
+      queries.push({
+        label: location.name,
+        katoCode: location.kato,
+        statusId,
+        allowedStatusNames: resolvePlanStatusNames([String(statusId)])
+      });
+    }
+  }
+  return queries;
+}
+
+function mergeSearchLabels(left: string, right: string): string {
+  return [...new Set([...left.split("; "), ...right.split("; ")].filter(Boolean))].join("; ");
 }
 
 function runDetailPrefilter(
@@ -350,7 +403,13 @@ export async function collectPlanSearch(
     allItems.push(...items);
 
     const pagination = parseGoszakupPagination(html);
-    const totalPages = Math.min(pagination.totalPages > 0 ? pagination.totalPages : 1, options.maxPages);
+    const availablePages = pagination.totalPages > 0 ? pagination.totalPages : 1;
+    if (availablePages > options.maxPages) {
+      throw new Error(
+        `Plan search maxPages=${options.maxPages} could truncate ${availablePages} available pages for "${keyword}"`
+      );
+    }
+    const totalPages = availablePages;
     if (pageNum === 0 && pagination.totalCount > 0) {
       console.log(
         `goszakup plan search: keyword="${keyword}" page=1 parsed=${parsed.length} matched=${items.length} total=${pagination.totalCount} pages=${totalPages}`

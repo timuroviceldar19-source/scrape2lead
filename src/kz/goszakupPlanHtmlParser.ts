@@ -7,21 +7,34 @@ export { parseGoszakupPagination };
 const BASE_URL = "https://goszakup.gov.kz";
 
 export function buildPlanSearchUrl(options: {
-  keyword: string;
+  keyword?: string;
+  katoCode?: string;
   year: number;
   months: number[];
   /** Optional; omit in collector — goszakup serves a maintenance page when filter[status][] is present. */
   statusIds?: number[];
+  /** Singular filter used by Goszakup for KATO plan searches. */
+  statusId?: number;
   recordsPerPage?: number;
 }): string {
+  const hasKeyword = Boolean(options.keyword?.trim());
+  const hasKato = Boolean(options.katoCode?.trim());
+  if (hasKeyword === hasKato) {
+    throw new Error("Plan search requires exactly one keyword or KATO code");
+  }
+
   const params = new URLSearchParams();
-  params.set("filter[name]", options.keyword);
+  if (hasKeyword) params.set("filter[name]", options.keyword!.trim());
+  if (hasKato) params.set("filter[kato]", options.katoCode!.trim());
   params.append("filter[year][]", String(options.year));
   for (const month of options.months) {
     params.append("filter[month][]", String(month));
   }
   for (const statusId of options.statusIds ?? []) {
     params.append("filter[status][]", String(statusId));
+  }
+  if (options.statusId !== undefined) {
+    params.set("filter[status]", String(options.statusId));
   }
   params.set("count_record", String(options.recordsPerPage ?? 50));
   return `${BASE_URL}/ru/registry/plan?${params.toString()}`;

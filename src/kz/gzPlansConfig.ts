@@ -12,7 +12,11 @@ import {
 export const DEFAULT_GZ_PLANS_CONFIG_PATH = "config/gz-plans.json";
 
 const GzPlansConfigSchema = z.object({
-  keywords: z.array(z.string().min(1)).min(1).default([...DEFAULT_GZ_PLAN_KEYWORDS]),
+  keywords: z.array(z.string().min(1)).default([...DEFAULT_GZ_PLAN_KEYWORDS]),
+  katoLocations: z.array(z.object({
+    name: z.string().trim().min(1),
+    kato: z.string().regex(/^\d{9}$/, "KATO must contain exactly 9 digits")
+  })).default([]),
   year: z.coerce.number().int().min(2000).max(2100).default(2026),
   months: z.array(z.coerce.number().int().min(1).max(12)).default([6, 7, 8]),
   statuses: z.array(z.string().min(1)).default([...DEFAULT_GZ_PLAN_STATUSES]),
@@ -29,6 +33,14 @@ const GzPlansConfigSchema = z.object({
   debugDir: z.string().default("data/debug"),
   pageLoadTimeoutMs: z.coerce.number().int().positive().default(30_000),
   keepDuplicates: z.boolean().default(false)
+}).superRefine((config, context) => {
+  if (config.keywords.length === 0 && config.katoLocations.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "At least one keyword or KATO location is required",
+      path: ["keywords"]
+    });
+  }
 });
 
 export type GzPlansConfig = z.infer<typeof GzPlansConfigSchema>;
@@ -76,6 +88,7 @@ export function mergeGzPlansExportOptions(
 
   return {
     keywords: merged.keywords,
+    katoLocations: merged.katoLocations,
     year: merged.year,
     months: merged.months,
     statuses: merged.statuses,

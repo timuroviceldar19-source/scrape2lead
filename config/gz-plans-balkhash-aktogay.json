@@ -1,0 +1,29 @@
+{
+  "keywords": [],
+  "katoLocations": [
+    { "name": "Балхаш", "kato": "351610000" },
+    { "name": "Саяк", "kato": "351645100" },
+    { "name": "Шашубай", "kato": "353679100" },
+    { "name": "Торангалык", "kato": "353675100" },
+    { "name": "Актогай", "kato": "353630100" }
+  ],
+  "year": 2026,
+  "months": [8, 9, 10, 11, 12],
+  "statuses": [
+    "Утвержден",
+    "На проверке камерального контроля"
+  ],
+  "minAmount": 0,
+  "excludeKeywords": [],
+  "includeTruCodePrefixes": [],
+  "maxPages": 500,
+  "delayMs": 200,
+  "skipRegistry": true,
+  "forceRegistryRefresh": false,
+  "headless": true,
+  "outPath": "exports/gz-plans-balkhash-aktogay-2026-aug-dec.xlsx",
+  "databasePath": "data/scrape2lead.db",
+  "debugDir": "data/debug/gz-plans-balkhash-aktogay-2026-aug-dec",
+  "pageLoadTimeoutMs": 90000,
+  "keepDuplicates": false
+}
