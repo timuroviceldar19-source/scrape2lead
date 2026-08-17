@@ -25,7 +25,7 @@
   "databasePath": "data/scrape2lead.db",
   "debugDir": "data/debug/gz-plans-balkhash-aktogay-2026-aug-dec",
   "pageLoadTimeoutMs": 90000,
-  "searchPageWaitMs": 100,
+  "searchPageWaitMs": 500,
   "skipDetails": true,
   "keepDuplicates": false
 }

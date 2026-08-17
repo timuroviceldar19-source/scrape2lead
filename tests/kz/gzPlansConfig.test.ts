@@ -110,7 +110,7 @@ describe("loadGzPlansConfig", () => {
     expect(config.excludeKeywords).toEqual([]);
     expect(config.includeTruCodePrefixes).toEqual([]);
     expect(config.skipDetails).toBe(true);
-    expect(config.searchPageWaitMs).toBe(100);
+    expect(config.searchPageWaitMs).toBe(500);
   });
 
   it("reads minAmount and excludeKeywords from the config file", () => {
