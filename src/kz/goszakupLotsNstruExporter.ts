@@ -316,7 +316,30 @@ export async function writeLotsWorkbook(xlsxPath: string, rows: GoszakupLotsNstr
   const sheet = workbook.addWorksheet("Лоты НСТРУ");
   sheet.columns = EXPORT_COLUMNS;
   sheet.addRows(rows);
-  sheet.getRow(1).font = { bold: true };
+  sheet.views = [{ state: "frozen", ySplit: 1, activeCell: "A2", showGridLines: false }];
+  sheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: Math.max(1, rows.length + 1), column: EXPORT_COLUMNS.length }
+  };
+
+  const header = sheet.getRow(1);
+  header.height = 30;
+  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E78" } };
+  header.alignment = { vertical: "middle", wrapText: true };
+
+  const amountColumn = EXPORT_COLUMNS.findIndex((column) => column.key === "amount") + 1;
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const excelRow = sheet.getRow(rowIndex + 2);
+    excelRow.height = 48;
+    excelRow.alignment = { vertical: "top", wrapText: true };
+    const amount = parseAmount(rows[rowIndex].amount);
+    if (amount > 0) {
+      const amountCell = excelRow.getCell(amountColumn);
+      amountCell.value = amount;
+      amountCell.numFmt = "#,##0.00";
+    }
+  }
   applyHyperlinks(sheet, rows);
 
   await workbook.xlsx.writeFile(xlsxPath);
@@ -411,7 +434,9 @@ function applyHyperlinks(sheet: ExcelJS.Worksheet, rows: GoszakupLotsNstruRow[])
       const url = row[key];
       const colIndex = columnIndexByKey.get(key);
       if (typeof url !== "string" || !url || !colIndex) continue;
-      excelRow.getCell(colIndex).value = { text: url, hyperlink: url };
+      const cell = excelRow.getCell(colIndex);
+      cell.value = { text: url, hyperlink: url };
+      cell.font = { color: { argb: "FF0563C1" }, underline: true };
     }
   });
 }

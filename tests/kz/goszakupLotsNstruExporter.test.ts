@@ -279,10 +279,7 @@ describe("writeLotsWorkbook", () => {
       hyperlink: row.lot_url
     });
     expect(sheet?.views).toContainEqual(expect.objectContaining({ state: "frozen", ySplit: 1 }));
-    expect(sheet?.autoFilter).toEqual({
-      from: { row: 1, column: 1 },
-      to: { row: 2, column: 15 }
-    });
+    expect(sheet?.autoFilter).toBe("A1:O2");
     expect(sheet?.getRow(1).fill).toMatchObject({
       type: "pattern",
       pattern: "solid",
