@@ -5,6 +5,8 @@ import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import {
   buildLotsNstruSearchUrl,
+  dedupeRows,
+  ensurePageLimitCoversTotal,
   filterLotRows,
   looksLikeIgnoredEnstruFilter,
   readNstruCodes,
@@ -82,7 +84,21 @@ describe("buildLotsNstruSearchUrl", () => {
     expect(url).not.toContain("filter%5Benstru%5D");
   });
 
-  it("throws when both or neither of nstruCode and nameQuery are provided", () => {
+  it("builds a KATO-only URL without a product query", () => {
+    const url = buildLotsNstruSearchUrl({
+      katoCode: "351610000",
+      year: 2026,
+      month: 8,
+      statusIds: [210, 220, 230, 240]
+    });
+
+    expect(url).toContain("filter%5Bkato%5D=351610000");
+    expect(url).not.toContain("filter%5Benstru%5D");
+    expect(url).not.toContain("filter%5Bname%5D");
+    expect(url.match(/filter%5Bstatus%5D%5B%5D=/g)).toHaveLength(4);
+  });
+
+  it("throws unless exactly one product or KATO query is provided", () => {
     expect(() => buildLotsNstruSearchUrl({ year: 2026, month: 7 })).toThrow(/exactly one/);
     expect(() =>
       buildLotsNstruSearchUrl({
@@ -92,6 +108,24 @@ describe("buildLotsNstruSearchUrl", () => {
         month: 7
       })
     ).toThrow(/exactly one/);
+    expect(() =>
+      buildLotsNstruSearchUrl({
+        nstruCode: "262011.100.000000",
+        katoCode: "351610000",
+        year: 2026,
+        month: 7
+      })
+    ).toThrow(/exactly one/);
+  });
+});
+
+describe("pagination safety", () => {
+  it("rejects a result set that exceeds the configured page limit", () => {
+    expect(() => ensurePageLimitCoversTotal(51, 50)).toThrow(/truncate/i);
+  });
+
+  it("accepts a result set fully covered by the configured page limit", () => {
+    expect(() => ensurePageLimitCoversTotal(50, 50)).not.toThrow();
   });
 });
 
@@ -149,6 +183,52 @@ describe("filterLotRows", () => {
   });
 });
 
+describe("dedupeRows", () => {
+  it("merges matched delivery places for the same lot", () => {
+    const rows = [
+      lotRow({ lot_number: "lot-1", delivery_place: "Балхаш" }),
+      lotRow({ lot_number: "lot-1", delivery_place: "Саяк" }),
+      lotRow({ lot_number: "lot-2", delivery_place: "Балхаш" })
+    ];
+
+    const deduped = dedupeRows(rows);
+
+    expect(deduped).toHaveLength(2);
+    expect(deduped[0].delivery_place).toBe("Балхаш; Саяк");
+  });
+});
+
+describe("Balkhash and Aktogay export config", () => {
+  it("contains the requested geography, active statuses and unrestricted product scope", () => {
+    const configPath = path.resolve("config/gz-lots-balkhash-aktogay.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+      katoLocations: Array<{ name: string; kato: string }>;
+      months: number[];
+      statuses: string[];
+      keywords: string[];
+      nstruCodes: string[];
+      minAmount: number;
+      excludeKeywords: string[];
+      outPath: string;
+    };
+
+    expect(config.katoLocations).toEqual([
+      { name: "Балхаш", kato: "351610000" },
+      { name: "Саяк", kato: "351645100" },
+      { name: "Шашубай", kato: "353679100" },
+      { name: "Торангылык", kato: "353675100" },
+      { name: "Актогай", kato: "353630100" }
+    ]);
+    expect(config.months).toEqual([8, 9, 10, 11, 12]);
+    expect(resolveLotStatusIds(config.statuses)).toEqual([210, 220, 230, 240]);
+    expect(config.keywords).toEqual([]);
+    expect(config.nstruCodes).toEqual([]);
+    expect(config.minAmount).toBe(0);
+    expect(config.excludeKeywords).toEqual([]);
+    expect(config.outPath).toBe("exports/gz-lots-balkhash-aktogay-2026-aug-dec.xlsx");
+  });
+});
+
 describe("readNstruCodes", () => {
   it("removes empty lines and duplicates while preserving first-seen order", () => {
     const filePath = path.join(os.tmpdir(), `nstru-${Date.now()}.txt`);
@@ -168,6 +248,7 @@ describe("writeLotsWorkbook", () => {
     const filePath = path.join(dir, "lots.xlsx");
     const row: GoszakupLotsNstruRow = {
       nstru_code: "262011.100.000000",
+      delivery_place: "Балхаш",
       month: "Июнь",
       lot_number: "87175914-ЗЦП3",
       lot_name: "Ноутбук",
@@ -189,9 +270,11 @@ describe("writeLotsWorkbook", () => {
     await workbook.xlsx.readFile(filePath);
     const sheet = workbook.getWorksheet("Лоты НСТРУ");
 
-    expect(sheet?.getRow(1).getCell(1).value).toBe("Запрос (НСТРУ/слово)");
+    expect(sheet?.getRow(1).getCell(1).value).toBe("Запрос (НСТРУ/слово/КАТО)");
     expect(sheet?.getRow(2).getCell(1).value).toBe("262011.100.000000");
-    expect(sheet?.getRow(2).getCell(12).value).toEqual({
+    expect(sheet?.getRow(1).getCell(2).value).toBe("Место поставки");
+    expect(sheet?.getRow(2).getCell(2).value).toBe("Балхаш");
+    expect(sheet?.getRow(2).getCell(13).value).toEqual({
       text: row.lot_url,
       hyperlink: row.lot_url
     });
