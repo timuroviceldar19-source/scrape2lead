@@ -173,7 +173,7 @@ describe("collectPlanSearch", () => {
     })).rejects.toThrow(/maxPages.*3/i);
   });
 
-  it("uses page=2 after the first page and rejects an unexpectedly empty page", async () => {
+  it("uses zero-based page=1 after the first page and rejects an unexpectedly empty page", async () => {
     const urls: string[] = [];
     let contentCall = 0;
     const page: PlanSearchPage = {
@@ -201,7 +201,7 @@ describe("collectPlanSearch", () => {
       delayMs: 0,
       allowedStatusNames: ["Утвержден"]
     })).rejects.toThrow(/empty page 2.*2 expected pages/i);
-    expect(new URL(urls[1]).searchParams.get("page")).toBe("2");
+    expect(new URL(urls[1]).searchParams.get("page")).toBe("1");
   });
 });
 

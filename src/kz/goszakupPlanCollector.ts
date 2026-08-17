@@ -391,7 +391,7 @@ export async function collectPlanSearch(
   let expectedTotalPages = 1;
 
   while (pageNum < options.maxPages) {
-    const url = buildGoszakupHtmlPageUrl(baseUrl, pageNum === 0 ? 0 : pageNum + 1);
+    const url = buildGoszakupHtmlPageUrl(baseUrl, pageNum);
     await gotoPlanSearchPage(page, url, keyword, pageNum, options);
     await page.waitForTimeout(options.searchPageWaitMs ?? 1500);
 
