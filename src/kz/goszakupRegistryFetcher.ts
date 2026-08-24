@@ -5,7 +5,7 @@ import { parseRegistryProfileHtml, parseRegistrySearchHtml } from "./goszakupReg
 
 const REGISTRY_SEARCH_URL = "https://goszakup.gov.kz/ru/registry/supplierreg";
 
-type RegistryFetchResult =
+export type RegistryFetchResult =
   | { record: ReturnType<typeof parseRegistryProfileHtml>; rawSnapshotPath: string | null }
   | "not_found";
 
