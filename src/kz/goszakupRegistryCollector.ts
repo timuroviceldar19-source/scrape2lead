@@ -1,7 +1,7 @@
 import { chromium, type Browser, type Page } from "playwright";
 import { isValidBin, sleep } from "./csv.js";
 import { KzStorage } from "./kzStorage.js";
-import { fetchRegistryForBin } from "./goszakupRegistryFetcher.js";
+import { fetchRegistryForBin, type RegistryFetchResult } from "./goszakupRegistryFetcher.js";
 
 export interface RegistryCollectOptions {
   databasePath?: string;
@@ -13,6 +13,8 @@ export interface RegistryCollectOptions {
   requireName?: boolean;
   profileUrlsByBin?: ReadonlyMap<string, string>;
   cacheTtlDays?: number;
+  /** Extra attempts per BIN after a transient failure. Defaults to REGISTRY_FETCH_RETRIES. */
+  fetchRetries?: number;
   onProgress?: (index: number, total: number, bin: string) => void;
 }
 
@@ -27,6 +29,61 @@ export interface RegistryCollectStats {
 
 const DEFAULT_DB_PATH = "data/scrape2lead.db";
 const DEFAULT_DEBUG_DIR = "data/debug";
+const REGISTRY_FETCH_RETRIES = 2;
+
+export interface RegistryFetchRetryOptions {
+  retries?: number;
+  delayMs?: number;
+  profileUrl?: string;
+  fetchImpl?: typeof fetchRegistryForBin;
+  sleepImpl?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Retries a registry lookup that failed for transient reasons — a DNS blip or a
+ * timeout takes down a whole plan export otherwise, because assertRegistryCoverage
+ * treats one uncovered BIN as fatal.
+ *
+ * A "not_found" verdict is the registry answering, not failing, so it returns
+ * immediately. A parsed page without a record is retried (a partial load looks the
+ * same) but is returned rather than thrown once the budget runs out — the caller
+ * already distinguishes that case.
+ */
+export async function fetchRegistryForBinWithRetry(
+  page: Page,
+  bin: string,
+  debugDir: string,
+  options: RegistryFetchRetryOptions = {}
+): Promise<RegistryFetchResult> {
+  const retries = Math.max(0, options.retries ?? REGISTRY_FETCH_RETRIES);
+  const delayMs = options.delayMs ?? 0;
+  const fetchImpl = options.fetchImpl ?? fetchRegistryForBin;
+  const doSleep = options.sleepImpl ?? sleep;
+
+  let lastResult: RegistryFetchResult | null = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const result = await fetchImpl(page, bin, debugDir, options.profileUrl);
+      if (result === "not_found" || result.record) return result;
+      lastResult = result;
+      if (attempt >= retries) return result;
+      console.warn(`registry: ${bin} unparseable, retry ${attempt + 1}/${retries}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt >= retries) {
+        console.error(`registry: ${bin} failed after ${attempt + 1} attempts: ${message}`);
+        throw error;
+      }
+      console.warn(`registry: ${bin} retry ${attempt + 1}/${retries}: ${message}`);
+    }
+
+    if (delayMs > 0) await doSleep(delayMs);
+  }
+
+  // Unreachable: the loop always returns or throws on its final attempt.
+  return lastResult ?? "not_found";
+}
 
 export async function collectGoszakupRegistryForBins(
   bins: string[],
@@ -74,12 +131,11 @@ export async function collectGoszakupRegistryForBins(
 
       stats.processed++;
       try {
-        const result = await fetchRegistryForBin(
-          page!,
-          bin,
-          debugDir,
-          options.profileUrlsByBin?.get(bin)
-        );
+        const result = await fetchRegistryForBinWithRetry(page!, bin, debugDir, {
+          retries: options.fetchRetries,
+          delayMs,
+          profileUrl: options.profileUrlsByBin?.get(bin)
+        });
         if (result === "not_found") {
           stats.not_found++;
         } else if (result.record) {
