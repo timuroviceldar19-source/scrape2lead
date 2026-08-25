@@ -13,6 +13,9 @@ const DEFAULT_MONTHS = [6, 7, 8];
 const DEFAULT_YEAR = 2026;
 const DEFAULT_MAX_PAGES = 50;
 const DEFAULT_DELAY_MS = 2000;
+const DEFAULT_PAGE_LOAD_TIMEOUT_MS = 60_000;
+const DEFAULT_PAGE_LOAD_ATTEMPTS = 4;
+const DEFAULT_PAGE_LOAD_RETRY_DELAY_MS = 2_000;
 const MONTH_NAMES_RU: Record<number, string> = {
   1: "Январь",
   2: "Февраль",
@@ -46,6 +49,8 @@ export interface GoszakupLotsNstruOptions {
   slowMoMs?: number;
   debugDir?: string;
   pageLoadTimeoutMs?: number;
+  pageLoadAttempts?: number;
+  pageLoadRetryDelayMs?: number;
   onProgress?: (message: string) => void;
 }
 
@@ -234,7 +239,9 @@ export async function exportGoszakupLotsByNstru(
   const maxPages = options.maxPages ?? DEFAULT_MAX_PAGES;
   const delayMs = options.delayMs ?? DEFAULT_DELAY_MS;
   const debugDir = options.debugDir ?? DEFAULT_DEBUG_DIR;
-  const pageLoadTimeoutMs = options.pageLoadTimeoutMs ?? 30_000;
+  const pageLoadTimeoutMs = options.pageLoadTimeoutMs ?? DEFAULT_PAGE_LOAD_TIMEOUT_MS;
+  const pageLoadAttempts = options.pageLoadAttempts ?? DEFAULT_PAGE_LOAD_ATTEMPTS;
+  const pageLoadRetryDelayMs = options.pageLoadRetryDelayMs ?? DEFAULT_PAGE_LOAD_RETRY_DELAY_MS;
 
   const browser = await chromium.launch({
     headless: options.headless ?? true,
@@ -258,7 +265,10 @@ export async function exportGoszakupLotsByNstru(
           statusIds,
           debugDir,
           maxPages,
-          pageLoadTimeoutMs
+          pageLoadTimeoutMs,
+          pageLoadAttempts,
+          pageLoadRetryDelayMs,
+          onRetry: options.onProgress
         });
 
         rows.push(...items.map((item) => buildExportRow(query.value, month, item)));
@@ -314,6 +324,9 @@ async function collectLotsPageSet(
     debugDir: string;
     maxPages: number;
     pageLoadTimeoutMs: number;
+    pageLoadAttempts: number;
+    pageLoadRetryDelayMs: number;
+    onRetry?: (message: string) => void;
   }
 ): Promise<GoszakupLotItem[]> {
   const allItems: GoszakupLotItem[] = [];
@@ -328,7 +341,12 @@ async function collectLotsPageSet(
       statusIds: options.statusIds,
       pageNum
     });
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.pageLoadTimeoutMs });
+    await gotoLotsPageWithRetry(page, url, {
+      timeoutMs: options.pageLoadTimeoutMs,
+      maxAttempts: options.pageLoadAttempts,
+      retryDelayMs: options.pageLoadRetryDelayMs,
+      onRetry: options.onRetry
+    });
     await page.waitForTimeout(1500);
 
     const html = await page.content();
@@ -359,6 +377,38 @@ async function collectLotsPageSet(
   }
 
   return allItems;
+}
+
+export interface LotsPageNavigator {
+  goto(url: string, options: { waitUntil: "domcontentloaded"; timeout: number }): Promise<unknown>;
+  waitForTimeout(timeoutMs: number): Promise<void>;
+}
+
+export async function gotoLotsPageWithRetry(
+  page: LotsPageNavigator,
+  url: string,
+  options: {
+    timeoutMs: number;
+    maxAttempts: number;
+    retryDelayMs: number;
+    onRetry?: (message: string) => void;
+  }
+): Promise<void> {
+  const maxAttempts = Math.max(1, Math.trunc(options.maxAttempts));
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.timeoutMs });
+      return;
+    } catch (error) {
+      if (attempt >= maxAttempts) throw error;
+
+      const message = error instanceof Error ? error.message : String(error);
+      options.onRetry?.(`goszakup lots navigation retry ${attempt}/${maxAttempts - 1}: ${message}`);
+      const delayMs = Math.max(0, options.retryDelayMs) * 2 ** (attempt - 1);
+      if (delayMs > 0) await page.waitForTimeout(delayMs);
+    }
+  }
 }
 
 function buildExportRow(code: string, month: number, item: GoszakupLotItem): GoszakupLotsNstruRow {
