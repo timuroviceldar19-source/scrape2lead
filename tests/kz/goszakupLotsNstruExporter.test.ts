@@ -29,7 +29,7 @@ describe("lots page navigation retries", () => {
     await gotoLotsPageWithRetry(
       { goto, waitForTimeout },
       "https://goszakup.gov.kz/ru/search/lots?x=1",
-      { timeoutMs: 60_000, maxAttempts: 4, retryDelayMs: 0, onRetry: (message) => retries.push(message) }
+      { timeoutMs: 60_000, maxAttempts: 4, retryDelayMs: 2_000, onRetry: (message) => retries.push(message) }
     );
 
     expect(goto).toHaveBeenCalledTimes(3);
@@ -38,6 +38,7 @@ describe("lots page navigation retries", () => {
       { waitUntil: "domcontentloaded", timeout: 60_000 }
     );
     expect(retries).toHaveLength(2);
+    expect(waitForTimeout.mock.calls).toEqual([[2_000], [4_000]]);
   });
 
   it("throws the final error after the configured attempt limit", async () => {
