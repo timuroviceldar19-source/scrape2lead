@@ -2,16 +2,55 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import ExcelJS from "exceljs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildLotsNstruSearchUrl,
   filterLotRows,
+  gotoLotsPageWithRetry,
   looksLikeIgnoredEnstruFilter,
   readNstruCodes,
   resolveLotStatusIds,
   writeLotsWorkbook,
   type GoszakupLotsNstruRow
 } from "../../src/kz/goszakupLotsNstruExporter.js";
+
+describe("lots page navigation retries", () => {
+  it("retries a transient navigation failure and eventually succeeds", async () => {
+    const transient = new Error("page.goto: net::ERR_NAME_NOT_RESOLVED");
+    const goto = vi.fn()
+      .mockRejectedValueOnce(transient)
+      .mockRejectedValueOnce(new Error("page.goto: Timeout 30000ms exceeded"))
+      .mockResolvedValueOnce(null);
+    const waitForTimeout = vi.fn().mockResolvedValue(undefined);
+    const retries: string[] = [];
+
+    await gotoLotsPageWithRetry(
+      { goto, waitForTimeout },
+      "https://goszakup.gov.kz/ru/search/lots?x=1",
+      { timeoutMs: 60_000, maxAttempts: 4, retryDelayMs: 0, onRetry: (message) => retries.push(message) }
+    );
+
+    expect(goto).toHaveBeenCalledTimes(3);
+    expect(goto).toHaveBeenLastCalledWith(
+      "https://goszakup.gov.kz/ru/search/lots?x=1",
+      { waitUntil: "domcontentloaded", timeout: 60_000 }
+    );
+    expect(retries).toHaveLength(2);
+  });
+
+  it("throws the final error after the configured attempt limit", async () => {
+    const finalError = new Error("page.goto: Timeout 60000ms exceeded");
+    const goto = vi.fn().mockRejectedValue(finalError);
+
+    await expect(gotoLotsPageWithRetry(
+      { goto, waitForTimeout: vi.fn().mockResolvedValue(undefined) },
+      "https://goszakup.gov.kz/ru/search/lots?x=1",
+      { timeoutMs: 60_000, maxAttempts: 3, retryDelayMs: 0 }
+    )).rejects.toBe(finalError);
+
+    expect(goto).toHaveBeenCalledTimes(3);
+  });
+});
 
 function lotRow(overrides: Partial<GoszakupLotsNstruRow> = {}): GoszakupLotsNstruRow {
   return {
