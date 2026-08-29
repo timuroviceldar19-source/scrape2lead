@@ -43,6 +43,7 @@ No live portal write was performed by the tests.
 
 ## Merge evidence
 
-- RED checkpoint: `ea16f5f`
-- GREEN checkpoint: `568218b`
-
+- RED checkpoint: `c8d62d1`
+- GREEN checkpoint: `51d90e7`
+- RED checkpoint (feat/customer-dossier): `ea16f5f`
+- GREEN checkpoint (feat/customer-dossier): `568218b`

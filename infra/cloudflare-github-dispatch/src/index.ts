@@ -3,6 +3,8 @@ const GITHUB_REPOSITORY = "scrape2lead";
 const GITHUB_REF = "main";
 const GITHUB_API_VERSION = "2026-03-10";
 const ERROR_BODY_LIMIT = 1_000;
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const RETRY_DELAYS_MS = [5_000, 20_000] as const;
 
 // Казахстан живёт в UTC+5 без перехода на летнее время, поэтому смещение постоянное.
 //
@@ -23,11 +25,16 @@ const ERROR_BODY_LIMIT = 1_000;
 const WORKFLOW_BY_CRON = {
   "40 3 * * *": "gz-daily-pk.yml", // 08:40 Алматы
   "10 4 * * *": "f3-daily.yml", // 09:10 Алматы
-  "0 5 * * *": "gz-daily-main.yml", // 10:00 Алматы
-  "30 6 * * *": "gz-watchdog.yml", // 11:30 Алматы
-  "0 8 * * *": "gz-daily-pk.yml", // 13:00 Алматы
-  "30 9 * * *": "gz-daily-main.yml", // 14:30 Алматы
+  // Cloudflare Free allows five cron triggers per account. These two expressions
+  // each cover two exact slots; scheduledTime selects the intended workflow.
+  "0 5,8 * * *": { 5: "gz-daily-main.yml", 8: "gz-daily-pk.yml" }, // 10:00/13:00 Алматы
+  "30 6,9 * * *": { 6: "gz-watchdog.yml", 9: "gz-daily-main.yml" }, // 11:30/14:30 Алматы
+  "15 10 * * *": "gz-watchdog.yml", // 15:15 Алматы
 } as const;
+
+const INPUTS_BY_CRON: Partial<Record<keyof typeof WORKFLOW_BY_CRON, Record<string, string>>> = {
+  "15 10 * * *": { window: "afternoon" },
+};
 
 export interface DispatchEnvironment {
   GITHUB_ACTIONS_TOKEN: string;
@@ -41,6 +48,7 @@ export interface ScheduledControllerLike {
 export interface DispatchDependencies {
   fetch: typeof fetch;
   log: (entry: Record<string, unknown>) => void;
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 interface GitHubDispatchResponse {
@@ -53,12 +61,22 @@ interface GitHubDispatchResponse {
 const DEFAULT_DEPENDENCIES: DispatchDependencies = {
   fetch: globalThis.fetch.bind(globalThis),
   log: (entry) => console.log(JSON.stringify(entry)),
+  sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 };
 
-function workflowForCron(cron: string): string {
-  const workflow = WORKFLOW_BY_CRON[cron as keyof typeof WORKFLOW_BY_CRON];
-  if (!workflow) {
+function workflowForSchedule(cron: string, scheduledTime: number): string {
+  const target = WORKFLOW_BY_CRON[cron as keyof typeof WORKFLOW_BY_CRON];
+  if (!target) {
     throw new Error(`Unknown cron trigger: ${cron}`);
+  }
+  if (typeof target === "string") {
+    return target;
+  }
+
+  const scheduledHour = new Date(scheduledTime).getUTCHours();
+  const workflow = target[scheduledHour as keyof typeof target];
+  if (!workflow) {
+    throw new Error(`Unexpected scheduled time for cron ${cron}: ${scheduledTime}`);
   }
   return workflow;
 }
@@ -89,7 +107,7 @@ export async function dispatchScheduled(
   env: DispatchEnvironment,
   dependencies: DispatchDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<void> {
-  const workflow = workflowForCron(controller.cron);
+  const workflow = workflowForSchedule(controller.cron, controller.scheduledTime);
   const token = env.GITHUB_ACTIONS_TOKEN;
   if (!token) {
     throw new Error("GITHUB_ACTIONS_TOKEN is not configured");
@@ -98,7 +116,8 @@ export async function dispatchScheduled(
   const url =
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPOSITORY}` +
     `/actions/workflows/${workflow}/dispatches`;
-  const response = await dependencies.fetch(url, {
+  const inputs = INPUTS_BY_CRON[controller.cron as keyof typeof WORKFLOW_BY_CRON];
+  const request = {
     method: "POST",
     headers: {
       Accept: "application/vnd.github+json",
@@ -107,8 +126,31 @@ export async function dispatchScheduled(
       "User-Agent": "scrape2lead-cloudflare-dispatch/1.0",
       "X-GitHub-Api-Version": GITHUB_API_VERSION,
     },
-    body: JSON.stringify({ ref: GITHUB_REF }),
-  });
+    body: JSON.stringify(inputs ? { ref: GITHUB_REF, inputs } : { ref: GITHUB_REF }),
+  };
+
+  let response: Response | undefined;
+  for (let attempt = 1; attempt <= RETRY_DELAYS_MS.length + 1; attempt += 1) {
+    response = await dependencies.fetch(url, request);
+    const retryDelay = RETRY_DELAYS_MS[attempt - 1];
+    if (response.ok || !RETRYABLE_STATUSES.has(response.status) || retryDelay === undefined) {
+      break;
+    }
+
+    dependencies.log({
+      event: "github_workflow_dispatch_retry",
+      cron: controller.cron,
+      workflow,
+      status: response.status,
+      attempt,
+      nextDelayMs: retryDelay,
+    });
+    await (dependencies.sleep ?? DEFAULT_DEPENDENCIES.sleep)?.(retryDelay);
+  }
+
+  if (!response) {
+    throw new Error("GitHub workflow dispatch did not produce a response");
+  }
 
   if (!response.ok) {
     const body = (await response.text()).slice(0, ERROR_BODY_LIMIT);
