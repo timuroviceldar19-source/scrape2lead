@@ -75,6 +75,8 @@ export interface GzPlanCollectOptions {
   debugDir?: string;
   pageLoadTimeoutMs?: number;
   pageLoadRetries?: number;
+  /** Base backoff between page-load retries; doubles per attempt. Defaults to 5000. */
+  pageLoadRetryDelayMs?: number;
   /** Wait after each registry page load before parsing server-rendered HTML. */
   searchPageWaitMs?: number;
   /** Export list fields without fetching every plan detail page. */
@@ -113,9 +115,17 @@ export interface PlanDetailCacheStats {
   fetchFailed: number;
 }
 
+/** A search query that stayed unreachable after every page-load retry. */
+export interface PlanSearchFailure {
+  label: string;
+  message: string;
+}
+
 export interface GzPlanCollectResult {
   items: Array<GoszakupPlanListItem & { detail: GoszakupPlanDetail | null }>;
   cacheStats?: PlanDetailCacheStats;
+  /** Queries dropped by network failures. Absent = every query was collected. */
+  searchFailures?: PlanSearchFailure[];
 }
 
 export interface GzPlanExportOptions extends GzPlanCollectOptions {

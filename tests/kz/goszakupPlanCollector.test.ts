@@ -1,9 +1,13 @@
+import fs from "node:fs";
+import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  assertPlanSearchCoverage,
   buildFallbackPlanDetail,
   buildPlanSearchQueries,
   collectPlanDetails,
+  collectPlanListItems,
   prefilterPlanListItems,
   type PlanSearchPage
 } from "../../src/kz/goszakupPlanCollector.js";
@@ -240,5 +244,96 @@ describe("buildFallbackPlanDetail", () => {
       customer_bin: null,
       ref_enstru_code: null
     });
+  });
+});
+
+describe("collectPlanListItems fault tolerance", () => {
+  const searchHtml = fs.readFileSync(path.resolve("tests/fixtures/goszakup-plan-search.html"), "utf8");
+
+  function collectOptions() {
+    return {
+      year: 2026,
+      months: [8, 9],
+      debugDir: path.join("data", "debug-test"),
+      maxPages: 5,
+      pageLoadTimeoutMs: 1000,
+      searchPageWaitMs: 0,
+      delayMs: 0,
+      pageLoadRetries: 1,
+      pageLoadRetryDelayMs: 0,
+      sleepImpl: async () => {}
+    };
+  }
+
+  it("keeps collecting the remaining queries after one query fails", async () => {
+    const visited: string[] = [];
+    const page: PlanSearchPage = {
+      async goto(url: string) {
+        const decoded = decodeURIComponent(url);
+        visited.push(decoded);
+        // URLSearchParams кодирует пробел как "+", поэтому сверяем по одному слову.
+        if (decoded.includes("Компьютер")) {
+          throw new Error("page.goto: net::ERR_NAME_NOT_RESOLVED");
+        }
+      },
+      async waitForTimeout() {},
+      async content() {
+        return searchHtml;
+      }
+    };
+    const queries = buildPlanSearchQueries({
+      keywords: ["Компьютер персональный", "Панель интерактивная"],
+      katoLocations: [],
+      statuses: []
+    });
+
+    const result = await collectPlanListItems(page, queries, collectOptions());
+
+    expect(result.items).toHaveLength(3);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].label).toBe("Компьютер персональный");
+    expect(result.failures[0].message).toMatch(/ERR_NAME_NOT_RESOLVED/);
+    expect(visited.some((url) => url.includes("Панель"))).toBe(true);
+  });
+
+  it("reports every failed query when the whole portal is unreachable", async () => {
+    const page: PlanSearchPage = {
+      async goto() {
+        throw new Error("page.goto: net::ERR_CERT_AUTHORITY_INVALID");
+      },
+      async waitForTimeout() {},
+      async content() {
+        return searchHtml;
+      }
+    };
+    const queries = buildPlanSearchQueries({
+      keywords: ["Компьютер персональный", "Монитор"],
+      katoLocations: [],
+      statuses: []
+    });
+
+    const result = await collectPlanListItems(page, queries, collectOptions());
+
+    expect(result.items).toHaveLength(0);
+    expect(result.failures.map((failure) => failure.label)).toEqual(["Компьютер персональный", "Монитор"]);
+  });
+});
+
+describe("assertPlanSearchCoverage", () => {
+  it("throws only when every query failed, listing each one", () => {
+    expect(() => assertPlanSearchCoverage(2, [
+      { label: "Компьютер персональный", message: "net::ERR_NAME_NOT_RESOLVED" },
+      { label: "Монитор", message: "net::ERR_CERT_AUTHORITY_INVALID" }
+    ])).toThrow(/all 2 plan search queries failed[\s\S]*Компьютер персональный[\s\S]*Монитор/);
+  });
+
+  it("tolerates a partial failure so surviving queries still export", () => {
+    expect(() => assertPlanSearchCoverage(2, [
+      { label: "Монитор", message: "net::ERR_NAME_NOT_RESOLVED" }
+    ])).not.toThrow();
+  });
+
+  it("does not throw when there was nothing to search", () => {
+    expect(() => assertPlanSearchCoverage(0, [])).not.toThrow();
   });
 });

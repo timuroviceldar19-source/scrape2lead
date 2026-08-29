@@ -24,14 +24,20 @@ import type {
   GzPlanCollectOptions,
   GzPlanCollectResult,
   GoszakupPlanKatoLocation,
-  PlanDetailCacheStats
+  PlanDetailCacheStats,
+  PlanSearchFailure
 } from "./goszakupPlanTypes.js";
 import { DEFAULT_GZ_PLAN_KEYWORDS as DEFAULT_KEYWORDS } from "./goszakupPlanTypes.js";
 
 const DEFAULT_DEBUG_DIR = "data/debug";
 const MAX_PAGES_DEFAULT = 50;
 const DEFAULT_PAGE_LOAD_TIMEOUT_MS = 90_000;
-const SEARCH_PAGE_RETRIES = 2;
+// Сбои на раннере GitHub — ERR_NAME_NOT_RESOLVED и ERR_CERT_AUTHORITY_INVALID —
+// возвращаются мгновенно, поэтому три попытки с фиксированной паузой укладывались
+// в ~6 секунд и не переживали ни одной реальной сетевой ямы (run 33242145182).
+// Пять попыток с удвоением дают запас ~75 секунд.
+const SEARCH_PAGE_RETRIES = 4;
+const SEARCH_PAGE_RETRY_DELAY_MS = 5_000;
 const DETAIL_RETRIES = 2;
 const DEFAULT_DETAIL_CACHE_TTL_DAYS = 3;
 
@@ -68,47 +74,24 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
   });
   const page = await context.newPage();
 
-  const listItems: GoszakupPlanListItem[] = [];
-  const listById = new Map<string, GoszakupPlanListItem>();
-
   try {
-    for (const query of searchQueries) {
-      const statusSuffix = query.allowedStatusNames.length ? ` / ${query.allowedStatusNames[0]}` : "";
-      options.onProgress?.(`search: ${query.label}${statusSuffix}`);
-      const baseUrl = buildPlanSearchUrl({
-        keyword: query.keyword,
-        katoCode: query.katoCode,
-        statusId: query.statusId,
-        year,
-        months
-      });
-      const items = await collectPlanSearch(page, baseUrl, query.label, {
-        debugDir,
-        maxPages,
-        pageLoadTimeoutMs,
-        searchPageWaitMs: options.searchPageWaitMs ?? 1500,
-        delayMs,
-        allowedStatusNames: query.allowedStatusNames,
-        pageLoadRetries: options.pageLoadRetries ?? SEARCH_PAGE_RETRIES
-      });
+    const search = await collectPlanListItems(page, searchQueries, {
+      year,
+      months,
+      debugDir,
+      maxPages,
+      pageLoadTimeoutMs,
+      searchPageWaitMs: options.searchPageWaitMs ?? 1500,
+      delayMs,
+      pageLoadRetries: options.pageLoadRetries ?? SEARCH_PAGE_RETRIES,
+      pageLoadRetryDelayMs: options.pageLoadRetryDelayMs,
+      keepDuplicates: options.keepDuplicates,
+      onProgress: options.onProgress
+    });
+    assertPlanSearchCoverage(searchQueries.length, search.failures);
+    const searchFailures = search.failures.length > 0 ? search.failures : undefined;
 
-      for (const item of items) {
-        if (!matchesPlanStatus(item.status, query.allowedStatusNames)) continue;
-        if (options.keepDuplicates) {
-          listItems.push(item);
-        } else {
-          const existing = listById.get(item.plan_point_id);
-          listById.set(item.plan_point_id, existing
-            ? { ...existing, keyword: mergeSearchLabels(existing.keyword, item.keyword) }
-            : item);
-        }
-      }
-
-      console.log(`goszakup plan search: filter="${query.label}${statusSuffix}" rows=${items.length}`);
-      if (delayMs > 0) await sleep(delayMs);
-    }
-
-    const dedupedItems = options.keepDuplicates ? listItems : [...listById.values()];
+    const dedupedItems = search.items;
     const detailItems = options.prefilterDetails
       ? runDetailPrefilter(dedupedItems, options.minAmount ?? 0, options.excludeKeywords ?? [])
       : dedupedItems;
@@ -116,7 +99,8 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
     if (options.skipDetails) {
       return {
         items: detailItems.map((item) => ({ ...item, detail: buildFallbackPlanDetail(item) })),
-        cacheStats: { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 }
+        cacheStats: { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 },
+        searchFailures
       };
     }
 
@@ -135,7 +119,7 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
         forceRefresh: resolveDetailForceRefresh(options.forceDetailRefresh),
         onProgress: options.onProgress
       });
-      return { items: detailResult.items, cacheStats: detailResult.stats };
+      return { items: detailResult.items, cacheStats: detailResult.stats, searchFailures };
     } finally {
       storage.close();
     }
@@ -181,6 +165,123 @@ export function buildPlanSearchQueries(options: {
     }
   }
   return queries;
+}
+
+export interface PlanListCollectOptions {
+  year: number;
+  months: number[];
+  debugDir: string;
+  maxPages: number;
+  pageLoadTimeoutMs: number;
+  searchPageWaitMs?: number;
+  delayMs: number;
+  pageLoadRetries?: number;
+  pageLoadRetryDelayMs?: number;
+  keepDuplicates?: boolean;
+  sleepImpl?: (ms: number) => Promise<void>;
+  onProgress?: (message: string) => void;
+}
+
+export interface PlanListCollectOutput {
+  items: GoszakupPlanListItem[];
+  failures: PlanSearchFailure[];
+}
+
+/**
+ * Runs every search query and returns the deduplicated list rows.
+ *
+ * Одна упавшая поисковая фраза больше не роняет весь сбор: сетевые сбои на
+ * раннере бьют по отдельному запросу, а остальные фразы обычно проходят.
+ * Провалы копятся в failures — решение «падать или нет» принимает
+ * assertPlanSearchCoverage у вызывающего.
+ */
+export async function collectPlanListItems(
+  page: PlanSearchPage,
+  searchQueries: readonly PlanSearchQuery[],
+  options: PlanListCollectOptions
+): Promise<PlanListCollectOutput> {
+  const listItems: GoszakupPlanListItem[] = [];
+  const listById = new Map<string, GoszakupPlanListItem>();
+  const failures: PlanSearchFailure[] = [];
+  const doSleep = options.sleepImpl ?? sleep;
+
+  for (const query of searchQueries) {
+    const statusSuffix = query.allowedStatusNames.length ? ` / ${query.allowedStatusNames[0]}` : "";
+    const label = `${query.label}${statusSuffix}`;
+    options.onProgress?.(`search: ${label}`);
+    const baseUrl = buildPlanSearchUrl({
+      keyword: query.keyword,
+      katoCode: query.katoCode,
+      statusId: query.statusId,
+      year: options.year,
+      months: options.months
+    });
+
+    let items: GoszakupPlanListItem[];
+    try {
+      items = await collectPlanSearch(page, baseUrl, query.label, {
+        debugDir: options.debugDir,
+        maxPages: options.maxPages,
+        pageLoadTimeoutMs: options.pageLoadTimeoutMs,
+        searchPageWaitMs: options.searchPageWaitMs,
+        delayMs: options.delayMs,
+        allowedStatusNames: query.allowedStatusNames,
+        pageLoadRetries: options.pageLoadRetries,
+        pageLoadRetryDelayMs: options.pageLoadRetryDelayMs,
+        sleepImpl: options.sleepImpl
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({ label, message });
+      console.error(`goszakup plan search: filter="${label}" failed, continuing: ${message}`);
+      options.onProgress?.(`search failed: ${label}`);
+      continue;
+    }
+
+    for (const item of items) {
+      if (!matchesPlanStatus(item.status, query.allowedStatusNames)) continue;
+      if (options.keepDuplicates) {
+        listItems.push(item);
+      } else {
+        const existing = listById.get(item.plan_point_id);
+        listById.set(item.plan_point_id, existing
+          ? { ...existing, keyword: mergeSearchLabels(existing.keyword, item.keyword) }
+          : item);
+      }
+    }
+
+    console.log(`goszakup plan search: filter="${label}" rows=${items.length}`);
+    if (options.delayMs > 0) await doSleep(options.delayMs);
+  }
+
+  return {
+    items: options.keepDuplicates ? listItems : [...listById.values()],
+    failures
+  };
+}
+
+/**
+ * Останавливает прогон, только если не собралось вообще ничего: частичный
+ * результат лучше пустого, дедупликация сделок живёт в Bitrix, а недобранные
+ * фразы подхватит следующий прогон.
+ */
+export function assertPlanSearchCoverage(
+  queryCount: number,
+  failures: readonly PlanSearchFailure[]
+): void {
+  if (queryCount === 0 || failures.length < queryCount) {
+    if (failures.length > 0) {
+      console.warn(
+        `goszakup plan search: ${failures.length}/${queryCount} queries failed, continuing with partial results`
+      );
+    }
+    return;
+  }
+
+  throw new Error(
+    `goszakup plan search: all ${queryCount} plan search queries failed\n`
+    + failures.map((failure) => `  ${failure.label}: ${failure.message}`).join("\n")
+  );
 }
 
 function mergeSearchLabels(left: string, right: string): string {
@@ -384,6 +485,8 @@ export async function collectPlanSearch(
     delayMs: number;
     allowedStatusNames: string[];
     pageLoadRetries?: number;
+    pageLoadRetryDelayMs?: number;
+    sleepImpl?: (ms: number) => Promise<void>;
   }
 ): Promise<GoszakupPlanListItem[]> {
   const allItems: GoszakupPlanListItem[] = [];
@@ -435,7 +538,7 @@ export async function collectPlanSearch(
     if (pageNum + 1 >= totalPages) break;
 
     pageNum++;
-    if (options.delayMs > 0) await sleep(options.delayMs);
+    if (options.delayMs > 0) await (options.sleepImpl ?? sleep)(options.delayMs);
   }
 
   return allItems;
@@ -450,9 +553,14 @@ async function gotoPlanSearchPage(
     pageLoadTimeoutMs: number;
     delayMs: number;
     pageLoadRetries?: number;
+    pageLoadRetryDelayMs?: number;
+    sleepImpl?: (ms: number) => Promise<void>;
   }
 ): Promise<void> {
   const retries = options.pageLoadRetries ?? SEARCH_PAGE_RETRIES;
+  const baseDelayMs = Math.max(0, options.pageLoadRetryDelayMs ?? SEARCH_PAGE_RETRY_DELAY_MS);
+  const doSleep = options.sleepImpl ?? sleep;
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.pageLoadTimeoutMs });
@@ -468,7 +576,9 @@ async function gotoPlanSearchPage(
       console.warn(
         `goszakup plan search: keyword="${keyword}" page=${pageNum + 1} retry ${attempt + 1}/${retries}: ${message}`
       );
-      if (options.delayMs > 0) await sleep(options.delayMs);
+      // Пауза удваивается: сетевые сбои раннера живут дольше одной фиксированной паузы.
+      const delayMs = baseDelayMs * 2 ** attempt;
+      if (delayMs > 0) await doSleep(delayMs);
     }
   }
 }

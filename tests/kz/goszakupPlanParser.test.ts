@@ -117,7 +117,8 @@ describe("collectPlanSearch", () => {
       pageLoadTimeoutMs: 90_000,
       delayMs: 0,
       allowedStatusNames: [],
-      pageLoadRetries: 2
+      pageLoadRetries: 2,
+      pageLoadRetryDelayMs: 0
     });
 
     expect(items).toHaveLength(0);
@@ -144,10 +145,67 @@ describe("collectPlanSearch", () => {
         pageLoadTimeoutMs: 90_000,
         delayMs: 0,
         allowedStatusNames: [],
-        pageLoadRetries: 2
+        pageLoadRetries: 2,
+        pageLoadRetryDelayMs: 0
       })
     ).rejects.toThrow(/Timeout 90000ms exceeded/);
     expect(attempts).toBe(3);
+  });
+
+  it("backs off exponentially between search page retries", async () => {
+    let attempts = 0;
+    const sleeps: number[] = [];
+    const page: PlanSearchPage = {
+      async goto() {
+        attempts++;
+        if (attempts < 3) throw new Error("page.goto: net::ERR_NAME_NOT_RESOLVED");
+      },
+      async waitForTimeout() {},
+      async content() {
+        return emptySearchHtml;
+      }
+    };
+
+    await collectPlanSearch(page, "https://example.test/registry/plan", "Ноутбук", {
+      debugDir: path.join("data", "debug-test"),
+      maxPages: 1,
+      pageLoadTimeoutMs: 90_000,
+      delayMs: 0,
+      allowedStatusNames: [],
+      pageLoadRetryDelayMs: 5_000,
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      }
+    });
+
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([5_000, 10_000]);
+  });
+
+  it("gives a transient network failure five attempts by default", async () => {
+    let attempts = 0;
+    const page: PlanSearchPage = {
+      async goto() {
+        attempts++;
+        throw new Error("page.goto: net::ERR_NAME_NOT_RESOLVED");
+      },
+      async waitForTimeout() {},
+      async content() {
+        return emptySearchHtml;
+      }
+    };
+
+    await expect(
+      collectPlanSearch(page, "https://example.test/registry/plan", "Ноутбук", {
+        debugDir: path.join("data", "debug-test"),
+        maxPages: 1,
+        pageLoadTimeoutMs: 90_000,
+        delayMs: 0,
+        allowedStatusNames: [],
+        pageLoadRetryDelayMs: 0
+      })
+    ).rejects.toThrow(/ERR_NAME_NOT_RESOLVED/);
+    expect(attempts).toBe(5);
   });
 
   it("fails when maxPages could truncate available results", async () => {
