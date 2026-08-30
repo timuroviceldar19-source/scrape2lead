@@ -18,13 +18,20 @@ describe("GZ plan deal card layout", () => {
       title: "Обязательные поля",
       type: "section" as const,
       elements: [{ name: "UF_CRM_PLAN_LINK", optionFlags: "0" }]
+    },
+    {
+      name: "additional",
+      title: "Дополнительно",
+      type: "section" as const,
+      elements: [{ name: "COMMENTS", optionFlags: "0" }]
     }
   ];
 
   it("preserves the current card and adds a dedicated plan-data section", () => {
     const result = mergeGzPlanDetailsSection(existing);
 
-    expect(result.slice(0, 2)).toEqual(existing);
+    expect(result.slice(0, 2)).toEqual(existing.slice(0, 2));
+    expect(result[2]?.name).toBe(GZ_PLAN_DETAILS_SECTION_NAME);
     const planSection = result.find((section) => section.name === GZ_PLAN_DETAILS_SECTION_NAME);
     expect(planSection?.title).toBe("Данные плана закупки");
     expect(planSection?.elements.map((element) => element.name)).toEqual(
