@@ -64,4 +64,30 @@ describe("GZ plan deal card layout", () => {
     mergeGzPlanDetailsSection(existing);
     expect(existing).toEqual(snapshot);
   });
+
+  it("deep-clones field display options from the existing card", () => {
+    const withOptions = [{
+      name: "main",
+      title: "О сделке",
+      type: "section" as const,
+      elements: [{ name: "OPPORTUNITY_WITH_CURRENCY", optionFlags: "0", options: { showPayButton: "false" } }]
+    }];
+
+    const result = mergeGzPlanDetailsSection(withOptions);
+    expect(result[0]?.elements[0]?.options).toEqual({ showPayButton: "false" });
+    expect(result[0]?.elements[0]?.options).not.toBe(withOptions[0]?.elements[0]?.options);
+  });
+
+  it("does not add an empty generated section when all plan fields are already visible", () => {
+    const complete = [{
+      name: "main",
+      title: "О сделке",
+      type: "section" as const,
+      elements: GZ_PLAN_DETAILS_FIELD_NAMES.map((name) => ({ name, optionFlags: "0" }))
+    }];
+
+    const result = mergeGzPlanDetailsSection(complete);
+    expect(result).toEqual(complete);
+    expect(result.some((section) => section.name === GZ_PLAN_DETAILS_SECTION_NAME)).toBe(false);
+  });
 });

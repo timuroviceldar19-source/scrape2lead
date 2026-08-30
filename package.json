@@ -44,6 +44,7 @@
     "bitrix:report": "tsx scripts/bitrix-report.mts",
     "bitrix:activity-audit": "tsx scripts/bitrix-activity-audit.mts",
     "bitrix:apply-procurement-layout": "tsx scripts/bitrix-apply-procurement-layout.mts",
+    "bitrix:apply-gz-plan-layout": "tsx scripts/bitrix-apply-gz-plan-layout.mts",
     "bitrix:reassign-procurement-deals": "tsx scripts/bitrix-reassign-procurement-deals.mts",
     "bitrix:backfill-gz-origin": "tsx scripts/bitrix-backfill-gz-origin.mts",
     "bitrix:backfill-gz-plan-number": "tsx scripts/bitrix-backfill-gz-plan-number.mts",
