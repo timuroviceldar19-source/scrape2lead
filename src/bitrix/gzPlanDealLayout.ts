@@ -47,6 +47,11 @@ export const GZ_PLAN_DETAILS_FIELD_NAMES = [
   "UF_CRM_DELIVERY_ADDRESSES"
 ] as const;
 
+function isRequiredFieldsSection(section: GzDealLayoutSection): boolean {
+  return section.name === "required"
+    || section.title.trim().toLocaleLowerCase("ru-RU") === "обязательные поля";
+}
+
 function cloneSection(section: GzDealLayoutSection): GzDealLayoutSection {
   return {
     ...section,
@@ -57,7 +62,7 @@ function cloneSection(section: GzDealLayoutSection): GzDealLayoutSection {
   };
 }
 
-/** Adds the generated plan-data block while preserving every existing section. */
+/** Adds the generated plan-data block immediately after the required-fields section. */
 export function mergeGzPlanDetailsSection(
   configuration: readonly GzDealLayoutSection[]
 ): GzDealLayoutSection[] {
@@ -72,13 +77,17 @@ export function mergeGzPlanDetailsSection(
     .map((name) => ({ name, optionFlags: "0" }));
 
   if (elements.length === 0) return preserved;
+  const requiredIndex = preserved.findIndex(isRequiredFieldsSection);
+  const insertIndex = requiredIndex >= 0 ? requiredIndex + 1 : preserved.length;
+  const planSection: GzDealLayoutSection = {
+    name: GZ_PLAN_DETAILS_SECTION_NAME,
+    title: "Данные плана закупки",
+    type: "section",
+    elements
+  };
   return [
-    ...preserved,
-    {
-      name: GZ_PLAN_DETAILS_SECTION_NAME,
-      title: "Данные плана закупки",
-      type: "section",
-      elements
-    }
+    ...preserved.slice(0, insertIndex),
+    planSection,
+    ...preserved.slice(insertIndex)
   ];
 }
