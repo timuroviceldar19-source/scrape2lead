@@ -1,4 +1,5 @@
 ﻿import type { GoszakupRegistryRecord } from "./registryTypes.js";
+import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
 
 export function parseRegistrySearchHtml(html: string, bin: string): { participant_id: string; profile_url: string } | null {
   const binPattern = bin.replace(/\D/g, "");
@@ -13,7 +14,7 @@ export function parseRegistrySearchHtml(html: string, bin: string): { participan
     if (linkMatch) {
       return {
         participant_id: linkMatch[1],
-        profile_url: `https://goszakup.gov.kz/ru/registry/show_supplier/${linkMatch[1]}`
+        profile_url: `${GZ_PORTAL_ORIGIN}/ru/registry/show_supplier/${linkMatch[1]}`
       };
     }
   }
@@ -24,7 +25,7 @@ export function parseRegistrySearchHtml(html: string, bin: string): { participan
     const pid = fallbackMatch[1] ?? fallbackMatch[2];
     return {
       participant_id: pid,
-      profile_url: `https://goszakup.gov.kz/ru/registry/show_supplier/${pid}`
+      profile_url: `${GZ_PORTAL_ORIGIN}/ru/registry/show_supplier/${pid}`
     };
   }
 
@@ -93,7 +94,7 @@ export function parseRegistryProfileHtml(html: string, bin: string): GoszakupReg
     location_address: nullable(locationAddress),
     full_address_ru: nullable(fullAddressRu),
     reporting_administrator: nullable(reportingAdministrator),
-    registry_url: participantId ? `https://goszakup.gov.kz/ru/registry/show_supplier/${participantId}` : null,
+    registry_url: participantId ? `${GZ_PORTAL_ORIGIN}/ru/registry/show_supplier/${participantId}` : null,
     updated_at: new Date().toISOString(),
     raw_snapshot_path: null
   };
@@ -305,7 +306,9 @@ const WEBSITE_EXCLUDED_HOSTS = new Set([
   "satypalu.gov.kz",
   "www.satypalu.gov.kz",
   "goszakup.gov.kz",
-  "www.goszakup.gov.kz"
+  "www.goszakup.gov.kz",
+  "procurement.gov.kz",
+  "www.procurement.gov.kz"
 ]);
 
 export function normalizeWebsite(raw: string | null): string | null {

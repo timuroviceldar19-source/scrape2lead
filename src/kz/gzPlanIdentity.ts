@@ -1,3 +1,5 @@
+import { isGzPortalHost } from "./goszakupOrigin.js";
+
 const SHOW_PLAN_PATH = /^\/ru\/registry\/show_plan\/(\d+)(?:\/(\d+))?\/?$/i;
 
 export interface GzPlanLinkIdentity {
@@ -11,8 +13,7 @@ export function parseGzPlanLinkIdentity(value: string | null | undefined): GzPla
 
   try {
     const url = new URL(raw);
-    const hostname = url.hostname.toLocaleLowerCase("en");
-    if (hostname !== "goszakup.gov.kz" && !hostname.endsWith(".goszakup.gov.kz")) return null;
+    if (!isGzPortalHost(url.hostname)) return null;
     const match = url.pathname.match(SHOW_PLAN_PATH);
     if (!match) return null;
     return {

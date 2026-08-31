@@ -145,8 +145,9 @@ describe("registry profile hints", () => {
       detail: detail({ plan_point_id: planPointId, customer_bin: "980840002897" })
     }));
 
+    // Ссылка на входе — со старого домена (так они лежат в БД), нормализуется на новый.
     expect(buildRegistryProfileHints(items)).toEqual(new Map([
-      ["980840002897", "https://goszakup.gov.kz/ru/registry/show_supplier/34591"]
+      ["980840002897", "https://procurement.gov.kz/ru/registry/show_supplier/34591"]
     ]));
   });
 

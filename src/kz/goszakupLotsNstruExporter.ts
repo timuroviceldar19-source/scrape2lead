@@ -5,8 +5,9 @@ import { chromium, type Page } from "playwright";
 import { sleep } from "./csv.js";
 import { filterGzItems } from "./gzItemFilter.js";
 import { parseGoszakupLotsHtml, parseGoszakupPagination, type GoszakupLotItem } from "./goszakupHtmlParser.js";
+import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
 
-const BASE_URL = "https://goszakup.gov.kz";
+const BASE_URL = GZ_PORTAL_ORIGIN;
 const DEFAULT_INPUT_PATH = "Nstru.txt";
 const DEFAULT_DEBUG_DIR = "data/debug";
 const DEFAULT_MONTHS = [6, 7, 8];

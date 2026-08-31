@@ -81,7 +81,7 @@ describe("buildLotsNstruSearchUrl", () => {
       month: 6
     });
 
-    expect(url).toContain("https://goszakup.gov.kz/ru/search/lots?");
+    expect(url).toContain("https://procurement.gov.kz/ru/search/lots?");
     expect(url).toContain("filter%5Benstru%5D=262011.100.000000");
     expect(url).toContain("filter%5Byear%5D=2026");
     expect(url).toContain("filter%5Bmonth%5D=6");

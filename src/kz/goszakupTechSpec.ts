@@ -19,7 +19,9 @@
  * All requests are plain HTTP (no Playwright); the pages and PDFs are public.
  */
 
-const GOSZAKUP_ORIGIN = "https://goszakup.gov.kz";
+import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
+
+const GOSZAKUP_ORIGIN = GZ_PORTAL_ORIGIN;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 

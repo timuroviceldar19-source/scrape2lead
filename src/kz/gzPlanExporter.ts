@@ -16,8 +16,9 @@ import type {
   PlanDetailCacheStats
 } from "./goszakupPlanTypes.js";
 import { MONTH_NAMES_RU as MONTH_MAP } from "./goszakupPlanTypes.js";
+import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "./goszakupOrigin.js";
 
-const BASE_URL = "https://goszakup.gov.kz";
+const BASE_URL = GZ_PORTAL_ORIGIN;
 
 const EXPORT_COLUMNS: Array<{ header: string; key: keyof GzPlanExportRow; width: number }> = [
   { header: "БИН Заказчика", key: "customer_bin", width: 16 },
@@ -204,10 +205,10 @@ function normalizeSupplierProfileUrl(value: string): string | null {
   try {
     const url = new URL(value);
     if (url.protocol !== "https:") return null;
-    if (url.hostname !== "goszakup.gov.kz" && url.hostname !== "www.goszakup.gov.kz") return null;
+    if (!isGzPortalRootHost(url.hostname)) return null;
     const match = url.pathname.match(/^\/(ru|kz)\/registry\/show_supplier\/(\d+)\/?$/);
     if (!match) return null;
-    return `https://goszakup.gov.kz/${match[1]}/registry/show_supplier/${match[2]}`;
+    return `${GZ_PORTAL_ORIGIN}/${match[1]}/registry/show_supplier/${match[2]}`;
   } catch {
     return null;
   }
