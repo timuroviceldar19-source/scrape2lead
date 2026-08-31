@@ -1,4 +1,6 @@
-const GOSZAKUP_ORIGIN = "https://www.goszakup.gov.kz";
+import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
+
+const GOSZAKUP_ORIGIN = GZ_PORTAL_ORIGIN;
 
 export interface ContractSearchItem {
   contractId: string;

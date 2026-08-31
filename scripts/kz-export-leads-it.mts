@@ -7,6 +7,7 @@ import { collectGoszakupRegistryForBins } from "../src/kz/goszakupRegistryCollec
 import { KzStorage } from "../src/kz/kzStorage.js";
 import { chromium } from "playwright";
 import { parseContractGeneralHtml, parseContractPartiesHtml, parseContractSearchHtml, parseContractUnitNamesHtml } from "../src/kz/goszakupContractParser.js";
+import { GZ_PORTAL_ORIGIN } from "../src/kz/goszakupOrigin.js";
 
 const ConfigSchema = z.object({
   includePrefixes: z.array(z.string().regex(/^\d+$/)).min(1),
@@ -78,12 +79,12 @@ async function main(): Promise<void> {
 async function collectContractsByPrefixes(include: string[], exclude: string[], from: string, to: string): Promise<LeadContract[]> {
   const browser = await chromium.launch({ headless: true }); const rows: LeadContract[] = [];
   try { const page = await browser.newPage({ locale: "ru-RU" });
-    const url = (pageNo: number) => { const p = new URLSearchParams({ "filter[start_date_from]": from, "filter[start_date_to]": to, count_record: "50" }); if (pageNo > 1) p.set("page", String(pageNo)); return `https://www.goszakup.gov.kz/ru/registry/contract?${p}`; };
+    const url = (pageNo: number) => { const p = new URLSearchParams({ "filter[start_date_from]": from, "filter[start_date_to]": to, count_record: "50" }); if (pageNo > 1) p.set("page", String(pageNo)); return `${GZ_PORTAL_ORIGIN}/ru/registry/contract?${p}`; };
     await page.goto(url(1), { waitUntil: "domcontentloaded", timeout: 45_000 }); let search = parseContractSearchHtml(await page.content(), 50); const total = search.pagination.totalPages;
     for (let pageNo = 1; pageNo <= total; pageNo++) { if (pageNo > 1) { await page.goto(url(pageNo), { waitUntil: "domcontentloaded", timeout: 45_000 }); search = parseContractSearchHtml(await page.content(), 50); } console.log(`gz-leads: contracts page=${pageNo}/${total}`);
-      for (const item of search.items) { await page.goto(`https://www.goszakup.gov.kz/ru/egzcontract/cpublic/show/${item.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 }); const signedAt = parseContractGeneralHtml(await page.content()).signedAt?.slice(0, 10); if (!signedAt) continue;
-        await page.goto(`https://www.goszakup.gov.kz/ru/egzcontract/cpublic/units/${item.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 }); const units = parseContractUnitNamesHtml(await page.content()).filter((unit) => include.some((prefix) => unit.code.startsWith(prefix)) && !exclude.some((prefix) => unit.code.startsWith(prefix))); if (!units.length) continue;
-        await page.goto(`https://www.goszakup.gov.kz/ru/egzcontract/cpublic/customer_n_supplier/${item.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 }); const parties = parseContractPartiesHtml(await page.content());
+      for (const item of search.items) { await page.goto(`${GZ_PORTAL_ORIGIN}/ru/egzcontract/cpublic/show/${item.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 }); const signedAt = parseContractGeneralHtml(await page.content()).signedAt?.slice(0, 10); if (!signedAt) continue;
+        await page.goto(`${GZ_PORTAL_ORIGIN}/ru/egzcontract/cpublic/units/${item.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 }); const units = parseContractUnitNamesHtml(await page.content()).filter((unit) => include.some((prefix) => unit.code.startsWith(prefix)) && !exclude.some((prefix) => unit.code.startsWith(prefix))); if (!units.length) continue;
+        await page.goto(`${GZ_PORTAL_ORIGIN}/ru/egzcontract/cpublic/customer_n_supplier/${item.contractId}`, { waitUntil: "domcontentloaded", timeout: 45_000 }); const parties = parseContractPartiesHtml(await page.content());
         for (const unit of units) rows.push({ bin: parties.supplierBinIin, supplierName: parties.supplierName, signedAt, contractId: item.contractId, contractNumber: item.contractNumber, customerName: parties.customerName, customerBin: parties.customerBin, amount: item.amount, searchCode: unit.code });
       }
     } return rows;

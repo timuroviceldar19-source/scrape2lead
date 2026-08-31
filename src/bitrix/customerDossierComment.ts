@@ -22,7 +22,7 @@ export function renderDossierComment(dossier: CustomerDossier, options: DossierC
   const { summary } = dossier;
   const blocks = [
     `[B]Досье заказчика ${dossier.bin} — «${dossier.query}»[/B]`,
-    `Источник: goszakup.gov.kz, собрано ${options.collectedAt}`,
+    `Источник: procurement.gov.kz, собрано ${options.collectedAt}`,
     "",
     renderOfficers(dossier),
     "",

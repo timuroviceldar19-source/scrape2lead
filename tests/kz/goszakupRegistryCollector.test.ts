@@ -8,7 +8,10 @@ import { fetchRegistryForBinWithRetry } from "../../src/kz/goszakupRegistryColle
 import { parseRegistryProfileHtml } from "../../src/kz/goszakupRegistryParser.js";
 
 const FIXTURES = path.resolve("tests/fixtures");
+// Подсказка приходит из БД со старого домена — портал переехал, а ссылки остались.
 const PROFILE_URL = "https://goszakup.gov.kz/ru/registry/show_supplier/34591";
+// Ссылка, которую парсер сам собирает из результатов поиска — уже на текущем домене.
+const RESOLVED_PROFILE_URL = "https://procurement.gov.kz/ru/registry/show_supplier/34591";
 const PROFILE_HTML = fs.readFileSync(path.join(FIXTURES, "goszakup-registry-profile-980840002897.html"), "utf8");
 const tempDirs: string[] = [];
 
@@ -38,8 +41,8 @@ describe("fetchRegistryForBin direct profile hints", () => {
     expect(result !== "not_found" && result.record?.bin).toBe("980840002897");
     expect(mock.visited).toEqual([
       PROFILE_URL,
-      "https://goszakup.gov.kz/ru/registry/supplierreg",
-      PROFILE_URL
+      "https://procurement.gov.kz/ru/registry/supplierreg",
+      RESOLVED_PROFILE_URL
     ]);
     expect(mock.searchUses).toBe(3);
   });

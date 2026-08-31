@@ -28,6 +28,7 @@ import type {
   PlanSearchFailure
 } from "./goszakupPlanTypes.js";
 import { DEFAULT_GZ_PLAN_KEYWORDS as DEFAULT_KEYWORDS } from "./goszakupPlanTypes.js";
+import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
 
 const DEFAULT_DEBUG_DIR = "data/debug";
 const MAX_PAGES_DEFAULT = 50;
@@ -594,8 +595,8 @@ async function fetchPlanDetailHtml(
 ): Promise<GoszakupPlanDetail | null> {
   const url = listItem.detail_url
     ?? (listItem.plan_list_number
-      ? `https://goszakup.gov.kz/ru/registry/show_plan/${listItem.plan_list_number}/${listItem.plan_point_id}`
-      : `https://goszakup.gov.kz/ru/registry/show_plan/${listItem.plan_point_id}`);
+      ? `${GZ_PORTAL_ORIGIN}/ru/registry/show_plan/${listItem.plan_list_number}/${listItem.plan_point_id}`
+      : `${GZ_PORTAL_ORIGIN}/ru/registry/show_plan/${listItem.plan_point_id}`);
 
   for (let attempt = 0; attempt <= DETAIL_RETRIES; attempt++) {
     try {

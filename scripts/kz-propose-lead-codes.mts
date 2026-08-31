@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseContractGeneralHtml, parseContractSearchHtml, parseContractUnitNamesHtml } from "../src/kz/goszakupContractParser.js";
 import { buildLeadCodeProposal, renderLeadCodeProposal } from "../src/kz/goszakupLeadCodeProposal.js";
+import { GZ_PORTAL_ORIGIN } from "../src/kz/goszakupOrigin.js";
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log("Usage: npm run kz:propose-lead-codes\nReads the public contract registry for the last three months and prints a review-only code table.");
@@ -12,7 +13,7 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
 const now = new Date();
 const to = iso(now);
 const from = iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, now.getUTCDate())));
-const base = "https://www.goszakup.gov.kz";
+const base = GZ_PORTAL_ORIGIN;
 const maxCards = 2_000;
 const pageDelayMs = 1_750;
 const cacheDir = path.join("data", "gz-lead-code-proposal", `${from}-${to}`);

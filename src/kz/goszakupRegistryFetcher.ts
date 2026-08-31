@@ -2,8 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "playwright";
 import { parseRegistryProfileHtml, parseRegistrySearchHtml } from "./goszakupRegistryParser.js";
+import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "./goszakupOrigin.js";
 
-const REGISTRY_SEARCH_URL = "https://goszakup.gov.kz/ru/registry/supplierreg";
+const REGISTRY_SEARCH_URL = `${GZ_PORTAL_ORIGIN}/ru/registry/supplierreg`;
 
 export type RegistryFetchResult =
   | { record: ReturnType<typeof parseRegistryProfileHtml>; rawSnapshotPath: string | null }
@@ -84,7 +85,7 @@ function isAllowedSupplierProfileUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "https:"
-      && (url.hostname === "goszakup.gov.kz" || url.hostname === "www.goszakup.gov.kz")
+      && isGzPortalRootHost(url.hostname)
       && /^\/(?:ru|kz)\/registry\/show_supplier\/\d+\/?$/.test(url.pathname);
   } catch {
     return false;

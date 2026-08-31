@@ -30,9 +30,9 @@ describe("dossier URL builders", () => {
   });
 
   it("points at the announcement and its contracts tab", () => {
-    expect(buildAnnounceUrl("16744298")).toBe("https://www.goszakup.gov.kz/ru/announce/index/16744298");
+    expect(buildAnnounceUrl("16744298")).toBe("https://procurement.gov.kz/ru/announce/index/16744298");
     expect(buildAnnounceContractsUrl("16744298")).toBe(
-      "https://www.goszakup.gov.kz/ru/announce/index/16744298?tab=contracts"
+      "https://procurement.gov.kz/ru/announce/index/16744298?tab=contracts"
     );
   });
 });

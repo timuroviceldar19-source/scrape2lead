@@ -12,7 +12,7 @@ describe("parseRegistrySearchHtml", () => {
 
     expect(result).not.toBeNull();
     expect(result?.participant_id).toBe("31664");
-    expect(result?.profile_url).toBe("https://goszakup.gov.kz/ru/registry/show_supplier/31664");
+    expect(result?.profile_url).toBe("https://procurement.gov.kz/ru/registry/show_supplier/31664");
   });
 
   it("returns null when BIN not found", () => {

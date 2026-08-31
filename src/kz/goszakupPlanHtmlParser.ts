@@ -1,10 +1,11 @@
 import type { GoszakupPlanDetail, GoszakupPlanListItem } from "./goszakupPlanTypes.js";
 import { extractGzPlanPointIdFromUrl } from "./gzPlanIdentity.js";
 import { parseGoszakupPagination } from "./goszakupHtmlParser.js";
+import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
 
 export { parseGoszakupPagination };
 
-const BASE_URL = "https://goszakup.gov.kz";
+const BASE_URL = GZ_PORTAL_ORIGIN;
 
 export function buildPlanSearchUrl(options: {
   keyword?: string;

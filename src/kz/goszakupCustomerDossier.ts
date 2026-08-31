@@ -14,8 +14,9 @@ import {
   type CustomerLot,
   type LotAward
 } from "./goszakupDossierParser.js";
+import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
 
-const BASE_URL = "https://www.goszakup.gov.kz";
+const BASE_URL = GZ_PORTAL_ORIGIN;
 const DEFAULT_RECORDS_PER_PAGE = 50;
 const DEFAULT_MAX_ANNOUNCEMENTS = 8;
 
