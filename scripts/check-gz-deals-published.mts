@@ -14,6 +14,7 @@ import {
   selectPanelsPublishedDealBatch,
   type PublishedDealAction
 } from "../src/bitrix/gzPublishedDealStatus.js";
+import { GZ_PORTAL_ORIGIN } from "../src/kz/goszakupOrigin.js";
 
 dotenv.config();
 
@@ -405,7 +406,7 @@ async function checkPlanStatusFromHtml(planId: string, deal: BitrixDeal): Promis
     ?? buildPlanUrl(planId);
   const planListNumber = extractPlanListNumber(planUrl);
   const searchUrl = planListNumber
-    ? `https://goszakup.gov.kz/ru/registry/plan?filter%5Bnumber%5D=${encodeURIComponent(planListNumber)}&count_record=50`
+    ? `${GZ_PORTAL_ORIGIN}/ru/registry/plan?filter%5Bnumber%5D=${encodeURIComponent(planListNumber)}&count_record=50`
     : planUrl;
   const response = await fetch(searchUrl, {
     headers: {
@@ -579,7 +580,7 @@ function extractPlanListNumber(planUrl: string): string | null {
 }
 
 function buildPlanUrl(planId: string): string {
-  return `https://goszakup.gov.kz/ru/registry/show_plan/${planId}`;
+  return `${GZ_PORTAL_ORIGIN}/ru/registry/show_plan/${planId}`;
 }
 
 function cleanHtmlText(html: string): string {

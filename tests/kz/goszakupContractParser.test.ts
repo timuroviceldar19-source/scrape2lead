@@ -18,7 +18,7 @@ describe("goszakup contract HTML parser", () => {
     expect(result.items).toEqual([expect.objectContaining({
       contractId: "25553717",
       contractNumber: "980840002542/260020/00",
-      url: "https://www.goszakup.gov.kz/ru/egzcontract/cpublic/show/25553717"
+      url: "https://procurement.gov.kz/ru/egzcontract/cpublic/show/25553717"
     })]);
     expect(result.pagination).toEqual({ totalCount: 1, totalPages: 1 });
   });

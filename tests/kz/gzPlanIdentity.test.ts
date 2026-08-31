@@ -30,11 +30,27 @@ describe("extractGzPlanPointIdFromUrl", () => {
     )).toBeNull();
   });
 
+  it("reads links from both the current and the historical portal domain", () => {
+    // Портал переехал на procurement.gov.kz, но ссылки со старого домена лежат в SQLite
+    // и в карточках Bitrix — если перестать их узнавать, развалится дедупликация.
+    expect(extractGzPlanPointIdFromUrl(
+      "https://procurement.gov.kz/ru/registry/show_plan/87018653/4775438"
+    )).toBe("87018653");
+    expect(extractGzPlanPointIdFromUrl(
+      "https://goszakup.gov.kz/ru/registry/show_plan/87018653/4775438"
+    )).toBe("87018653");
+    expect(extractGzPlanPointIdFromUrl(
+      "https://www.goszakup.gov.kz/ru/registry/show_plan/87018653/4775438"
+    )).toBe("87018653");
+  });
+
   it("rejects foreign and malformed links", () => {
     expect(extractGzPlanPointIdFromUrl("https://goszakup.gov.kz/ru/registry/show_supplier/87018653"))
       .toBeNull();
     expect(extractGzPlanPointIdFromUrl("not a url")).toBeNull();
     expect(extractGzPlanPointIdFromUrl("https://example.test/ru/registry/show_plan/1/2")).toBeNull();
+    expect(extractGzPlanPointIdFromUrl("https://procurement.gov.kz.example.test/ru/registry/show_plan/1/2"))
+      .toBeNull();
   });
 });
 

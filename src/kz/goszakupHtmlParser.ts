@@ -1,3 +1,5 @@
+import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
+
 export interface GoszakupAnnounceItem {
   number: string;
   name: string;
@@ -234,7 +236,7 @@ function extractCustomerUrl(input: string): string | null {
 
 function normalizeGoszakupUrl(url: string): string {
   if (url.startsWith("http")) return url;
-  return `https://goszakup.gov.kz${url.startsWith("/") ? "" : "/"}${url}`;
+  return `${GZ_PORTAL_ORIGIN}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 
 function extractAnnounceName(cellHtml: string): string | null {

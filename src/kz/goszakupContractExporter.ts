@@ -12,8 +12,9 @@ import {
   parseContractSearchHtml,
   parseContractUnitsHtml
 } from "./goszakupContractParser.js";
+import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
 
-const BASE_URL = "https://www.goszakup.gov.kz";
+const BASE_URL = GZ_PORTAL_ORIGIN;
 const DEFAULT_RECORDS_PER_PAGE = 50;
 
 export type ContractPageLoader = (url: string) => Promise<string>;
