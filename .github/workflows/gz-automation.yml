@@ -22,6 +22,8 @@ on:
     secrets:
       BITRIX24_WEBHOOK_URL:
         required: true
+      GOSZAKUP_TOKEN:
+        required: true
 
 # Раннеры эфемерные, поэтому runs/prepare.lock из конфига здесь ничего не
 # сериализует — файла на чистой машине никогда нет. Взаимное исключение двух
@@ -42,6 +44,7 @@ jobs:
       # без TZ идентификаторы прогонов уехали бы на 5 часов назад от казахстанских.
       TZ: Asia/Almaty
       BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
+      GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
