@@ -29,7 +29,6 @@ function dependencies(...responses: Response[]) {
 describe("Cloudflare GitHub workflow dispatcher", () => {
   it.each([
     ["40 3 * * *", "2026-07-26T03:40:00Z", "gz-daily-pk.yml", undefined],
-    ["10 4 * * *", "2026-07-26T04:10:00Z", "f3-daily.yml", undefined],
     ["0 5,8 * * *", "2026-07-26T05:00:00Z", "gz-daily-main.yml", undefined],
     ["30 6,9 * * *", "2026-07-26T06:30:00Z", "gz-watchdog.yml", undefined],
     ["0 5,8 * * *", "2026-07-26T08:00:00Z", "gz-daily-pk.yml", undefined],
@@ -279,7 +278,6 @@ describe("Cloudflare cron wiring", () => {
     // рукописных списков падает только в рантайме Worker.
     const scheduledTimeByCron: Record<string, number> = {
       "40 3 * * *": Date.parse("2026-07-26T03:40:00Z"),
-      "10 4 * * *": Date.parse("2026-07-26T04:10:00Z"),
       "0 5,8 * * *": Date.parse("2026-07-26T05:00:00Z"),
       "30 6,9 * * *": Date.parse("2026-07-26T06:30:00Z"),
       "15 10 * * *": Date.parse("2026-07-26T10:15:00Z"),
@@ -298,9 +296,9 @@ describe("Cloudflare cron wiring", () => {
       dispatched.add(String(deps.fetch.mock.calls[0]?.[0]).split("/workflows/")[1]?.split("/")[0] ?? "");
     }
     expect([...dispatched].sort()).toEqual(
-      ["f3-daily.yml", "gz-daily-main.yml", "gz-daily-pk.yml", "gz-watchdog.yml"],
+      ["gz-daily-main.yml", "gz-daily-pk.yml", "gz-watchdog.yml"],
     );
-    expect(wranglerCrons).toHaveLength(5);
+    expect(wranglerCrons).toHaveLength(4);
     expect(wranglerCrons).toContain("0 5,8 * * *");
     expect(wranglerCrons).toContain("30 6,9 * * *");
   });
@@ -316,14 +314,18 @@ describe("Cloudflare cron wiring", () => {
     expect(watchdog).toContain('main_since="${day}T09:30:00Z"');
   });
 
-  it("dispatches only the primary F3 slot, leaving the backstop to GitHub's own schedule", () => {
-    // Диспетч приходит как workflow_dispatch, а guard пропускает такие запуски
-    // безусловно: backstop-слот в Worker обесценил бы проверку «сегодня уже собрано».
-    expect(wranglerCrons).toContain("10 4 * * *");
+  it("does not dispatch the disabled F3 workflow", async () => {
+    expect(wranglerCrons).not.toContain("10 4 * * *");
     expect(wranglerCrons).not.toContain("10 5 * * *");
 
-    const daily = fs.readFileSync(".github/workflows/f3-daily.yml", "utf8");
-    expect(daily).toContain('cron: "10 4 * * *"');
-    expect(daily).toContain('cron: "10 5 * * *"');
+    const deps = dependencies(new Response(null, { status: 204 }));
+    await expect(
+      dispatchScheduled(
+        { cron: "10 4 * * *", scheduledTime: Date.parse("2026-07-26T04:10:00Z") },
+        { GITHUB_ACTIONS_TOKEN: TOKEN },
+        deps,
+      ),
+    ).rejects.toThrow("Unknown cron trigger: 10 4 * * *");
+    expect(deps.fetch).not.toHaveBeenCalled();
   });
 });

@@ -18,13 +18,10 @@ const RETRY_DELAYS_MS = [5_000, 20_000] as const;
 // Сторож стоит в 11:30 — после утренней пары и до дневной, чтобы пропуск
 // утреннего сбора был виден до того, как дневной прогон его замаскирует.
 //
-// F3 B2B идёт один раз, в 09:10, между PK и main. Здесь стоит ТОЛЬКО основной слот:
-// backstop-триггер 05:10 UTC живёт в самом f3-daily.yml как schedule. Диспетч из
-// Worker приходит как event=workflow_dispatch, а guard пропускает такие запуски
-// безусловно — добавив сюда backstop, мы бы обесценили его проверку.
+// F3 B2B отключён и в GitHub Actions, и здесь: Worker не должен продолжать
+// отправлять заведомо отклоняемый workflow_dispatch в отключённый workflow.
 const WORKFLOW_BY_CRON = {
   "40 3 * * *": "gz-daily-pk.yml", // 08:40 Алматы
-  "10 4 * * *": "f3-daily.yml", // 09:10 Алматы
   // Cloudflare Free allows five cron triggers per account. These two expressions
   // each cover two exact slots; scheduledTime selects the intended workflow.
   "0 5,8 * * *": { 5: "gz-daily-main.yml", 8: "gz-daily-pk.yml" }, // 10:00/13:00 Алматы
