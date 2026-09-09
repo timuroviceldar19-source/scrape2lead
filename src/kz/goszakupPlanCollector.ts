@@ -329,7 +329,11 @@ export async function collectPlanSearch(
   let pageNum = 0;
 
   while (pageNum < options.maxPages) {
-    const url = buildGoszakupHtmlPageUrl(baseUrl, pageNum);
+    // The registry omits `page` for the first page and numbers the next page as 2.
+    // `page=1` is an alias for the first page, so using the zero-based loop index
+    // here would silently fetch page one twice and skip every second result page.
+    const portalPageNumber = pageNum === 0 ? 0 : pageNum + 1;
+    const url = buildGoszakupHtmlPageUrl(baseUrl, portalPageNumber);
     await gotoPlanSearchPage(page, url, keyword, pageNum, options);
     await page.waitForTimeout(1500);
 
