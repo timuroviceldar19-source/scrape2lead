@@ -8,7 +8,7 @@ import {
 
 const TOKEN = "test-token-do-not-use";
 const SCHEDULED_TIME = Date.parse("2026-07-26T03:40:00Z");
-const MAIN_SCHEDULED_TIME = Date.parse("2026-07-26T05:00:00Z");
+const MAIN_SCHEDULED_TIME = Date.parse("2026-07-26T04:20:00Z");
 const WATCHDOG_SCHEDULED_TIME = Date.parse("2026-07-26T06:30:00Z");
 const AFTERNOON_PK_SCHEDULED_TIME = Date.parse("2026-07-26T08:00:00Z");
 
@@ -29,9 +29,9 @@ function dependencies(...responses: Response[]) {
 describe("Cloudflare GitHub workflow dispatcher", () => {
   it.each([
     ["40 3 * * *", "2026-07-26T03:40:00Z", "gz-daily-pk.yml", undefined],
-    ["0 5,8 * * *", "2026-07-26T05:00:00Z", "gz-daily-main.yml", undefined],
+    ["20 4 * * *", "2026-07-26T04:20:00Z", "gz-daily-main.yml", undefined],
     ["30 6,9 * * *", "2026-07-26T06:30:00Z", "gz-watchdog.yml", undefined],
-    ["0 5,8 * * *", "2026-07-26T08:00:00Z", "gz-daily-pk.yml", undefined],
+    ["0 8 * * *", "2026-07-26T08:00:00Z", "gz-daily-pk.yml", undefined],
     ["30 6,9 * * *", "2026-07-26T09:30:00Z", "gz-daily-main.yml", undefined],
     ["15 10 * * *", "2026-07-26T10:15:00Z", "gz-watchdog.yml", { window: "afternoon" }],
   ])("maps %s at %s to %s and sends one authenticated dispatch", async (cron, scheduledAt, workflow, inputs) => {
@@ -101,7 +101,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
 
     await expect(
       dispatchScheduled(
-        { cron: "0 5,8 * * *", scheduledTime: MAIN_SCHEDULED_TIME },
+        { cron: "20 4 * * *", scheduledTime: MAIN_SCHEDULED_TIME },
         { GITHUB_ACTIONS_TOKEN: TOKEN },
         deps,
       ),
@@ -109,9 +109,9 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
 
     expect(deps.log).toHaveBeenCalledWith({
       event: "github_workflow_dispatch",
-      cron: "0 5,8 * * *",
+      cron: "20 4 * * *",
       workflow: "gz-daily-main.yml",
-      scheduledTime: "2026-07-26T05:00:00.000Z",
+      scheduledTime: "2026-07-26T04:20:00.000Z",
       status: 204,
     });
   });
@@ -179,7 +179,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     );
 
     await dispatchScheduled(
-      { cron: "0 5,8 * * *", scheduledTime: AFTERNOON_PK_SCHEDULED_TIME },
+      { cron: "0 8 * * *", scheduledTime: AFTERNOON_PK_SCHEDULED_TIME },
       { GITHUB_ACTIONS_TOKEN: TOKEN },
       deps,
     );
@@ -189,7 +189,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     expect(deps.sleep).toHaveBeenNthCalledWith(2, 20_000);
     expect(deps.log).toHaveBeenNthCalledWith(1, {
       event: "github_workflow_dispatch_retry",
-      cron: "0 5,8 * * *",
+      cron: "0 8 * * *",
       workflow: "gz-daily-pk.yml",
       status: 503,
       attempt: 1,
@@ -197,7 +197,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     });
     expect(deps.log).toHaveBeenNthCalledWith(2, {
       event: "github_workflow_dispatch_retry",
-      cron: "0 5,8 * * *",
+      cron: "0 8 * * *",
       workflow: "gz-daily-pk.yml",
       status: 502,
       attempt: 2,
@@ -205,7 +205,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     });
     expect(deps.log).toHaveBeenLastCalledWith({
       event: "github_workflow_dispatch",
-      cron: "0 5,8 * * *",
+      cron: "0 8 * * *",
       workflow: "gz-daily-pk.yml",
       scheduledTime: "2026-07-26T08:00:00.000Z",
       status: 204,
@@ -222,7 +222,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
       );
 
       const error = await dispatchScheduled(
-        { cron: "0 5,8 * * *", scheduledTime: AFTERNOON_PK_SCHEDULED_TIME },
+        { cron: "0 8 * * *", scheduledTime: AFTERNOON_PK_SCHEDULED_TIME },
         { GITHUB_ACTIONS_TOKEN: TOKEN },
         deps,
       ).catch((caught: unknown) => caught);
@@ -257,7 +257,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
 
     await expect(
       dispatchScheduled(
-        { cron: "0 5,8 * * *", scheduledTime: Date.parse("2026-07-26T06:00:00Z") },
+        { cron: "30 6,9 * * *", scheduledTime: Date.parse("2026-07-26T08:30:00Z") },
         { GITHUB_ACTIONS_TOKEN: TOKEN },
         deps,
       ),
@@ -278,7 +278,8 @@ describe("Cloudflare cron wiring", () => {
     // рукописных списков падает только в рантайме Worker.
     const scheduledTimeByCron: Record<string, number> = {
       "40 3 * * *": Date.parse("2026-07-26T03:40:00Z"),
-      "0 5,8 * * *": Date.parse("2026-07-26T05:00:00Z"),
+      "20 4 * * *": Date.parse("2026-07-26T04:20:00Z"),
+      "0 8 * * *": Date.parse("2026-07-26T08:00:00Z"),
       "30 6,9 * * *": Date.parse("2026-07-26T06:30:00Z"),
       "15 10 * * *": Date.parse("2026-07-26T10:15:00Z"),
     };
@@ -298,9 +299,19 @@ describe("Cloudflare cron wiring", () => {
     expect([...dispatched].sort()).toEqual(
       ["gz-daily-main.yml", "gz-daily-pk.yml", "gz-watchdog.yml"],
     );
-    expect(wranglerCrons).toHaveLength(4);
-    expect(wranglerCrons).toContain("0 5,8 * * *");
+    expect(wranglerCrons).toHaveLength(5);
+    expect(wranglerCrons).toContain("20 4 * * *");
+    expect(wranglerCrons).toContain("0 8 * * *");
     expect(wranglerCrons).toContain("30 6,9 * * *");
+  });
+
+  it("schedules the main run at 09:20 with a 10:20 GitHub backstop", () => {
+    const main = fs.readFileSync(".github/workflows/gz-daily-main.yml", "utf8");
+
+    expect(main).toContain('cron: "20 4 * * *"');
+    expect(main).toContain('cron: "20 5 * * *"');
+    expect(main).not.toContain('cron: "0 5 * * *"');
+    expect(main).not.toContain('cron: "0 6 * * *"');
   });
 
   it("runs an afternoon watchdog after both repeat collection slots", () => {
