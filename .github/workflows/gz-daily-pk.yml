@@ -78,3 +78,4 @@ jobs:
       log-path: runs/pk/scheduler.log
     secrets:
       BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
+      GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
