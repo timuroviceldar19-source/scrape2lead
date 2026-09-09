@@ -25,3 +25,12 @@ describe("GZ GitHub workflow credentials", () => {
     }
   );
 });
+
+describe("GZ GitHub workflow browser setup", () => {
+  it("installs the Playwright browser without refreshing external apt repositories", () => {
+    const reusable = readWorkflow("gz-automation.yml");
+
+    expect(reusable).toContain("npx playwright install chromium");
+    expect(reusable).not.toContain("playwright install --with-deps");
+  });
+});
