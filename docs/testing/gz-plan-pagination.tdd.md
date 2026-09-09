@@ -25,6 +25,15 @@ No source plan file was provided. The journey was derived from the production au
   - `4 passed` files, `35 passed` tests.
 - Guarantee: both daily workflows forward the repository secret and the reusable workflow exposes it to the automation process.
 
+### Playwright installation resilience
+
+- Production RED: manual runs `34385047474` and `34385055960` both failed before automation because `playwright install --with-deps` refreshed apt and the Google mirror returned `Hash Sum mismatch`.
+- Test RED: `npx vitest run tests/automation/gzGithubWorkflow.test.ts`
+  - `1 failed | 3 passed`; the workflow still used `--with-deps`.
+- GREEN: `npx vitest run tests/automation/gzGithubWorkflow.test.ts tests/kz/goszakupPlanParser.test.ts`
+  - `2 passed` files, `17 passed` tests.
+- Guarantee: the workflow installs the Chromium binary without refreshing unrelated apt repositories on every run.
+
 ## Test specification
 
 | # | What is guaranteed | Test target | Type | Result | Evidence |
@@ -35,6 +44,7 @@ No source plan file was provided. The journey was derived from the production au
 | 4 | Main and PK workflows pass `GOSZAKUP_TOKEN` into the reusable workflow | `tests/automation/gzGithubWorkflow.test.ts` | Contract | PASS | Targeted GREEN run: 3/3 |
 | 5 | The repository still builds and type-checks | `npm run build`; `npm run lint` | Integration | PASS | Both commands exited 0 |
 | 6 | The full repository suite remains green | `npm test` | Regression | PASS | 732 passed, 4 skipped |
+| 7 | Browser setup cannot fail solely because an unrelated apt mirror is inconsistent | `tests/automation/gzGithubWorkflow.test.ts` | Contract | PASS | Follow-up GREEN run: 4/4 |
 
 ## Coverage and known gaps
 
@@ -48,3 +58,5 @@ No source plan file was provided. The journey was derived from the production au
 - GREEN checkpoint: `0d0c9ea` (`fix: request every GZ plan result page`)
 - RED checkpoint: `481217b` (`test: require GZ token wiring in GitHub workflows`)
 - GREEN checkpoint: `f9b31ed` (`ci: provide Goszakup token to daily plan runs`)
+- RED checkpoint: `70d8957` (`test: reproduce brittle Playwright dependency install`)
+- GREEN checkpoint: `dda336f` (`ci: avoid apt mirror failures during Chromium setup`)

@@ -67,7 +67,10 @@ jobs:
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
 
       - name: Install chromium
-        run: npx playwright install --with-deps chromium
+        # GitHub's Ubuntu image already contains Chromium's shared libraries.
+        # Avoid `--with-deps`: it refreshes every configured apt repository and
+        # can fail the whole automation on an unrelated mirror hash mismatch.
+        run: npx playwright install chromium
 
       # Кэш деталей планов и реестра контрагентов. Это ускоритель, а не источник
       # правды: дедупликация сделок живёт в Bitrix (UF_CRM_PLAN_ID / ORIGINATOR_ID),
