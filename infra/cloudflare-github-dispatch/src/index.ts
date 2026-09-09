@@ -8,7 +8,7 @@ const RETRY_DELAYS_MS = [5_000, 20_000] as const;
 
 // Казахстан живёт в UTC+5 без перехода на летнее время, поэтому смещение постоянное.
 //
-// Утренняя пара 08:40/10:00 собирает основной объём. Дневная пара 13:00/14:30 —
+// Утренняя пара 08:40/09:20 собирает основной объём. Дневная пара 13:00/14:30 —
 // не backstop, а осознанный повторный сбор: планы публикуются в течение дня, и
 // утренний прогон их не видит. Guard пропускает повтор только для
 // event=schedule, а Worker шлёт workflow_dispatch, поэтому дневные слоты
@@ -22,9 +22,10 @@ const RETRY_DELAYS_MS = [5_000, 20_000] as const;
 // отправлять заведомо отклоняемый workflow_dispatch в отключённый workflow.
 const WORKFLOW_BY_CRON = {
   "40 3 * * *": "gz-daily-pk.yml", // 08:40 Алматы
-  // Cloudflare Free allows five cron triggers per account. These two expressions
-  // each cover two exact slots; scheduledTime selects the intended workflow.
-  "0 5,8 * * *": { 5: "gz-daily-main.yml", 8: "gz-daily-pk.yml" }, // 10:00/13:00 Алматы
+  "20 4 * * *": "gz-daily-main.yml", // 09:20 Алматы
+  "0 8 * * *": "gz-daily-pk.yml", // 13:00 Алматы
+  // Cloudflare Free allows five cron triggers per account. This expression covers
+  // two exact slots; scheduledTime selects the intended workflow.
   "30 6,9 * * *": { 6: "gz-watchdog.yml", 9: "gz-daily-main.yml" }, // 11:30/14:30 Алматы
   "15 10 * * *": "gz-watchdog.yml", // 15:15 Алматы
 } as const;
