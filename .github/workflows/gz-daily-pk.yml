@@ -79,3 +79,46 @@ jobs:
     secrets:
       BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
       GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
+
+  # Итоги закупок по открытым сделкам: договор (с кем), статус плана. Пишет
+  # менеджеру комментарий один раз на событие, этапы не двигает. Едет на том
+  # же надёжном триггере, что и сбор, и не зависит от его успеха: договоры
+  # берутся из API, а не из сегодняшней выгрузки.
+  #
+  # continue-on-error: guard и gz-watchdog.yml считают прогон удачным по
+  # conclusion всего run. Сбой этой проверки не должен выглядеть как сбой
+  # сбора и запускать backstop-сбор повторно.
+  deal-outcomes:
+    needs: [guard, pk-plans]
+    if: always() && needs.guard.outputs.should-run == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    concurrency:
+      group: gz-deal-outcomes
+      cancel-in-progress: false
+    env:
+      TZ: Asia/Almaty
+      BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
+      GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check deal outcomes
+        run: npx tsx scripts/check-gz-deal-outcomes.mts --execute --report logs/gz-deal-outcomes.json
+
+      - name: Upload outcome report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gz-deal-outcomes-${{ github.run_id }}
+          path: logs/gz-deal-outcomes.json
+          retention-days: 30
+          if-no-files-found: warn
