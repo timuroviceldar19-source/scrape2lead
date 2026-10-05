@@ -204,6 +204,7 @@ function writeProcurementSummary(
     `month_unknown=${collected.counts.monthUnknown ?? 0}`,
     `new=${dryRun.counts.create ?? 0}`,
     `updates=${dryRun.counts.update ?? 0}`,
+    `revised=${dryRun.counts.revise ?? 0}`,
     `duplicates=${dryRun.counts.duplicate ?? 0}`,
     `failed=${dryRun.counts.failed ?? 0}`
   ];

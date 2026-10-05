@@ -18,6 +18,14 @@ import {
   type GzDuplicateSearch
 } from "../src/bitrix/gzDuplicateSearch.js";
 import {
+  buildGzPlanRevisionComment,
+  buildGzPlanRevisionFields,
+  detectGzPlanRevision,
+  findAmbiguousRevisionDealIds,
+  type GzPlanRevision,
+  type GzPlanRevisionRow
+} from "../src/bitrix/gzPlanRevision.js";
+import {
   callBitrixBatch,
   chunkBatchCommands,
   type BitrixBatchCommand
@@ -76,10 +84,13 @@ interface ExistingDeal {
   ORIGINATOR_ID?: string | null;
   ORIGIN_ID?: string | null;
   OPPORTUNITY?: string | number | null;
+  CLOSED?: string | null;
   UF_CRM_PLAN_ID?: string | number | null;
   UF_CRM_PLAN_LINK?: string | null;
   UF_CRM_1782386293000_IU_XLS?: string | number | null;
   UF_CRM_1782386571874_IU_XLS?: string | null;
+  UF_CRM_1715597423325?: string | number | null;
+  UF_CRM_6627AEBD67FFF?: string | number | null;
 }
 
 interface DuplicateMatch {
@@ -95,7 +106,8 @@ interface PreflightItem {
   duplicateDealId: string | null;
   duplicateReason: string | null;
   route: GzRoute;
-  action: "create" | "update" | "existing" | "duplicate" | "skip";
+  action: "create" | "update" | "revise" | "existing" | "duplicate" | "skip";
+  revision: GzPlanRevision | null;
   issues: string[];
   warnings: string[];
 }
@@ -104,9 +116,10 @@ const DEFAULT_INPUT = "exports/gz-plans-latest.xlsx";
 const DEFAULT_ROUTING_CONFIG = "config/bitrix-gz-routing.json";
 const ORIGINATOR_ID = "scrape2lead-gz-plans";
 const DEAL_SELECT_FIELDS = [
-  "ID", "TITLE", "COMPANY_ID", "ORIGINATOR_ID", "ORIGIN_ID", "OPPORTUNITY",
+  "ID", "TITLE", "COMPANY_ID", "ORIGINATOR_ID", "ORIGIN_ID", "OPPORTUNITY", "CLOSED",
   "UF_CRM_PLAN_ID", "UF_CRM_PLAN_LINK",
-  "UF_CRM_1782386293000_IU_XLS", "UF_CRM_1782386571874_IU_XLS"
+  "UF_CRM_1782386293000_IU_XLS", "UF_CRM_1782386571874_IU_XLS",
+  "UF_CRM_1715597423325", "UF_CRM_6627AEBD67FFF"
 ];
 const DEFAULT_ASSIGNED_BY_ID = 2301;
 const COMPANY_BIN_FIELD = "UF_CRM_666171B20E9E3";
@@ -196,13 +209,15 @@ async function main(): Promise<void> {
     if (duplicateDeal && !duplicateDeal.blocking) {
       warnings.push(`possible duplicate of deal ${duplicateDeal.deal.ID} (${duplicateDeal.reason})`);
     }
-    const action: PreflightItem["action"] = issues.length > 0
+    const baseAction: PreflightItem["action"] = issues.length > 0
       ? "skip"
       : existingDeal?.ID
         ? (args.updateExisting ? "update" : "existing")
         : duplicateDeal?.blocking
           ? "duplicate"
         : "create";
+    const knownDeal = baseAction === "existing" ? existingDeal : baseAction === "duplicate" ? duplicateDeal?.deal : null;
+    const revision = knownDeal ? detectGzPlanRevision(toRevisionRow(row), knownDeal, ORIGINATOR_ID) : null;
     preflight.push({
       row,
       originId: identity.originId,
@@ -210,11 +225,13 @@ async function main(): Promise<void> {
       duplicateDealId: duplicateDeal ? String(duplicateDeal.deal.ID ?? "") : null,
       duplicateReason: duplicateDeal?.reason ?? null,
       route: resolveGzRoute(row, routing),
-      action,
+      action: revision ? "revise" : baseAction,
+      revision,
       issues,
       warnings
     });
   }
+  holdAmbiguousRevisions(preflight);
 
   printPreflight(args, allRows.length, preflight);
 
@@ -232,11 +249,23 @@ async function main(): Promise<void> {
       continue;
     }
     if (!args.execute) {
+      if (item.revision) {
+        console.log(`[dry-run] revise ${item.originId} -> deal ${item.revision.dealId} | ${describeRevision(item.revision)}`);
+        continue;
+      }
       console.log(`[dry-run] ${item.action} ${item.originId} -> cat ${item.route.categoryId} (${item.route.ruleName}) | ${buildTitle(item.row)}`);
       continue;
     }
 
     try {
+      if (item.revision) {
+        const revisionRow = toRevisionRow(item.row);
+        await client.updateDeal(item.revision.dealId, buildGzPlanRevisionFields(revisionRow, item.revision));
+        await client.addDealComment(item.revision.dealId, buildGzPlanRevisionComment(revisionRow, item.revision));
+        console.log(`[revised] ${item.originId} -> deal ${item.revision.dealId} | ${describeRevision(item.revision)}`);
+        continue;
+      }
+
       if (item.action === "update") {
         if (!item.existingDealId) throw new Error("existing deal id is missing");
         await client.updateDeal(item.existingDealId, buildDealUpdateFields(item.row));
@@ -252,6 +281,38 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   }
+}
+
+function toRevisionRow(row: GzPlanRow): GzPlanRevisionRow {
+  return {
+    amount: parseMoney(row.amount),
+    quantity: row.quantity,
+    price: row.price,
+    pricePerUnit: parseMoney(row.price),
+    status: row.status,
+    planUrl: row.planUrl
+  };
+}
+
+/** Falls back to the pre-revision action for deals that two rows want to rewrite. */
+function holdAmbiguousRevisions(items: PreflightItem[]): void {
+  const ambiguous = findAmbiguousRevisionDealIds(
+    items.flatMap((item) => (item.revision ? [item.revision.dealId] : []))
+  );
+  for (const item of items) {
+    if (!item.revision || !ambiguous.has(item.revision.dealId)) continue;
+    item.warnings.push(`several plan rows revise deal ${item.revision.dealId}; left unchanged`);
+    item.action = item.existingDealId ? "existing" : "duplicate";
+    item.revision = null;
+  }
+}
+
+function describeRevision(revision: GzPlanRevision): string {
+  const quantity = revision.previousQuantity === revision.quantity
+    ? ""
+    : ` qty ${revision.previousQuantity || "-"} -> ${revision.quantity || "-"}`;
+  const manual = revision.updatesOpportunity ? "" : " (deal amount kept: edited by hand)";
+  return `amount ${revision.previousAmount} -> ${revision.amount}${quantity}${manual}`;
 }
 
 interface RowLookup {
@@ -530,6 +591,16 @@ class BitrixClient {
     });
   }
 
+  async addDealComment(dealId: string, comment: string): Promise<void> {
+    await this.call("crm.timeline.comment.add", {
+      fields: {
+        ENTITY_ID: dealId,
+        ENTITY_TYPE: "deal",
+        COMMENT: comment
+      }
+    });
+  }
+
   async ensureDealDetailsFields(fieldNames: string[]): Promise<void> {
     const configuration = await this.call("crm.deal.details.configuration.get", {
       scope: "C",
@@ -778,7 +849,7 @@ function printPreflight(args: CliArgs, totalRows: number, items: PreflightItem[]
   const issueCount = items.reduce((sum, item) => sum + item.issues.length, 0);
   console.log(`bitrix gz deals: mode=${args.execute ? "execute" : "dry-run"} update_existing=${args.updateExisting}`);
   console.log(`input=${path.normalize(args.inputPath)} rows_total=${totalRows} rows_checked=${items.length}`);
-  console.log(`preflight: create=${count("create")} update=${count("update")} existing=${count("existing")} duplicate=${count("duplicate")} skipped=${count("skip")} issues=${issueCount} warnings=${warningCount}`);
+  console.log(`preflight: create=${count("create")} update=${count("update")} revise=${count("revise")} existing=${count("existing")} duplicate=${count("duplicate")} skipped=${count("skip")} issues=${issueCount} warnings=${warningCount}`);
   const routeCounts = new Map<string, number>();
   for (const item of items) {
     const key = `cat ${item.route.categoryId} (${item.route.ruleName})`;
