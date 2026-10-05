@@ -14,6 +14,7 @@ import {
   type GzOutcomeDealFields,
   type GzItemFamilies,
   type GzPlanSignal,
+  isSignedGzPlanStatus,
   readGzPlanSignal,
   shouldReplaceGzOutcomeKey
 } from "../src/bitrix/gzDealOutcome.js";
@@ -56,6 +57,7 @@ interface ApiPlan {
   rootrecordId?: number | null;
   subjectBiin?: string | null;
   isActive?: number | null;
+  plnPointYear?: number | null;
   refEnstruCode?: string | null;
   nameRu?: string | null;
   RefPlnPointStatus?: { nameRu?: string | null } | null;
@@ -94,7 +96,7 @@ const THROTTLE_BACKOFF_MS = 30_000;
 // Runs come at 08:40 and 13:00; an hourly slot gives each of them its own slice.
 const HTML_ROTATION_MS = 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 60_000;
-const PLAN_FIELDS = "id rootrecordId subjectBiin isActive refEnstruCode nameRu RefPlnPointStatus{nameRu}";
+const PLAN_FIELDS = "id rootrecordId subjectBiin isActive plnPointYear refEnstruCode nameRu RefPlnPointStatus{nameRu}";
 const PLANS_BY_ROOT = `query($v:[Int],$after:Int){Plans(filter:{rootrecordId:$v},limit:200,after:$after){${PLAN_FIELDS}}}`;
 const PLANS_BY_ID = `query($v:[Int],$after:Int){Plans(filter:{id:$v},limit:200,after:$after){${PLAN_FIELDS}}}`;
 const CONTRACTS_BY_CUSTOMER = `query($bin:String,$year:Int,$after:Int){Contract(filter:{customerBin:$bin,finYear:$year},limit:200,after:$after){
@@ -188,7 +190,10 @@ async function main(): Promise<void> {
   await fillApiPlanStatuses(checks, gql, config.itemFamilies);
   const contractsByBin = await fetchContractsByBin(checks, currentYear, gql, args.concurrency);
   // A contract settles the deal, so the slow portal pages go only to the rest.
-  const htmlPending = checks.filter((check) => !check.plan.status && !check.plan.repurposedTo && check.ref.planNumber
+  // A "contract signed" status without a matched contract also goes there: the
+  // registry names the live revision the contract unit points at.
+  const htmlPending = checks.filter((check) => check.ref.planNumber && !check.plan.repurposedTo
+    && (!check.plan.status || isSignedGzPlanStatus(check.plan.status))
     && !decideGzDealOutcome(check.ref, contractsByBin.get(check.bin ?? "") ?? [], NO_PLAN_SIGNAL, config));
   const htmlFailed = args.skipHtml
     ? 0
@@ -262,10 +267,27 @@ async function fillApiPlanStatuses(checks: DealCheck[], gql: { token: string }, 
     if (plan.isActive !== 0 && (!known || plan.id > known.id)) current.set(root, plan);
   }
   const points = new Map(byId.map((plan) => [plan.id, plan]));
+  const revisions = new Map<number, number[]>();
+  for (const plan of byRoot) {
+    const root = plan.rootrecordId ?? plan.id;
+    revisions.set(root, [...(revisions.get(root) ?? []), plan.id]);
+  }
 
   for (const check of checks) {
-    const plan = (check.ref.planNumber ? current.get(check.ref.planNumber) : undefined)
-      ?? check.ref.pointIds.map((id) => points.get(id)).find(Boolean);
+    const root = check.ref.planNumber;
+    const rootRevisions = root ? revisions.get(root) ?? [] : [];
+    const dealYear = Number(String(check.deal.DATE_CREATE ?? "").slice(0, 4)) || 0;
+    // A point of an earlier year is a stale id, not the deal's plan.
+    const ownPlan = check.ref.pointIds.map((id) => points.get(id))
+      .find((item) => item && (item.plnPointYear ?? dealYear) >= dealYear);
+    const verified = check.ref.planNumberVerified
+      || (root !== null && ownPlan?.rootrecordId === root)
+      || rootRevisions.some((id) => check.ref.pointIds.includes(id));
+    check.ref = withRevisions({ ...check.ref, planNumberVerified: verified }, rootRevisions);
+    // An unconfirmed plan number may belong to another item: the deal's own point speaks first.
+    const plan = verified
+      ? (root ? current.get(root) : undefined) ?? ownPlan
+      : ownPlan ?? (root ? current.get(root) : undefined);
     if (!plan) continue;
     check.plan = readGzPlanSignal(check.ref, {
       status: plan.RefPlnPointStatus?.nameRu?.trim() || null,
@@ -306,7 +328,9 @@ async function fillHtmlPlanStatuses(
   let failed = 0;
   for (const check of slice) {
     try {
-      const row = await searchPlanRow(check);
+      const rows = await searchPlanRows(check);
+      check.ref = withRevisions(check.ref, rows.map((item) => Number(item.plan_point_id)));
+      const row = [...rows].sort((a, b) => Number(b.plan_point_id) - Number(a.plan_point_id))[0];
       if (row?.status) {
         check.plan = readGzPlanSignal(check.ref, {
           status: row.status.trim(),
@@ -329,7 +353,7 @@ async function fillHtmlPlanStatuses(
   return failed;
 }
 
-async function searchPlanRow(check: DealCheck, retried = false): Promise<GoszakupPlanListItem | undefined> {
+async function searchPlanRows(check: DealCheck, retried = false): Promise<GoszakupPlanListItem[]> {
   const url = `${GZ_PORTAL_ORIGIN}/ru/registry/plan?filter%5Bnumber%5D=${check.ref.planNumber}&count_record=50`;
   const response = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
@@ -340,13 +364,18 @@ async function searchPlanRow(check: DealCheck, retried = false): Promise<Goszaku
   if (html.length < THROTTLED_PAGE_MAX_LENGTH) {
     if (retried) throw new PortalThrottledError();
     await sleep(THROTTLE_BACKOFF_MS);
-    return searchPlanRow(check, true);
+    return searchPlanRows(check, true);
   }
   // Rows are the revisions of the plan number; the newest one is live. The
   // number filter matches substrings, which is harmless while every plan
   // number has the same 8 digits.
-  const rows = parseGoszakupPlanSearchHtml(html, "outcome-check");
-  return [...rows].sort((a, b) => Number(b.plan_point_id) - Number(a.plan_point_id))[0];
+  return parseGoszakupPlanSearchHtml(html, "outcome-check")
+    .filter((row) => Number.isInteger(Number(row.plan_point_id)) && Number(row.plan_point_id) > 0);
+}
+
+function withRevisions(ref: GzDealPlanRef, ids: number[]): GzDealPlanRef {
+  const fresh = ids.filter((id) => !ref.pointIds.includes(id) && !ref.revisionIds.includes(id));
+  return fresh.length === 0 ? ref : { ...ref, revisionIds: [...ref.revisionIds, ...fresh] };
 }
 
 class PortalThrottledError extends Error {
@@ -396,7 +425,7 @@ async function fetchContractsByBin(
 }
 
 function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: number): { line: string; markdown: string } {
-  const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "signed-unknown"] as const;
+  const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft", "signed-unknown"] as const;
   const fresh = (kind: string) => checks.filter((check) => check.isNew && check.outcome?.kind === kind).length;
   const counts = kinds.map((kind) => `${kind.replace("-", "_")}=${fresh(kind)}`).join(" ");
   const line = `outcomes: checked=${checks.length} ${counts} unchanged=${checks.filter((check) => check.key && !check.isNew).length}`
@@ -416,7 +445,7 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
     "## Итоги закупок по открытым сделкам",
     "",
     `Новых событий: выиграли ${fresh("won")}, проиграли ${fresh("lost")}, партнёр ${fresh("partner")}, расторгнуто ${fresh("terminated")}, пункт переделан ${fresh("repurposed")},`
-      + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор без победителя ${fresh("signed-unknown")}.`,
+      + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")}, договор без победителя ${fresh("signed-unknown")}.`,
     "",
     ...(wins.length ? ["**Новые победы:**", ...wins.map((check) => `- сделка ${check.deal.ID}: ${describeContract(check.outcome!)}`), ""] : []),
     "**Кому уходят открытые сделки (все известные договоры):**",

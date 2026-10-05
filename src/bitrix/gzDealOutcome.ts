@@ -25,7 +25,8 @@ export interface GzOutcomeDealFields {
 export interface GzOutcomeContractUnit {
   plnPointId?: number | null;
   totalSum?: number | null;
-  refEnstruCode?: string | null;
+  /** The API sends a one-element list here, sometimes a plain string. */
+  refEnstruCode?: string | string[] | null;
   Plans?: { rootrecordId?: number | null; nameRu?: string | null } | null;
 }
 
@@ -43,6 +44,18 @@ export interface GzOutcomeContract {
 export interface GzDealPlanRef {
   planNumber: number | null;
   pointIds: number[];
+  /**
+   * Other revisions of the plan number found in the registry. A contract unit
+   * often points at one of them while its Plans link is empty, because the API
+   * index lacks the revision. Weak evidence: a match needs the same item.
+   */
+  revisionIds: number[];
+  /**
+   * The plan number is confirmed by the deal's own point. Some deals carry a
+   * wrong one (42445: a panel deal under an archive-services plan), so a
+   * rewrite is claimed only when this is true.
+   */
+  planNumberVerified: boolean;
   /** ENSTRU code of the deal's item; old June deals have none. */
   enstruCode: string | null;
   itemName: string | null;
@@ -73,7 +86,7 @@ export interface GzItemFamilies {
 }
 
 export type GzContractOutcomeKind = "won" | "lost" | "partner" | "terminated";
-export type GzPlanOutcomeKind = "published" | "failed" | "cancelled" | "signed-unknown";
+export type GzPlanOutcomeKind = "published" | "failed" | "cancelled" | "contract-draft" | "signed-unknown";
 
 export type GzDealOutcome =
   | {
@@ -98,7 +111,7 @@ const PLAN_STATUS_OUTCOMES: Record<string, GzPlanOutcomeKind> = {
   "отменен": "cancelled",
   "отказ от закупки": "cancelled",
   "удален": "cancelled",
-  "проект договора": "signed-unknown",
+  "проект договора": "contract-draft",
   "договор действует": "signed-unknown",
   "исполнен": "signed-unknown",
   "срок договора истек": "signed-unknown"
@@ -117,8 +130,11 @@ export function buildGzDealPlanRef(deal: GzOutcomeDealFields): GzDealPlanRef {
     ?? positiveInt(/\[GZ (\d+)\]/.exec(title)?.[1]);
   const urlPoints = [deal.UF_CRM_PLAN_LINK, deal.UF_CRM_1782386571874_IU_XLS]
     .map((url) => positiveInt(extractGzPlanPointIdFromUrl(url)));
-  const fieldPoint = positiveInt(deal.UF_CRM_6A436D5A3614C);
-  const known = [fieldPoint, ...urlPoints].filter((id): id is number => id !== null);
+  // Old deals keep the plan list id in the point field; it can collide with a
+  // real point of another year (deal 26239: list 4755430 = a 2016 brake disc).
+  const fromUrl = urlPoints.filter((id): id is number => id !== null);
+  const fieldPoint = fromUrl.length === 0 ? positiveInt(deal.UF_CRM_6A436D5A3614C) : null;
+  const known = fieldPoint === null ? fromUrl : [fieldPoint];
   const originPoint = known.length === 0 ? positiveInt(String(deal.ORIGIN_ID ?? "").split(":")[1]) : null;
   // Bitrix returns an empty custom field as "", so `??` would stop at it.
   const code = String(deal.UF_CRM_6A436D5A19612 || deal.UF_CRM_REF_ENSTRU_CODE || "").trim();
@@ -127,6 +143,8 @@ export function buildGzDealPlanRef(deal: GzOutcomeDealFields): GzDealPlanRef {
   return {
     planNumber,
     pointIds: [...new Set(originPoint === null ? known : [...known, originPoint])],
+    revisionIds: [],
+    planNumberVerified: planNumber !== null && known.includes(planNumber),
     enstruCode: /^\d{6}/.test(code) ? code : null,
     itemName: itemName || null
   };
@@ -199,8 +217,15 @@ export function readGzPlanSignal(
   if (plan.exactPoint) return { status: plan.status, repurposedTo: null };
   const same = isSameGzItem(ref, plan.enstruCode, plan.name, families);
   if (same) return { status: plan.status, repurposedTo: null };
-  const certain = same === false && ref.enstruCode !== null && /^\d{6}/.test(String(plan.enstruCode ?? ""));
+  const certain = same === false && ref.planNumberVerified && ref.enstruCode !== null
+    && /^\d{6}/.test(String(plan.enstruCode ?? ""));
   return { status: null, repurposedTo: certain ? String(plan.name ?? "").trim() || null : null };
+}
+
+/** The plan register says a contract exists or is being drafted. */
+export function isSignedGzPlanStatus(status: string | null | undefined): boolean {
+  const kind = PLAN_STATUS_OUTCOMES[normalize(status)];
+  return kind === "signed-unknown" || kind === "contract-draft";
 }
 
 export function findPlanContracts(
@@ -317,13 +342,15 @@ function repurposedByContract(
   contracts: readonly GzOutcomeContract[],
   families: GzItemFamilies
 ): GzDealOutcome | null {
-  if (!ref.enstruCode || ref.planNumber === null) return null;
+  if (!ref.enstruCode || !ref.planNumberVerified) return null;
   for (const contract of contracts) {
     if (contract.deleted || !LIVE_CONTRACT_STATUSES.has(normalize(contract.RefContractStatus?.nameRu))) continue;
     for (const unit of units(contract)) {
-      if (!isRevisionOf(ref, unit) || !/^\d{6}/.test(String(unit.refEnstruCode ?? ""))) continue;
-      if (isSameGzItem(ref, unit.refEnstruCode, unit.Plans?.nameRu, families) === false) {
-        const newItem = String(unit.Plans?.nameRu ?? unit.refEnstruCode).trim();
+      const code = unitCode(unit);
+      // Registry rows are not proof of lineage; only the API root link is.
+      if (!isRootRevisionOf(ref, unit) || !/^\d{6}/.test(code)) continue;
+      if (isSameGzItem(ref, code, unit.Plans?.nameRu, families) === false) {
+        const newItem = String(unit.Plans?.nameRu || code).trim();
         return { kind: "repurposed", newItem };
       }
     }
@@ -344,6 +371,8 @@ function buildPlanStatusComment(kind: GzPlanOutcomeKind, planStatus: string, lin
       return `Итог закупки: закупка не состоялась. Заказчик, скорее всего, объявит её повторно или купит из одного источника.${link}`;
     case "cancelled":
       return `Итог закупки: заказчик отказался от закупки (статус плана «${planStatus}»).${link}`;
+    case "contract-draft":
+      return `Итог закупки: победитель определён, договор на стадии проекта и ещё не подписан. Когда его подпишут, робот напишет, с кем.${link}`;
     case "signed-unknown":
       return `Итог закупки: по плану уже заключён договор (статус «${planStatus}»), победителя определить не удалось — проверьте на портале.${link}`;
   }
@@ -352,13 +381,20 @@ function buildPlanStatusComment(kind: GzPlanOutcomeKind, planStatus: string, lin
 function matchingUnits(ref: GzDealPlanRef, contract: GzOutcomeContract, families: GzItemFamilies): GzOutcomeContractUnit[] {
   return units(contract).filter((unit) => {
     if (unit.plnPointId != null && ref.pointIds.includes(unit.plnPointId)) return true;
-    return isRevisionOf(ref, unit) && isSameGzItem(ref, unit.refEnstruCode, unit.Plans?.nameRu, families) === true;
+    const registryRevision = unit.plnPointId != null && ref.revisionIds.includes(unit.plnPointId);
+    return (registryRevision || isRootRevisionOf(ref, unit))
+      && isSameGzItem(ref, unitCode(unit), unit.Plans?.nameRu, families) === true;
   });
 }
 
-function isRevisionOf(ref: GzDealPlanRef, unit: GzOutcomeContractUnit): boolean {
+function isRootRevisionOf(ref: GzDealPlanRef, unit: GzOutcomeContractUnit): boolean {
   if (ref.planNumber === null) return false;
   return unit.plnPointId === ref.planNumber || unit.Plans?.rootrecordId === ref.planNumber;
+}
+
+function unitCode(unit: GzOutcomeContractUnit): string {
+  const code = Array.isArray(unit.refEnstruCode) ? unit.refEnstruCode[0] : unit.refEnstruCode;
+  return String(code ?? "").trim();
 }
 
 function units(contract: GzOutcomeContract): GzOutcomeContractUnit[] {

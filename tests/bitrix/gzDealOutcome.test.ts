@@ -8,6 +8,7 @@ import {
   findPlanContracts,
   gzDealOutcomeKey,
   isSameGzItem,
+  isSignedGzPlanStatus,
   readGzPlanSignal,
   shouldReplaceGzOutcomeKey,
   type GzDealOutcome,
@@ -22,7 +23,7 @@ const F3 = "061140003942";
 // Same families as config/gz-deal-outcomes.json.
 const FAMILIES: GzItemFamilies = {
   groups: [
-    ["262030.100.000021", "279020"],
+    ["262030.100.000021", "262030.100.000043", "279020"],
     ["262011", "262013", "262040.000.000267", "265152.790.000067"]
   ],
   wildcards: ["329959.900.000019", "329953.000"]
@@ -35,7 +36,9 @@ const REF: GzDealPlanRef = {
   planNumber: 87777759,
   pointIds: [88029694],
   enstruCode: "262013.000.000011",
-  itemName: "Компьютер"
+  itemName: "Компьютер",
+  revisionIds: [],
+  planNumberVerified: true
 };
 
 function contract(overrides: Partial<GzOutcomeContract> & { units?: GzOutcomeContract["ContractUnits"] }): GzOutcomeContract {
@@ -183,7 +186,7 @@ describe("decideGzDealOutcome from the plan register", () => {
     ["Отказ от закупки", "cancelled"],
     ["Договор действует", "signed-unknown"],
     ["Исполнен", "signed-unknown"],
-    ["Проект договора", "signed-unknown"]
+    ["Проект договора", "contract-draft"]
   ])("maps «%s» to %s", (value, kind) => {
     expect(decideGzDealOutcome(REF, [], status(value), CONFIG)?.kind).toBe(kind);
   });
@@ -198,6 +201,13 @@ describe("decideGzDealOutcome from the plan register", () => {
   it("reports a rewrite the plan register revealed", () => {
     expect(decideGzDealOutcome(REF, [], { status: null, repurposedTo: "Кондиционер" }, CONFIG))
       .toEqual({ kind: "repurposed", newItem: "Кондиционер" });
+  });
+});
+
+describe("isSignedGzPlanStatus", () => {
+  it("is true only for statuses that promise a contract", () => {
+    expect(["Проект договора", "Договор действует", "Исполнен", "Срок договора истек"].every((value) => isSignedGzPlanStatus(value))).toBe(true);
+    expect(["Утвержден", "Опубликован", "Отменен", null].some((value) => isSignedGzPlanStatus(value))).toBe(false);
   });
 });
 
@@ -344,6 +354,11 @@ describe("buildGzDealOutcomeComment", () => {
     expect(buildGzDealOutcomeComment({ kind: "published", planStatus: "Опубликован" }, url)).toContain(url);
   });
 
+  it("says a draft contract is not signed yet", () => {
+    const text = buildGzDealOutcomeComment({ kind: "contract-draft", planStatus: "Проект договора" }, null);
+    expect(text).toContain("ещё не подписан");
+  });
+
   it("explains a rewritten point", () => {
     expect(buildGzDealOutcomeComment({ kind: "repurposed", newItem: "Плинтус" }, null)).toContain("«Плинтус»");
   });
@@ -363,7 +378,7 @@ describe("buildGzDealPlanRef", () => {
       UF_CRM_PLAN_LINK: "https://procurement.gov.kz/ru/registry/show_plan/88029694/4880113",
       UF_CRM_6A436D5A19612: "262013.000.000011",
       UF_CRM_6627AEBD54B8D: "Компьютер"
-    })).toEqual({ planNumber: 87777759, pointIds: [88029694], enstruCode: "262013.000.000011", itemName: "Компьютер" });
+    })).toEqual({ planNumber: 87777759, pointIds: [88029694], enstruCode: "262013.000.000011", itemName: "Компьютер", revisionIds: [], planNumberVerified: false });
   });
 
   it("ignores the plan list id a June deal keeps in ORIGIN_ID and reads the item from the title", () => {
@@ -373,12 +388,65 @@ describe("buildGzDealPlanRef", () => {
       ORIGIN_ID: "gz-plan:4608960",
       UF_CRM_PLAN_ID: "84954271",
       UF_CRM_PLAN_LINK: "https://www.goszakup.gov.kz/ru/registry/show_plan/85108971/4608960"
-    })).toEqual({ planNumber: 84954271, pointIds: [85108971], enstruCode: null, itemName: "Панель интерактивная" });
+    })).toEqual({ planNumber: 84954271, pointIds: [85108971], enstruCode: null, itemName: "Панель интерактивная", revisionIds: [], planNumberVerified: false });
   });
 
   it("falls back to the title number and ORIGIN_ID when the plan fields are empty", () => {
     expect(buildGzDealPlanRef({ TITLE: "[GZ 87568873] Ясли-сад - Ноутбук", ORIGIN_ID: "gz-plan:87568873" }))
       .toMatchObject({ planNumber: 87568873, pointIds: [87568873], itemName: null });
+  });
+});
+
+describe("buildGzDealPlanRef with legacy fields", () => {
+  it("drops the plan list id an old deal keeps in the point field", () => {
+    // Deal 26239: field 4755430 is the plan list, and also a 2016 «Тормозной диск» point.
+    expect(buildGzDealPlanRef({
+      UF_CRM_PLAN_ID: "84178572",
+      UF_CRM_6A436D5A3614C: "4755430",
+      UF_CRM_PLAN_LINK: "https://goszakup.gov.kz/ru/registry/show_plan/86946667/4755430"
+    }).pointIds).toEqual([86946667]);
+  });
+
+  it("still reads the point field when the deal has no link", () => {
+    expect(buildGzDealPlanRef({ UF_CRM_6A436D5A3614C: "88029694" }).pointIds).toEqual([88029694]);
+  });
+});
+
+describe("revisions known only from the registry", () => {
+  it("matches a contract unit whose Plans link is empty through a registry revision id", () => {
+    // Deal 43133: the live revision 87514840 is missing from the API index; MARti
+    // signed for it with ContractUnits.Plans = null and the code as a list.
+    const ref: GzDealPlanRef = { ...REF, planNumber: 87442622, pointIds: [87442622], enstruCode: "262030.100.000021", itemName: "Панель интерактивная", revisionIds: [87514840] };
+    const marti = contract({
+      supplierBiin: "100940012345",
+      Supplier: { nameRu: "ТОО \"MARti Technology\"" },
+      units: [{ plnPointId: 87514840, totalSum: 2_844_827.58, refEnstruCode: ["262030.100.000021"], Plans: null }]
+    });
+
+    expect(decideGzDealOutcome(ref, [marti], status("Договор действует"), CONFIG))
+      .toMatchObject({ kind: "lost", supplierName: "ТОО \"MARti Technology\"", unitSum: 2_844_827.58 });
+  });
+
+  it("never claims a rewrite from a registry row", () => {
+    // Deal 40467: a registry row of another item is no proof of lineage.
+    const ref: GzDealPlanRef = { ...REF, revisionIds: [88111111] };
+    const other = contract({ units: [{ plnPointId: 88111111, totalSum: 1, refEnstruCode: ["162914.900.000007"], Plans: null }] });
+    expect(decideGzDealOutcome(ref, [other], NO_PLAN, CONFIG)).toBeNull();
+  });
+
+  it("never claims a rewrite under a plan number the deal's point does not confirm", () => {
+    // Deal 42445: a panel deal stored under the plan number of archive services.
+    const ref: GzDealPlanRef = { ...REF, planNumberVerified: false };
+    const archive = contract({ units: revisionUnit("829919.000.000004", "Услуги по ведению архивных документов") });
+    expect(decideGzDealOutcome(ref, [archive], NO_PLAN, CONFIG)).toBeNull();
+    expect(readGzPlanSignal(ref, { status: "Договор действует", enstruCode: "829919.000.000004", name: "Услуги", exactPoint: false }, FAMILIES))
+      .toEqual({ status: null, repurposedTo: null });
+  });
+
+  it("still checks the item of a registry revision", () => {
+    const ref: GzDealPlanRef = { ...REF, revisionIds: [88111111] };
+    const other = contract({ units: [{ plnPointId: 88111111, totalSum: 1, refEnstruCode: ["282512.300.000000"], Plans: null }] });
+    expect(findPlanContracts(ref, [other], FAMILIES)).toEqual([]);
   });
 });
 
