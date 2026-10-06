@@ -95,6 +95,7 @@ export interface GzRegisterPlanRow {
   itemName: string | null;
   amount: number | null;
   status: string | null;
+  url: string | null;
 }
 
 export type GzContractOutcomeKind = "won" | "lost" | "partner" | "terminated";
@@ -114,11 +115,15 @@ export type GzDealOutcome =
   }
   | { kind: GzPlanOutcomeKind; planStatus: string }
   | { kind: "repurposed"; newItem: string }
-  /** The deal holds a revision id; the register prints the plan under another number. */
-  | { kind: "plan-renumbered"; planNumber: number; planStatus: string | null }
-  /** The plan is gone, and the customer has a plan of the same item for the same amount. */
-  | { kind: "plan-moved"; planNumber: number; candidates: GzRegisterPlanRow[] }
+  /** The deal held a revision id; the robot rewrites the card to the real plan number. */
+  | { kind: "plan-renumbered"; oldPlanNumber: number; plan: GzRegisterPlanRow }
+  /** The plan is gone and the customer has a free plan of the same item and amount: the robot moves the card. */
+  | { kind: "plan-moved"; oldPlanNumber: number; plan: GzRegisterPlanRow }
+  /** The plan is gone and its twin already has a deal of its own. */
+  | { kind: "plan-duplicate"; planNumber: number; twinPlanNumber: number; twinDealId: string }
   | { kind: "plan-deleted"; planNumber: number };
+
+export type GzMissingPlanOutcome = Extract<GzDealOutcome, { kind: `plan-${string}` }>;
 
 // «Изменен» marks a version superseded by a supplementary agreement.
 const LIVE_CONTRACT_STATUSES = new Set(["действует", "исполнен", "передан.действует", "создано доп.соглашение"]);
@@ -135,8 +140,11 @@ const PLAN_STATUS_OUTCOMES: Record<string, GzPlanOutcomeKind> = {
 };
 // First 6 digits of an ENSTRU code name the item class; used only outside the families.
 const ENSTRU_CLASS_LENGTH = 6;
-const MAX_MOVE_CANDIDATES = 3;
 const AMOUNT_TOLERANCE = 0.01;
+export const DELETED_PLAN_STATUS = "Удален с портала";
+const PLAN_STATUS_FIELDS = ["UF_CRM_6627AEBD85B4D", "UF_CRM_PLAN_STATUS"] as const;
+const PLAN_NUMBER_FIELDS = ["UF_CRM_PLAN_ID", "UF_CRM_1782386293000_IU_XLS"] as const;
+const PLAN_LINK_FIELDS = ["UF_CRM_PLAN_LINK", "UF_CRM_1782386571874_IU_XLS", "UF_CRM_1782386080157_IU_XLS"] as const;
 
 /**
  * Deals from different months carry the plan identity in different fields;
@@ -279,40 +287,87 @@ export function decideGzDealOutcome(
 }
 
 /**
- * For a deal whose plan number the register no longer knows. The customer's
- * register tells a wrong number (the deal holds a revision id) from a plan
- * moved under another number or deleted outright. A move is only suggested:
- * the same item and amount down to the tiyn, never a certainty.
+ * Plans the deal's purchase may live under now, best first: the plan that owns
+ * the deal's point (the deal held a revision id), otherwise plans of the same
+ * item for the same amount down to the tiyn, newest first.
+ */
+export function gzMissingPlanCandidates(
+  ref: GzDealPlanRef,
+  dealAmount: number | null,
+  rows: readonly GzRegisterPlanRow[],
+  families: GzItemFamilies
+): GzRegisterPlanRow[] {
+  const planNumber = ref.planNumber;
+  if (planNumber === null) return [];
+  const others = rows.filter((row) => row.planNumber !== planNumber);
+  const owner = others.find((row) => ownsDealPoint(ref, row));
+  if (owner) return [owner];
+  const seen = new Set<number>();
+  return others
+    .filter((row) => dealAmount !== null && row.amount !== null && Math.abs(row.amount - dealAmount) < AMOUNT_TOLERANCE)
+    .filter((row) => isSameGzItem(ref, null, row.itemName, families) === true)
+    .sort((a, b) => b.planNumber - a.planNumber || b.pointId - a.pointId)
+    .filter((row) => !seen.has(row.planNumber) && seen.add(row.planNumber));
+}
+
+/**
+ * For a deal whose plan number the register no longer knows. A candidate plan
+ * that already has a deal is another purchase of the same customer, so the
+ * deal moves only to a free one; with none free it is a duplicate.
  */
 export function decideMissingGzPlan(
   ref: GzDealPlanRef,
   dealAmount: number | null,
   rows: readonly GzRegisterPlanRow[],
-  families: GzItemFamilies
-): GzDealOutcome | null {
+  families: GzItemFamilies,
+  dealsByPlan: ReadonlyMap<number, string>
+): GzMissingPlanOutcome | null {
   const planNumber = ref.planNumber;
   if (planNumber === null) return null;
-  const others = rows.filter((row) => row.planNumber !== planNumber);
-  const owner = others.find((row) => row.pointId === planNumber || ref.pointIds.includes(row.pointId));
-  if (owner) return { kind: "plan-renumbered", planNumber: owner.planNumber, planStatus: owner.status };
+  const candidates = gzMissingPlanCandidates(ref, dealAmount, rows, families);
+  if (candidates.length === 0) return { kind: "plan-deleted", planNumber };
+  const free = candidates.find((row) => !dealsByPlan.has(row.planNumber));
+  if (free) {
+    const kind = ownsDealPoint(ref, free) ? "plan-renumbered" : "plan-moved";
+    return { kind, oldPlanNumber: planNumber, plan: free };
+  }
+  const twin = candidates[0];
+  return { kind: "plan-duplicate", planNumber, twinPlanNumber: twin.planNumber, twinDealId: dealsByPlan.get(twin.planNumber)! };
+}
 
-  const seen = new Set<number>();
-  const candidates = others
-    .filter((row) => dealAmount !== null && row.amount !== null && Math.abs(row.amount - dealAmount) < AMOUNT_TOLERANCE)
-    .filter((row) => isSameGzItem(ref, null, row.itemName, families) === true)
-    .sort((a, b) => b.planNumber - a.planNumber || b.pointId - a.pointId)
-    .filter((row) => !seen.has(row.planNumber) && seen.add(row.planNumber))
-    .slice(0, MAX_MOVE_CANDIDATES);
-  return candidates.length > 0 ? { kind: "plan-moved", planNumber, candidates } : { kind: "plan-deleted", planNumber };
+/** Card fields the robot rewrites itself for a missing plan. */
+export function buildGzMissingPlanFields(deal: GzOutcomeDealFields, outcome: GzMissingPlanOutcome): Record<string, string> {
+  if (outcome.kind === "plan-duplicate") return {};
+  if (outcome.kind === "plan-deleted") return fieldsOf(PLAN_STATUS_FIELDS, DELETED_PLAN_STATUS);
+  const { plan, oldPlanNumber } = outcome;
+  const number = String(plan.planNumber);
+  const title = String(deal.TITLE ?? "");
+  return {
+    ...(title.includes(`[GZ ${oldPlanNumber}]`) ? { TITLE: title.replace(`[GZ ${oldPlanNumber}]`, `[GZ ${number}]`) } : {}),
+    ...fieldsOf(PLAN_NUMBER_FIELDS, number),
+    UF_CRM_6A436D5A3614C: String(plan.pointId),
+    ...(plan.url ? fieldsOf(PLAN_LINK_FIELDS, plan.url) : {}),
+    ...(plan.status ? fieldsOf(PLAN_STATUS_FIELDS, plan.status) : {})
+  };
+}
+
+function ownsDealPoint(ref: GzDealPlanRef, row: GzRegisterPlanRow): boolean {
+  return row.pointId === ref.planNumber || ref.pointIds.includes(row.pointId);
+}
+
+function fieldsOf(names: readonly string[], value: string): Record<string, string> {
+  return Object.fromEntries(names.map((name) => [name, value]));
 }
 
 export function gzDealOutcomeKey(outcome: GzDealOutcome): string {
   switch (outcome.kind) {
     case "plan-renumbered":
+    case "plan-moved":
+      return `${outcome.kind}:${outcome.plan.planNumber}`;
+    case "plan-duplicate":
+      return `${outcome.kind}:${outcome.twinDealId}`;
     case "plan-deleted":
       return `${outcome.kind}:${outcome.planNumber}`;
-    case "plan-moved":
-      return `${outcome.kind}:${outcome.candidates.map((row) => row.planNumber).join(",")}`;
     case "repurposed":
       return `${outcome.kind}:${normalize(outcome.newItem)}`;
   }
@@ -322,9 +377,7 @@ export function gzDealOutcomeKey(outcome: GzDealOutcome): string {
 
 export function buildGzDealOutcomeComment(outcome: GzDealOutcome, planUrl: string | null): string {
   const link = planUrl ? `\n${planUrl}` : "";
-  if (outcome.kind === "plan-renumbered" || outcome.kind === "plan-moved" || outcome.kind === "plan-deleted") {
-    return buildMissingPlanComment(outcome, link);
-  }
+  if (isMissingPlanOutcome(outcome)) return buildMissingPlanComment(outcome, link);
   if ("newItem" in outcome) {
     return `Итог закупки: заказчик переделал пункт плана под другой товар («${outcome.newItem}») — по этому плану закупки не будет.${link}`;
   }
@@ -432,28 +485,34 @@ function decidePlanStatusOutcome(planStatus: string | null): GzDealOutcome | nul
   return kind && planStatus ? { kind, planStatus: planStatus.trim() } : null;
 }
 
-function buildMissingPlanComment(
-  outcome: Extract<GzDealOutcome, { kind: "plan-renumbered" | "plan-moved" | "plan-deleted" }>,
-  link: string
-): string {
+export function isMissingPlanOutcome(outcome: GzDealOutcome): outcome is GzMissingPlanOutcome {
+  return outcome.kind.startsWith("plan-");
+}
+
+function buildMissingPlanComment(outcome: GzMissingPlanOutcome, link: string): string {
   switch (outcome.kind) {
     case "plan-renumbered": {
-      const state = outcome.planStatus ? ` (статус «${outcome.planStatus}»)` : "";
-      return `Номер плана в карточке — номер одной из версий пункта. Настоящий номер плана: ${outcome.planNumber}${state}.`
-        + ` Поправьте номер в карточке: под старым робот не может следить за этим планом.${link}`;
+      const { plan } = outcome;
+      return `Номер плана исправлен: ${outcome.oldPlanNumber} → ${plan.planNumber}. В карточке был номер версии плана, а не номер плана.`
+        + ` Робот обновил номер, ссылку и статус${statusSuffix(plan.status)}.${plan.url ? `\n${plan.url}` : ""}`;
     }
     case "plan-moved": {
-      const list = outcome.candidates.map((row) => {
-        const state = row.status ? `, статус «${row.status}»` : "";
-        return `№ ${row.planNumber} («${row.itemName ?? "без названия"}»${state})`;
-      }).join("; ");
-      return `План ${outcome.planNumber} пропал с портала. У заказчика есть план на тот же товар на ту же сумму: ${list}.`
-        + ` Возможно, закупку перенесли — проверьте и поправьте номер плана в карточке.${link}`;
+      const { plan } = outcome;
+      return `Заказчик перенёс закупку: план ${outcome.oldPlanNumber} удалён, тот же товар на ту же сумму теперь в плане ${plan.planNumber}`
+        + ` («${plan.itemName ?? "без названия"}»). Робот перевёл сделку на новый план и обновил ссылку и статус${statusSuffix(plan.status)}.`
+        + `${plan.url ? `\n${plan.url}` : ""}`;
     }
+    case "plan-duplicate":
+      return `Плана ${outcome.planNumber} на портале нет. Такой же план ${outcome.twinPlanNumber} (тот же товар, та же сумма)`
+        + ` уже ведётся в сделке ${outcome.twinDealId} — эта сделка дубль, её можно закрыть.`;
     case "plan-deleted":
-      return `План ${outcome.planNumber} удалён с портала, похожего плана на ту же сумму у заказчика нет.`
-        + ` Скорее всего, закупки не будет — уточните у заказчика.${link}`;
+      return `План ${outcome.planNumber} удалён с портала, похожего плана у заказчика нет. Робот поставил статус «${DELETED_PLAN_STATUS}».`
+        + ` Скорее всего, закупки не будет.${link}`;
   }
+}
+
+function statusSuffix(status: string | null): string {
+  return status ? `: «${status}»` : "";
 }
 
 function buildPlanStatusComment(kind: GzPlanOutcomeKind, planStatus: string, link: string): string {

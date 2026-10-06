@@ -4,11 +4,14 @@ import dotenv from "dotenv";
 import {
   buildGzDealOutcomeComment,
   buildGzDealPlanRef,
+  buildGzMissingPlanFields,
   dealBin,
   dealPlanAmount,
   decideGzDealOutcome,
   decideMissingGzPlan,
   gzDealOutcomeKey,
+  gzMissingPlanCandidates,
+  isMissingPlanOutcome,
   parseTenge,
   type GzDealOutcome,
   type GzDealPlanRef,
@@ -32,7 +35,9 @@ dotenv.config();
 
 // Checks every open plan deal against the portal once a run: who signed the
 // contract, or what the plan point status says, and leaves the manager one
-// timeline comment per new event. Stages stay untouched on purpose.
+// timeline comment per new event. Stages stay untouched on purpose. A plan
+// gone from the register is the one case the robot edits the card itself: it
+// moves the deal to the plan's new number, or marks the plan deleted.
 
 interface CliArgs {
   webhookUrl: string | null;
@@ -90,6 +95,7 @@ interface DealCheck {
 const ORIGINATOR_ID = "scrape2lead-gz-plans";
 const OUTCOME_FIELD = "UF_CRM_S2L_GZ_OUTCOME";
 const COMPANY_BIN_FIELD = "UF_CRM_666171B20E9E3";
+const PLAN_NUMBER_FIELDS = ["UF_CRM_PLAN_ID", "UF_CRM_1782386293000_IU_XLS"];
 const DEAL_SELECT = [
   "ID", "TITLE", "ORIGIN_ID", "COMPANY_ID", "ASSIGNED_BY_ID", "CATEGORY_ID", "DATE_CREATE",
   "UF_CRM_PLAN_ID", "UF_CRM_1782386293000_IU_XLS", "UF_CRM_6A436D5A3614C",
@@ -215,6 +221,11 @@ async function main(): Promise<void> {
     : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, config.itemFamilies)
       + await fillCustomerRegisters(checks.filter((check) => check.planMissing && check.bin), args.htmlDelayMs);
 
+  // A plan that already has a deal is another purchase, never the new home of a missing plan.
+  const dealsByPlan = await bitrix.dealsByPlanNumbers(uniqueInts(checks.flatMap((check) => check.registerRows
+    ? gzMissingPlanCandidates(check.ref, dealPlanAmount(check.deal), check.registerRows, config.itemFamilies).map((row) => row.planNumber)
+    : [])));
+
   for (const check of checks) {
     // Without this customer's contracts the plan status would pass for news.
     if (check.bin && contractsByBin.failedBins.has(check.bin)) {
@@ -223,8 +234,12 @@ async function main(): Promise<void> {
     }
     check.outcome = decideGzDealOutcome(check.ref, contractsByBin.get(check.bin ?? "") ?? [], check.plan, config)
       ?? (check.registerRows
-        ? decideMissingGzPlan(check.ref, dealPlanAmount(check.deal), check.registerRows, config.itemFamilies)
+        ? decideMissingGzPlan(check.ref, dealPlanAmount(check.deal), check.registerRows, config.itemFamilies, dealsByPlan)
         : null);
+    // Two deals of one customer must not move onto the same plan.
+    if (check.outcome?.kind === "plan-renumbered" || check.outcome?.kind === "plan-moved") {
+      dealsByPlan.set(check.outcome.plan.planNumber, check.deal.ID);
+    }
     check.key = check.outcome ? gzDealOutcomeKey(check.outcome) : null;
     check.isNew = check.key !== null && shouldReplaceGzOutcomeKey(check.deal.UF_CRM_S2L_GZ_OUTCOME, check.key);
   }
@@ -232,14 +247,16 @@ async function main(): Promise<void> {
   if (args.execute && checks.some((check) => check.isNew)) await bitrix.ensureOutcomeField();
   for (const check of checks.filter((item) => item.isNew)) {
     const comment = buildGzDealOutcomeComment(check.outcome!, check.planUrl);
+    const cardFields = isMissingPlanOutcome(check.outcome!) ? buildGzMissingPlanFields(check.deal, check.outcome) : {};
     if (!args.execute) {
-      console.log(`[dry-run] ${check.outcome!.kind} deal ${check.deal.ID} | ${comment.split("\n")[0]}`);
+      const edits = Object.keys(cardFields).length ? ` | card: ${JSON.stringify(cardFields)}` : "";
+      console.log(`[dry-run] ${check.outcome!.kind} deal ${check.deal.ID} | ${comment.split("\n")[0]}${edits}`);
       continue;
     }
     // Marker first: a comment that cannot be marked would repeat every run.
     const previousKey = check.deal.UF_CRM_S2L_GZ_OUTCOME || "";
     try {
-      await bitrix.updateDeal(check.deal.ID, { [OUTCOME_FIELD]: check.key });
+      await bitrix.updateDeal(check.deal.ID, { ...cardFields, [OUTCOME_FIELD]: check.key });
     } catch (error) {
       check.error = error instanceof Error ? error.message : String(error);
       console.error(`[failed] deal ${check.deal.ID}: ${check.error}`);
@@ -427,7 +444,14 @@ function toRegisterRow(item: GoszakupPlanListItem): GzRegisterPlanRow[] {
   const planNumber = Number(item.plan_list_number);
   const pointId = Number(item.plan_point_id);
   if (!Number.isInteger(planNumber) || planNumber <= 0) return [];
-  return [{ planNumber, pointId, itemName: item.item_name, amount: parseTenge(item.planned_amount), status: item.status?.trim() || null }];
+  return [{
+    planNumber,
+    pointId,
+    itemName: item.item_name,
+    amount: parseTenge(item.planned_amount),
+    status: item.status?.trim() || null,
+    url: portalPlanUrl(item.detail_url)
+  }];
 }
 
 async function fetchRegisterRows(url: string, retried = false): Promise<GoszakupPlanListItem[]> {
@@ -499,9 +523,9 @@ async function fetchContractsByBin(
 
 function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: number): { line: string; markdown: string } {
   const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft", "signed-unknown",
-    "plan-renumbered", "plan-moved", "plan-deleted"] as const;
+    "plan-renumbered", "plan-moved", "plan-duplicate", "plan-deleted"] as const;
   const fresh = (kind: string) => checks.filter((check) => check.isNew && check.outcome?.kind === kind).length;
-  const counts = kinds.map((kind) => `${kind.replace("-", "_")}=${fresh(kind)}`).join(" ");
+  const counts = kinds.map((kind) => `${kind.replaceAll("-", "_")}=${fresh(kind)}`).join(" ");
   const line = `outcomes: checked=${checks.length} ${counts} unchanged=${checks.filter((check) => check.key && !check.isNew).length}`
     + ` no_signal=${checks.filter((check) => !check.key && !check.skipped).length} skipped=${checks.filter((check) => check.skipped).length} no_bin=${checks.filter((check) => !check.bin).length}`
     + ` status_api=${checks.filter((check) => check.statusSource === "api").length} status_html=${checks.filter((check) => check.statusSource === "html").length}`
@@ -520,7 +544,7 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
     "",
     `Новых событий: выиграли ${fresh("won")}, проиграли ${fresh("lost")}, партнёр ${fresh("partner")}, расторгнуто ${fresh("terminated")}, пункт переделан ${fresh("repurposed")},`
       + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")}, договор без победителя ${fresh("signed-unknown")},`
-      + ` неверный номер плана ${fresh("plan-renumbered")}, план перенесён ${fresh("plan-moved")}, план удалён ${fresh("plan-deleted")}.`,
+      + ` номер плана исправлен ${fresh("plan-renumbered")}, сделка переведена на новый план ${fresh("plan-moved")}, дубль ${fresh("plan-duplicate")}, план удалён ${fresh("plan-deleted")}.`,
     "",
     ...(wins.length ? ["**Новые победы:**", ...wins.map((check) => `- сделка ${check.deal.ID}: ${describeContract(check.outcome!)}`), ""] : []),
     "**Кому уходят открытые сделки (все известные договоры):**",
@@ -619,6 +643,25 @@ class BitrixClient {
       }
     }
     return bins;
+  }
+
+  /** Deals of any stage that carry one of the plan numbers, by plan number. */
+  async dealsByPlanNumbers(planNumbers: number[]): Promise<Map<number, string>> {
+    const found = new Map<number, string>();
+    const commands = planNumbers.flatMap((plan) => PLAN_NUMBER_FIELDS.map((field) => ({
+      key: `${field}_${plan}`,
+      method: "crm.deal.list",
+      params: { filter: { [field]: String(plan) }, select: ["ID"], order: { ID: "ASC" } }
+    })));
+    for (const chunk of chunkBatchCommands(commands)) {
+      for (const [key, outcome] of await callBitrixBatch(this.baseUrl, chunk)) {
+        if (outcome.error) throw new Error(`deals by plan ${key}: ${outcome.error.error_description || outcome.error.error}`);
+        const first = (outcome.result as Array<{ ID: string }> | undefined)?.[0];
+        const plan = Number(key.slice(key.lastIndexOf("_") + 1));
+        if (first && !found.has(plan)) found.set(plan, String(first.ID));
+      }
+    }
+    return found;
   }
 
   async ensureOutcomeField(): Promise<void> {
