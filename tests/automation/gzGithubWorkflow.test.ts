@@ -26,6 +26,21 @@ describe("GZ GitHub workflow credentials", () => {
   );
 });
 
+describe("GZ deal outcome check", () => {
+  it("runs after the PK collection even when the collection failed", () => {
+    const pk = readWorkflow("gz-daily-pk.yml");
+    const job = pk.slice(pk.indexOf("  deal-outcomes:"));
+
+    expect(job).toContain("needs: [guard, pk-plans]");
+    expect(job).toContain("if: always() && needs.guard.outputs.should-run == 'true'");
+    // A failed check must not fail the run: the backstop and the watchdog read run conclusions.
+    expect(job).toContain("continue-on-error: true");
+    expect(job).toContain("npx tsx scripts/check-gz-deal-outcomes.mts --execute");
+    expect(job).toContain("BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}");
+    expect(job).toContain("GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}");
+  });
+});
+
 describe("GZ GitHub workflow browser setup", () => {
   it("installs the Playwright browser without refreshing external apt repositories", () => {
     const reusable = readWorkflow("gz-automation.yml");
