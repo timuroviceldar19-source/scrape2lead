@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
+import { pathToFileURL } from "node:url";
 import dotenv from "dotenv";
 import ExcelJS from "exceljs";
 import {
@@ -46,7 +47,7 @@ interface CliArgs {
   minAmount: number;
 }
 
-interface GzPlanRow {
+export interface GzPlanRow {
   rowNumber: number;
   bin: string;
   customerName: string;
@@ -769,7 +770,7 @@ function buildDealUpdateFields(row: GzPlanRow): Record<string, unknown> {
   return buildDealGzFields(row);
 }
 
-function buildDealGzFields(row: GzPlanRow): Record<string, unknown> {
+export function buildDealGzFields(row: GzPlanRow): Record<string, unknown> {
   const planPointId = canonicalPlanId(row);
   return stripUndefined({
     TITLE: buildTitle(row),
@@ -780,7 +781,6 @@ function buildDealGzFields(row: GzPlanRow): Record<string, unknown> {
     CURRENCY_ID: "KZT",
     OPPORTUNITY: parseMoney(row.amount),
     COMMENTS: buildComments(row),
-    UF_CRM_1705406174976: 57,
     UF_CRM_1711518716644: row.unit,
     UF_CRM_6627AEBD4503E: row.purchaseMethod,
     UF_CRM_6627AEBD54B8D: row.itemName,
@@ -967,7 +967,9 @@ function stripUndefined<T extends Record<string, unknown>>(fields: T): T {
   ) as T;
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
