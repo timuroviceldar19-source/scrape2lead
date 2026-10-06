@@ -36,8 +36,8 @@ dotenv.config();
 // Checks every open plan deal against the portal once a run: who signed the
 // contract, or what the plan point status says, and leaves the manager one
 // timeline comment per new event. Stages stay untouched on purpose. A plan
-// gone from the register is the one case the robot edits the card itself: it
-// moves the deal to the plan's new number, or marks the plan deleted.
+// moved under a new number is the one case the robot edits the card itself;
+// a deleted plan is left alone.
 
 interface CliArgs {
   webhookUrl: string | null;
@@ -250,7 +250,7 @@ async function main(): Promise<void> {
     const cardFields = isMissingPlanOutcome(check.outcome!) ? buildGzMissingPlanFields(check.deal, check.outcome) : {};
     const edits = Object.keys(cardFields).length ? ` | card: ${JSON.stringify(cardFields)}` : "";
     if (!args.execute) {
-      console.log(`[dry-run] ${check.outcome!.kind} deal ${check.deal.ID} | ${comment?.split("\n")[0] ?? "(no comment)"}${edits}`);
+      console.log(`[dry-run] ${check.outcome!.kind} deal ${check.deal.ID} | ${comment.split("\n")[0]}${edits}`);
       continue;
     }
     // Marker first: a comment that cannot be marked would repeat every run.
@@ -261,11 +261,6 @@ async function main(): Promise<void> {
       check.error = error instanceof Error ? error.message : String(error);
       console.error(`[failed] deal ${check.deal.ID}: ${check.error}`);
       process.exitCode = 1;
-      continue;
-    }
-    if (comment === null) {
-      check.applied = true;
-      console.log(`[${check.outcome!.kind}] deal ${check.deal.ID}${edits}`);
       continue;
     }
     try {
@@ -528,7 +523,7 @@ async function fetchContractsByBin(
 
 function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: number): { line: string; markdown: string } {
   const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft", "signed-unknown",
-    "plan-renumbered", "plan-moved", "plan-duplicate", "plan-deleted"] as const;
+    "plan-renumbered", "plan-moved"] as const;
   const fresh = (kind: string) => checks.filter((check) => check.isNew && check.outcome?.kind === kind).length;
   const counts = kinds.map((kind) => `${kind.replaceAll("-", "_")}=${fresh(kind)}`).join(" ");
   const line = `outcomes: checked=${checks.length} ${counts} unchanged=${checks.filter((check) => check.key && !check.isNew).length}`
@@ -549,7 +544,7 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
     "",
     `Новых событий: выиграли ${fresh("won")}, проиграли ${fresh("lost")}, партнёр ${fresh("partner")}, расторгнуто ${fresh("terminated")}, пункт переделан ${fresh("repurposed")},`
       + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")}, договор без победителя ${fresh("signed-unknown")},`
-      + ` номер плана исправлен ${fresh("plan-renumbered")}, сделка переведена на новый план ${fresh("plan-moved")}, дубль ${fresh("plan-duplicate")}, план удалён ${fresh("plan-deleted")}.`,
+      + ` номер плана исправлен ${fresh("plan-renumbered")}, сделка переведена на новый план ${fresh("plan-moved")}.`,
     "",
     ...(wins.length ? ["**Новые победы:**", ...wins.map((check) => `- сделка ${check.deal.ID}: ${describeContract(check.outcome!)}`), ""] : []),
     "**Кому уходят открытые сделки (все известные договоры):**",

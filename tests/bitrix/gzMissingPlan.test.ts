@@ -4,7 +4,6 @@ import {
   buildGzMissingPlanFields,
   dealPlanAmount,
   decideMissingGzPlan,
-  DELETED_PLAN_STATUS,
   gzDealOutcomeKey,
   gzMissingPlanCandidates,
   parseTenge,
@@ -84,38 +83,24 @@ describe("decideMissingGzPlan", () => {
     expect(outcome).toMatchObject({ kind: "plan-moved", plan: { planNumber: 82000002 } });
   });
 
-  it("silently marks a deal deleted when every twin plan already has a deal", () => {
+  it("leaves the deal alone when every twin plan already has a deal", () => {
     // Deal 44095: plan 87540699 deleted, its twin 87540700 is deal 44093.
     const monitor: GzDealPlanRef = { ...GYMNASIUM, planNumber: 87540699, pointIds: [87540699], enstruCode: null, itemName: "Монитор" };
     const twin = row({ planNumber: 87540700, pointId: 87540700, itemName: "Монитор", amount: 1_025_853.45 });
 
-    const outcome = decideMissingGzPlan(monitor, 1_025_853.45, [twin], FAMILIES, new Map([[87540700, "44093"]]));
-
-    expect(outcome).toEqual({ kind: "plan-duplicate", planNumber: 87540699, twinPlanNumber: 87540700, twinDealId: "44093" });
-    expect(gzDealOutcomeKey(outcome!)).toBe("plan-duplicate:44093");
-    expect(buildGzDealOutcomeComment(outcome!, null)).toBeNull();
-    expect(buildGzMissingPlanFields({}, outcome!)).toEqual({ UF_CRM_6627AEBD85B4D: DELETED_PLAN_STATUS, UF_CRM_PLAN_STATUS: DELETED_PLAN_STATUS });
+    expect(decideMissingGzPlan(monitor, 1_025_853.45, [twin], FAMILIES, new Map([[87540700, "44093"]]))).toBeNull();
   });
 
   it("needs the amount to match to the tiyn", () => {
-    const outcome = decideMissingGzPlan(GYMNASIUM, 978_437.93, [row({ amount: 978_000 })], FAMILIES, NO_DEALS);
-    expect(outcome).toEqual({ kind: "plan-deleted", planNumber: 87676031 });
+    expect(decideMissingGzPlan(GYMNASIUM, 978_437.93, [row({ amount: 978_000 })], FAMILIES, NO_DEALS)).toBeNull();
   });
 
-  it("silently marks the plan deleted when the customer has nothing alike", () => {
-    const outcome = decideMissingGzPlan(GYMNASIUM, 978_437.93, [], FAMILIES, NO_DEALS);
-
-    expect(outcome).toEqual({ kind: "plan-deleted", planNumber: 87676031 });
-    expect(gzDealOutcomeKey(outcome!)).toBe("plan-deleted:87676031");
-    expect(buildGzDealOutcomeComment(outcome!, null)).toBeNull();
-    expect(buildGzMissingPlanFields({}, outcome!)).toEqual({
-      UF_CRM_6627AEBD85B4D: DELETED_PLAN_STATUS,
-      UF_CRM_PLAN_STATUS: DELETED_PLAN_STATUS
-    });
+  it("leaves a deleted plan alone when the customer has nothing alike", () => {
+    expect(decideMissingGzPlan(GYMNASIUM, 978_437.93, [], FAMILIES, NO_DEALS)).toBeNull();
   });
 
   it("does not guess a move without the deal amount", () => {
-    expect(decideMissingGzPlan(GYMNASIUM, null, [row({})], FAMILIES, NO_DEALS)).toEqual({ kind: "plan-deleted", planNumber: 87676031 });
+    expect(decideMissingGzPlan(GYMNASIUM, null, [row({})], FAMILIES, NO_DEALS)).toBeNull();
   });
 
   it("lists candidates newest first, each plan once", () => {
@@ -128,9 +113,9 @@ describe("decideMissingGzPlan", () => {
     expect(decideMissingGzPlan({ ...GYMNASIUM, planNumber: null }, 1, [], FAMILIES, NO_DEALS)).toBeNull();
   });
 
-  it("never downgrades a settled outcome to a missing plan", () => {
-    expect(shouldReplaceGzOutcomeKey("lost:990340007507/260547", "plan-deleted:87676031")).toBe(false);
-    expect(shouldReplaceGzOutcomeKey("published:опубликован", "plan-deleted:87676031")).toBe(true);
+  it("never downgrades a settled outcome to a moved plan", () => {
+    expect(shouldReplaceGzOutcomeKey("lost:990340007507/260547", "plan-moved:84517837")).toBe(false);
+    expect(shouldReplaceGzOutcomeKey("published:опубликован", "plan-moved:84517837")).toBe(true);
   });
 });
 

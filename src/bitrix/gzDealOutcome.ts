@@ -118,10 +118,7 @@ export type GzDealOutcome =
   /** The deal held a revision id; the robot rewrites the card to the real plan number. */
   | { kind: "plan-renumbered"; oldPlanNumber: number; plan: GzRegisterPlanRow }
   /** The plan is gone and the customer has a free plan of the same item and amount: the robot moves the card. */
-  | { kind: "plan-moved"; oldPlanNumber: number; plan: GzRegisterPlanRow }
-  /** The plan is gone and its twin already has a deal of its own. */
-  | { kind: "plan-duplicate"; planNumber: number; twinPlanNumber: number; twinDealId: string }
-  | { kind: "plan-deleted"; planNumber: number };
+  | { kind: "plan-moved"; oldPlanNumber: number; plan: GzRegisterPlanRow };
 
 export type GzMissingPlanOutcome = Extract<GzDealOutcome, { kind: `plan-${string}` }>;
 
@@ -141,7 +138,6 @@ const PLAN_STATUS_OUTCOMES: Record<string, GzPlanOutcomeKind> = {
 // First 6 digits of an ENSTRU code name the item class; used only outside the families.
 const ENSTRU_CLASS_LENGTH = 6;
 const AMOUNT_TOLERANCE = 0.01;
-export const DELETED_PLAN_STATUS = "Удален с портала";
 const PLAN_STATUS_FIELDS = ["UF_CRM_6627AEBD85B4D", "UF_CRM_PLAN_STATUS"] as const;
 const PLAN_NUMBER_FIELDS = ["UF_CRM_PLAN_ID", "UF_CRM_1782386293000_IU_XLS"] as const;
 const PLAN_LINK_FIELDS = ["UF_CRM_PLAN_LINK", "UF_CRM_1782386571874_IU_XLS", "UF_CRM_1782386080157_IU_XLS"] as const;
@@ -311,9 +307,10 @@ export function gzMissingPlanCandidates(
 }
 
 /**
- * For a deal whose plan number the register no longer knows. A candidate plan
- * that already has a deal is another purchase of the same customer, so the
- * deal moves only to a free one; with none free it is a duplicate.
+ * For a deal whose plan number the register no longer knows: the plan its
+ * purchase moved to, or null. A candidate plan that already has a deal is
+ * another purchase of the same customer, so the deal moves only to a free one.
+ * A deleted plan, or one whose twins all have deals, is left alone.
  */
 export function decideMissingGzPlan(
   ref: GzDealPlanRef,
@@ -324,21 +321,14 @@ export function decideMissingGzPlan(
 ): GzMissingPlanOutcome | null {
   const planNumber = ref.planNumber;
   if (planNumber === null) return null;
-  const candidates = gzMissingPlanCandidates(ref, dealAmount, rows, families);
-  if (candidates.length === 0) return { kind: "plan-deleted", planNumber };
-  const free = candidates.find((row) => !dealsByPlan.has(row.planNumber));
-  if (free) {
-    const kind = ownsDealPoint(ref, free) ? "plan-renumbered" : "plan-moved";
-    return { kind, oldPlanNumber: planNumber, plan: free };
-  }
-  const twin = candidates[0];
-  return { kind: "plan-duplicate", planNumber, twinPlanNumber: twin.planNumber, twinDealId: dealsByPlan.get(twin.planNumber)! };
+  const free = gzMissingPlanCandidates(ref, dealAmount, rows, families).find((row) => !dealsByPlan.has(row.planNumber));
+  if (!free) return null;
+  const kind = ownsDealPoint(ref, free) ? "plan-renumbered" : "plan-moved";
+  return { kind, oldPlanNumber: planNumber, plan: free };
 }
 
-/** Card fields the robot rewrites itself for a missing plan. A deleted plan only gets its status, silently. */
+/** Card fields the robot rewrites itself to follow the plan's new number. */
 export function buildGzMissingPlanFields(deal: GzOutcomeDealFields, outcome: GzMissingPlanOutcome): Record<string, string> {
-  // A duplicate's own plan is gone too; the twin deal carries the purchase.
-  if (outcome.kind === "plan-duplicate" || outcome.kind === "plan-deleted") return fieldsOf(PLAN_STATUS_FIELDS, DELETED_PLAN_STATUS);
   const { plan, oldPlanNumber } = outcome;
   const number = String(plan.planNumber);
   const title = String(deal.TITLE ?? "");
@@ -364,10 +354,6 @@ export function gzDealOutcomeKey(outcome: GzDealOutcome): string {
     case "plan-renumbered":
     case "plan-moved":
       return `${outcome.kind}:${outcome.plan.planNumber}`;
-    case "plan-duplicate":
-      return `${outcome.kind}:${outcome.twinDealId}`;
-    case "plan-deleted":
-      return `${outcome.kind}:${outcome.planNumber}`;
     case "repurposed":
       return `${outcome.kind}:${normalize(outcome.newItem)}`;
   }
@@ -375,8 +361,7 @@ export function gzDealOutcomeKey(outcome: GzDealOutcome): string {
   return `${outcome.kind}:${normalize(outcome.planStatus)}`;
 }
 
-/** null: the robot only edits the card and leaves the timeline alone. */
-export function buildGzDealOutcomeComment(outcome: GzDealOutcome, planUrl: string | null): string | null {
+export function buildGzDealOutcomeComment(outcome: GzDealOutcome, planUrl: string | null): string {
   const link = planUrl ? `\n${planUrl}` : "";
   if (isMissingPlanOutcome(outcome)) return buildMissingPlanComment(outcome);
   if ("newItem" in outcome) {
@@ -490,7 +475,7 @@ export function isMissingPlanOutcome(outcome: GzDealOutcome): outcome is GzMissi
   return outcome.kind.startsWith("plan-");
 }
 
-function buildMissingPlanComment(outcome: GzMissingPlanOutcome): string | null {
+function buildMissingPlanComment(outcome: GzMissingPlanOutcome): string {
   switch (outcome.kind) {
     case "plan-renumbered": {
       const { plan } = outcome;
@@ -503,9 +488,6 @@ function buildMissingPlanComment(outcome: GzMissingPlanOutcome): string | null {
         + ` («${plan.itemName ?? "без названия"}»). Робот перевёл сделку на новый план и обновил ссылку и статус${statusSuffix(plan.status)}.`
         + `${plan.url ? `\n${plan.url}` : ""}`;
     }
-    case "plan-duplicate":
-    case "plan-deleted":
-      return null;
   }
 }
 
