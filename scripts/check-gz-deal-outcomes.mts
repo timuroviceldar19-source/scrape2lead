@@ -27,7 +27,7 @@ import {
 } from "../src/bitrix/gzDealOutcome.js";
 import { callBitrixBatch, chunkBatchCommands } from "../src/bitrix/batch.js";
 import { goszakupGraphqlAll } from "../src/kz/goszakupGraphql.js";
-import { parseGoszakupPlanSearchHtml } from "../src/kz/goszakupPlanHtmlParser.js";
+import { parseGoszakupPlanDetailHtml, parseGoszakupPlanSearchHtml } from "../src/kz/goszakupPlanHtmlParser.js";
 import type { GoszakupPlanListItem } from "../src/kz/goszakupPlanTypes.js";
 import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "../src/kz/goszakupOrigin.js";
 
@@ -209,6 +209,7 @@ async function main(): Promise<void> {
 
   await fillCompanyBins(bitrix, checks);
   await fillApiPlanStatuses(checks, gql, config.itemFamilies);
+  const planPagesFailed = args.skipHtml ? 0 : await fillFromPlanPages(checks, args.htmlDelayMs);
   const contractsByBin = await fetchContractsByBin(checks, currentYear, gql, args.concurrency);
   // A contract settles the deal, so the slow portal pages go only to the rest.
   // A "contract signed" status without a matched contract also goes there: the
@@ -218,7 +219,7 @@ async function main(): Promise<void> {
     && !decideGzDealOutcome(check.ref, contractsByBin.get(check.bin ?? "") ?? [], NO_PLAN_SIGNAL, config));
   const htmlFailed = args.skipHtml
     ? 0
-    : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, config.itemFamilies)
+    : planPagesFailed + await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, config.itemFamilies)
       + await fillCustomerRegisters(checks.filter((check) => check.planMissing && check.bin), args.htmlDelayMs);
 
   // A plan that already has a deal is another purchase, never the new home of a missing plan.
@@ -454,7 +455,40 @@ function toRegisterRow(item: GoszakupPlanListItem): GzRegisterPlanRow[] {
   }];
 }
 
-async function fetchRegisterRows(url: string, retried = false): Promise<GoszakupPlanListItem[]> {
+async function fetchRegisterRows(url: string): Promise<GoszakupPlanListItem[]> {
+  return parseGoszakupPlanSearchHtml(await fetchPortalPage(url), "outcome-check")
+    .filter((row) => Number.isInteger(Number(row.plan_point_id)) && Number(row.plan_point_id) > 0);
+}
+
+/**
+ * The deal's own plan page names the customer BIN and the item code that old
+ * cards lack. Without the BIN the customer's contracts stay unknown; without
+ * the code a contract on an unindexed revision cannot be matched. Either way
+ * a won deal would read «победителя определить не удалось».
+ */
+async function fillFromPlanPages(checks: DealCheck[], delayMs: number): Promise<number> {
+  const pending = checks.filter((check) => (!check.bin || !check.ref.enstruCode) && check.planUrl);
+  console.log(`plan pages: pending=${pending.length}`);
+  let failed = 0;
+  for (const check of pending) {
+    try {
+      const detail = parseGoszakupPlanDetailHtml(await fetchPortalPage(check.planUrl!), String(check.ref.pointIds[0] ?? ""));
+      const bin = detail?.customer_bin ?? "";
+      const code = String(detail?.ref_enstru_code ?? "").trim();
+      check.bin ??= /^\d{12}$/.test(bin) ? bin : null;
+      if (!check.ref.enstruCode && /^\d{6}/.test(code)) check.ref = { ...check.ref, enstruCode: code };
+    } catch (error) {
+      failed += 1;
+      console.warn(`[plan-page] deal ${check.deal.ID}: ${error instanceof Error ? error.message : String(error)}`);
+      if (error instanceof PortalThrottledError) break;
+    }
+    if (delayMs > 0) await sleep(delayMs);
+  }
+  return failed;
+}
+
+/** The portal answers a burst with a stripped page and HTTP 200; one backoff, then give up. */
+async function fetchPortalPage(url: string, retried = false): Promise<string> {
   const response = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
@@ -464,10 +498,9 @@ async function fetchRegisterRows(url: string, retried = false): Promise<Goszakup
   if (html.length < THROTTLED_PAGE_MAX_LENGTH) {
     if (retried) throw new PortalThrottledError();
     await sleep(THROTTLE_BACKOFF_MS);
-    return fetchRegisterRows(url, true);
+    return fetchPortalPage(url, true);
   }
-  return parseGoszakupPlanSearchHtml(html, "outcome-check")
-    .filter((row) => Number.isInteger(Number(row.plan_point_id)) && Number(row.plan_point_id) > 0);
+  return html;
 }
 
 function withRevisions(ref: GzDealPlanRef, ids: number[]): GzDealPlanRef {
@@ -522,7 +555,7 @@ async function fetchContractsByBin(
 }
 
 function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: number): { line: string; markdown: string } {
-  const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft", "signed-unknown",
+  const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft",
     "plan-renumbered", "plan-moved"] as const;
   const fresh = (kind: string) => checks.filter((check) => check.isNew && check.outcome?.kind === kind).length;
   const counts = kinds.map((kind) => `${kind.replaceAll("-", "_")}=${fresh(kind)}`).join(" ");
@@ -543,7 +576,7 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
     "## Итоги закупок по открытым сделкам",
     "",
     `Новых событий: выиграли ${fresh("won")}, проиграли ${fresh("lost")}, партнёр ${fresh("partner")}, расторгнуто ${fresh("terminated")}, пункт переделан ${fresh("repurposed")},`
-      + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")}, договор без победителя ${fresh("signed-unknown")},`
+      + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")},`
       + ` номер плана исправлен ${fresh("plan-renumbered")}, сделка переведена на новый план ${fresh("plan-moved")}.`,
     "",
     ...(wins.length ? ["**Новые победы:**", ...wins.map((check) => `- сделка ${check.deal.ID}: ${describeContract(check.outcome!)}`), ""] : []),

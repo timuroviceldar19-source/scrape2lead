@@ -99,7 +99,7 @@ export interface GzRegisterPlanRow {
 }
 
 export type GzContractOutcomeKind = "won" | "lost" | "partner" | "terminated";
-export type GzPlanOutcomeKind = "published" | "failed" | "cancelled" | "contract-draft" | "signed-unknown";
+export type GzPlanOutcomeKind = "published" | "failed" | "cancelled" | "contract-draft";
 
 export type GzDealOutcome =
   | {
@@ -130,11 +130,11 @@ const PLAN_STATUS_OUTCOMES: Record<string, GzPlanOutcomeKind> = {
   "отменен": "cancelled",
   "отказ от закупки": "cancelled",
   "удален": "cancelled",
-  "проект договора": "contract-draft",
-  "договор действует": "signed-unknown",
-  "исполнен": "signed-unknown",
-  "срок договора истек": "signed-unknown"
+  "проект договора": "contract-draft"
 };
+// A signed contract the robot could not find is no news for the manager: it
+// stays silent until the contract itself turns up.
+const SIGNED_PLAN_STATUSES = new Set(["проект договора", "договор действует", "исполнен", "срок договора истек"]);
 // First 6 digits of an ENSTRU code name the item class; used only outside the families.
 const ENSTRU_CLASS_LENGTH = 6;
 const AMOUNT_TOLERANCE = 0.01;
@@ -258,8 +258,7 @@ export function readGzPlanSignal(
 
 /** The plan register says a contract exists or is being drafted. */
 export function isSignedGzPlanStatus(status: string | null | undefined): boolean {
-  const kind = PLAN_STATUS_OUTCOMES[normalize(status)];
-  return kind === "signed-unknown" || kind === "contract-draft";
+  return SIGNED_PLAN_STATUSES.has(normalize(status));
 }
 
 export function findPlanContracts(
@@ -505,8 +504,6 @@ function buildPlanStatusComment(kind: GzPlanOutcomeKind, planStatus: string, lin
       return `Итог закупки: заказчик отказался от закупки (статус плана «${planStatus}»).${link}`;
     case "contract-draft":
       return `Итог закупки: победитель определён, договор на стадии проекта и ещё не подписан. Когда его подпишут, робот напишет, с кем.${link}`;
-    case "signed-unknown":
-      return `Итог закупки: по плану уже заключён договор (статус «${planStatus}»), победителя определить не удалось — проверьте на портале.${link}`;
   }
 }
 
