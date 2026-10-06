@@ -184,8 +184,6 @@ describe("decideGzDealOutcome from the plan register", () => {
     ["Закупка не состоялась", "failed"],
     ["Отменен", "cancelled"],
     ["Отказ от закупки", "cancelled"],
-    ["Договор действует", "signed-unknown"],
-    ["Исполнен", "signed-unknown"],
     ["Проект договора", "contract-draft"]
   ])("maps «%s» to %s", (value, kind) => {
     expect(decideGzDealOutcome(REF, [], status(value), CONFIG)?.kind).toBe(kind);
@@ -193,6 +191,13 @@ describe("decideGzDealOutcome from the plan register", () => {
 
   it.each(["Утвержден", "На проверке камерального контроля", "Изменен", null])(
     "stays silent while the plan is still «%s»",
+    (value) => {
+      expect(decideGzDealOutcome(REF, [], status(value), CONFIG)).toBeNull();
+    }
+  );
+
+  it.each(["Договор действует", "Исполнен", "Срок договора истек"])(
+    "stays silent on «%s» until the contract itself is found",
     (value) => {
       expect(decideGzDealOutcome(REF, [], status(value), CONFIG)).toBeNull();
     }
@@ -278,7 +283,7 @@ describe("shouldReplaceGzOutcomeKey", () => {
     ["published:опубликован", "published:опубликован", false, "same event"],
     ["published:опубликован", "lost:1/2", true, "a contract after the announcement"],
     ["lost:1/2", "won:1/3", true, "a new contract"],
-    ["won:1/2", "signed-unknown:договор действует", false, "the contract fetch hiccuped"],
+    ["won:1/2", "contract-draft:проект договора", false, "the contract fetch hiccuped"],
     ["lost:1/2", "published:опубликован", false, "stale plan status"],
     ["repurposed:плинтус", "cancelled:отменен", false, "rewrite already reported"],
     ["won:1/2", "terminated:1/2", true, "our contract was terminated"],

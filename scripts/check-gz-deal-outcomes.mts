@@ -555,7 +555,7 @@ async function fetchContractsByBin(
 }
 
 function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: number): { line: string; markdown: string } {
-  const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft", "signed-unknown",
+  const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft",
     "plan-renumbered", "plan-moved"] as const;
   const fresh = (kind: string) => checks.filter((check) => check.isNew && check.outcome?.kind === kind).length;
   const counts = kinds.map((kind) => `${kind.replaceAll("-", "_")}=${fresh(kind)}`).join(" ");
@@ -576,7 +576,7 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
     "## Итоги закупок по открытым сделкам",
     "",
     `Новых событий: выиграли ${fresh("won")}, проиграли ${fresh("lost")}, партнёр ${fresh("partner")}, расторгнуто ${fresh("terminated")}, пункт переделан ${fresh("repurposed")},`
-      + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")}, договор без победителя ${fresh("signed-unknown")},`
+      + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")},`
       + ` номер плана исправлен ${fresh("plan-renumbered")}, сделка переведена на новый план ${fresh("plan-moved")}.`,
     "",
     ...(wins.length ? ["**Новые победы:**", ...wins.map((check) => `- сделка ${check.deal.ID}: ${describeContract(check.outcome!)}`), ""] : []),
