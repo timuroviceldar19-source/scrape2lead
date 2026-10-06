@@ -5,8 +5,11 @@ import {
   buildGzDealOutcomeComment,
   buildGzDealPlanRef,
   dealBin,
+  dealPlanAmount,
   decideGzDealOutcome,
+  decideMissingGzPlan,
   gzDealOutcomeKey,
+  parseTenge,
   type GzDealOutcome,
   type GzDealPlanRef,
   type GzOutcomeConfig,
@@ -14,6 +17,7 @@ import {
   type GzOutcomeDealFields,
   type GzItemFamilies,
   type GzPlanSignal,
+  type GzRegisterPlanRow,
   isSignedGzPlanStatus,
   readGzPlanSignal,
   shouldReplaceGzOutcomeKey
@@ -70,6 +74,10 @@ interface DealCheck {
   planUrl: string | null;
   plan: GzPlanSignal;
   statusSource: "api" | "html" | null;
+  /** The register search by plan number came back without this plan. */
+  planMissing: boolean;
+  /** The customer's plan register, read only for a missing plan. */
+  registerRows: GzRegisterPlanRow[] | null;
   outcome: GzDealOutcome | null;
   key: string | null;
   isNew: boolean;
@@ -86,7 +94,8 @@ const DEAL_SELECT = [
   "ID", "TITLE", "ORIGIN_ID", "COMPANY_ID", "ASSIGNED_BY_ID", "CATEGORY_ID", "DATE_CREATE",
   "UF_CRM_PLAN_ID", "UF_CRM_1782386293000_IU_XLS", "UF_CRM_6A436D5A3614C",
   "UF_CRM_PLAN_LINK", "UF_CRM_1782386571874_IU_XLS", "UF_CRM_6627AEBD7C2D2",
-  "UF_CRM_6A436D5A19612", "UF_CRM_REF_ENSTRU_CODE", "UF_CRM_6627AEBD54B8D", OUTCOME_FIELD
+  "UF_CRM_6A436D5A19612", "UF_CRM_REF_ENSTRU_CODE", "UF_CRM_6627AEBD54B8D",
+  "UF_CRM_1715597423325", "OPPORTUNITY", OUTCOME_FIELD
 ];
 const API_CHUNK = 50;
 const NO_PLAN_SIGNAL: GzPlanSignal = { status: null, repurposedTo: null };
@@ -96,6 +105,10 @@ const THROTTLE_BACKOFF_MS = 30_000;
 // Runs come at 08:40 and 13:00; an hourly slot gives each of them its own slice.
 const HTML_ROTATION_MS = 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 60_000;
+// The register accepts 500 rows a page (not 1000: that silently falls back to 30).
+const REGISTER_PAGE_SIZE = 500;
+// The largest customers (НАО «МУС») have ~3000 rows a year.
+const REGISTER_MAX_PAGES = 20;
 const PLAN_FIELDS = "id rootrecordId subjectBiin isActive plnPointYear refEnstruCode nameRu RefPlnPointStatus{nameRu}";
 const PLANS_BY_ROOT = `query($v:[Int],$after:Int){Plans(filter:{rootrecordId:$v},limit:200,after:$after){${PLAN_FIELDS}}}`;
 const PLANS_BY_ID = `query($v:[Int],$after:Int){Plans(filter:{id:$v},limit:200,after:$after){${PLAN_FIELDS}}}`;
@@ -178,6 +191,8 @@ async function main(): Promise<void> {
     planUrl: portalPlanUrl(deal.UF_CRM_PLAN_LINK || deal.UF_CRM_1782386571874_IU_XLS || null),
     plan: NO_PLAN_SIGNAL,
     statusSource: null,
+    planMissing: false,
+    registerRows: null,
     outcome: null,
     key: null,
     isNew: false,
@@ -197,7 +212,8 @@ async function main(): Promise<void> {
     && !decideGzDealOutcome(check.ref, contractsByBin.get(check.bin ?? "") ?? [], NO_PLAN_SIGNAL, config));
   const htmlFailed = args.skipHtml
     ? 0
-    : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, config.itemFamilies);
+    : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, config.itemFamilies)
+      + await fillCustomerRegisters(checks.filter((check) => check.planMissing && check.bin), args.htmlDelayMs);
 
   for (const check of checks) {
     // Without this customer's contracts the plan status would pass for news.
@@ -205,7 +221,10 @@ async function main(): Promise<void> {
       check.skipped = "contracts unavailable";
       continue;
     }
-    check.outcome = decideGzDealOutcome(check.ref, contractsByBin.get(check.bin ?? "") ?? [], check.plan, config);
+    check.outcome = decideGzDealOutcome(check.ref, contractsByBin.get(check.bin ?? "") ?? [], check.plan, config)
+      ?? (check.registerRows
+        ? decideMissingGzPlan(check.ref, dealPlanAmount(check.deal), check.registerRows, config.itemFamilies)
+        : null);
     check.key = check.outcome ? gzDealOutcomeKey(check.outcome) : null;
     check.isNew = check.key !== null && shouldReplaceGzOutcomeKey(check.deal.UF_CRM_S2L_GZ_OUTCOME, check.key);
   }
@@ -329,6 +348,8 @@ async function fillHtmlPlanStatuses(
   for (const check of slice) {
     try {
       const rows = await searchPlanRows(check);
+      // A plan the API still knows is not gone, whatever the search returned.
+      check.planMissing = check.statusSource !== "api" && !rows.some((item) => item.plan_list_number === String(check.ref.planNumber));
       check.ref = withRevisions(check.ref, rows.map((item) => Number(item.plan_point_id)));
       const row = [...rows].sort((a, b) => Number(b.plan_point_id) - Number(a.plan_point_id))[0];
       if (row?.status) {
@@ -353,8 +374,63 @@ async function fillHtmlPlanStatuses(
   return failed;
 }
 
-async function searchPlanRows(check: DealCheck, retried = false): Promise<GoszakupPlanListItem[]> {
-  const url = `${GZ_PORTAL_ORIGIN}/ru/registry/plan?filter%5Bnumber%5D=${check.ref.planNumber}&count_record=50`;
+async function searchPlanRows(check: DealCheck): Promise<GoszakupPlanListItem[]> {
+  // Rows are the revisions of the plan number; the newest one is live. The
+  // number filter matches substrings, which is harmless while every plan
+  // number has the same 8 digits.
+  return fetchRegisterRows(`${GZ_PORTAL_ORIGIN}/ru/registry/plan?filter%5Bnumber%5D=${check.ref.planNumber}&count_record=50`);
+}
+
+/**
+ * A plan the register no longer knows: the customer's whole register tells a
+ * wrong number, a plan moved under another number, or a deleted one. Rare
+ * enough (a few deals a run) to read every page of the customer.
+ */
+async function fillCustomerRegisters(missing: DealCheck[], delayMs: number): Promise<number> {
+  const byBin = new Map<string, DealCheck[]>();
+  for (const check of missing) byBin.set(check.bin!, [...(byBin.get(check.bin!) ?? []), check]);
+  console.log(`customer registers: missing_plans=${missing.length} customers=${byBin.size}`);
+
+  let failed = 0;
+  for (const [bin, binChecks] of byBin) {
+    const years = [...new Set(binChecks.flatMap((check) => {
+      const year = Number(String(check.deal.DATE_CREATE ?? "").slice(0, 4));
+      return year ? [year, year + 1] : [];
+    }))];
+    try {
+      const rows = await customerRegisterRows(bin, years, delayMs);
+      for (const check of binChecks) check.registerRows = rows;
+    } catch (error) {
+      failed += 1;
+      console.warn(`[customer-register] BIN ${bin}: ${error instanceof Error ? error.message : String(error)}`);
+      if (error instanceof PortalThrottledError) break;
+    }
+    if (delayMs > 0) await sleep(delayMs);
+  }
+  return failed;
+}
+
+async function customerRegisterRows(bin: string, years: number[], delayMs: number): Promise<GzRegisterPlanRow[]> {
+  const filter = [`filter%5Bcustomer%5D=${bin}`, ...years.map((year) => `filter%5Byear%5D%5B%5D=${year}`)].join("&");
+  const rows: GzRegisterPlanRow[] = [];
+  // The register numbers pages from 1; page=1 is the first page.
+  for (let page = 1; ; page++) {
+    if (page > REGISTER_MAX_PAGES) throw new Error(`more than ${REGISTER_MAX_PAGES} register pages`);
+    const items = await fetchRegisterRows(`${GZ_PORTAL_ORIGIN}/ru/registry/plan?${filter}&count_record=${REGISTER_PAGE_SIZE}&page=${page}`);
+    rows.push(...items.flatMap(toRegisterRow));
+    if (items.length < REGISTER_PAGE_SIZE) return rows;
+    if (delayMs > 0) await sleep(delayMs);
+  }
+}
+
+function toRegisterRow(item: GoszakupPlanListItem): GzRegisterPlanRow[] {
+  const planNumber = Number(item.plan_list_number);
+  const pointId = Number(item.plan_point_id);
+  if (!Number.isInteger(planNumber) || planNumber <= 0) return [];
+  return [{ planNumber, pointId, itemName: item.item_name, amount: parseTenge(item.planned_amount), status: item.status?.trim() || null }];
+}
+
+async function fetchRegisterRows(url: string, retried = false): Promise<GoszakupPlanListItem[]> {
   const response = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
@@ -364,11 +440,8 @@ async function searchPlanRows(check: DealCheck, retried = false): Promise<Goszak
   if (html.length < THROTTLED_PAGE_MAX_LENGTH) {
     if (retried) throw new PortalThrottledError();
     await sleep(THROTTLE_BACKOFF_MS);
-    return searchPlanRows(check, true);
+    return fetchRegisterRows(url, true);
   }
-  // Rows are the revisions of the plan number; the newest one is live. The
-  // number filter matches substrings, which is harmless while every plan
-  // number has the same 8 digits.
   return parseGoszakupPlanSearchHtml(html, "outcome-check")
     .filter((row) => Number.isInteger(Number(row.plan_point_id)) && Number(row.plan_point_id) > 0);
 }
@@ -425,7 +498,8 @@ async function fetchContractsByBin(
 }
 
 function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: number): { line: string; markdown: string } {
-  const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft", "signed-unknown"] as const;
+  const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft", "signed-unknown",
+    "plan-renumbered", "plan-moved", "plan-deleted"] as const;
   const fresh = (kind: string) => checks.filter((check) => check.isNew && check.outcome?.kind === kind).length;
   const counts = kinds.map((kind) => `${kind.replace("-", "_")}=${fresh(kind)}`).join(" ");
   const line = `outcomes: checked=${checks.length} ${counts} unchanged=${checks.filter((check) => check.key && !check.isNew).length}`
@@ -445,7 +519,8 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
     "## Итоги закупок по открытым сделкам",
     "",
     `Новых событий: выиграли ${fresh("won")}, проиграли ${fresh("lost")}, партнёр ${fresh("partner")}, расторгнуто ${fresh("terminated")}, пункт переделан ${fresh("repurposed")},`
-      + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")}, договор без победителя ${fresh("signed-unknown")}.`,
+      + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")}, договор без победителя ${fresh("signed-unknown")},`
+      + ` неверный номер плана ${fresh("plan-renumbered")}, план перенесён ${fresh("plan-moved")}, план удалён ${fresh("plan-deleted")}.`,
     "",
     ...(wins.length ? ["**Новые победы:**", ...wins.map((check) => `- сделка ${check.deal.ID}: ${describeContract(check.outcome!)}`), ""] : []),
     "**Кому уходят открытые сделки (все известные договоры):**",
@@ -458,9 +533,10 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
 }
 
 function describeContract(outcome: GzDealOutcome): string {
-  return "contractNumber" in outcome
-    ? `договор ${outcome.contractNumber} от ${outcome.signDate}${outcome.unitSum ? `, ${Math.round(outcome.unitSum).toLocaleString("ru-RU")} ₸` : ""}`
-    : "newItem" in outcome ? `переделан под «${outcome.newItem}»` : outcome.planStatus;
+  if ("contractNumber" in outcome) {
+    return `договор ${outcome.contractNumber} от ${outcome.signDate}${outcome.unitSum ? `, ${Math.round(outcome.unitSum).toLocaleString("ru-RU")} ₸` : ""}`;
+  }
+  return gzDealOutcomeKey(outcome);
 }
 
 function writeReport(reportPath: string, execute: boolean, checks: DealCheck[], markdown: string): void {
