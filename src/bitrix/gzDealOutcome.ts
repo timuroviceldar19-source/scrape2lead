@@ -335,10 +335,10 @@ export function decideMissingGzPlan(
   return { kind: "plan-duplicate", planNumber, twinPlanNumber: twin.planNumber, twinDealId: dealsByPlan.get(twin.planNumber)! };
 }
 
-/** Card fields the robot rewrites itself for a missing plan. */
+/** Card fields the robot rewrites itself for a missing plan. A deleted plan only gets its status, silently. */
 export function buildGzMissingPlanFields(deal: GzOutcomeDealFields, outcome: GzMissingPlanOutcome): Record<string, string> {
-  if (outcome.kind === "plan-duplicate") return {};
-  if (outcome.kind === "plan-deleted") return fieldsOf(PLAN_STATUS_FIELDS, DELETED_PLAN_STATUS);
+  // A duplicate's own plan is gone too; the twin deal carries the purchase.
+  if (outcome.kind === "plan-duplicate" || outcome.kind === "plan-deleted") return fieldsOf(PLAN_STATUS_FIELDS, DELETED_PLAN_STATUS);
   const { plan, oldPlanNumber } = outcome;
   const number = String(plan.planNumber);
   const title = String(deal.TITLE ?? "");
@@ -375,9 +375,10 @@ export function gzDealOutcomeKey(outcome: GzDealOutcome): string {
   return `${outcome.kind}:${normalize(outcome.planStatus)}`;
 }
 
-export function buildGzDealOutcomeComment(outcome: GzDealOutcome, planUrl: string | null): string {
+/** null: the robot only edits the card and leaves the timeline alone. */
+export function buildGzDealOutcomeComment(outcome: GzDealOutcome, planUrl: string | null): string | null {
   const link = planUrl ? `\n${planUrl}` : "";
-  if (isMissingPlanOutcome(outcome)) return buildMissingPlanComment(outcome, link);
+  if (isMissingPlanOutcome(outcome)) return buildMissingPlanComment(outcome);
   if ("newItem" in outcome) {
     return `Итог закупки: заказчик переделал пункт плана под другой товар («${outcome.newItem}») — по этому плану закупки не будет.${link}`;
   }
@@ -489,7 +490,7 @@ export function isMissingPlanOutcome(outcome: GzDealOutcome): outcome is GzMissi
   return outcome.kind.startsWith("plan-");
 }
 
-function buildMissingPlanComment(outcome: GzMissingPlanOutcome, link: string): string {
+function buildMissingPlanComment(outcome: GzMissingPlanOutcome): string | null {
   switch (outcome.kind) {
     case "plan-renumbered": {
       const { plan } = outcome;
@@ -503,11 +504,8 @@ function buildMissingPlanComment(outcome: GzMissingPlanOutcome, link: string): s
         + `${plan.url ? `\n${plan.url}` : ""}`;
     }
     case "plan-duplicate":
-      return `Плана ${outcome.planNumber} на портале нет. Такой же план ${outcome.twinPlanNumber} (тот же товар, та же сумма)`
-        + ` уже ведётся в сделке ${outcome.twinDealId} — эта сделка дубль, её можно закрыть.`;
     case "plan-deleted":
-      return `План ${outcome.planNumber} удалён с портала, похожего плана у заказчика нет. Робот поставил статус «${DELETED_PLAN_STATUS}».`
-        + ` Скорее всего, закупки не будет.${link}`;
+      return null;
   }
 }
 

@@ -84,7 +84,7 @@ describe("decideMissingGzPlan", () => {
     expect(outcome).toMatchObject({ kind: "plan-moved", plan: { planNumber: 82000002 } });
   });
 
-  it("calls the deal a duplicate when every twin plan already has a deal", () => {
+  it("silently marks a deal deleted when every twin plan already has a deal", () => {
     // Deal 44095: plan 87540699 deleted, its twin 87540700 is deal 44093.
     const monitor: GzDealPlanRef = { ...GYMNASIUM, planNumber: 87540699, pointIds: [87540699], enstruCode: null, itemName: "Монитор" };
     const twin = row({ planNumber: 87540700, pointId: 87540700, itemName: "Монитор", amount: 1_025_853.45 });
@@ -93,8 +93,8 @@ describe("decideMissingGzPlan", () => {
 
     expect(outcome).toEqual({ kind: "plan-duplicate", planNumber: 87540699, twinPlanNumber: 87540700, twinDealId: "44093" });
     expect(gzDealOutcomeKey(outcome!)).toBe("plan-duplicate:44093");
-    expect(buildGzDealOutcomeComment(outcome!, null)).toContain("сделке 44093");
-    expect(buildGzMissingPlanFields({}, outcome!)).toEqual({});
+    expect(buildGzDealOutcomeComment(outcome!, null)).toBeNull();
+    expect(buildGzMissingPlanFields({}, outcome!)).toEqual({ UF_CRM_6627AEBD85B4D: DELETED_PLAN_STATUS, UF_CRM_PLAN_STATUS: DELETED_PLAN_STATUS });
   });
 
   it("needs the amount to match to the tiyn", () => {
@@ -102,12 +102,12 @@ describe("decideMissingGzPlan", () => {
     expect(outcome).toEqual({ kind: "plan-deleted", planNumber: 87676031 });
   });
 
-  it("marks the plan deleted when the customer has nothing alike", () => {
+  it("silently marks the plan deleted when the customer has nothing alike", () => {
     const outcome = decideMissingGzPlan(GYMNASIUM, 978_437.93, [], FAMILIES, NO_DEALS);
 
     expect(outcome).toEqual({ kind: "plan-deleted", planNumber: 87676031 });
     expect(gzDealOutcomeKey(outcome!)).toBe("plan-deleted:87676031");
-    expect(buildGzDealOutcomeComment(outcome!, null)).toContain("удалён");
+    expect(buildGzDealOutcomeComment(outcome!, null)).toBeNull();
     expect(buildGzMissingPlanFields({}, outcome!)).toEqual({
       UF_CRM_6627AEBD85B4D: DELETED_PLAN_STATUS,
       UF_CRM_PLAN_STATUS: DELETED_PLAN_STATUS

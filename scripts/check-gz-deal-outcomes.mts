@@ -248,9 +248,9 @@ async function main(): Promise<void> {
   for (const check of checks.filter((item) => item.isNew)) {
     const comment = buildGzDealOutcomeComment(check.outcome!, check.planUrl);
     const cardFields = isMissingPlanOutcome(check.outcome!) ? buildGzMissingPlanFields(check.deal, check.outcome) : {};
+    const edits = Object.keys(cardFields).length ? ` | card: ${JSON.stringify(cardFields)}` : "";
     if (!args.execute) {
-      const edits = Object.keys(cardFields).length ? ` | card: ${JSON.stringify(cardFields)}` : "";
-      console.log(`[dry-run] ${check.outcome!.kind} deal ${check.deal.ID} | ${comment.split("\n")[0]}${edits}`);
+      console.log(`[dry-run] ${check.outcome!.kind} deal ${check.deal.ID} | ${comment?.split("\n")[0] ?? "(no comment)"}${edits}`);
       continue;
     }
     // Marker first: a comment that cannot be marked would repeat every run.
@@ -261,6 +261,11 @@ async function main(): Promise<void> {
       check.error = error instanceof Error ? error.message : String(error);
       console.error(`[failed] deal ${check.deal.ID}: ${check.error}`);
       process.exitCode = 1;
+      continue;
+    }
+    if (comment === null) {
+      check.applied = true;
+      console.log(`[${check.outcome!.kind}] deal ${check.deal.ID}${edits}`);
       continue;
     }
     try {
