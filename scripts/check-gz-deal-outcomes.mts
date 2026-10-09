@@ -492,6 +492,11 @@ async function fetchPortalPage(url: string, retried = false): Promise<string> {
   const response = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  }).catch((error: unknown) => {
+    // Node's «fetch failed» hides the reason (TLS, DNS, reset) in error.cause.
+    const cause = error instanceof Error ? (error.cause as { code?: string; message?: string } | undefined) : undefined;
+    const detail = cause ? ` (${cause.code ?? cause.message ?? "unknown cause"})` : "";
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${detail}`);
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const html = await response.text();

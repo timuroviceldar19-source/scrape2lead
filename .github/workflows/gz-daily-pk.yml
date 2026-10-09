@@ -120,7 +120,10 @@ jobs:
 
       - run: npm ci
 
+      # Промежуточный сертификат портала: см. комментарий в gz-automation.yml.
       - name: Check deal outcomes
+        env:
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/certs/rapidssl-tls-rsa-ca-g1.crt
         run: npx tsx scripts/check-gz-deal-outcomes.mts --execute --report logs/gz-deal-outcomes.json
 
       - name: Upload outcome report
