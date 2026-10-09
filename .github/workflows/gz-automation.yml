@@ -111,6 +111,13 @@ jobs:
         if: always()
         run: cat '${{ inputs.log-path }}' || true
 
+      # Сводка запуска на странице прогона: сколько сделок создано/обновлено и сколько
+      # занял каждый этап. Не влияет на итог job.
+      - name: Run summary
+        if: always()
+        continue-on-error: true
+        run: npx tsx scripts/gz-run-summary.mts '${{ inputs.runs-dir }}' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Save plan cache
         if: always()
         uses: actions/cache/save@v4
