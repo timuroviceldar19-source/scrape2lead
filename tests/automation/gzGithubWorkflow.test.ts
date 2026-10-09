@@ -89,3 +89,22 @@ describe("GZ GitHub workflow browser setup", () => {
     expect(reusable).not.toContain("playwright install --with-deps");
   });
 });
+
+describe("GZ portal intermediate certificate", () => {
+  const certPath = "certs/rapidssl-tls-rsa-ca-g1.crt";
+  const envLine = "NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/" + certPath;
+
+  it("ships the PEM certificate the portal does not send", () => {
+    const pem = fs.readFileSync(path.resolve(certPath), "utf8");
+
+    expect(pem).toMatch(/^-----BEGIN CERTIFICATE-----/);
+    expect(pem.trim()).toMatch(/-----END CERTIFICATE-----$/);
+    expect(pem).not.toMatch(/PRIVATE KEY/);
+  });
+
+  it("trusts it for the collection and for the deal outcome check", () => {
+    expect(readWorkflow("gz-automation.yml")).toContain(envLine);
+    const pk = readWorkflow("gz-daily-pk.yml");
+    expect(pk.slice(pk.indexOf("  deal-outcomes:"))).toContain(envLine);
+  });
+});
