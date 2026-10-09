@@ -19,6 +19,10 @@ on:
         description: Путь к логу планировщика
         required: true
         type: string
+      cache-scope:
+        description: Область кэша плана (pk или main), у каждой задачи свой кэш
+        required: true
+        type: string
     secrets:
       BITRIX24_WEBHOOK_URL:
         required: true
@@ -26,10 +30,16 @@ on:
         required: true
 
 # Раннеры эфемерные, поэтому runs/prepare.lock из конфига здесь ничего не
-# сериализует — файла на чистой машине никогда нет. Взаимное исключение двух
-# задач держится ТОЛЬКО на этой группе.
+# сериализует — файла на чистой машине никогда нет. Повторные прогоны ОДНОГО
+# конфига держатся по очереди только на этой группе.
+#
+# Группа своя у каждого конфига (runs-dir различается: runs и runs/pk), поэтому PK и
+# main идут параллельно. Это допустимо, потому что их наборы планов не пересекаются
+# (дедупликация в Bitrix по UF_CRM_PLAN_ID тогда не гонится сама с собой), а кэш у них
+# раздельный (см. cache-scope). Если наборы когда-нибудь пересекутся — вернуть общую
+# группу `gz-automation`.
 concurrency:
-  group: gz-automation
+  group: gz-automation-${{ inputs.runs-dir }}
   cancel-in-progress: false
 
 jobs:
@@ -81,8 +91,12 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data/scrape2lead.db
-          key: gz-db-${{ github.run_id }}
-          restore-keys: gz-db-
+          key: gz-db-${{ inputs.cache-scope }}-${{ github.run_id }}
+          # Второй префикс — переходный: подхватывает старый общий кэш `gz-db-<run_id>`,
+          # чтобы первый прогон каждой области не стартовал вхолодную (~65 мин).
+          restore-keys: |
+            gz-db-${{ inputs.cache-scope }}-
+            gz-db-
 
       - name: Run automation
         run: sh scripts/run-automation.sh '${{ inputs.config }}' '${{ inputs.log-path }}'
@@ -97,7 +111,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: data/scrape2lead.db
-          key: gz-db-${{ github.run_id }}
+          key: gz-db-${{ inputs.cache-scope }}-${{ github.run_id }}
 
       # Заменяет локальный каталог runs/ для аудита: manifest.json, xlsx,
       # результаты dry-run и summary.txt.

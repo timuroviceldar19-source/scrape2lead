@@ -33,11 +33,51 @@ describe("GZ deal outcome check", () => {
 
     expect(job).toContain("needs: [guard, pk-plans]");
     expect(job).toContain("if: always() && needs.guard.outputs.should-run == 'true'");
+    // dispatch: only when the Worker (or a person) asks for it; schedule backstop keeps it.
+    expect(job).toContain("github.event_name != 'workflow_dispatch' || inputs.deal_outcomes");
     // A failed check must not fail the run: the backstop and the watchdog read run conclusions.
     expect(job).toContain("continue-on-error: true");
     expect(job).toContain("npx tsx scripts/check-gz-deal-outcomes.mts --execute");
     expect(job).toContain("BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}");
     expect(job).toContain("GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}");
+  });
+});
+
+describe("GZ deal outcome dispatch input", () => {
+  it("declares a boolean deal_outcomes input that defaults to true for manual runs", () => {
+    const pk = readWorkflow("gz-daily-pk.yml");
+    const dispatch = pk.slice(pk.indexOf("  workflow_dispatch:"), pk.indexOf("jobs:"));
+
+    expect(dispatch).toContain("deal_outcomes:");
+    expect(dispatch).toContain("type: boolean");
+    expect(dispatch).toContain("default: true");
+  });
+});
+
+describe("GZ parallel PK and main collection", () => {
+  it("keys the concurrency group by runs-dir so PK and main do not queue behind each other", () => {
+    const reusable = readWorkflow("gz-automation.yml");
+
+    expect(reusable).toContain("group: gz-automation-${{ inputs.runs-dir }}");
+    expect(reusable).not.toMatch(/group: gz-automation\s*$/m);
+    expect(reusable).toContain("cancel-in-progress: false");
+  });
+
+  it("uses a different runs-dir and cache scope for PK and main", () => {
+    const pk = readWorkflow("gz-daily-pk.yml");
+    const main = readWorkflow("gz-daily-main.yml");
+
+    expect(pk).toContain("runs-dir: runs/pk");
+    expect(pk).toContain("cache-scope: pk");
+    expect(main).toContain("runs-dir: runs");
+    expect(main).toContain("cache-scope: main");
+  });
+
+  it("keeps the plan cache separate per scope and falls back to the legacy shared key", () => {
+    const reusable = readWorkflow("gz-automation.yml");
+
+    expect(reusable).toContain("key: gz-db-${{ inputs.cache-scope }}-${{ github.run_id }}");
+    expect(reusable).toContain("gz-db-${{ inputs.cache-scope }}-\n            gz-db-");
   });
 });
 
