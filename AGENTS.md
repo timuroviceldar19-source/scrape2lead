@@ -55,8 +55,12 @@ npm run cloudflare:check  # wrangler deploy --dry-run
   (`gz-db-pk-`, `gz-db-main-`). Это безопасно, пока наборы планов не пересекаются.
 - Guard пропускает повтор только для `event=schedule`; `workflow_dispatch` (Worker и ручной запуск) выполняется
   безусловно. Повторный сбор идемпотентен: дедупликация в Bitrix по `UF_CRM_PLAN_ID`.
-- Деплой Worker — отдельный шаг после merge: `npm run cloudflare:check`, затем `npm run cloudflare:deploy`
-  (нужен `wrangler login`). Секрет `GITHUB_ACTIONS_TOKEN` лежит в Cloudflare и при деплое не трогается.
+- Worker выкладывает `.github/workflows/deploy-worker.yml` при слиянии в `main`, затронувшем
+  `infra/cloudflare-github-dispatch/` (секрет репозитория `CLOUDFLARE_API_TOKEN`). Если секрета нет, job падает с пояснением.
+  Запасной путь — руками: `npm run cloudflare:check`, затем `npm run cloudflare:deploy` (нужен `wrangler login`).
+  Секрет `GITHUB_ACTIONS_TOKEN` лежит в Cloudflare и при деплое не трогается.
+- Сетевые сбои портала сбор переживает сам: `scripts/run-automation-with-retry.sh` — до 3 попыток с паузой 10 минут,
+  только при сетевых ошибках в логе новой попытки.
 
 ## Подводные камни (выяснено на практике)
 

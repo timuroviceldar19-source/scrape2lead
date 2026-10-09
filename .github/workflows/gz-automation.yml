@@ -101,10 +101,12 @@ jobs:
       # procurement.gov.kz отдаёт только листовой сертификат без промежуточного
       # (RapidSSL TLS RSA CA G1): браузер докачивает его сам, Node fetch падает с
       # UNABLE_TO_VERIFY_LEAF_SIGNATURE. Добавляем промежуточный к системным корням.
+      # Если портал недоступен (сетевой сбой), запуск повторяется до трёх попыток с паузой
+      # 10 минут: письмо о падении приходит только после последней. Другие ошибки не повторяются.
       - name: Run automation
         env:
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/certs/rapidssl-tls-rsa-ca-g1.crt
-        run: sh scripts/run-automation.sh '${{ inputs.config }}' '${{ inputs.log-path }}'
+        run: sh scripts/run-automation-with-retry.sh '${{ inputs.config }}' '${{ inputs.log-path }}'
 
       # Лог раннера дублируется в вывод job — иначе он виден только в артефакте.
       - name: Show run log

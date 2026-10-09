@@ -1,0 +1,55 @@
+name: Deploy Cloudflare Worker
+
+# Расписание сбора задаёт Cloudflare Worker (infra/cloudflare-github-dispatch).
+# Раньше его выкладывали вручную, и с 16 сентября развёрнутая версия отставала от
+# кода: запускался уже отключённый F3, main шёл не в то время. Теперь Worker
+# выкладывается сам при каждом изменении папки Worker, слитом в main.
+#
+# Нужен секрет репозитория CLOUDFLARE_API_TOKEN (шаблон токена «Edit Cloudflare
+# Workers»). Секрет GITHUB_ACTIONS_TOKEN внутри самого Worker деплой не трогает.
+# Без токена job падает с понятным сообщением: тихий пропуск вернул бы расхождение.
+#
+# Сам файл не входит в paths, чтобы его слияние не запускало деплой до настройки
+# секрета; первый запуск — вручную (Run workflow).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/cloudflare-github-dispatch/**"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check Cloudflare token
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Секрет CLOUDFLARE_API_TOKEN не задан. Settings → Secrets and variables → Actions → New repository secret (токен Cloudflare по шаблону «Edit Cloudflare Workers»)."
+            exit 1
+          fi
+
+      - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run cloudflare:deploy
