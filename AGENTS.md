@@ -74,7 +74,7 @@ npm run cloudflare:check  # wrangler deploy --dry-run
   повторяет при 429/5xx/`QUERY_LIMIT_EXCEEDED`. Пауза считается внутри процесса, параллельные прогоны её не делят.
 - **`deal-outcomes`** ([scripts/check-gz-deal-outcomes.mts](scripts/check-gz-deal-outcomes.mts)) работает с `--execute` и пишет
   итоги в Bitrix; шаг `continue-on-error`, поэтому остаётся зелёным при массовых сбоях — смотрите строку `outcomes: ...`
-  (`html_failed`, `errors`) в логе. За прогон HTML-проверка берёт не больше 200 сделок, остальные подтягиваются ротацией.
+  (`html_failed`, `errors`) в логе. За прогон HTML-проверка берёт до 500 сделок и работает не дольше 20 минут (`--html-limit`, `--html-budget-min`); сколько проверено из скольких, видно в Summary и в строке `html_status_checked=… html_status_pending=…`, а при ≥20% сбоев портала появляется предупреждение `::warning::`.
 - **Сводка запуска.** Каждый прогон GZ пишет в Step Summary итог (создано/обновлено/уже были, этапы, время) из
   `runs/<id>/manifest.json` — смотрите её вместо раскопок в логе. Счётчики этапов `applyPlans`/`applyLots` берутся из строки
   `preflight: create=… update=…` скрипта загрузки, а не из отдельных строк `[created]`.
