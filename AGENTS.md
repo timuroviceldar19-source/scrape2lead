@@ -23,8 +23,9 @@ npm run cloudflare:check  # wrangler deploy --dry-run
 
 - Скрипты — `scripts/*.mts`, запускаются через `tsx`; доменный код — `src/**` (`.ts`).
 - Импорты внутри проекта пишутся с расширением `.js` (`../src/automation/config.js`).
-- Два теста падают на чистом `main` и к правкам обычно не относятся: `kgdReport` (нужен `python`)
-  и `kgdCaptchaAutomation` (нужен Chromium для Playwright). Остальной набор должен быть зелёным.
+- На каждый PR и push в `main` запускается `.github/workflows/ci.yml` (`lint` + `npm test`), merge при красном CI не делаем.
+- Локально два теста могут падать без окружения: `kgdReport` (нужен `python` с reportlab) и `kgdCaptchaAutomation`
+  (нужен Chromium для Playwright, `npx playwright install chromium`). В CI они ставятся автоматически.
 
 ## Структура
 
@@ -70,6 +71,9 @@ npm run cloudflare:check  # wrangler deploy --dry-run
 - **`deal-outcomes`** ([scripts/check-gz-deal-outcomes.mts](scripts/check-gz-deal-outcomes.mts)) работает с `--execute` и пишет
   итоги в Bitrix; шаг `continue-on-error`, поэтому остаётся зелёным при массовых сбоях — смотрите строку `outcomes: ...`
   (`html_failed`, `errors`) в логе. За прогон HTML-проверка берёт не больше 200 сделок, остальные подтягиваются ротацией.
+- **Сводка запуска.** Каждый прогон GZ пишет в Step Summary итог (создано/обновлено/уже были, этапы, время) из
+  `runs/<id>/manifest.json` — смотрите её вместо раскопок в логе. Счётчики этапов `applyPlans`/`applyLots` берутся из строки
+  `preflight: create=… update=…` скрипта загрузки, а не из отдельных строк `[created]`.
 - **Кэш плана** `data/scrape2lead.db` — ускоритель, не источник правды. Каждый слот сохраняет кэш заново (18 раз в сутки).
 
 ## Правила работы

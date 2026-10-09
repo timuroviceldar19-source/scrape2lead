@@ -108,3 +108,41 @@ describe("GZ portal intermediate certificate", () => {
     expect(pk.slice(pk.indexOf("  deal-outcomes:"))).toContain(envLine);
   });
 });
+
+describe("GZ run summary", () => {
+  it("writes the run summary to the job page even when the run failed", () => {
+    const reusable = readWorkflow("gz-automation.yml");
+    const step = reusable.slice(reusable.indexOf("      - name: Run summary"));
+    const block = step.slice(0, step.indexOf("      - name: Save plan cache"));
+
+    expect(block).toContain("if: always()");
+    expect(block).toContain("continue-on-error: true");
+    expect(block).toContain("scripts/gz-run-summary.mts '${{ inputs.runs-dir }}'");
+    expect(block).toContain('>> "$GITHUB_STEP_SUMMARY"');
+  });
+});
+
+describe("CI workflow", () => {
+  const ci = readWorkflow("ci.yml");
+
+  it("runs on pull requests and on pushes to main", () => {
+    expect(ci).toMatch(/on:\s+pull_request:\s+push:\s+branches: \[main\]/);
+  });
+
+  it("checks types and runs the whole test suite", () => {
+    expect(ci).toContain("npm run lint");
+    expect(ci).toContain("npm test");
+  });
+
+  it("provides what the KGD tests need: Python with reportlab and Chromium", () => {
+    expect(ci).toContain("actions/setup-python@v5");
+    expect(ci).toContain("pip install reportlab");
+    expect(ci).toContain("npx playwright install chromium");
+  });
+
+  it("never gets secrets or write access", () => {
+    expect(ci).not.toContain("secrets.");
+    expect(ci).toMatch(/permissions:\s+contents: read/);
+  });
+});
+
