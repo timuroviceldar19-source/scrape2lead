@@ -1,9 +1,9 @@
 name: GZ daily plans and lots
 
 # Замена задачи Task Scheduler "Scrape2Lead Daily Prepare" (09:20 Алматы).
-# 04:20 UTC = 09:20 в UTC+5. Общая concurrency-группа с gz-daily-pk.yml не даёт
-# двум прогонам пересечься — это тот же инвариант, который на Windows держал
-# общий runs/prepare.lock.
+# 04:20 UTC = 09:20 в UTC+5. Concurrency-группа у main своя (gz-automation-runs), так
+# что она идёт параллельно с gz-daily-pk.yml, но два прогона самого main не
+# пересекаются — это тот же инвариант, который на Windows держал runs/prepare.lock.
 #
 # Второй триггер в 05:20 UTC — страховка на случай недоставленного scheduled
 # события (см. комментарий в gz-daily-pk.yml). Backstop пропускает себя сам,
@@ -64,6 +64,7 @@ jobs:
       config: config/automation.json
       runs-dir: runs
       log-path: runs/scheduler.log
+      cache-scope: main
     secrets:
       BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
       GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}

@@ -8,31 +8,50 @@ const RETRY_DELAYS_MS = [5_000, 20_000] as const;
 
 // Казахстан живёт в UTC+5 без перехода на летнее время, поэтому смещение постоянное.
 //
-// Утренняя пара 08:40/09:20 собирает основной объём. Дневная пара 13:00/13:30 —
-// не backstop, а осознанный повторный сбор: планы публикуются в течение дня, и
-// утренний прогон их не видит. Guard пропускает повтор только для
-// event=schedule, а Worker шлёт workflow_dispatch, поэтому дневные слоты
-// отрабатывают безусловно. Повтор безопасен — дедупликация идёт в Bitrix по
-// UF_CRM_PLAN_ID, повторно встреченный план не создаёт вторую сделку.
+// Сбор идёт почасово: PK (config/automation.pk.json) и main (config/automation.json)
+// стартуют ОДНОВРЕМЕННО в 08:40, затем каждый час в :30 до 16:30 Алматы
+// (03:40, 04:30 ... 11:30 UTC). Наборы планов у них не пересекаются, а concurrency-группы
+// и кэш у каждого свои. Guard пропускает повтор только для event=schedule, а Worker
+// шлёт workflow_dispatch, поэтому каждый слот отрабатывает безусловно. Повтор безопасен —
+// дедупликация идёт в Bitrix по UF_CRM_PLAN_ID. Потеря одного диспетча перестаёт быть
+// проблемой: следующий слот подхватит тот же объём через час.
 //
-// Сторож стоит в 11:30 — после утренней пары и до дневной, чтобы пропуск
-// утреннего сбора был виден до того, как дневной прогон его замаскирует.
+// Проверка итогов сделок (deal-outcomes в gz-daily-pk.yml) тяжёлая, поэтому её
+// включает только утренний слот 08:40, остальным PK-диспетчам уходит deal_outcomes=false.
 //
-// F3 B2B отключён и в GitHub Actions, и здесь: Worker не должен продолжать
-// отправлять заведомо отклоняемый workflow_dispatch в отключённый workflow.
-const WORKFLOW_BY_CRON = {
-  "40 3 * * *": "gz-daily-pk.yml", // 08:40 Алматы
-  "20 4 * * *": "gz-daily-main.yml", // 09:20 Алматы
-  "0 8 * * *": "gz-daily-pk.yml", // 13:00 Алматы
-  // Cloudflare Free allows five cron triggers per account. This expression covers
-  // two exact slots; scheduledTime selects the intended workflow.
-  "30 6,8 * * *": { 6: "gz-watchdog.yml", 8: "gz-daily-main.yml" }, // 11:30/13:30 Алматы
-  "15 10 * * *": "gz-watchdog.yml", // 15:15 Алматы
-} as const;
+// Сторож стоит в 11:30 (06:30 UTC) и 15:15: утренний слот проверяет сбор с начала суток,
+// дневной — с 13:00/13:30.
+//
+// Cloudflare Free allows five cron triggers per account. Три выражения ниже покрывают
+// все слоты: расписание «какие workflow запускать» хранится в коде, а не в числе триггеров.
+//
+// F3 B2B отключён и в GitHub Actions, и здесь.
+export interface DispatchTarget {
+  workflow: string;
+  inputs?: Record<string, string>;
+}
 
-const INPUTS_BY_CRON: Partial<Record<keyof typeof WORKFLOW_BY_CRON, Record<string, string>>> = {
-  "15 10 * * *": { window: "afternoon" },
-};
+const PK_WORKFLOW = "gz-daily-pk.yml";
+const MAIN_WORKFLOW = "gz-daily-main.yml";
+const WATCHDOG_WORKFLOW = "gz-watchdog.yml";
+
+function collection(dealOutcomes: boolean): DispatchTarget[] {
+  return [
+    { workflow: PK_WORKFLOW, inputs: { deal_outcomes: String(dealOutcomes) } },
+    { workflow: MAIN_WORKFLOW },
+  ];
+}
+
+// UTC-час, в который cron "30 4-11 * * *" даёт часовой слот (09:30 ... 16:30 Алматы).
+const HOURLY_SLOT_HOURS_UTC = [4, 5, 6, 7, 8, 9, 10, 11] as const;
+// 06:30 UTC = 11:30 Алматы: к часовому сбору добавляется утренний сторож.
+const MORNING_WATCHDOG_HOUR_UTC = 6;
+
+const CRON_MORNING = "40 3 * * *"; // 08:40 Алматы
+const CRON_HOURLY = "30 4-11 * * *"; // 09:30 ... 16:30 Алматы
+const CRON_AFTERNOON_WATCHDOG = "15 10 * * *"; // 15:15 Алматы
+
+export const SCHEDULED_CRONS = [CRON_MORNING, CRON_HOURLY, CRON_AFTERNOON_WATCHDOG] as const;
 
 export interface DispatchEnvironment {
   GITHUB_ACTIONS_TOKEN: string;
@@ -62,21 +81,25 @@ const DEFAULT_DEPENDENCIES: DispatchDependencies = {
   sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 };
 
-function workflowForSchedule(cron: string, scheduledTime: number): string {
-  const target = WORKFLOW_BY_CRON[cron as keyof typeof WORKFLOW_BY_CRON];
-  if (!target) {
-    throw new Error(`Unknown cron trigger: ${cron}`);
+function targetsForSchedule(cron: string, scheduledTime: number): DispatchTarget[] {
+  if (cron === CRON_MORNING) {
+    return collection(true);
   }
-  if (typeof target === "string") {
-    return target;
+  if (cron === CRON_AFTERNOON_WATCHDOG) {
+    return [{ workflow: WATCHDOG_WORKFLOW, inputs: { window: "afternoon" } }];
   }
-
-  const scheduledHour = new Date(scheduledTime).getUTCHours();
-  const workflow = target[scheduledHour as keyof typeof target];
-  if (!workflow) {
-    throw new Error(`Unexpected scheduled time for cron ${cron}: ${scheduledTime}`);
+  if (cron === CRON_HOURLY) {
+    const scheduledHour = new Date(scheduledTime).getUTCHours();
+    if (!(HOURLY_SLOT_HOURS_UTC as readonly number[]).includes(scheduledHour)) {
+      throw new Error(`Unexpected scheduled time for cron ${cron}: ${scheduledTime}`);
+    }
+    const targets = collection(false);
+    if (scheduledHour === MORNING_WATCHDOG_HOUR_UTC) {
+      targets.push({ workflow: WATCHDOG_WORKFLOW });
+    }
+    return targets;
   }
-  return workflow;
+  throw new Error(`Unknown cron trigger: ${cron}`);
 }
 
 function redact(value: string, secret: string): string {
@@ -100,21 +123,16 @@ async function responseData(response: Response): Promise<GitHubDispatchResponse>
   }
 }
 
-export async function dispatchScheduled(
+async function dispatchOne(
+  target: DispatchTarget,
   controller: ScheduledControllerLike,
-  env: DispatchEnvironment,
-  dependencies: DispatchDependencies = DEFAULT_DEPENDENCIES,
+  token: string,
+  dependencies: DispatchDependencies,
 ): Promise<void> {
-  const workflow = workflowForSchedule(controller.cron, controller.scheduledTime);
-  const token = env.GITHUB_ACTIONS_TOKEN;
-  if (!token) {
-    throw new Error("GITHUB_ACTIONS_TOKEN is not configured");
-  }
-
+  const { workflow, inputs } = target;
   const url =
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPOSITORY}` +
     `/actions/workflows/${workflow}/dispatches`;
-  const inputs = INPUTS_BY_CRON[controller.cron as keyof typeof WORKFLOW_BY_CRON];
   const request = {
     method: "POST",
     headers: {
@@ -154,7 +172,9 @@ export async function dispatchScheduled(
     const body = (await response.text()).slice(0, ERROR_BODY_LIMIT);
     const safeBody = redact(body, token);
     const suffix = safeBody ? `: ${safeBody}` : "";
-    throw new Error(`GitHub workflow dispatch failed with HTTP ${response.status}${suffix}`);
+    throw new Error(
+      `GitHub workflow dispatch of ${workflow} failed with HTTP ${response.status}${suffix}`,
+    );
   }
 
   const data = await responseData(response);
@@ -177,6 +197,33 @@ export async function dispatchScheduled(
   }
 
   dependencies.log(entry);
+}
+
+export async function dispatchScheduled(
+  controller: ScheduledControllerLike,
+  env: DispatchEnvironment,
+  dependencies: DispatchDependencies = DEFAULT_DEPENDENCIES,
+): Promise<void> {
+  const targets = targetsForSchedule(controller.cron, controller.scheduledTime);
+  const token = env.GITHUB_ACTIONS_TOKEN;
+  if (!token) {
+    throw new Error("GITHUB_ACTIONS_TOKEN is not configured");
+  }
+
+  // Цели независимы: сбой PK не должен отменять main и наоборот, поэтому ждём все и
+  // только потом сообщаем об ошибках. Повторов целого слота нет — повторный
+  // workflow_dispatch мог бы запустить полный сбор второй раз.
+  const results = await Promise.allSettled(
+    targets.map((target) => dispatchOne(target, controller, token, dependencies)),
+  );
+  const failures = results.flatMap((result) =>
+    result.status === "rejected"
+      ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
+      : [],
+  );
+  if (failures.length > 0) {
+    throw new Error(failures.join("; "));
+  }
 }
 
 /* v8 ignore next 8 -- Wrangler dry-run validates the scheduled runtime adapter */

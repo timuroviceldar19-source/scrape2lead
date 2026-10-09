@@ -14,6 +14,11 @@ on:
     - cron: "40 3 * * *"
     - cron: "40 4 * * *"
   workflow_dispatch:
+    inputs:
+      deal_outcomes:
+        description: "Run the deal outcome check after the collection (the Worker enables it for the morning slot only)"
+        type: boolean
+        default: true
 
 jobs:
   guard:
@@ -76,6 +81,7 @@ jobs:
       config: config/automation.pk.json
       runs-dir: runs/pk
       log-path: runs/pk/scheduler.log
+      cache-scope: pk
     secrets:
       BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
       GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
@@ -90,7 +96,10 @@ jobs:
   # сбора и запускать backstop-сбор повторно.
   deal-outcomes:
     needs: [guard, pk-plans]
-    if: always() && needs.guard.outputs.should-run == 'true'
+    # Для event=workflow_dispatch решает вход deal_outcomes: Worker включает его только
+    # в утреннем слоте, иначе при почасовых сборах проверка (15-18 мин) шла бы 9 раз в
+    # день. Ручной запуск по умолчанию выполняет её. Backstop (event=schedule) тоже.
+    if: always() && needs.guard.outputs.should-run == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deal_outcomes)
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 40
