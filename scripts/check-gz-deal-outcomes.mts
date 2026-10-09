@@ -26,6 +26,7 @@ import {
   shouldReplaceGzOutcomeKey
 } from "../src/bitrix/gzDealOutcome.js";
 import { callBitrixBatch, chunkBatchCommands } from "../src/bitrix/batch.js";
+import { describeOutcomeCoverage, type OutcomeCoverageInput } from "../src/bitrix/gzOutcomeCoverage.js";
 import { goszakupGraphqlAll } from "../src/kz/goszakupGraphql.js";
 import { parseGoszakupPlanDetailHtml, parseGoszakupPlanSearchHtml } from "../src/kz/goszakupPlanHtmlParser.js";
 import type { GoszakupPlanListItem } from "../src/kz/goszakupPlanTypes.js";
@@ -49,6 +50,7 @@ interface CliArgs {
   concurrency: number;
   htmlDelayMs: number;
   htmlLimit: number;
+  htmlBudgetMs: number;
   skipHtml: boolean;
 }
 
@@ -132,7 +134,8 @@ function parseArgs(argv: string[]): CliArgs {
     reportPath: path.join("logs", `gz-deal-outcomes-${new Date().toISOString().replace(/[:.]/g, "-")}.json`),
     concurrency: 4,
     htmlDelayMs: 1500,
-    htmlLimit: 200,
+    htmlLimit: 500,
+    htmlBudgetMs: 20 * 60 * 1000,
     skipHtml: false
   };
   for (let i = 0; i < argv.length; i++) {
@@ -144,6 +147,7 @@ function parseArgs(argv: string[]): CliArgs {
     else if (arg === "--concurrency") args.concurrency = Math.max(1, Number(argv[++i]) || 1);
     else if (arg === "--html-delay-ms") args.htmlDelayMs = Math.max(0, Number(argv[++i]) || 0);
     else if (arg === "--html-limit") args.htmlLimit = Math.max(0, Number(argv[++i]) || 0);
+    else if (arg === "--html-budget-min") args.htmlBudgetMs = Math.max(0, Number(argv[++i]) || 0) * 60 * 1000;
     else if (arg === "--skip-html") args.skipHtml = true;
   }
   return args;
@@ -209,7 +213,7 @@ async function main(): Promise<void> {
 
   await fillCompanyBins(bitrix, checks);
   await fillApiPlanStatuses(checks, gql, config.itemFamilies);
-  const planPagesFailed = args.skipHtml ? 0 : await fillFromPlanPages(checks, args.htmlDelayMs);
+  const planPages = args.skipHtml ? { pending: 0, failed: 0 } : await fillFromPlanPages(checks, args.htmlDelayMs);
   const contractsByBin = await fetchContractsByBin(checks, currentYear, gql, args.concurrency);
   // A contract settles the deal, so the slow portal pages go only to the rest.
   // A "contract signed" status without a matched contract also goes there: the
@@ -217,10 +221,15 @@ async function main(): Promise<void> {
   const htmlPending = checks.filter((check) => check.ref.planNumber && !check.plan.repurposedTo
     && (!check.plan.status || isSignedGzPlanStatus(check.plan.status))
     && !decideGzDealOutcome(check.ref, contractsByBin.get(check.bin ?? "") ?? [], NO_PLAN_SIGNAL, config));
-  const htmlFailed = args.skipHtml
+  const emptyStatus = { pending: 0, attempted: 0, failed: 0, budgetReached: false };
+  const htmlStatus = args.skipHtml
+    ? emptyStatus
+    : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, args.htmlBudgetMs, config.itemFamilies);
+  const registersFailed = args.skipHtml
     ? 0
-    : planPagesFailed + await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, config.itemFamilies)
-      + await fillCustomerRegisters(checks.filter((check) => check.planMissing && check.bin), args.htmlDelayMs);
+    : await fillCustomerRegisters(checks.filter((check) => check.planMissing && check.bin), args.htmlDelayMs);
+  const coverage: OutcomeCoverageInput = { planPages, status: htmlStatus, registers: { failed: registersFailed } };
+  const htmlFailed = planPages.failed + htmlStatus.failed + registersFailed;
 
   // A plan that already has a deal is another purchase, never the new home of a missing plan.
   const dealsByPlan = await bitrix.dealsByPlanNumbers(uniqueInts(checks.flatMap((check) => check.registerRows
@@ -277,8 +286,9 @@ async function main(): Promise<void> {
     }
   }
 
-  const summary = summarize(checks, htmlFailed, contractsByBin.failedBins.size);
+  const summary = summarize(checks, htmlFailed, contractsByBin.failedBins.size, coverage);
   console.log(summary.line);
+  if (summary.warning) console.log(`::warning::${summary.warning}`);
   writeReport(args.reportPath, args.execute, checks, summary.markdown);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary.markdown}\n`);
 }
@@ -354,16 +364,26 @@ async function fillHtmlPlanStatuses(
   pending: DealCheck[],
   delayMs: number,
   limit: number,
+  budgetMs: number,
   families: GzItemFamilies
-): Promise<number> {
+): Promise<OutcomeCoverageInput["status"]> {
   const ordered = [...pending].sort((a, b) => Number(a.deal.ID) - Number(b.deal.ID));
   const runSlot = Math.floor(Date.now() / HTML_ROTATION_MS);
   const start = ordered.length > 0 ? (runSlot * limit) % ordered.length : 0;
   const slice = [...ordered.slice(start), ...ordered.slice(0, start)].slice(0, limit);
   console.log(`html status: pending=${pending.length} checking=${slice.length} from=${start}`);
 
+  const startedAt = Date.now();
   let failed = 0;
+  let attempted = 0;
+  let budgetReached = false;
   for (const check of slice) {
+    if (Date.now() - startedAt >= budgetMs) {
+      budgetReached = true;
+      console.warn(`html status: time budget of ${Math.round(budgetMs / 60_000)} min reached, the rest waits for the next run`);
+      break;
+    }
+    attempted += 1;
     try {
       const rows = await searchPlanRows(check);
       // A plan the API still knows is not gone, whatever the search returned.
@@ -389,7 +409,7 @@ async function fillHtmlPlanStatuses(
     }
     if (delayMs > 0) await sleep(delayMs);
   }
-  return failed;
+  return { pending: pending.length, attempted, failed, budgetReached };
 }
 
 async function searchPlanRows(check: DealCheck): Promise<GoszakupPlanListItem[]> {
@@ -466,7 +486,7 @@ async function fetchRegisterRows(url: string): Promise<GoszakupPlanListItem[]> {
  * the code a contract on an unindexed revision cannot be matched. Either way
  * a won deal would read «победителя определить не удалось».
  */
-async function fillFromPlanPages(checks: DealCheck[], delayMs: number): Promise<number> {
+async function fillFromPlanPages(checks: DealCheck[], delayMs: number): Promise<OutcomeCoverageInput["planPages"]> {
   const pending = checks.filter((check) => (!check.bin || !check.ref.enstruCode) && check.planUrl);
   console.log(`plan pages: pending=${pending.length}`);
   let failed = 0;
@@ -484,7 +504,7 @@ async function fillFromPlanPages(checks: DealCheck[], delayMs: number): Promise<
     }
     if (delayMs > 0) await sleep(delayMs);
   }
-  return failed;
+  return { pending: pending.length, failed };
 }
 
 /** The portal answers a burst with a stripped page and HTTP 200; one backoff, then give up. */
@@ -559,7 +579,13 @@ async function fetchContractsByBin(
   return result;
 }
 
-function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: number): { line: string; markdown: string } {
+function summarize(
+  checks: DealCheck[],
+  htmlFailed: number,
+  contractsFailed: number,
+  coverageInput: OutcomeCoverageInput
+): { line: string; markdown: string; warning: string | null } {
+  const coverage = describeOutcomeCoverage(coverageInput);
   const kinds = ["won", "lost", "partner", "terminated", "repurposed", "published", "failed", "cancelled", "contract-draft",
     "plan-renumbered", "plan-moved"] as const;
   const fresh = (kind: string) => checks.filter((check) => check.isNew && check.outcome?.kind === kind).length;
@@ -567,7 +593,8 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
   const line = `outcomes: checked=${checks.length} ${counts} unchanged=${checks.filter((check) => check.key && !check.isNew).length}`
     + ` no_signal=${checks.filter((check) => !check.key && !check.skipped).length} skipped=${checks.filter((check) => check.skipped).length} no_bin=${checks.filter((check) => !check.bin).length}`
     + ` status_api=${checks.filter((check) => check.statusSource === "api").length} status_html=${checks.filter((check) => check.statusSource === "html").length}`
-    + ` html_failed=${htmlFailed} contracts_failed=${contractsFailed} errors=${checks.filter((check) => check.error).length}`;
+    + ` html_failed=${htmlFailed} contracts_failed=${contractsFailed} errors=${checks.filter((check) => check.error).length}`
+    + ` ${coverage.line}`;
 
   const competitors = new Map<string, { deals: number; sum: number }>();
   for (const check of checks) {
@@ -584,6 +611,8 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
       + ` объявлено ${fresh("published")}, не состоялось ${fresh("failed")}, отменено ${fresh("cancelled")}, договор на подписании ${fresh("contract-draft")},`
       + ` номер плана исправлен ${fresh("plan-renumbered")}, сделка переведена на новый план ${fresh("plan-moved")}.`,
     "",
+    coverage.markdown,
+    "",
     ...(wins.length ? ["**Новые победы:**", ...wins.map((check) => `- сделка ${check.deal.ID}: ${describeContract(check.outcome!)}`), ""] : []),
     "**Кому уходят открытые сделки (все известные договоры):**",
     ...[...competitors.entries()].sort((a, b) => b[1].deals - a[1].deals).slice(0, 10)
@@ -591,7 +620,7 @@ function summarize(checks: DealCheck[], htmlFailed: number, contractsFailed: num
     "",
     `\`${line}\``
   ].join("\n");
-  return { line, markdown };
+  return { line, markdown, warning: coverage.warning };
 }
 
 function describeContract(outcome: GzDealOutcome): string {
