@@ -132,6 +132,7 @@ applyLots=succeeded
 | `gz-automation.yml` | — | Общее тело GZ, вызывается двумя GZ-задачами |
 | `gz-watchdog.yml` | 11:30 и 15:15 Алматы | Падает, если сегодня не отработала хотя бы одна из GZ-задач |
 | `gz-probe.yml` | вручную | Проверяет, отвечает ли goszakup с раннеров GitHub |
+| `deploy-worker.yml` | push в `main` с изменениями в `infra/cloudflare-github-dispatch/`, вручную | Выкладывает Cloudflare Worker; нужен секрет репозитория `CLOUDFLARE_API_TOKEN` |
 | `ci.yml` | каждый PR и push в `main` | `npm run lint` и весь набор тестов (Python с reportlab и Chromium ставятся в самом workflow) |
 
 F3 B2B в GitHub Actions больше не запускается: `f3-daily.yml` и `f3-automation.yml` удалены,
@@ -146,6 +147,11 @@ PK и main идут **параллельно**: у каждого своя concu
 обновлено и уже было, сколько занял каждый этап, сколько планов взято из кэша и сколько не
 загрузилось. Её собирает `scripts/gz-run-summary.mts` из `runs/<id>/manifest.json`; на итог
 job она не влияет.
+
+Если сбор упал из-за сети или недоступности портала (`ERR_CONNECTION_TIMED_OUT`, `fetch failed`
+и т. п.), `scripts/run-automation-with-retry.sh` повторяет запуск: до трёх попыток с паузой
+10 минут. Письмо о падении приходит только после последней попытки. Ошибки другого рода
+(код, Bitrix, данные) не повторяются.
 
 Второй cron у каждой задачи — backstop. Он спрашивает через API, есть ли сегодня
 успешный **или ещё идущий** прогон этого же workflow, и пропускает себя, если есть;
@@ -221,6 +227,12 @@ Guard пропускает повтор **только для `event=schedule`**
 
    `cloudflare:secret` запросит значение интерактивно. Не передавайте PAT аргументом
    командной строки и не записывайте его в `.env` или `.dev.vars`.
+
+   Дальше Worker выкладывается автоматически: `deploy-worker.yml` запускается при каждом
+   слиянии в `main`, затронувшем `infra/cloudflare-github-dispatch/`. Для этого заведите
+   секрет репозитория `CLOUDFLARE_API_TOKEN` (токен Cloudflare по шаблону «Edit Cloudflare
+   Workers»): Settings → Secrets and variables → Actions. Первый запуск — вручную, кнопкой
+   **Run workflow**. Ручной `cloudflare:deploy` остаётся запасным путём.
 
 4. Открыть поток боевых логов:
 

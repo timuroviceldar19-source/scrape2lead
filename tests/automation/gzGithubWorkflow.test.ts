@@ -146,3 +146,12 @@ describe("CI workflow", () => {
   });
 });
 
+describe("GZ portal outage retry", () => {
+  it("runs the automation through the retry wrapper", () => {
+    const reusable = readWorkflow("gz-automation.yml");
+
+    expect(reusable).toContain("sh scripts/run-automation-with-retry.sh '${{ inputs.config }}' '${{ inputs.log-path }}'");
+    expect(reusable).not.toContain("sh scripts/run-automation.sh");
+  });
+});
+
