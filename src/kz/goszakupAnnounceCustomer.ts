@@ -23,6 +23,31 @@ export function parseAnnounceCustomer(html: string): AnnounceCustomer | null {
   return { bin, name, legalAddress };
 }
 
+export interface AnnounceRepresentative {
+  fullName: string | null;
+  position: string | null;
+  email: string | null;
+}
+
+const EMAIL_PATTERN = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+
+/**
+ * Contact person of the organizer. The announcement page lists it in the
+ * "Информация об организаторе" block as rows `ФИО представителя`, `Должность`
+ * and `E-Mail`; the customer's phone is not published there. Rows that the
+ * portal keeps commented out in the markup are ignored.
+ */
+export function parseAnnounceRepresentative(html: string): AnnounceRepresentative | null {
+  const visible = html.replace(/<!--[\s\S]*?-->/g, "");
+  const fullName = extractRowValue(visible, "ФИО представителя");
+  const position = extractRowValue(visible, "Должность");
+  const rawEmail = extractRowValue(visible, "E-Mail")?.toLowerCase() ?? null;
+  const email = rawEmail && EMAIL_PATTERN.test(rawEmail) ? rawEmail : null;
+
+  if (!fullName && !position && !email) return null;
+  return { fullName, position, email };
+}
+
 function extractRowValue(html: string, label: string): string | null {
   const pattern = new RegExp(
     `<th[^>]*>\\s*${escapeRegex(label)}\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>`,
