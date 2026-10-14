@@ -17,12 +17,14 @@ export interface GoszakupGraphqlPage<T> {
   items: T[];
   hasNextPage: boolean;
   lastId: number | null;
+  /** Сколько всего записей под фильтр; API отдаёт его, когда страница неполная. */
+  totalCount?: number;
 }
 
 interface GraphqlPayload {
   data?: Record<string, unknown> | null;
   errors?: Array<{ message?: string }>;
-  extensions?: { pageInfo?: { hasNextPage?: boolean; lastId?: number | null } };
+  extensions?: { pageInfo?: { hasNextPage?: boolean; lastId?: number | null; totalCount?: number | null } };
 }
 
 /**
@@ -44,7 +46,8 @@ export async function goszakupGraphqlPage<T>(
   return {
     items: Array.isArray(items) ? items as T[] : [],
     hasNextPage: Boolean(pageInfo?.hasNextPage),
-    lastId: pageInfo?.lastId ?? null
+    lastId: pageInfo?.lastId ?? null,
+    ...(typeof pageInfo?.totalCount === "number" ? { totalCount: pageInfo.totalCount } : {})
   };
 }
 

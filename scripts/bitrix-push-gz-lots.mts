@@ -2,6 +2,8 @@ import dotenv from "dotenv";
 import ExcelJS from "exceljs";
 import { chromium, type Browser, type Page } from "playwright";
 import { parseAnnounceCustomer, type AnnounceCustomer } from "../src/kz/goszakupAnnounceCustomer.js";
+import { fetchLotBidWindow, type LotBidWindow } from "../src/kz/goszakupLotWindow.js";
+import { bidWindowComment, bidWindowFields } from "../src/bitrix/gzLotDates.js";
 import {
   callBitrixBatch,
   chunkBatchCommands,
@@ -89,6 +91,8 @@ async function main(): Promise<void> {
   if (!args.webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
 
   const client = new BitrixClient(args.webhookUrl);
+  const goszakupToken = process.env.GOSZAKUP_TOKEN?.trim() || null;
+  if (!goszakupToken) console.warn("GOSZAKUP_TOKEN не задан: сроки приёма заявок в новые сделки не попадут");
   const allRows = await readGzLotRows(args.inputPath);
   const rows = args.limit ? allRows.slice(0, args.limit) : allRows;
 
@@ -136,12 +140,14 @@ async function main(): Promise<void> {
           continue;
         }
 
+        const bidWindow = await lookupBidWindow(row.lotNumber, goszakupToken);
+
         if (!args.execute) {
-          console.log(`[dry-run] create ${dealOriginId}${customer ? ` bin=${customer.bin}` : ""} | ${buildTitle(row)}`);
+          console.log(`[dry-run] create ${dealOriginId}${customer ? ` bin=${customer.bin}` : ""} | ${bidWindowComment(bidWindow) ?? "срок приёма заявок не найден"} | ${buildTitle(row)}`);
           continue;
         }
 
-        const dealId = await client.addDeal(buildDealFields(row, args, companyId));
+        const dealId = await client.addDeal(buildDealFields(row, args, companyId, bidWindow));
         stats.created += 1;
         if (companyId) stats.companyLinked += 1;
         console.log(`[created] ${dealOriginId} -> deal ${dealId}${companyId ? ` company ${companyId}` : ""}`);
@@ -390,8 +396,24 @@ function buildCompanyFields(customer: AnnounceCustomer, companyOriginId: string,
   });
 }
 
-function buildDealFields(row: GzLotRow, args: CliArgs, companyId: string | null): Record<string, unknown> {
+/**
+ * Срок приёма заявок берём из реестра по номеру лота: в выгрузке с портала его нет, а без него Bitrix сам
+ * ставит `BEGINDATE` = день создания и `CLOSEDATE` = +7 дней, и менеджеры принимают это за срок закупки.
+ * Реестр не ответил — сделку всё равно создаём, сроки подставит следующая правка.
+ */
+async function lookupBidWindow(lotNumber: string, token: string | null): Promise<LotBidWindow | null> {
+  if (!token) return null;
+  try {
+    return await fetchLotBidWindow(lotNumber, { token });
+  } catch (error) {
+    console.warn(`[dates-missing] gz-lot:${lotNumber}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+function buildDealFields(row: GzLotRow, args: CliArgs, companyId: string | null, bidWindow: LotBidWindow | null): Record<string, unknown> {
   return stripUndefined({
+    ...bidWindowFields(bidWindow),
     TITLE: buildTitle(row),
     TYPE_ID: "SALE",
     CATEGORY_ID: args.categoryId,
@@ -404,7 +426,7 @@ function buildDealFields(row: GzLotRow, args: CliArgs, companyId: string | null)
     SOURCE_DESCRIPTION: "scrape2lead gz lots search (Опубликован)",
     ORIGINATOR_ID,
     ORIGIN_ID: originId(row),
-    COMMENTS: buildComments(row),
+    COMMENTS: buildComments(row, bidWindow),
     UF_CRM_6627AEBD4503E: row.method,
     UF_CRM_6627AEBD54B8D: row.lotName,
     UF_CRM_6627AEBD67FFF: row.quantity,
@@ -413,9 +435,10 @@ function buildDealFields(row: GzLotRow, args: CliArgs, companyId: string | null)
   });
 }
 
-function buildComments(row: GzLotRow): string {
+function buildComments(row: GzLotRow, bidWindow: LotBidWindow | null): string {
   return [
     `GZ лот: ${row.lotNumber} (${row.lotName})`,
+    bidWindowComment(bidWindow),
     `Объявление: ${row.announceNumber} — ${row.announceName}`,
     `Заказчик: ${row.customer}`,
     `Способ закупки: ${row.method}`,
@@ -427,7 +450,7 @@ function buildComments(row: GzLotRow): string {
     `Лот: ${row.lotUrl}`,
     `Объявление: ${row.announceUrl}`,
     `Заказчик (реестр): ${row.customerUrl}`
-  ].join("\n");
+  ].filter((line): line is string => line !== null).join("\n");
 }
 
 function buildTitle(row: GzLotRow): string {
