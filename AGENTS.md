@@ -35,6 +35,7 @@ npm run cloudflare:check  # wrangler deploy --dry-run
 | `src/bitrix/` | клиент Bitrix24, импорт, маршрутизация сделок, исходы закупок |
 | `src/automation/` | жизненный цикл запуска: prepare → dry-run → push → approve |
 | `src/analysis/` | AI-анализ технических спецификаций |
+| `src/assistant/` | чат-бот-помощник в Bitrix24 (только чтение): запуск `npm run assistant`, см. `docs/testing/bitrix-assistant-bot.tdd.md` |
 | `scripts/` | CLI-обёртки (`automation.mts`, `check-gz-deal-outcomes.mts`, `bitrix-*.mts`) |
 | `config/` | конфиги запусков (`automation.json` — main, `automation.pk.json` — PK), ключевые слова, маршрутизация |
 | `infra/cloudflare-github-dispatch/` | Worker, который по cron вызывает `workflow_dispatch` |
@@ -78,6 +79,12 @@ npm run cloudflare:check  # wrangler deploy --dry-run
 - **Сводка запуска.** Каждый прогон GZ пишет в Step Summary итог (создано/обновлено/уже были, этапы, время) из
   `runs/<id>/manifest.json` — смотрите её вместо раскопок в логе. Счётчики этапов `applyPlans`/`applyLots` берутся из строки
   `preflight: create=… update=…` скрипта загрузки, а не из отдельных строк `[created]`.
+- **Помощник в чате Bitrix24** (`src/assistant/`). Настройки и секреты — в `.env` (`ANTHROPIC_API_KEY`, `ASSISTANT_MODEL`,
+  `BITRIX_CRM_WEBHOOK_URL`, `BITRIX_BOT_WEBHOOK_URL`, `BITRIX_BOT_TOKEN`, `BITRIX_BOT_ID`, `GOSZAKUP_TOKEN`,
+  `ASSISTANT_ALLOWED_USER_IDS`, дневные лимиты). Два отдельных входящих вебхука: `imbot` (бот) и `crm` (чтение). У вебхука нет
+  режима «только чтение», поэтому запись исключена кодом: `CrmReader` пускает лишь методы из белого списка (`crm.deal.get/list/fields`, `crm.company.get/list`, `crm.contact.list`, `crm.activity.list`, `crm.status.list`). Инструменты бота — `src/assistant/tools.ts`; поиск в интернете подключён серверным инструментом Anthropic `web_search` (до 3 поисков на вопрос, $10 за 1000; если в аккаунте он выключен, бот работает без него); данные портала — `GoszakupApi` (контакты и телефоны из договоров, цены, история и поставщики заказчика, статус плана). Проверка без бота:
+  `npm run assistant -- --ask "оцени сделку N"`; регистрация бота и любые ответы в чат — только по явной просьбе.
+- **Сроки в сделках по лотам.** Выгрузка лотов с портала не содержит дат, поэтому раньше Bitrix сам ставил `BEGINDATE` = день создания, `CLOSEDATE` = +7 дней, и это выглядело как срок закупки. Теперь `bitrix-push-gz-lots.mts` берёт срок приёма заявок из реестра по номеру лота (`src/kz/goszakupLotWindow.ts`). Уже созданные сделки правит `scripts/bitrix-backfill-gz-lot-dates.mts` (просмотр по умолчанию, запись только с `--execute`, пробно `--limit 5`; даты, поправленные менеджером, не трогает). Число до дефиса в номере лота — старый пункт плана, ключом оно не служит. См. `docs/testing/gz-lot-bid-dates.tdd.md`.
 - **Кэш плана** `data/scrape2lead.db` — ускоритель, не источник правды. Каждый слот сохраняет кэш заново (18 раз в сутки).
 
 ## Правила работы

@@ -14,6 +14,7 @@
     "cloudflare:secret": "wrangler secret put GITHUB_ACTIONS_TOKEN --config infra/cloudflare-github-dispatch/wrangler.jsonc",
     "cloudflare:deploy": "wrangler deploy --config infra/cloudflare-github-dispatch/wrangler.jsonc",
     "cloudflare:tail": "wrangler tail --config infra/cloudflare-github-dispatch/wrangler.jsonc",
+    "assistant": "NODE_EXTRA_CA_CERTS=certs/rapidssl-tls-rsa-ca-g1.crt tsx scripts/bitrix-assistant-bot.mts",
     "automation:prepare": "tsx scripts/automation.mts prepare",
     "automation:run": "tsx scripts/automation.mts run",
     "automation:f3": "tsx scripts/automation.mts run --config config/automation.f3.json",
