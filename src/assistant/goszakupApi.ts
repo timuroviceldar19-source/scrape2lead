@@ -132,6 +132,8 @@ export interface PlanInfo {
   count: number | null;
   unitPrice: number | null;
   enstruCode: string | null;
+  /** День, когда заказчик изменил пункт: показана его текущая версия, а номер на портале прежний. Нет, если пункт не менялся. */
+  revisedAt?: string;
 }
 
 export interface PlanLot {
@@ -202,6 +204,13 @@ const CUSTOMER_HISTORY_BY_CODE = `query($bin: String, $code: [String], $limit: I
 const PLAN_BY_ID = `query($id: [Int]) {
   Plans(filter: { id: $id }, limit: 1) {
     id nameRu plnPointYear amount count price refEnstruCode
+    RefMonths { nameRu } RefPlnPointStatus { nameRu } RefTradeMethods { nameRu }
+  }
+}`;
+// Правка пункта даёт новую запись под тем же номером на портале (rootrecordId); старая запись из реестра исчезает.
+const PLAN_BY_ROOT = `query($root: [Int]) {
+  Plans(filter: { rootrecordId: $root }, limit: 20) {
+    id rootrecordId isActive isDeleted dateCreate nameRu plnPointYear amount count price refEnstruCode
     RefMonths { nameRu } RefPlnPointStatus { nameRu } RefTradeMethods { nameRu }
   }
 }`;
@@ -499,13 +508,21 @@ export class GoszakupApi {
 
   /** Пункт плана и все закупки, объявленные по нему (повторные тоже), новые первыми. */
   async planStatus(planId: number): Promise<PlanStatus> {
-    const planPage = await goszakupGraphqlPage<Row>(PLAN_BY_ID, { id: planId }, "Plans", this.options);
-    const row = planPage.items[0];
+    // Номер на портале может быть номером первой версии пункта: берём действующую версию под этим номером.
+    const versions = await goszakupGraphqlPage<Row>(PLAN_BY_ROOT, { root: planId }, "Plans", this.options);
+    const current = versions.items
+      .filter((item) => Number(item.isActive) !== 0 && Number(item.isDeleted) !== 1)
+      .sort((a, b) => Number(b.id) - Number(a.id))[0];
+    const row = current ?? (await goszakupGraphqlPage<Row>(PLAN_BY_ID, { id: planId }, "Plans", this.options)).items[0];
     if (!row) return { plan: null, lots: [] };
 
-    const lotPage = await goszakupGraphqlPage<Row>(LOTS_BY_POINT, { point: planId }, "Lots", this.options);
+    // Закупки по пункту могут быть привязаны и к старому, и к новому номеру версии.
+    const points = [...new Set([planId, Number(row.id)])];
+    const lotPage = await goszakupGraphqlPage<Row>(LOTS_BY_POINT, { point: points.length === 1 ? points[0] : points }, "Lots", this.options);
     const lots = lotPage.items.map(toPlanLot).sort((a, b) => b.announceId - a.announceId);
-    return { plan: toPlanInfo(row), lots };
+    const plan = toPlanInfo(row);
+    const revisedAt = Number(row.id) !== planId ? clean(row.dateCreate)?.slice(0, 10) : undefined;
+    return { plan: revisedAt ? { ...plan, revisedAt } : plan, lots };
   }
 }
 
