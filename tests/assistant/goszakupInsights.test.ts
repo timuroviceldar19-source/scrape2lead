@@ -196,7 +196,7 @@ describe("GoszakupApi.planStatus", () => {
       specFiles: [{ name: "techspec.pdf", url: "https://ows.goszakup.gov.kz/download/trd_buy/b" }],
       otherFiles: ["Перечень лотов"]
     });
-    expect(bodies.map((b) => b.variables)).toEqual([{ id: 88029122 }, { point: 88029122 }]);
+    expect(bodies.map((b) => b.variables)).toEqual([{ root: 88029122 }, { point: 88029122 }]);
   });
 
   it("says there are no tenders yet for a plan point that has not been announced", async () => {
@@ -276,6 +276,49 @@ describe("GoszakupApi.lotInfo", () => {
     const infos = await goszakup.lotsInfo(["a-1", "нет-1", "b-1"]);
 
     expect(infos.map((info) => info?.lotNumber ?? null)).toEqual(["a-1", null, "b-1"]);
+  });
+});
+
+describe("GoszakupApi.planStatus amended plan points", () => {
+  // Заказчик правит пункт: номер на портале остаётся (rootrecordId), а запись получает новый внутренний id; старого id в реестре уже нет.
+  const NEW_VERSION = { id: 88294659, rootrecordId: 88137237, isActive: 1, isDeleted: 0, dateCreate: "2026-10-15 13:30:14", nameRu: "Панель жидкокристаллическая", plnPointYear: 2026, amount: 1200000, count: 1, price: 1200000, refEnstruCode: "279020.100.000002", RefPlnPointStatus: { nameRu: "На проверке камерального контроля" } };
+  const OLD_VERSION = { ...NEW_VERSION, id: 88137237, isActive: 0, dateCreate: "2026-10-05 09:00:00", nameRu: "Доска специальная", refEnstruCode: "262030.100.000043" };
+
+  it("finds the point by the number the portal shows and reports its current version, not the old one", async () => {
+    const { goszakup, bodies } = api({
+      Plans: { data: (variables: Record<string, unknown>) => (variables.root ? [OLD_VERSION, NEW_VERSION] : null) },
+      Lots: { data: [] }
+    });
+
+    const status = await goszakup.planStatus(88137237);
+
+    expect(status.plan).toMatchObject({ id: 88294659, name: "Панель жидкокристаллическая", enstruCode: "279020.100.000002", revisedAt: "2026-10-15" });
+    expect(bodies[0].query).toMatch(/rootrecordId/);
+    expect(bodies[0].variables).toEqual({ root: 88137237 });
+    // тендеры могут быть привязаны и к старому, и к новому номеру версии
+    expect(bodies[1].variables).toEqual({ point: [88137237, 88294659] });
+  });
+
+  it("does not mention a revision for a point that was never amended", async () => {
+    const { goszakup } = api({
+      Plans: { data: (variables: Record<string, unknown>) => (variables.root ? [{ ...NEW_VERSION, id: 88137237, rootrecordId: 88137237 }] : null) },
+      Lots: { data: [] }
+    });
+
+    expect((await goszakup.planStatus(88137237)).plan?.revisedAt).toBeUndefined();
+  });
+
+  it("falls back to the plain id when no record carries this number as its root (an id of a version)", async () => {
+    const { goszakup, bodies } = api({
+      Plans: { data: (variables: Record<string, unknown>) => (variables.id ? [NEW_VERSION] : []) },
+      Lots: { data: [] }
+    });
+
+    const status = await goszakup.planStatus(88294659);
+
+    expect(status.plan?.id).toBe(88294659);
+    expect(status.plan?.revisedAt).toBeUndefined();
+    expect(bodies.map((body) => Object.keys(body.variables)[0])).toEqual(["root", "id", "point"]);
   });
 });
 

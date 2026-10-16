@@ -344,6 +344,20 @@ describe("plan_status", () => {
     expect(await byName(tools, "plan_status").run({ plan_id: 1 })).toMatch(/пока не объявлен|ещё не объявлен/i);
   });
 
+  it("tells that the customer amended the plan point and which code is current", async () => {
+    const base = deps();
+    const full = await base.goszakup.planStatus(1);
+    const amended = { ...full.plan!, id: 88294659, name: "Панель жидкокристаллическая", enstruCode: "279020.100.000002", revisedAt: "2026-10-15" };
+    const tools = buildTools({ ...base, goszakup: { ...base.goszakup, planStatus: async () => ({ plan: amended, lots: [] }) } });
+
+    const text = await byName(tools, "plan_status").run({ plan_id: 88137237 });
+
+    expect(text).toContain("Пункт плана 88137237");
+    expect(text).toContain("изменён заказчиком 2026-10-15");
+    expect(text).toContain("код ЕНС ТРУ 279020.100.000002");
+    expect(text).toMatch(/код и название.*сделке.*устар/i);
+  });
+
   it("says when the plan point is unknown", async () => {
     const base = deps();
     const tools = buildTools({ ...base, goszakup: { ...base.goszakup, planStatus: async () => ({ plan: null, lots: [] }) } });

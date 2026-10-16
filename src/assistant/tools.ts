@@ -362,9 +362,12 @@ export function buildTools(deps: ToolDeps, context: ToolContext = {}): AgentTool
         if (!status.plan) return `Пункт плана ${planId} в реестре не найден`;
         const plan = status.plan;
         const head = [
-          `Пункт плана ${plan.id}: ${plan.name}; статус: ${plan.status ?? "?"}; ${plan.year ?? "?"} год, месяц: ${plan.month ?? "?"}; способ: ${plan.tradeMethod ?? "?"}`,
+          `Пункт плана ${planId}: ${plan.name}; статус: ${plan.status ?? "?"}; ${plan.year ?? "?"} год, месяц: ${plan.month ?? "?"}; способ: ${plan.tradeMethod ?? "?"}`,
           `Количество ${plan.count ?? "?"}, цена за единицу ${plan.unitPrice === null ? "?" : money(plan.unitPrice)}, сумма ${plan.amount === null ? "?" : money(plan.amount)}; код ЕНС ТРУ ${plan.enstruCode ?? "?"}`
         ];
+        if (plan.revisedAt) {
+          head.push(`Пункт изменён заказчиком ${plan.revisedAt}: показана текущая версия (внутренний номер ${plan.id}). Код и название в сделке могут быть устаревшими: сравни их с данными выше.`);
+        }
         if (!status.lots.length) return [...head, "По этому пункту закупка пока не объявлена."].join("\n");
         const lots = status.lots.map((lot) => {
           const specs = lot.specFiles.length ? lot.specFiles.map((file) => `${file.name} ${file.url}`).join("; ") : "файла ТЗ нет";
