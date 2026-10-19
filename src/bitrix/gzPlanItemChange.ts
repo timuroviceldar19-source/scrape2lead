@@ -10,6 +10,7 @@ const CODE_FIELDS = ["UF_CRM_REF_ENSTRU_CODE", "UF_CRM_6A436D5A19612"] as const;
 const NAME_FIELDS = ["UF_CRM_6627AEBD54B8D", "UF_CRM_ENSTRU_NAME"] as const;
 const BIN_FIELD = "UF_CRM_6627AEBD7C2D2";
 const PLAN_LINK_FIELD = "UF_CRM_PLAN_LINK";
+const PLAN_NUMBER_FIELDS = ["UF_CRM_PLAN_ID", "UF_CRM_1782386293000_IU_XLS"] as const;
 const ORIGIN_PREFIX = "gz-plan:";
 const TITLE_MAX = 250;
 
@@ -26,6 +27,8 @@ export interface PlanItemDeal {
   UF_CRM_ENSTRU_NAME?: string | null;
   UF_CRM_6627AEBD7C2D2?: string | null;
   UF_CRM_PLAN_LINK?: string | null;
+  UF_CRM_PLAN_ID?: string | number | null;
+  UF_CRM_1782386293000_IU_XLS?: string | number | null;
 }
 
 export const PLAN_ITEM_DEAL_SELECT = [
@@ -37,7 +40,8 @@ export const PLAN_ITEM_DEAL_SELECT = [
   ...CODE_FIELDS,
   ...NAME_FIELDS,
   BIN_FIELD,
-  PLAN_LINK_FIELD
+  PLAN_LINK_FIELD,
+  ...PLAN_NUMBER_FIELDS
 ];
 
 export interface PlanItemChange {
@@ -77,9 +81,25 @@ function firstFilled(deal: PlanItemDeal, fields: readonly string[]): string {
   return "";
 }
 
-function rootOf(deal: PlanItemDeal): number | null {
-  const match = /^gz-plan:(\d+)$/.exec(text(deal.ORIGIN_ID));
-  return match ? Number(match[1]) : null;
+/**
+ * Номера, под которыми сделка может знать свой пункт плана. У сделок, созданных роботом позже, `ORIGIN_ID` = `gz-plan:<номер пункта>`;
+ * у старых там внутренний номер записи на портале, а номер пункта лежит в «ID Плана» и в названии «[GZ <номер>]».
+ * Поэтому смотрим на все места; какой из номеров настоящий, решают проверки в `planItemChange` (БИН, дата версии).
+ */
+export function planRootsOf(deal: PlanItemDeal): number[] {
+  const found: number[] = [];
+  const add = (raw: unknown) => {
+    const text = String(raw ?? "").trim();
+    if (/^\d+$/.test(text) && !found.includes(Number(text))) found.push(Number(text));
+  };
+  for (const field of PLAN_NUMBER_FIELDS) add(deal[field]);
+  add(/^\[GZ (\d+)\]/.exec(text(deal.TITLE))?.[1]);
+  add(/^gz-plan:(\d+)$/.exec(text(deal.ORIGIN_ID))?.[1]);
+  return found;
+}
+
+function isPlanDeal(deal: PlanItemDeal): boolean {
+  return text(deal.ORIGIN_ID).startsWith(ORIGIN_PREFIX);
 }
 
 function dealBin(deal: PlanItemDeal): string | null {
@@ -95,8 +115,7 @@ const day = (value: string): string => value.slice(0, 10);
  * чужой заказчик, версия старше сделки (старая запись с тем же номером), год раньше сделки, БИН не проверить.
  */
 export function planItemChange(deal: PlanItemDeal, current: CurrentPlanItem): PlanItemChange | null {
-  const root = rootOf(deal);
-  if (root === null || root !== current.rootId) return null;
+  if (!isPlanDeal(deal) || !planRootsOf(deal).includes(current.rootId)) return null;
   if (!current.code || !current.name) return null;
 
   const previousCode = firstFilled(deal, CODE_FIELDS);
@@ -146,26 +165,23 @@ export function planItemSync(deals: PlanItemDeal[], items: Map<number, CurrentPl
   const stats: PlanItemSyncStats = { total: 0, willUpdate: 0, alreadyRight: 0, notInRegistry: 0, lookupFailed: 0, skipped: 0 };
   const updates: PlanItemChange[] = [];
   for (const deal of deals) {
-    const root = rootOf(deal);
-    if (root === null) continue;
+    if (!isPlanDeal(deal)) continue;
     stats.total += 1;
-    if (failedRoots.has(root)) {
-      stats.lookupFailed += 1;
-      continue;
-    }
-    const item = items.get(root);
-    if (!item) {
-      stats.notInRegistry += 1;
-      continue;
-    }
-    const change = planItemChange(deal, item);
+    const roots = planRootsOf(deal);
+    const found = roots.map((root) => items.get(root)).filter((item): item is CurrentPlanItem => item !== undefined);
+    // Подходит первая запись реестра, прошедшая проверки: чужой номер (например из origin) может совпасть с другой записью.
+    const change = found.map((item) => planItemChange(deal, item)).find((candidate) => candidate !== null) ?? null;
     if (change) {
       stats.willUpdate += 1;
       updates.push(change);
-    } else if (firstFilled(deal, CODE_FIELDS) === item.code) {
+    } else if (found.some((item) => firstFilled(deal, CODE_FIELDS) === item.code)) {
       stats.alreadyRight += 1;
-    } else {
+    } else if (found.length > 0) {
       stats.skipped += 1;
+    } else if (roots.some((root) => failedRoots.has(root))) {
+      stats.lookupFailed += 1;
+    } else {
+      stats.notInRegistry += 1;
     }
   }
   return { updates, stats };

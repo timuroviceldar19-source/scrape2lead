@@ -13,7 +13,7 @@
 
 import dotenv from "dotenv";
 import { BitrixClient } from "../src/bitrix/client.js";
-import { PLAN_ITEM_DEAL_SELECT, planItemSync, type PlanItemDeal } from "../src/bitrix/gzPlanItemChange.js";
+import { PLAN_ITEM_DEAL_SELECT, planItemSync, planRootsOf, type PlanItemDeal } from "../src/bitrix/gzPlanItemChange.js";
 import { fetchCurrentPlanItems } from "../src/kz/goszakupPlanItems.js";
 
 dotenv.config();
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   const deals = (await client.listAll("deal", { "%ORIGIN_ID": "gz-plan:", STAGE_SEMANTIC_ID: "P" }, PLAN_ITEM_DEAL_SELECT)) as unknown as PlanItemDeal[];
   console.log(`открытых сделок по плану: ${deals.length}`);
 
-  const roots = deals.map((deal) => Number(/^gz-plan:(\d+)$/.exec(String(deal.ORIGIN_ID ?? ""))?.[1])).filter((root) => root > 0);
+  const roots = deals.flatMap((deal) => planRootsOf(deal));
   const { items, failed } = await fetchCurrentPlanItems(roots, { token });
   const plan = planItemSync(deals, items, new Set(failed));
   console.log(`план: ${JSON.stringify(plan.stats)}`);
