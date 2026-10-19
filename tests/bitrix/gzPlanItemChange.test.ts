@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planItemChange, planItemSync, type CurrentPlanItem, type PlanItemDeal } from "../../src/bitrix/gzPlanItemChange.js";
+import { planItemChange, planItemSync, planRootsOf, type CurrentPlanItem, type PlanItemDeal } from "../../src/bitrix/gzPlanItemChange.js";
 
 // Сделка 48115: создана 06.10 по первой версии пункта; 15.10 заказчик заменил товар, сумма и количество остались прежними.
 const DEAL: PlanItemDeal = {
@@ -80,8 +80,20 @@ describe("planItemChange", () => {
   });
 
   it("does nothing for another plan number", () => {
-    expect(planItemChange({ ...DEAL, ORIGIN_ID: "gz-plan:1" }, CURRENT)).toBeNull();
-    expect(planItemChange({ ...DEAL, ORIGIN_ID: "gz-lot:88137237-ЗЦП1" }, CURRENT)).toBeNull();
+    const another = { ...DEAL, TITLE: '[GZ 1] КГП "Городской родильный дом № 4" - Доска специальная' };
+
+    expect(planItemChange({ ...another, ORIGIN_ID: "gz-plan:1" }, CURRENT)).toBeNull();
+    expect(planItemChange({ ...another, ORIGIN_ID: "gz-lot:88137237-ЗЦП1" }, CURRENT)).toBeNull();
+  });
+
+  it("finds the point of an older deal whose origin id holds the portal's record id, by the plan number written in the deal", () => {
+    // Сделка 40443: ORIGIN_ID = gz-plan:4804795 (номер записи на портале), а номер пункта 81584546 лежит в «ID Плана» и в названии.
+    const older: PlanItemDeal = { ...DEAL, ORIGIN_ID: "gz-plan:4804795", UF_CRM_PLAN_ID: "88137237" };
+
+    expect(planItemChange(older, CURRENT)?.dealId).toBe("48115");
+    expect(planItemChange({ ...older, UF_CRM_PLAN_ID: "", UF_CRM_1782386293000_IU_XLS: "88137237" }, CURRENT)).not.toBeNull();
+    expect(planItemChange({ ...older, UF_CRM_PLAN_ID: "", UF_CRM_1782386293000_IU_XLS: "" }, CURRENT)).not.toBeNull(); // номер из названия «[GZ 88137237]»
+    expect(planItemChange({ ...older, UF_CRM_PLAN_ID: "", TITLE: "Роддом 4, панель" }, CURRENT)).toBeNull(); // номера нигде нет, кроме чужого origin
   });
 
   describe("guards against a record that only shares the number", () => {
@@ -108,8 +120,15 @@ describe("planItemChange", () => {
   });
 });
 
+describe("planRootsOf", () => {
+  it("lists every number the deal carries for its plan point, the plan fields first, without repeats", () => {
+    expect(planRootsOf({ ...DEAL, ORIGIN_ID: "gz-plan:4804795", UF_CRM_PLAN_ID: "88137237", UF_CRM_1782386293000_IU_XLS: "88137237" })).toEqual([88137237, 4804795]);
+    expect(planRootsOf({ ID: 1, ORIGIN_ID: "gz-lot:1-ЗЦП1", TITLE: "без номера", UF_CRM_PLAN_ID: "abc" })).toEqual([]);
+  });
+});
+
 describe("planItemSync", () => {
-  const other: PlanItemDeal = { ...DEAL, ID: "5", ORIGIN_ID: "gz-plan:5", UF_CRM_REF_ENSTRU_CODE: "262011.100.000001", UF_CRM_6A436D5A19612: "262011.100.000001" };
+  const other: PlanItemDeal = { ...DEAL, ID: "5", ORIGIN_ID: "gz-plan:5", TITLE: "[GZ 5] Школа - Ноутбук", UF_CRM_REF_ENSTRU_CODE: "262011.100.000001", UF_CRM_6A436D5A19612: "262011.100.000001" };
 
   it("plans updates only for deals whose point changed, and counts the rest", () => {
     const items = new Map<number, CurrentPlanItem>([
@@ -117,7 +136,7 @@ describe("planItemSync", () => {
       [5, { ...CURRENT, id: 6, rootId: 5, code: "262011.100.000001", name: "Ноутбук" }]
     ]);
 
-    const plan = planItemSync([DEAL, other, { ...DEAL, ID: "9", ORIGIN_ID: "gz-plan:9" }, { ...DEAL, ID: "10", ORIGIN_ID: "gz-lot:1-ЗЦП1" }], items, new Set([77]));
+    const plan = planItemSync([DEAL, other, { ...DEAL, ID: "9", ORIGIN_ID: "gz-plan:9", TITLE: "[GZ 9] Школа - Ноутбук" }, { ...DEAL, ID: "10", ORIGIN_ID: "gz-lot:1-ЗЦП1", TITLE: "лот" }], items, new Set([77]));
 
     expect(plan.updates.map((update) => update.dealId)).toEqual(["48115"]);
     expect(plan.stats).toEqual({ total: 3, willUpdate: 1, alreadyRight: 1, notInRegistry: 1, lookupFailed: 0, skipped: 0 });
@@ -135,4 +154,24 @@ describe("planItemSync", () => {
 
     expect(plan.stats).toMatchObject({ notInRegistry: 0, lookupFailed: 1 });
   });
+
+  it("plans the update for an older deal through its plan number, and counts it once", () => {
+    const older: PlanItemDeal = { ...DEAL, ID: "40443", ORIGIN_ID: "gz-plan:4804795", UF_CRM_PLAN_ID: "88137237" };
+
+    const plan = planItemSync([older], new Map([[88137237, CURRENT]]), new Set());
+
+    expect(plan.updates.map((update) => update.dealId)).toEqual(["40443"]);
+    expect(plan.stats).toMatchObject({ total: 1, willUpdate: 1, notInRegistry: 0 });
+  });
+
+  it("is not fooled by a number that belongs to another point: only the candidate that passes the checks counts", () => {
+    // Номер из origin совпал с чужой записью другого заказчика, а настоящий номер в поле «ID Плана».
+    const older: PlanItemDeal = { ...DEAL, ID: "40443", ORIGIN_ID: "gz-plan:4804795", UF_CRM_PLAN_ID: "88137237" };
+    const stranger: CurrentPlanItem = { ...CURRENT, id: 7, rootId: 4804795, code: "111111.111.111111", name: "Чужое", bin: "111111111111" };
+
+    const plan = planItemSync([older], new Map([[88137237, CURRENT], [4804795, stranger]]), new Set());
+
+    expect(plan.updates[0]?.current.code).toBe("279020.100.000002");
+  });
 });
+
