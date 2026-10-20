@@ -19,7 +19,9 @@ on:
 
 jobs:
   probe:
-    runs-on: ubuntu-latest
+    # Не ubuntu-latest: с 19.10.2026 он указывает на ubuntu-26.04, а Playwright 1.60 там не ставит chromium
+    # ("Playwright does not support chromium on ubuntu26.04-x64"). Вернуть latest, когда Playwright обновят.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       TZ: Asia/Almaty

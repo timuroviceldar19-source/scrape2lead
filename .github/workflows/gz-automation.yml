@@ -44,7 +44,9 @@ concurrency:
 
 jobs:
   run:
-    runs-on: ubuntu-latest
+    # Не ubuntu-latest: с 19.10.2026 он указывает на ubuntu-26.04, а Playwright 1.60 там не ставит chromium
+    # ("Playwright does not support chromium on ubuntu26.04-x64"). Вернуть latest, когда Playwright обновят.
+    runs-on: ubuntu-24.04
     # Холодный кэш деталей планов даёт ~65 мин (см. runs/pk/20260724-084004),
     # plans-and-lots вхолодную дольше. Запас до потолка GitHub в 6 часов.
     timeout-minutes: 180
