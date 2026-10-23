@@ -12,7 +12,7 @@
   "year": 2026,
   "months": [6, 7, 8],
   "statuses": ["Утвержден"],
-  "maxPages": 50,
+  "maxPages": 0,
   "delayMs": 2000,
   "skipRegistry": false,
   "forceRegistryRefresh": false,

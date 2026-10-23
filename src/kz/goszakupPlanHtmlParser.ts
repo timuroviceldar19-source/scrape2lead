@@ -110,7 +110,7 @@ export function parseGoszakupPlanDetailHtml(html: string, planPointId: string): 
     "Дата акта, которым утвержден план",
     "Дата приказа",
     "Дата утверждения"
-  ]);
+  ]) ?? extractControlValue(html, ["act_date_tmp"]);
 
   const abpName = findFieldValue(fields, [
     "Наименование администратора(ов) отчетности",

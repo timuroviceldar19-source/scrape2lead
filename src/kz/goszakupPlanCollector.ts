@@ -29,7 +29,7 @@ import { DEFAULT_GZ_PLAN_KEYWORDS as DEFAULT_KEYWORDS } from "./goszakupPlanType
 import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
 
 const DEFAULT_DEBUG_DIR = "data/debug";
-const MAX_PAGES_DEFAULT = 50;
+const MAX_PAGES_DEFAULT = 0;
 const DEFAULT_PAGE_LOAD_TIMEOUT_MS = 90_000;
 const SEARCH_PAGE_RETRIES = 2;
 const DETAIL_RETRIES = 2;
@@ -327,13 +327,21 @@ export async function collectPlanSearch(
 ): Promise<GoszakupPlanListItem[]> {
   const allItems: GoszakupPlanListItem[] = [];
   let pageNum = 0;
+  let expectedPages = 1;
+  if (!Number.isInteger(options.maxPages) || options.maxPages < 0) {
+    throw new Error("goszakup plan maxPages must be a nonnegative integer (0 = all pages)");
+  }
+  const recordsPerPage = Number(new URL(baseUrl).searchParams.get("count_record") ?? 50);
+  if (!Number.isInteger(recordsPerPage) || recordsPerPage <= 0) {
+    throw new Error("goszakup plan count_record must be a positive integer");
+  }
 
-  while (pageNum < options.maxPages) {
+  while (options.maxPages === 0 || pageNum < options.maxPages) {
     // The registry omits `page` for the first page and numbers the next page as 2.
     // `page=1` is an alias for the first page, so using the zero-based loop index
     // here would silently fetch page one twice and skip every second result page.
     const portalPageNumber = pageNum === 0 ? 0 : pageNum + 1;
-    const url = buildGoszakupHtmlPageUrl(baseUrl, portalPageNumber);
+    const url = buildGoszakupHtmlPageUrl(baseUrl, portalPageNumber, recordsPerPage);
     await gotoPlanSearchPage(page, url, keyword, pageNum, options);
     await page.waitForTimeout(1500);
 
@@ -350,12 +358,25 @@ export async function collectPlanSearch(
 
     const parsed = parseGoszakupPlanSearchHtml(html, keyword);
     const items = parsed.filter((item) => matchesPlanStatus(item.status, options.allowedStatusNames));
-    if (parsed.length === 0) break;
+    if (parsed.length === 0) {
+      if (pageNum > 0 && pageNum < expectedPages) {
+        throw new Error(`goszakup plan search incomplete: keyword="${keyword}" page=${pageNum + 1} is empty; expected ${expectedPages} pages`);
+      }
+      break;
+    }
 
     allItems.push(...items);
 
     const pagination = parseGoszakupPagination(html);
-    const totalPages = Math.min(pagination.totalPages > 0 ? pagination.totalPages : 1, options.maxPages);
+    // The shared parser also serves older, zero-based registries. Plan page links
+    // are one-based, so use the reported record count instead of adding a phantom page.
+    const totalPages = pagination.totalCount > 0
+      ? Math.ceil(pagination.totalCount / recordsPerPage)
+      : Math.max(1, ...Array.from(html.matchAll(/\bpage=(\d+)/g), match => Number(match[1])));
+    expectedPages = totalPages;
+    if (options.maxPages > 0 && totalPages > options.maxPages) {
+      throw new Error(`goszakup plan search incomplete: keyword="${keyword}" needs ${totalPages} pages, maxPages=${options.maxPages}`);
+    }
     if (pageNum === 0 && pagination.totalCount > 0) {
       console.log(
         `goszakup plan search: keyword="${keyword}" page=1 parsed=${parsed.length} matched=${items.length} total=${pagination.totalCount} pages=${totalPages}`
