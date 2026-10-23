@@ -19,7 +19,8 @@ const GzPlansConfigSchema = z.object({
   minAmount: z.coerce.number().nonnegative().default(0),
   excludeKeywords: z.array(z.string().min(1)).default([...DEFAULT_GZ_EXCLUDE_KEYWORDS]),
   includeTruCodePrefixes: z.array(z.string().trim().min(1)).default([]),
-  maxPages: z.coerce.number().int().positive().default(50),
+  // Zero collects every result page. A positive value is an explicit safety budget.
+  maxPages: z.coerce.number().int().nonnegative().default(0),
   delayMs: z.coerce.number().int().nonnegative().default(2000),
   skipRegistry: z.boolean().default(false),
   forceRegistryRefresh: z.boolean().default(false),
@@ -67,7 +68,9 @@ export function mergeGzPlansExportOptions(
   const { configPath: _configPath, ...rest } = cliOverrides;
   const merged = GzPlansConfigSchema.parse({ ...fileConfig, ...rest });
 
-  const maxPages = rest.maxPages ?? Number(process.env.GOSZAKUP_PLAN_MAX_PAGES ?? merged.maxPages);
+  const maxPages = GzPlansConfigSchema.shape.maxPages.parse(
+    rest.maxPages ?? process.env.GOSZAKUP_PLAN_MAX_PAGES ?? merged.maxPages
+  );
   const delayMs = rest.delayMs ?? Number(process.env.KZ_ENRICH_DELAY_MS ?? merged.delayMs);
 
   const outPath = rest.outPath !== undefined

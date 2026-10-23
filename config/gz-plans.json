@@ -22,7 +22,7 @@
     "\u0423\u0441\u043b\u0443\u0433\u0438",
     "\u041a\u043e\u043c\u043c\u0443\u0442\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f \u043f\u0430\u043d\u0435\u043b\u044c"
   ],
-  "maxPages": 50,
+  "maxPages": 0,
   "delayMs": 2000,
   "skipRegistry": false,
   "forceRegistryRefresh": false,

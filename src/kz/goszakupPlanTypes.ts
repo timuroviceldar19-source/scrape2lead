@@ -67,6 +67,7 @@ export interface GzPlanCollectOptions {
   months?: number[];
   /** Plan status names (e.g. "Утвержден") or numeric IDs as strings. Empty = no filter. */
   statuses?: string[];
+  /** Zero (default) collects all result pages; a positive budget fails if it would truncate the search. */
   maxPages?: number;
   delayMs?: number;
   headless?: boolean;
