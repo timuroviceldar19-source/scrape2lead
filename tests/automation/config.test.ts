@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { loadAutomationConfig, validateCollectorText } from "../../src/automation/config.js";
 
@@ -52,6 +53,24 @@ describe("automation workflow config", () => {
     const f3 = loadAutomationConfig("config/automation.f3.json").lockPath;
     expect(f3).not.toBe(loadAutomationConfig("config/automation.json").lockPath);
     expect(f3).not.toBe(loadAutomationConfig("config/automation.pk.json").lockPath);
+  });
+
+  it("searches daily lots for interactive panels, not only computers", () => {
+    const lots = JSON.parse(fs.readFileSync(loadAutomationConfig("config/automation.json").lotsConfig, "utf8")) as {
+      keywords: string[];
+      excludeKeywords: string[];
+    };
+    // Лот 88330806-ОК1 «Панель интерактивная» (объявление 17867217-1, 38,8 млн) прошёл мимо
+    // «B2G - Тендеры» в октябре 2026: ЕНС ТРУ у лота пустой, а по названию панели не искали.
+    expect(lots.keywords).toEqual(expect.arrayContaining([
+      "панель интерактивная",
+      "интерактивная панель",
+      "доска специальная",
+      "панель жидкокристаллическая"
+    ]));
+    const lotName = "Панель интерактивная".toLowerCase();
+    expect(lots.keywords.some((keyword) => lotName.includes(keyword.toLowerCase()))).toBe(true);
+    expect(lots.excludeKeywords.some((stop) => lotName.includes(stop.toLowerCase()))).toBe(false);
   });
 
   it("does not demand the GZ collector configs for an F3 run", () => {
