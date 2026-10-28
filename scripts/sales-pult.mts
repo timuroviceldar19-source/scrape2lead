@@ -255,6 +255,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
     console.log("|---|---|---|---|---|---|---|---|---|");
 
     const managersWithContractDiscrepancy = new Set<string>();
+    const latestRollupsByManager = new Map<string, ManagerRollups>();
+    const latestManualReportByManager = new Map<string, ParsedManualReport>();
 
     for (const rep of manualReports) {
       const mgr = config.groups.flatMap((g) => g.managers).find(
@@ -272,6 +274,13 @@ export async function runSalesPult(args: string[]): Promise<void> {
         targets: config.targets
       });
 
+      if (!latestRollupsByManager.has(mgr.id)) {
+        latestRollupsByManager.set(mgr.id, rollups);
+      }
+      if (!latestManualReportByManager.has(mgr.id)) {
+        latestManualReportByManager.set(mgr.id, rep);
+      }
+
       const dayCalls = `${rollups.day.calls.successful} / ${rep.day.callsFact}`;
       const dayKp = `${rollups.day.proposals.uniqueDealsCount} / ${rep.day.proposalsFact}`;
       const dayContracts = `${rollups.day.contracts.uniqueDealsCount} / ${rep.day.contractsFact}`;
@@ -288,9 +297,9 @@ export async function runSalesPult(args: string[]): Promise<void> {
       console.log(`| ${mgr.name} (${mgr.id}) | ${dateStr} | ${dayCalls} | ${dayKp} | ${dayContracts} | ${monthCalls} | ${monthKp} | ${monthContracts} | ${monthAmount} |`);
     }
 
-    // Dynamic breakdown of deals that entered proposal stages or C41:EXECUTING this month and did not reach WON
+    // Dynamic breakdown of deals that entered proposal stages or C41:EXECUTING (including before the month) and are in open stages
     if (managersWithContractDiscrepancy.size > 0) {
-      console.log("\n\n### Сделки менеджеров с расхождением по договорам (вошли в КП или C41:EXECUTING в этом месяце, но не в WON)\n");
+      console.log("\n\n### Сделки менеджеров с расхождением по договорам (открытые стадии в КП или «Договорился»)\n");
       console.log("| Менеджер | ID | Воронка | Текущая стадия | Сумма | Ответственный | Название |");
       console.log("|---|---|---|---|---|---|---|");
 
@@ -299,6 +308,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
       const currentMonthStart = `${todayAlmaty.slice(0, 7)}-01T00:00:00+03:00`;
 
       const candidateDealIds = new Set<string>();
+
+      // 1. Transitions into these stages this month
       for (const stage of stagesToInspect) {
         const items = await reader.listAllBatched<{ OWNER_ID?: string | number }>(
           "crm.stagehistory.list",
@@ -313,6 +324,19 @@ export async function runSalesPult(args: string[]): Promise<void> {
         for (const item of items) {
           if (item.OWNER_ID) {
             candidateDealIds.add(String(item.OWNER_ID));
+          }
+        }
+      }
+
+      // 2. Deals currently in these stages (covers entered before this month and still there)
+      for (const stage of stagesToInspect) {
+        const rows = (await reader.call("crm.deal.list", {
+          filter: { STAGE_ID: stage },
+          select: ["ID"]
+        })) as Array<{ ID?: string | number }>;
+        if (Array.isArray(rows)) {
+          for (const r of rows) {
+            if (r.ID) candidateDealIds.add(String(r.ID));
           }
         }
       }
@@ -346,16 +370,22 @@ export async function runSalesPult(args: string[]): Promise<void> {
         }
       }
 
-      const allManagersMap = new Map(config.groups.flatMap((g) => g.managers).map((m) => [m.id, m.name]));
+      // Open stages filter: strictly exclude WON, LOSE, DUPLICATE, APOLOGY
+      const isOpenDeal = (stageId?: string | null): boolean => {
+        const s = String(stageId ?? "").toUpperCase();
+        if (s.endsWith(":WON") || s === "WON") return false;
+        if (s.endsWith(":LOSE") || s === "LOSE") return false;
+        if (s.includes("DUPLICATE") || s.includes("APOLOGY")) return false;
+        return true;
+      };
 
-      const notWonDeals = candidateDeals.filter((d) => {
-        const st = String(d.STAGE_ID ?? "").toUpperCase();
-        return !st.endsWith(":WON") && st !== "WON";
-      });
+      const openDeals = candidateDeals.filter((d) => isOpenDeal(d.STAGE_ID));
+
+      const allManagersMap = new Map(config.groups.flatMap((g) => g.managers).map((m) => [m.id, m.name]));
 
       for (const mgrId of managersWithContractDiscrepancy) {
         const mgrName = allManagersMap.get(mgrId) || mgrId;
-        const mgrDeals = notWonDeals.filter((d) => String(d.ASSIGNED_BY_ID) === mgrId);
+        const mgrDeals = openDeals.filter((d) => String(d.ASSIGNED_BY_ID) === mgrId);
 
         for (const d of mgrDeals) {
           const cat = String(d.CATEGORY_ID ?? "");
@@ -366,6 +396,38 @@ export async function runSalesPult(args: string[]): Promise<void> {
           console.log(`| ${mgrName} (${mgrId}) | #${d.ID} | ${cat} | ${stage} | ${formatMoney(opp)} | ${assigned} | ${title} |`);
         }
       }
+
+      console.log("\n\n### Итоги по менеджерам с расхождениями\n");
+      console.log("| Менеджер | Выиграно в CRM (WON) | Висит в КП и «Договорился» | Ручной отчёт (факт) | Разница (Ручной − Выиграно) |");
+      console.log("|---|---|---|---|---|");
+
+      for (const mgrId of managersWithContractDiscrepancy) {
+        const mgrName = allManagersMap.get(mgrId) || mgrId;
+        const rollups = latestRollupsByManager.get(mgrId);
+        const rep = latestManualReportByManager.get(mgrId);
+
+        const wonCount = rollups ? rollups.month.contracts.uniqueDealsCount : 0;
+        const wonAmount = rollups ? rollups.month.contracts.totalAmount : 0;
+
+        const mgrPendingDeals = openDeals.filter(
+          (d) => String(d.ASSIGNED_BY_ID) === mgrId && stagesToInspect.includes(String(d.STAGE_ID))
+        );
+        const pendingCount = mgrPendingDeals.length;
+        const pendingAmount = mgrPendingDeals.reduce((sum, d) => sum + Number(d.OPPORTUNITY ?? 0), 0);
+
+        const manualCount = rep ? rep.month.contractsFact : 0;
+        const manualAmount = rep ? rep.month.amountFact : 0;
+
+        const diffCount = manualCount - wonCount;
+        const diffAmount = manualAmount - wonAmount;
+        const diffSign = diffAmount >= 0 ? "+" : "";
+        const diffCountSign = diffCount >= 0 ? "+" : "";
+
+        console.log(
+          `| ${mgrName} (${mgrId}) | ${formatMoney(wonAmount)} (${wonCount}) | ${formatMoney(pendingAmount)} (${pendingCount}) | ${formatMoney(manualAmount)} (${manualCount}) | ${diffSign}${formatMoney(diffAmount)} (${diffCountSign}${diffCount}) |`
+        );
+      }
+      console.log("");
     }
 
     return;

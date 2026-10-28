@@ -40,18 +40,28 @@ jobs:
         env:
           BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
           MODE: ${{ github.event.inputs.mode || 'site' }}
+          PULT_CHAT_ENABLED: ${{ vars.PULT_CHAT_ENABLED }}
         run: |
           set -eu
           echo "Running sales pult in mode: $MODE"
           if [ "$MODE" = "site" ]; then
             npm run bitrix:sales-pult -- --mode site
-          elif [ "$MODE" = "morning" ]; then
-            npm run bitrix:sales-pult -- --mode morning --execute
-          elif [ "$MODE" = "evening" ]; then
-            npm run bitrix:sales-pult -- --mode evening --execute
           else
-            echo "Unknown mode: $MODE" >&2
-            exit 1
+            EXECUTE_FLAG=""
+            if [ "${PULT_CHAT_ENABLED:-}" = "true" ]; then
+              EXECUTE_FLAG="--execute"
+            else
+              echo "отправка в чат выключена (PULT_CHAT_ENABLED)"
+            fi
+
+            if [ "$MODE" = "morning" ]; then
+              npm run bitrix:sales-pult -- --mode morning $EXECUTE_FLAG
+            elif [ "$MODE" = "evening" ]; then
+              npm run bitrix:sales-pult -- --mode evening $EXECUTE_FLAG
+            else
+              echo "Unknown mode: $MODE" >&2
+              exit 1
+            fi
           fi
 
       - name: Deploy to Cloudflare Pages
