@@ -3,6 +3,7 @@
   "timezone": "Asia/Almaty",
   "timezoneOffsetHours": 5,
   "chatDialogId": "chat50617",
+  "proposalsTracked": false,
   "pultUrl": "https://f3-pult.pages.dev",
   "maxOverdueDays": 30,
   "topTaskCategories": [
