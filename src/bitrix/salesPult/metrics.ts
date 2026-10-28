@@ -140,8 +140,13 @@ export function getMetricStatus(fact: number, target: number): MetricStatus {
   return "red";
 }
 
+/** Default minimum talk time for a call to count towards the calls target. */
+export const DEFAULT_MIN_CALL_SECONDS = 30;
+
 /**
  * Calculates metrics for one manager on a single day.
+ * Calls target counts only answered calls (CALL_FAILED_CODE=200) lasting at least minCallSeconds;
+ * attempts and minutes on the line include every call / every answered call as before.
  */
 export function calculateDailyMetrics(params: {
   managerId: string;
@@ -150,16 +155,19 @@ export function calculateDailyMetrics(params: {
   kpTransitions: StageTransition[];
   contractTransitions: StageTransition[];
   deals: Map<string, DealInfo>;
+  minCallSeconds?: number;
 }): DailyActivityMetrics {
   const { managerId, date, calls, kpTransitions, contractTransitions, deals } = params;
+  const minCallSeconds = params.minCallSeconds ?? DEFAULT_MIN_CALL_SECONDS;
 
   // 1. Calls
   const dayCalls = calls.filter(
     (c) => String(c.userId) === String(managerId) && toAlmatyDate(c.startDate) === date
   );
   const totalAttempts = dayCalls.length;
-  const successfulCalls = dayCalls.filter((c) => String(c.statusCode) === "200");
-  const durationSeconds = successfulCalls.reduce((sum, c) => sum + (c.durationSeconds || 0), 0);
+  const answeredCalls = dayCalls.filter((c) => String(c.statusCode) === "200");
+  const successfulCalls = answeredCalls.filter((c) => (c.durationSeconds || 0) >= minCallSeconds);
+  const durationSeconds = answeredCalls.reduce((sum, c) => sum + (c.durationSeconds || 0), 0);
   const durationMinutes = Math.round(durationSeconds / 60);
 
   // 2. Proposals (unique deals transitioned into proposal stages)

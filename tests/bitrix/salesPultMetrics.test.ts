@@ -90,6 +90,35 @@ describe("salesPultMetrics", () => {
     expect(metrics.calls.hasBitrixCalls).toBe(true);
   });
 
+  it("counts towards the calls target only answered calls of at least minCallSeconds", () => {
+    const calls: CallRecord[] = [
+      { id: "c1", userId: "2373", statusCode: "200", durationSeconds: 29, startDate: "2026-10-27T10:00:00+05:00" },
+      { id: "c2", userId: "2373", statusCode: "200", durationSeconds: 30, startDate: "2026-10-27T10:05:00+05:00" },
+      { id: "c3", userId: "2373", statusCode: "200", durationSeconds: 95, startDate: "2026-10-27T10:10:00+05:00" },
+      { id: "c4", userId: "2373", statusCode: "200", durationSeconds: 8, startDate: "2026-10-27T10:20:00+05:00" },
+      { id: "c5", userId: "2373", statusCode: "304", durationSeconds: 0, startDate: "2026-10-27T10:25:00+05:00" },
+      { id: "c6", userId: "2373", statusCode: "603", durationSeconds: 40, startDate: "2026-10-27T10:30:00+05:00" }
+    ];
+    const base = {
+      managerId: "2373",
+      date: "2026-10-27",
+      calls,
+      kpTransitions: [],
+      contractTransitions: [],
+      deals: new Map<string, DealInfo>()
+    };
+
+    const byDefault = calculateDailyMetrics(base);
+    expect(byDefault.calls.successful).toBe(2);
+    // Attempts and minutes on the line are not affected by the threshold.
+    expect(byDefault.calls.totalAttempts).toBe(6);
+    expect(byDefault.calls.durationSeconds).toBe(162);
+    expect(byDefault.calls.durationMinutes).toBe(3);
+
+    expect(calculateDailyMetrics({ ...base, minCallSeconds: 60 }).calls.successful).toBe(1);
+    expect(calculateDailyMetrics({ ...base, minCallSeconds: 0 }).calls.successful).toBe(4);
+  });
+
   it("calculates weekly and monthly rollups with target thresholds", () => {
     const targets = {
       daily: { calls: 15, proposals: 3, contracts: 1 },

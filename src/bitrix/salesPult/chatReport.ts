@@ -1,4 +1,4 @@
-import type { ManagerRollups, TopTask, TargetsConfig } from "./metrics.js";
+import { toAlmatyDate, type ManagerRollups, type TopTask, type TargetsConfig } from "./metrics.js";
 
 export function formatMoney(amount: number): string {
   if (!amount || Number.isNaN(amount)) return "0 ₸";
@@ -282,4 +282,90 @@ export function parseManualReport(rawText: string): ParsedManualReport {
     week,
     month
   };
+}
+
+/**
+ * Managers post the morning plan and the evening report with the same template. Neither the
+ * heading word ("Ежедневный план" is used in the evening, "отчет" in the morning) nor the date in
+ * the header (often copied from the previous post) is reliable in chat50617. The posting time is:
+ * morning plans arrive before ~13:30 Almaty, evening reports after ~17:00. A message posted at or
+ * after this Almaty hour is the evening report for the Almaty date it was posted on.
+ */
+export const EVENING_REPORT_FROM_HOUR_ALMATY = 15;
+
+const DAILY_SECTION_RE = /Ежедневный\s+(?:план|отч[её]т)/i;
+
+export interface ManualChatMessage {
+  id?: number | string;
+  text?: string | null;
+  date?: string;
+  author_id?: number | string;
+}
+
+export interface EveningManualReport {
+  managerId: string;
+  managerName: string;
+  date: string;
+  postedAt: string;
+  report: ParsedManualReport;
+}
+
+function findManagerForMessage(
+  managers: Array<{ id: string; name: string }>,
+  authorId: string,
+  parsedName?: string
+): { id: string; name: string } | undefined {
+  const byAuthor = managers.find((m) => m.id === authorId);
+  if (byAuthor) return byAuthor;
+  const name = (parsedName ?? "").trim().toLowerCase();
+  if (name.length < 3) return undefined;
+  return managers.find((m) => {
+    const managerName = m.name.toLowerCase();
+    return managerName.includes(name) || name.includes(managerName);
+  });
+}
+
+/**
+ * Picks the last evening manual report per manager and posting date (newest date first).
+ * The manager is resolved by message author, falling back to the name inside the report.
+ */
+export function selectEveningManualReports(
+  messages: ManualChatMessage[],
+  managers: Array<{ id: string; name: string }>,
+  fromDate: string
+): EveningManualReport[] {
+  const latest = new Map<string, EveningManualReport & { postedMs: number }>();
+
+  for (const msg of messages) {
+    if (!msg.text || !msg.date || !DAILY_SECTION_RE.test(msg.text)) continue;
+    const postedMs = Date.parse(msg.date);
+    if (Number.isNaN(postedMs)) continue;
+
+    const date = toAlmatyDate(msg.date);
+    if (date < fromDate) continue;
+    const eveningFromMs = Date.parse(
+      `${date}T${String(EVENING_REPORT_FROM_HOUR_ALMATY).padStart(2, "0")}:00:00+05:00`
+    );
+    if (postedMs < eveningFromMs) continue;
+
+    const report = parseManualReport(msg.text);
+    const manager = findManagerForMessage(managers, String(msg.author_id ?? ""), report.managerName);
+    if (!manager) continue;
+
+    const key = `${manager.id}|${date}`;
+    const existing = latest.get(key);
+    if (existing && existing.postedMs >= postedMs) continue;
+    latest.set(key, {
+      managerId: manager.id,
+      managerName: manager.name,
+      date,
+      postedAt: msg.date,
+      postedMs,
+      report
+    });
+  }
+
+  return [...latest.values()]
+    .sort((a, b) => b.date.localeCompare(a.date) || a.managerName.localeCompare(b.managerName, "ru"))
+    .map(({ postedMs: _postedMs, ...entry }) => entry);
 }

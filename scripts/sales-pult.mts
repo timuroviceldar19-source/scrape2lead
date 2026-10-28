@@ -17,6 +17,7 @@ import {
   getDateRange,
   calculateDailyMetrics,
   calculateRollups,
+  DEFAULT_MIN_CALL_SECONDS,
   type DailyActivityMetrics,
   type ManagerRollups,
   type TopTask
@@ -25,7 +26,7 @@ import {
   buildMorningReport,
   buildEveningReport,
   isReportAlreadySent,
-  parseManualReport,
+  selectEveningManualReports,
   formatMoney,
   type ParsedManualReport
 } from "../src/bitrix/salesPult/chatReport.js";
@@ -45,6 +46,8 @@ export interface PultConfig {
   maxOverdueDays?: number;
   topTaskCategories?: number[];
   holidays?: string[];
+  /** Minimum talk time (seconds) for an answered call to count towards the calls target. */
+  minCallSeconds?: number;
   targets: {
     daily: { calls: number; proposals: number; contracts: number };
     weekly: { calls: number; proposals: number; contracts: number };
@@ -167,6 +170,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
 
   const config = loadConfig();
+  const minCallSeconds = config.minCallSeconds ?? DEFAULT_MIN_CALL_SECONDS;
   const webhookUrl = process.env.BITRIX24_WEBHOOK_URL?.trim();
   if (!webhookUrl) {
     throw new Error("Missing BITRIX24_WEBHOOK_URL in environment (.env)");
@@ -203,16 +207,10 @@ export async function runSalesPult(args: string[]): Promise<void> {
     const cutoffDate = cutoffObj.toISOString().slice(0, 10);
 
     const messages = await fetchChatMessagesSince(reader, config.chatDialogId, cutoffDate);
-    const manualReports: ParsedManualReport[] = [];
-    for (const msg of messages) {
-      if (!msg.text) continue;
-      const parsed = parseManualReport(msg.text);
-      if (parsed.managerName && parsed.date && parsed.date >= cutoffDate) {
-        manualReports.push(parsed);
-      }
-    }
+    const allManagers = config.groups.flatMap((g) => g.managers);
+    const manualReports = selectEveningManualReports(messages, allManagers, cutoffDate);
 
-    console.log(`Найдено ручных отчетов в чате: ${manualReports.length}`);
+    console.log(`Найдено вечерних ручных отчетов в чате: ${manualReports.length}`);
 
     // Load auto data from earliest manual report or startDate
     const earliestReportDate = manualReports.reduce(
@@ -245,7 +243,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
             calls: collected.calls,
             kpTransitions: collected.kpTransitions,
             contractTransitions: collected.contractTransitions,
-            deals: collected.deals
+            deals: collected.deals,
+            minCallSeconds
           })
         );
       }
@@ -258,14 +257,10 @@ export async function runSalesPult(args: string[]): Promise<void> {
     const latestRollupsByManager = new Map<string, ManagerRollups>();
     const latestManualReportByManager = new Map<string, ParsedManualReport>();
 
-    for (const rep of manualReports) {
-      const mgr = config.groups.flatMap((g) => g.managers).find(
-        (m) => m.name.toLowerCase().includes((rep.managerName ?? "").toLowerCase()) ||
-               (rep.managerName ?? "").toLowerCase().includes(m.name.toLowerCase())
-      );
-      if (!mgr) continue;
-
-      const dateStr = rep.date ?? todayAlmaty;
+    for (const entry of manualReports) {
+      const rep = entry.report;
+      const mgr = { id: entry.managerId, name: entry.managerName };
+      const dateStr = entry.date;
       const rollups = calculateRollups({
         managerId: mgr.id,
         asOfDate: dateStr,
@@ -477,7 +472,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
           calls: collected.calls,
           kpTransitions: collected.kpTransitions,
           contractTransitions: collected.contractTransitions,
-          deals: collected.deals
+          deals: collected.deals,
+          minCallSeconds
         })
       );
     }
