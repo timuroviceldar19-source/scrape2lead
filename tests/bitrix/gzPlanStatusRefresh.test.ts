@@ -85,11 +85,65 @@ describe("decideRefresh", () => {
     expect(decideRefresh(empty, "Утвержден", "t").kind).toBe("update");
   });
 
-  it("ranks the lifecycle in order", () => {
+  it("ranks the lifecycle in order and includes new statuses", () => {
     const order = ["Утвержден", "Опубликован", "Заявка", "Закупка состоялась", "Проект договора", "Договор действует", "Исполнен"];
     const ranks = order.map((status) => getStatusRank(status) as number);
     expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
     expect(getStatusRank("ДОГОВОР ДЕЙСТВУЕТ")).toBe(getStatusRank("Договор действует"));
+
+    expect(getStatusRank("Ожидает подтверждения")).toBe(0);
+    expect(getStatusRank("Изменен")).toBe(0);
+    expect(getStatusRank("Отказ от закупки")).toBe(7);
+    expect(getStatusRank("Отказ от закупки")).toBe(getStatusRank("Исполнен"));
+  });
+
+  it("permits re-procurement transitions without treating them as downgrades", () => {
+    // Deal 49825, plan 88169954: "Закупка не состоялась" -> "Опубликован"
+    const reprocured = decideRefresh(
+      deal(49825, "88169954", "Закупка не состоялась"),
+      "Опубликован",
+      NOW.toISOString()
+    );
+    expect(reprocured).toMatchObject({
+      kind: "update",
+      from: "Закупка не состоялась",
+      to: "Опубликован",
+      isSync: false
+    });
+
+    // Variants of cancelled / not concluded
+    expect(decideRefresh(deal(1, "100", "Отменен"), "Утвержден", NOW.toISOString())).toMatchObject({
+      kind: "update", from: "Отменен", to: "Утвержден"
+    });
+    expect(decideRefresh(deal(2, "100", "Закупка не состоялась. Изменен"), "Проект заявки", NOW.toISOString())).toMatchObject({
+      kind: "update", from: "Закупка не состоялась. Изменен", to: "Проект заявки"
+    });
+    expect(decideRefresh(deal(3, "100", "Договор не заключен"), "Заявка", NOW.toISOString())).toMatchObject({
+      kind: "update", from: "Договор не заключен", to: "Заявка"
+    });
+    expect(decideRefresh(deal(4, "100", "Договор не заключен. Изменен."), "На проверке камерального контроля", NOW.toISOString())).toMatchObject({
+      kind: "update", from: "Договор не заключен. Изменен.", to: "На проверке камерального контроля"
+    });
+
+    // Genuine downgrades remain rejected
+    expect(decideRefresh(deal(5, "100", "Договор действует"), "Опубликован", NOW.toISOString())).toEqual({
+      kind: "downgrade", crmStatus: "Договор действует", apiStatus: "Опубликован"
+    });
+    expect(decideRefresh(deal(6, "100", "Закупка состоялась"), "Опубликован", NOW.toISOString())).toEqual({
+      kind: "downgrade", crmStatus: "Закупка состоялась", apiStatus: "Опубликован"
+    });
+  });
+
+  it("flags field synchronization when status is unchanged but one field was missing", () => {
+    const missingLegacy = deal(1, "100", "Опубликован", { UF_CRM_6627AEBD85B4D: "", UF_CRM_S2L_GZ_PUBLISHED_AT: "x" });
+    const decision = decideRefresh(missingLegacy, "Опубликован", NOW.toISOString());
+    expect(decision).toMatchObject({
+      kind: "update",
+      from: "Опубликован",
+      to: "Опубликован",
+      isSync: true,
+      fields: { UF_CRM_6627AEBD85B4D: "Опубликован" }
+    });
   });
 });
 
@@ -182,6 +236,53 @@ describe("runPlanStatusRefresh", () => {
     const report = await runPlanStatusRefresh(deps, { execute: false });
     expect(report.skippedInvalidPlanNumber).toHaveLength(1);
     expect(deps.fetchStatuses).not.toHaveBeenCalled();
+  });
+
+  it("honors --limit by writing only the first N changes in execute mode", async () => {
+    const deals = [deal(1, "100"), deal(2, "200"), deal(3, "300")];
+    const api = { "100": "Опубликован", "200": "Опубликован", "300": "Опубликован" };
+    const deps = makeDeps(deals, api);
+    const report = await runPlanStatusRefresh(deps, { execute: true, limit: 2 });
+    expect(report.toUpdate).toBe(3);
+    expect(report.limit).toBe(2);
+    expect(report.updated).toBe(2);
+    expect(deps.writeUpdates).toHaveBeenCalledTimes(1);
+    const [writtenUpdates] = deps.writeUpdates.mock.calls[0];
+    expect(writtenUpdates).toHaveLength(2);
+    expect(writtenUpdates.map((u: { dealId: string }) => u.dealId)).toEqual(["1", "2"]);
+    expect(formatReportLines(report).some((line) => line.includes("обновлено: 2 (из 3 по лимиту 2)"))).toBe(true);
+  });
+
+  it("honors --deal by restricting processing to that single deal", async () => {
+    const deals = [deal(1, "100"), deal(2, "200"), deal(3, "300")];
+    const api = { "100": "Опубликован", "200": "Опубликован", "300": "Опубликован" };
+    const deps = makeDeps(deals, api);
+    const report = await runPlanStatusRefresh(deps, { execute: true, dealId: "2" });
+    expect(report.totalDeals).toBe(1);
+    expect(report.dealId).toBe("2");
+    expect(report.toUpdate).toBe(1);
+    expect(report.updated).toBe(1);
+    expect(deps.writeUpdates).toHaveBeenCalledTimes(1);
+    const [writtenUpdates] = deps.writeUpdates.mock.calls[0];
+    expect(writtenUpdates.map((u: { dealId: string }) => u.dealId)).toEqual(["2"]);
+  });
+
+  it("separates real transitions and second field synchronization in reports", async () => {
+    const deals = [
+      deal(1, "100", "Утвержден"), // transition to Опубликован
+      deal(2, "200", "Опубликован", { UF_CRM_6627AEBD85B4D: "", UF_CRM_S2L_GZ_PUBLISHED_AT: "x" }) // sync second field
+    ];
+    const api = { "100": "Опубликован", "200": "Опубликован" };
+    const deps = makeDeps(deals, api);
+    const report = await runPlanStatusRefresh(deps, { execute: false });
+    expect(report.toUpdate).toBe(2);
+    expect(report.transitionsCount).toBe(1);
+    expect(report.syncCount).toBe(1);
+    expect(report.transitionPairs).toEqual([{ from: "Утвержден", to: "Опубликован", count: 1 }]);
+    expect(report.syncPairs).toEqual([{ from: "Опубликован", to: "Опубликован", count: 1 }]);
+    const lines = formatReportLines(report);
+    expect(lines.some((l) => l.includes("реальные переходы (1)"))).toBe(true);
+    expect(lines.some((l) => l.includes("синхронизация второго поля (1)"))).toBe(true);
   });
 });
 

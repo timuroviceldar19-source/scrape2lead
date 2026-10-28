@@ -16,8 +16,33 @@ import { createBatchDealUpdater } from "../src/bitrix/gzPlanStatusWriter.js";
 
 const REPORT_DIR = join("runs", "gz-plan-status");
 
+function parseCliArgs(argv: string[]): { execute: boolean; dealId: string | null; limit: number | null } {
+  const execute = argv.includes("--execute");
+  let dealId: string | null = null;
+  let limit: number | null = null;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--deal" && i + 1 < argv.length) {
+      dealId = argv[i + 1].trim();
+      i++;
+    } else if (arg.startsWith("--deal=")) {
+      dealId = arg.slice("--deal=".length).trim();
+    } else if (arg === "--limit" && i + 1 < argv.length) {
+      const parsed = parseInt(argv[i + 1], 10);
+      if (!Number.isNaN(parsed) && parsed > 0) limit = parsed;
+      i++;
+    } else if (arg.startsWith("--limit=")) {
+      const parsed = parseInt(arg.slice("--limit=".length), 10);
+      if (!Number.isNaN(parsed) && parsed > 0) limit = parsed;
+    }
+  }
+
+  return { execute, dealId: dealId || null, limit };
+}
+
 async function main(): Promise<void> {
-  const execute = process.argv.includes("--execute");
+  const cli = parseCliArgs(process.argv.slice(2));
   const webhookUrl = process.env.BITRIX24_WEBHOOK_URL?.trim();
   const token = process.env.GOSZAKUP_TOKEN?.trim();
   if (!webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
@@ -31,18 +56,21 @@ async function main(): Promise<void> {
       listDeals: async () => {
         const allDeals: Array<RefreshDeal & Record<string, unknown>> = [];
         for (const categoryId of GZ_REFRESH_PIPELINE_IDS) {
+          const filter: Record<string, unknown> = {
+            CLOSED: "N",
+            CATEGORY_ID: categoryId,
+            [`!${GZ_REFRESH_PLAN_NUMBER_FIELD}`]: ""
+          };
+          if (cli.dealId) filter.ID = cli.dealId;
           console.error(`Fetching open deals from Bitrix (category ${categoryId})...`);
           const deals = await reader.listAllBatched<RefreshDeal & Record<string, unknown>>("crm.deal.list", {
             order: { ID: "ASC" },
-            filter: {
-              CLOSED: "N",
-              CATEGORY_ID: categoryId,
-              [`!${GZ_REFRESH_PLAN_NUMBER_FIELD}`]: ""
-            },
+            filter,
             select: [...GZ_REFRESH_DEAL_SELECT]
           });
           console.error(`Fetched ${deals.length} deals in category ${categoryId}.`);
           allDeals.push(...deals);
+          if (cli.dealId && allDeals.length > 0) break;
         }
         return allDeals;
       },
@@ -50,7 +78,7 @@ async function main(): Promise<void> {
       writeUpdates: updateDeals,
       now: () => new Date()
     },
-    { execute }
+    { execute: cli.execute, limit: cli.limit, dealId: cli.dealId }
   );
 
   await mkdir(REPORT_DIR, { recursive: true });

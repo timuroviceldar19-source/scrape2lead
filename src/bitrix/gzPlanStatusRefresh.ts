@@ -24,7 +24,7 @@ export const GZ_REFRESH_DEAL_SELECT = [
  * Statuses missing from this table are never compared (see unknown-status skip).
  */
 const STATUS_RANKS: ReadonlyArray<readonly [number, readonly string[]]> = [
-  [0, ["Утвержден", "На проверке камерального контроля"]],
+  [0, ["Утвержден", "На проверке камерального контроля", "Ожидает подтверждения", "Изменен"]],
   [1, ["Опубликован"]],
   [2, ["Проект заявки"]],
   [3, [
@@ -41,7 +41,10 @@ const STATUS_RANKS: ReadonlyArray<readonly [number, readonly string[]]> = [
     "Договор не заключен, отказ от первого победителя"
   ]],
   [6, ["Договор действует", "Договор изменен"]],
-  [7, ["Исполнен", "Договор частично исполнен", "Договор не исполнен. Нет платежей"]]
+  [7, [
+    "Исполнен", "Договор частично исполнен", "Договор не исполнен. Нет платежей",
+    "Отказ от закупки"
+  ]]
 ];
 
 const RANK_BY_STATUS = new Map<string, number>(
@@ -50,6 +53,27 @@ const RANK_BY_STATUS = new Map<string, number>(
 
 export function getStatusRank(status: string): number | null {
   return RANK_BY_STATUS.get(normalizeRu(status)) ?? null;
+}
+
+export const REPROCUREMENT_API_STATUS_NAMES = new Set([
+  "утвержден",
+  "на проверке камерального контроля",
+  "опубликован",
+  "проект заявки",
+  "заявка"
+]);
+
+export function isReProcurementCrmStatus(status: string): boolean {
+  const norm = normalizeRu(status).replace(/[.\s]+$/, "");
+  return (
+    norm.startsWith("закупка не состоялась") ||
+    norm.startsWith("отменен") ||
+    norm.startsWith("договор не заключен")
+  );
+}
+
+export function isReProcurementApiStatus(status: string): boolean {
+  return REPROCUREMENT_API_STATUS_NAMES.has(normalizeRu(status).replace(/[.\s]+$/, ""));
 }
 
 export interface RefreshDeal extends PublishedDealSnapshot {
@@ -78,7 +102,7 @@ export interface PlanStatusRefreshDeps {
 }
 
 export type RefreshDecision =
-  | { kind: "update"; from: string; to: string; fields: Record<string, string> }
+  | { kind: "update"; from: string; to: string; isSync: boolean; fields: Record<string, string> }
   | { kind: "unchanged" }
   | { kind: "downgrade"; crmStatus: string; apiStatus: string }
   | { kind: "unknown-status"; crmStatus: string; apiStatus: string };
@@ -91,13 +115,19 @@ export function decideRefresh(deal: RefreshDeal, apiStatus: string, detectedAt: 
   const isSameStatus = normalizeRu(crmStatus) === normalizeRu(apiStatus);
   if (!isSameStatus && crmStatus) {
     if (apiRank === null || crmRank === null) return { kind: "unknown-status", crmStatus, apiStatus };
-    if (crmRank > apiRank) return { kind: "downgrade", crmStatus, apiStatus };
+    if (crmRank > apiRank) {
+      const isReProcurement = isReProcurementCrmStatus(crmStatus) && isReProcurementApiStatus(apiStatus);
+      if (!isReProcurement) {
+        return { kind: "downgrade", crmStatus, apiStatus };
+      }
+    }
   }
 
   const isPublished = normalizeRu(apiStatus) === normalizeRu(GZ_PUBLISHED_STATUS_NAME);
   const fields = buildStatusFieldUpdates(deal, apiStatus, detectedAt, isPublished);
   if (Object.keys(fields).length === 0) return { kind: "unchanged" };
-  return { kind: "update", from: crmStatus, to: apiStatus, fields };
+  const isSync = Boolean(crmStatus && normalizeRu(crmStatus) === normalizeRu(apiStatus));
+  return { kind: "update", from: crmStatus, to: apiStatus, isSync, fields };
 }
 
 export interface PlannedUpdate {
@@ -106,6 +136,7 @@ export interface PlannedUpdate {
   planNumber: string;
   from: string;
   to: string;
+  isSync: boolean;
   fields: Record<string, string>;
 }
 
@@ -125,6 +156,8 @@ export interface RefreshError {
 
 export interface PlanStatusRefreshReport {
   mode: "dry-run" | "execute";
+  limit: number | null;
+  dealId: string | null;
   date: string;
   startedAt: string;
   finishedAt: string;
@@ -132,6 +165,10 @@ export interface PlanStatusRefreshReport {
   foundInApi: number;
   unchanged: number;
   toUpdate: number;
+  transitionsCount: number;
+  syncCount: number;
+  transitionPairs: Array<{ from: string; to: string; count: number }>;
+  syncPairs: Array<{ from: string; to: string; count: number }>;
   updatePairs: Array<{ from: string; to: string; count: number }>;
   updates: PlannedUpdate[];
   updated: number;
@@ -143,6 +180,12 @@ export interface PlanStatusRefreshReport {
   errors: RefreshError[];
 }
 
+export interface PlanStatusRefreshOptions {
+  execute: boolean;
+  limit?: number | null;
+  dealId?: string | null;
+}
+
 interface PreparedDeal {
   deal: RefreshDeal;
   dealId: string;
@@ -152,11 +195,15 @@ interface PreparedDeal {
 
 export async function runPlanStatusRefresh(
   deps: PlanStatusRefreshDeps,
-  options: { execute: boolean }
+  options: PlanStatusRefreshOptions
 ): Promise<PlanStatusRefreshReport> {
   const startedAt = deps.now();
   const detectedAt = startedAt.toISOString();
-  const deals = await deps.listDeals();
+  const allDeals = await deps.listDeals();
+  const normalizedDealId = options.dealId ? String(options.dealId).trim() : null;
+  const deals = normalizedDealId
+    ? allDeals.filter((d) => text(d.ID) === normalizedDealId)
+    : allDeals;
 
   const prepared: PreparedDeal[] = [];
   const invalid: PlanStatusRefreshReport["skippedInvalidPlanNumber"] = [];
@@ -202,23 +249,41 @@ export async function runPlanStatusRefresh(
     if (decision.kind === "unchanged") unchanged += 1;
     else if (decision.kind === "update") {
       updates.push({
-        dealId: entry.dealId, title: entry.title, planNumber: entry.planNumber,
-        from: decision.from, to: decision.to, fields: decision.fields
+        dealId: entry.dealId,
+        title: entry.title,
+        planNumber: entry.planNumber,
+        from: decision.from,
+        to: decision.to,
+        isSync: decision.isSync,
+        fields: decision.fields
       });
     } else {
       const skipped = {
-        dealId: entry.dealId, title: entry.title, planNumber: entry.planNumber,
-        crmStatus: decision.crmStatus, apiStatus: decision.apiStatus
+        dealId: entry.dealId,
+        title: entry.title,
+        planNumber: entry.planNumber,
+        crmStatus: decision.crmStatus,
+        apiStatus: decision.apiStatus
       };
       (decision.kind === "downgrade" ? downgrades : unknownStatuses).push(skipped);
     }
   }
 
-  const written = options.execute ? await writeAll(deps, updates, errors) : new Set<string>();
+  let updatesToWrite = updates;
+  if (options.limit != null && options.limit > 0) {
+    updatesToWrite = updatesToWrite.slice(0, options.limit);
+  }
+
+  const written = options.execute ? await writeAll(deps, updatesToWrite, errors) : new Set<string>();
   const finishedAt = deps.now();
+
+  const transitions = updates.filter((u) => !u.isSync);
+  const syncs = updates.filter((u) => u.isSync);
 
   return {
     mode: options.execute ? "execute" : "dry-run",
+    limit: options.limit ?? null,
+    dealId: normalizedDealId,
     date: formatLocalDate(startedAt),
     startedAt: detectedAt,
     finishedAt: finishedAt.toISOString(),
@@ -226,6 +291,10 @@ export async function runPlanStatusRefresh(
     foundInApi,
     unchanged,
     toUpdate: updates.length,
+    transitionsCount: transitions.length,
+    syncCount: syncs.length,
+    transitionPairs: countPairs(transitions),
+    syncPairs: countPairs(syncs),
     updatePairs: countPairs(updates),
     updates,
     updated: written.size,
@@ -285,13 +354,35 @@ function describeDeal(deal: RefreshDeal): PreparedDeal {
 
 export function formatReportLines(report: PlanStatusRefreshReport): string[] {
   const label = (value: string) => value || "—";
+  const flags = [
+    `mode=${report.mode}`,
+    `date=${report.date}`,
+    report.dealId ? `deal=${report.dealId}` : null,
+    report.limit ? `limit=${report.limit}` : null
+  ].filter(Boolean).join(" ");
+
   const lines = [
-    `gz plan status refresh: mode=${report.mode} date=${report.date}`,
+    `gz plan status refresh: ${flags}`,
     `всего сделок: ${report.totalDeals}`,
     `найдено в API: ${report.foundInApi}`,
     `без изменений: ${report.unchanged}`,
-    `${report.mode === "execute" ? "обновлено" : "будет обновлено"}: ${report.mode === "execute" ? report.updated : report.toUpdate}`,
-    ...report.updatePairs.map((pair) => `  ${label(pair.from)} → ${pair.to}: ${pair.count}`),
+    `${report.mode === "execute" ? "обновлено" : "будет обновлено"}: ${
+      report.mode === "execute"
+        ? `${report.updated}${report.limit ? ` (из ${report.toUpdate} по лимиту ${report.limit})` : ""}`
+        : `${report.toUpdate} (переходов: ${report.transitionsCount}, синхронизация полей: ${report.syncCount})`
+    }`
+  ];
+
+  if (report.transitionPairs.length > 0) {
+    lines.push(`  реальные переходы (${report.transitionsCount}):`);
+    lines.push(...report.transitionPairs.map((pair) => `    ${label(pair.from)} → ${pair.to}: ${pair.count}`));
+  }
+  if (report.syncPairs.length > 0) {
+    lines.push(`  синхронизация второго поля (${report.syncCount}):`);
+    lines.push(...report.syncPairs.map((pair) => `    ${label(pair.from)} → ${pair.to}: ${pair.count}`));
+  }
+
+  lines.push(
     `не найдено в API: ${report.notFound}`,
     `пропущено: ${report.skipped}`,
     ...report.skippedDowngrade.map(
@@ -305,13 +396,13 @@ export function formatReportLines(report: PlanStatusRefreshReport): string[] {
     ),
     `ошибки: ${report.errors.length}`,
     ...report.errors.map((error) => `  ${error.dealId ?? "-"} ${error.planNumber ?? "-"}: ${error.message}`)
-  ];
+  );
   if (report.mode === "dry-run" && report.updates.length > 0) {
     lines.push(`первые ${Math.min(DRY_RUN_PREVIEW_LIMIT, report.updates.length)} изменений (сделка, номер плана, было → стало):`);
     lines.push(
       ...report.updates
         .slice(0, DRY_RUN_PREVIEW_LIMIT)
-        .map((update) => `  ${update.dealId}, ${update.planNumber}, ${label(update.from)} → ${update.to}`)
+        .map((update) => `  ${update.dealId}, ${update.planNumber}, ${label(update.from)} → ${update.to}${update.isSync ? " (синхронизация полей)" : ""}`)
     );
   }
   return lines;
