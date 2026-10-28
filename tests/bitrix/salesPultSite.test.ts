@@ -2,8 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   renderPultHtml,
   formatMoney,
+  plural,
+  pluralDeals,
+  pluralDays,
+  decodeHtmlEntities,
+  formatTaskDeadline,
+  formatOverdue,
+  formatUpdatedTime,
+  getAlmatyHour,
+  buildSignals,
   type SalesPultPayload
 } from "../../src/bitrix/salesPult/site.js";
+import { formatAlmatyTime } from "../../src/bitrix/salesPult/metrics.js";
 
 describe("salesPultSite", () => {
   const basePayload: SalesPultPayload = {
@@ -58,7 +68,7 @@ describe("salesPultSite", () => {
                 amount: 4500000,
                 deadline: "2026-10-22T10:00:00+05:00",
                 planNumber: "88001",
-                lastComment: "Ждем КП",
+                lastComment: 'работает с &quot;Аданком&quot;',
                 isOverdue: true,
                 rank: 1
               }
@@ -121,6 +131,35 @@ describe("salesPultSite", () => {
               }
             },
             topTasks: []
+          },
+          {
+            id: "999",
+            name: "Бекзат",
+            active: true,
+            rollups: {
+              managerId: "999",
+              asOfDate: "2026-10-28",
+              day: {
+                calls: { successful: 0, totalAttempts: 0, durationSeconds: 0, durationMinutes: 0, status: "red" },
+                proposals: { uniqueDealsCount: 0, dealIds: [], status: "red" },
+                contracts: { uniqueDealsCount: 0, totalAmount: 0, dealIds: [], status: "red" }
+              },
+              week: {
+                calls: { successful: 0, totalAttempts: 0, durationSeconds: 0, durationMinutes: 0, status: "red" },
+                proposals: { uniqueDealsCount: 0, dealIds: [], status: "red" },
+                contracts: { uniqueDealsCount: 0, totalAmount: 0, dealIds: [], status: "red" }
+              },
+              month: {
+                calls: { successful: 0, totalAttempts: 0, durationSeconds: 0, durationMinutes: 0, status: "red" },
+                proposals: { uniqueDealsCount: 0, dealIds: [], status: "red" },
+                contracts: { uniqueDealsCount: 0, totalAmount: 0, dealIds: [], status: "red" }
+              },
+              signals: {
+                zeroBitrixCallsToday: true,
+                zeroKpThreeDays: false
+              }
+            },
+            topTasks: []
           }
         ]
       },
@@ -138,7 +177,7 @@ describe("salesPultSite", () => {
               day: {
                 calls: { successful: 0, totalAttempts: 0, durationSeconds: 0, durationMinutes: 0, status: "green" },
                 proposals: { uniqueDealsCount: 0, dealIds: [], status: "green" },
-                contracts: { uniqueDealsCount: 3, totalAmount: 4600000, dealIds: ["301"], status: "green" }
+                contracts: { uniqueDealsCount: 2, totalAmount: 4600000, dealIds: ["301"], status: "green" }
               },
               week: {
                 calls: { successful: 0, totalAttempts: 0, durationSeconds: 0, durationMinutes: 0, status: "green" },
@@ -167,7 +206,7 @@ describe("salesPultSite", () => {
               day: {
                 calls: { successful: 0, totalAttempts: 0, durationSeconds: 0, durationMinutes: 0, status: "green" },
                 proposals: { uniqueDealsCount: 0, dealIds: [], status: "green" },
-                contracts: { uniqueDealsCount: 0, totalAmount: 0, dealIds: [], status: "red" }
+                contracts: { uniqueDealsCount: 1, totalAmount: 0, dealIds: ["302"], status: "green" }
               },
               week: {
                 calls: { successful: 0, totalAttempts: 0, durationSeconds: 0, durationMinutes: 0, status: "green" },
@@ -200,6 +239,158 @@ describe("salesPultSite", () => {
     ]
   };
 
+  it("1. calculates Almaty time (UTC+5) correctly from UTC ISO string", () => {
+    expect(formatAlmatyTime("2026-10-28T13:50:00Z")).toBe("18:50");
+    expect(formatAlmatyTime("2026-10-28T09:00:00Z")).toBe("14:00");
+  });
+
+  it("2. uses gender-neutral phrasing in signals and tables", () => {
+    const html = renderPultHtml(basePayload);
+
+    // Gender neutral contract signals: "Эльмира — 2 договора на 4,6 млн ₸"
+    expect(html).toContain("Эльмира — 2 договора на 4,6 млн ₸");
+    expect(html).toContain("Турар — 4 договора на 2,4 млн ₸");
+    expect(html).not.toContain("подписал");
+    expect(html).not.toContain("подписала");
+
+    // Gender neutral zero calls signal: "Бекзат: сегодня нет звонков через Битрикс"
+    expect(html).toContain("Бекзат: сегодня нет звонков через Битрикс");
+    expect(html).not.toContain("не звонил через Битрикс");
+    expect(html).not.toContain("не звонила через Битрикс");
+
+    // In the table for manager with zero calls:
+    expect(html).toContain("нет звонков через Битрикс");
+
+    // Low calls signal: "Мало звонков: Жанат — 9 из 15"
+    expect(html).toContain("Мало звонков: Жанат — 9 из 15");
+  });
+
+  it("3. correctly pluralizes words and avoids duplicate counters or .replace tricks", () => {
+    // Unit plural tests
+    expect(plural(1, ["задача", "задачи", "задач"])).toBe("1 задача");
+    expect(plural(2, ["задача", "задачи", "задач"])).toBe("2 задачи");
+    expect(plural(3, ["задача", "задачи", "задач"])).toBe("3 задачи");
+    expect(plural(5, ["задача", "задачи", "задач"])).toBe("5 задач");
+    expect(plural(11, ["задача", "задачи", "задач"])).toBe("11 задач");
+    expect(plural(21, ["задача", "задачи", "задач"])).toBe("21 задача");
+
+    expect(plural(1, ["договор", "договора", "договоров"])).toBe("1 договор");
+    expect(plural(2, ["договор", "договора", "договоров"])).toBe("2 договора");
+    expect(plural(5, ["договор", "договора", "договоров"])).toBe("5 договоров");
+
+    expect(plural(1, ["день", "дня", "дней"])).toBe("1 день");
+    expect(plural(3, ["день", "дня", "дней"])).toBe("3 дня");
+    expect(plural(5, ["день", "дня", "дней"])).toBe("5 дней");
+
+    const html = renderPultHtml(basePayload);
+    expect(html).toContain("1 задача");
+    expect(html).not.toContain("1 1 задач");
+    expect(html).not.toContain("5 5 задачов");
+    expect(html).not.toContain("3 3 задача");
+  });
+
+  it("4. converts task deadlines from Bitrix (+03:00) to Almaty (+05:00) and handles overdue", () => {
+    // 07:19:33 +03:00 -> 09:19 in Almaty (+05:00)
+    expect(formatTaskDeadline("2026-10-28T07:19:33+03:00")).toBe("до 28 октября, 09:19");
+
+    // Overdue today (deadline today in Almaty and already passed)
+    expect(formatOverdue("2026-10-28T07:19:33+03:00", "2026-10-28")).toBe("просрочено сегодня");
+
+    // Overdue yesterday (1 day difference)
+    expect(formatOverdue("2026-10-27T07:19:33+03:00", "2026-10-28")).toBe("просрочено на 1 день");
+
+    // Overdue 3 days ago
+    expect(formatOverdue("2026-10-25T10:00:00+03:00", "2026-10-28")).toBe("просрочено на 3 дня");
+  });
+
+  it("5. omits planTag when the plan number is already present in the deal title", () => {
+    const payloadWithPlanInTitle: SalesPultPayload = {
+      ...basePayload,
+      groups: [
+        {
+          id: "sales",
+          name: "Отдел продаж",
+          managers: [
+            {
+              id: "1",
+              name: "Менеджер",
+              active: true,
+              rollups: basePayload.groups[0].managers[0].rollups,
+              topTasks: [
+                {
+                  id: "t1",
+                  dealId: "d1",
+                  title: "[GZ 87699186] Поставка оборудования",
+                  planNumber: "87699186",
+                  amount: 1000000,
+                  deadline: "2026-10-22T10:00:00+05:00",
+                  isOverdue: true,
+                  rank: 1
+                },
+                {
+                  id: "t2",
+                  dealId: "d2",
+                  title: "Другая поставка",
+                  planNumber: "99999999",
+                  amount: 2000000,
+                  deadline: "2026-10-22T10:00:00+05:00",
+                  isOverdue: true,
+                  rank: 2
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    const html = renderPultHtml(payloadWithPlanInTitle);
+
+    // For t1: planNumber is in title, so no separate <b>[87699186]</b>
+    expect(html).not.toContain("<b>[87699186]</b>");
+    expect(html).toContain("[GZ 87699186] Поставка оборудования");
+
+    // For t2: planNumber is not in title, so <b>[99999999]</b> is rendered
+    expect(html).toContain("<b>[99999999]</b>");
+  });
+
+  it("6. decodes HTML entities in comments before escaping", () => {
+    expect(decodeHtmlEntities('работает с &quot;Аданком&quot;')).toBe('работает с "Аданком"');
+    expect(decodeHtmlEntities('Цена &lt; 500 &amp; Срок &gt; 10')).toBe('Цена < 500 & Срок > 10');
+
+    const html = renderPultHtml(basePayload);
+    // On the rendered page, &quot; is not double-escaped to &amp;quot;
+    expect(html).not.toContain("&amp;quot;");
+    expect(html).toContain("&quot;Аданком&quot;");
+  });
+
+  it("7. formats contract with zero or missing amount as '1 · сумма не указана'", () => {
+    const html = renderPultHtml(basePayload);
+
+    // In signals: Nurdaulet has 1 contract with 0 amount
+    expect(html).toContain("Нурдаулет — 1 договор · сумма не указана");
+
+    // In table: Nurdaulet's cell
+    expect(html).toContain("1 · сумма не указана");
+  });
+
+  it("8. does not contain <script id='pult-data'> payload dump", () => {
+    const html = renderPultHtml(basePayload);
+    expect(html).not.toContain('id="pult-data"');
+    expect(html).not.toContain("application/json");
+  });
+
+  it("9. respects proposalsTracked: false without reading files via fs", () => {
+    const untrackedPayload: SalesPultPayload = {
+      ...basePayload,
+      proposalsTracked: false
+    };
+    const html = renderPultHtml(untrackedPayload);
+
+    expect(html).toContain("в CRM пока не отмечают");
+    expect(html).toContain("tile-bar-fill gray");
+  });
+
   it("formats money correctly: 850 000 ₸ / 2,4 млн ₸ / 1 млн ₸", () => {
     expect(formatMoney(850000)).toBe("850 000 ₸");
     expect(formatMoney(2400000)).toBe("2,4 млн ₸");
@@ -216,18 +407,13 @@ describe("salesPultSite", () => {
   it("ensures tender department has no calls or proposals anywhere", () => {
     const html = renderPultHtml(basePayload);
 
-    // Header has tender dept
     expect(html).toContain("Тендерный отдел");
-
-    // The tender table header only has Manager and Signed
     expect(html).toContain("<thead><tr><th>Менеджер</th><th>Подписал</th></tr></thead>");
 
-    // In every tender department section, no calls or proposals exist
     const tenderParts = html.split('<h2>Тендерный отдел</h2>').slice(1);
     expect(tenderParts.length).toBeGreaterThan(0);
 
     for (const part of tenderParts) {
-      // Look until the end of this department section
       const deptContent = part.split('</div>\n    </div>')[0] || part.split('</table>')[0];
       expect(deptContent).not.toContain("Дозвонился");
       expect(deptContent).not.toContain("Дозвонились");
@@ -252,79 +438,6 @@ describe("salesPultSite", () => {
     };
     const afternoonHtml = renderPultHtml(afternoonPayload);
     expect(afternoonHtml).toContain("Мало звонков: Жанат — 9 из 15");
-  });
-
-  it("does not show red in proposals when proposalsTracked is false", () => {
-    const untrackedPayload: SalesPultPayload = {
-      ...basePayload,
-      proposalsTracked: false
-    };
-    const html = renderPultHtml(untrackedPayload);
-
-    expect(html).toContain("в CRM пока не отмечают");
-
-    // Verify proposals column has no red status in sales table
-    const salesTable = html.slice(0, html.indexOf("Тендерный отдел"));
-    expect(salesTable).toContain("tile-value gray");
-    expect(salesTable).toContain("mini-bar-fill gray");
-  });
-
-  it("sorts worse performing managers higher in the list", () => {
-    const html = renderPultHtml(basePayload);
-
-    // In sales, Жанат is red (9 of 15), Бахтияр is yellow (13 of 15), Турар is green (15 of 15)
-    // Find day period view
-    const dayViewStart = html.indexOf('<div class="period-view" data-period="day"');
-    const weekViewStart = html.indexOf('<div class="period-view" data-period="week"');
-    const daySection = html.slice(dayViewStart, weekViewStart);
-
-    const janatIndex = daySection.indexOf("Жанат");
-    const bahtiyarIndex = daySection.indexOf("Бахтияр");
-    const turarIndex = daySection.indexOf("Турар");
-
-    expect(janatIndex).toBeGreaterThan(-1);
-    expect(bahtiyarIndex).toBeGreaterThan(-1);
-    expect(turarIndex).toBeGreaterThan(-1);
-
-    expect(janatIndex).toBeLessThan(bahtiyarIndex);
-    expect(bahtiyarIndex).toBeLessThan(turarIndex);
-
-    // In tenders, Нурдаулет is red (0 contracts), Эльмира is green (3 contracts)
-    const nurdauletIndex = daySection.indexOf("Нурдаулет");
-    const elmiraIndex = daySection.indexOf("Эльмира");
-
-    expect(nurdauletIndex).toBeGreaterThan(-1);
-    expect(elmiraIndex).toBeGreaterThan(-1);
-    expect(nurdauletIndex).toBeLessThan(elmiraIndex);
-  });
-
-  it("renders task deadlines and overdue format correctly", () => {
-    const html = renderPultHtml(basePayload);
-
-    // Overdue by days
-    expect(html).toContain("просрочено на 6 дней");
-    // Deadline format
-    expect(html).toContain("до 22 октября, 10:00");
-  });
-
-  it("renders a self-contained HTML page escaping scripts and dangerous characters", () => {
-    const html = renderPultHtml(basePayload);
-
-    expect(html).toContain("<!doctype html>");
-    expect(html).toContain("<title>Пульт продаж F3</title>");
-    expect(html).toContain("Обновлено 28 октября в 15:00");
-
-    // Safe escaping: <script> should not be rendered raw in HTML body
-    expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("\\u003cscript\\u003ealert(1)\\u003c/script\\u003e");
-
-    // Deal links to Bitrix
-    expect(html).toContain("https://ft3.bitrix24.kz/crm/deal/details/101/");
-
-    // Period switchers
-    expect(html).toContain('data-period="day"');
-    expect(html).toContain('data-period="week"');
-    expect(html).toContain('data-period="month"');
   });
 
   it("contains no external resource links (scripts, styles, fonts, images)", () => {

@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { ManagerRollups, TopTask, TargetsConfig, MetricStatus } from "./metrics.js";
 
 export interface PultManagerView {
@@ -60,28 +58,76 @@ export function formatMoney(n: number): string {
   return `${formatted} ₸`;
 }
 
+export function plural(n: number, forms: [string, string, string]): string {
+  const abs = Math.abs(Math.round(n));
+  const mod100 = abs % 100;
+  const mod10 = abs % 10;
+  let word: string;
+  if (mod100 >= 11 && mod100 <= 19) {
+    word = forms[2];
+  } else if (mod10 === 1) {
+    word = forms[0];
+  } else if (mod10 >= 2 && mod10 <= 4) {
+    word = forms[1];
+  } else {
+    word = forms[2];
+  }
+  return `${n} ${word}`;
+}
+
 export function pluralDeals(n: number): string {
-  const rem10 = n % 10;
-  const rem100 = n % 100;
-  if (rem100 >= 11 && rem100 <= 19) return `${n} договоров`;
-  if (rem10 === 1) return `${n} договор`;
-  if (rem10 >= 2 && rem10 <= 4) return `${n} договора`;
-  return `${n} договоров`;
+  return plural(n, ["договор", "договора", "договоров"]);
 }
 
 export function pluralDays(n: number): string {
-  const rem10 = n % 10;
-  const rem100 = n % 100;
-  if (rem100 >= 11 && rem100 <= 19) return `${n} дней`;
-  if (rem10 === 1) return `${n} день`;
-  if (rem10 >= 2 && rem10 <= 4) return `${n} дня`;
-  return `${n} дней`;
+  return plural(n, ["день", "дня", "дней"]);
+}
+
+export function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function parseBitrixDate(str: string): number {
+  let s = str.trim();
+  if (s && !/[Z+-]\d{2}(?::?\d{2})?$/i.test(s)) {
+    if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(s)) {
+      s = s.replace(" ", "T") + "+03:00";
+    }
+  }
+  return Date.parse(s);
 }
 
 export function formatUpdatedTime(generatedAt: string): string {
-  const match = generatedAt.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
-  if (match) {
-    const [, , m, d, hh, mm] = match;
+  if (generatedAt.includes("(UTC+5)")) {
+    const match = generatedAt.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
+    if (match) {
+      const [, , m, d, hh, mm] = match;
+      const months = [
+        "января", "февраля", "марта", "апреля", "мая", "июня",
+        "июля", "августа", "сентября", "октября", "ноября", "декабря"
+      ];
+      const monthName = months[parseInt(m, 10) - 1] || m;
+      const dayNum = parseInt(d, 10);
+      return `Обновлено ${dayNum} ${monthName} в ${hh}:${mm}`;
+    }
+  }
+
+  const ms = Date.parse(generatedAt);
+  if (!Number.isNaN(ms)) {
+    let shiftedMs = ms;
+    if (/[Z+-]\d{2}(?::?\d{2})?$/i.test(generatedAt.trim())) {
+      shiftedMs = ms + 5 * 3600000;
+    }
+    const iso = new Date(shiftedMs).toISOString();
+    const [, m, d] = iso.slice(0, 10).split("-");
+    const hh = iso.slice(11, 13);
+    const mm = iso.slice(14, 16);
     const months = [
       "января", "февраля", "марта", "апреля", "мая", "июня",
       "июля", "августа", "сентября", "октября", "ноября", "декабря"
@@ -90,24 +136,55 @@ export function formatUpdatedTime(generatedAt: string): string {
     const dayNum = parseInt(d, 10);
     return `Обновлено ${dayNum} ${monthName} в ${hh}:${mm}`;
   }
+
   return `Обновлено ${generatedAt}`;
 }
 
 export function formatTaskDeadline(deadlineStr?: string | null): string {
   if (!deadlineStr) return "";
-  const match = deadlineStr.match(/(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2}))?/);
-  if (!match) return `до ${deadlineStr}`;
-  const [, , m, d, hh, mm] = match;
+  const ms = parseBitrixDate(deadlineStr);
+  if (Number.isNaN(ms)) {
+    return `до ${deadlineStr}`;
+  }
+
+  const shifted = new Date(ms + 5 * 3600000);
+  const iso = shifted.toISOString();
+  const datePart = iso.slice(0, 10);
+  const timePart = iso.slice(11, 16);
+
+  const [, m, d] = datePart.split("-");
   const months = [
     "января", "февраля", "марта", "апреля", "мая", "июня",
     "июля", "августа", "сентября", "октября", "ноября", "декабря"
   ];
   const monthName = months[parseInt(m, 10) - 1] || m;
   const dayNum = parseInt(d, 10);
-  if (hh && mm) {
-    return `до ${dayNum} ${monthName}, ${hh}:${mm}`;
+
+  const hasTime = deadlineStr.includes(":") || timePart !== "00:00";
+  if (hasTime) {
+    return `до ${dayNum} ${monthName}, ${timePart}`;
   }
   return `до ${dayNum} ${monthName}`;
+}
+
+export function formatOverdue(deadlineStr: string, asOfDate: string): string {
+  if (!deadlineStr) return "";
+  const ms = parseBitrixDate(deadlineStr);
+  let deadlineAlmatyDate = "";
+  if (!Number.isNaN(ms)) {
+    deadlineAlmatyDate = new Date(ms + 5 * 3600000).toISOString().slice(0, 10);
+  } else {
+    deadlineAlmatyDate = deadlineStr.slice(0, 10);
+  }
+
+  const diffDays = Math.round(
+    (Date.parse(asOfDate) - Date.parse(deadlineAlmatyDate)) / 86400000
+  );
+
+  if (diffDays <= 0) {
+    return "просрочено сегодня";
+  }
+  return `просрочено на ${plural(diffDays, ["день", "дня", "дней"])}`;
 }
 
 export function formatChartDate(dateStr: string): string {
@@ -124,41 +201,26 @@ export function formatChartDate(dateStr: string): string {
 }
 
 export function getAlmatyHour(generatedAt: string): number {
-  const match = generatedAt.match(/[T\s](\d{2}):(\d{2})/);
-  if (match) {
-    return parseInt(match[1], 10);
+  if (generatedAt.includes("(UTC+5)")) {
+    const match = generatedAt.match(/[T\s](\d{2}):(\d{2})/);
+    if (match) return parseInt(match[1], 10);
   }
-  const d = new Date(generatedAt);
-  if (!isNaN(d.getTime())) {
-    return new Date(d.getTime() + 5 * 3600000).getUTCHours();
+  const ms = Date.parse(generatedAt);
+  if (!Number.isNaN(ms)) {
+    if (/[Z+-]\d{2}(?::?\d{2})?$/i.test(generatedAt.trim())) {
+      return new Date(ms + 5 * 3600000).getUTCHours();
+    }
+    const match = generatedAt.match(/[T\s](\d{2}):(\d{2})/);
+    if (match) return parseInt(match[1], 10);
+    return new Date(ms).getHours();
   }
   return 12;
 }
 
 function loadProposalsTracked(payload: SalesPultPayload): boolean {
-  if (typeof payload.proposalsTracked === "boolean") {
-    return payload.proposalsTracked;
-  }
-  try {
-    const configPath = path.resolve("config/sales-pult.json");
-    if (fs.existsSync(configPath)) {
-      const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      if (typeof parsed.proposalsTracked === "boolean") {
-        return parsed.proposalsTracked;
-      }
-    }
-  } catch {
-    // fallback
-  }
-  return false;
+  return payload.proposalsTracked ?? false;
 }
 
-function safeJson(value: unknown): string {
-  return JSON.stringify(value)
-    .replace(/</g, "\\u003c")
-    .replace(/>/g, "\\u003e")
-    .replace(/&/g, "\\u0026");
-}
 
 function esc(s: unknown): string {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -203,9 +265,7 @@ export function buildSignals(payload: SalesPultPayload): SignalItem[] {
       }
     }
     if (zeroCallsNames.length > 0) {
-      const phrase = zeroCallsNames.length === 1
-        ? `${zeroCallsNames[0]} сегодня не звонил через Битрикс`
-        : `${joinNames(zeroCallsNames)} сегодня не звонили через Битрикс`;
+      const phrase = `${joinNames(zeroCallsNames)}: сегодня нет звонков через Битрикс`;
       items.push({ color: "red", text: phrase });
     }
   }
@@ -240,9 +300,10 @@ export function buildSignals(payload: SalesPultPayload): SignalItem[] {
       const dayContracts = m.rollups.day.contracts;
       if (dayContracts.uniqueDealsCount > 0) {
         const count = dayContracts.uniqueDealsCount;
+        const countStr = plural(count, ["договор", "договора", "договоров"]);
         const amtStr = formatMoney(dayContracts.totalAmount);
-        const amtPart = amtStr ? ` на ${amtStr}` : "";
-        const phrase = `${cleanFirstName(m.name)} подписал ${pluralDeals(count)}${amtPart}`;
+        const amtPart = amtStr ? ` на ${amtStr}` : " · сумма не указана";
+        const phrase = `${cleanFirstName(m.name)} — ${countStr}${amtPart}`;
         items.push({ color: "green", text: phrase });
       }
     }
@@ -314,7 +375,9 @@ function renderDepartmentSummary(
     const status = contractsFact >= targetContracts ? "green" : (contractsFact >= Math.ceil(targetContracts * 0.6) ? "yellow" : "red");
     const amtStr = formatMoney(contractsAmount);
     const contractsDesc = contractsFact > 0
-      ? `${pluralDeals(contractsFact)}${amtStr ? ` на ${amtStr}` : ""}`
+      ? (amtStr
+          ? `${plural(contractsFact, ["договор", "договора", "договоров"])} на ${amtStr}`
+          : `${plural(contractsFact, ["договор", "договора", "договоров"])} · сумма не указана`)
       : "0 договоров";
 
     return `<div class="summary-tiles one-tile">
@@ -340,8 +403,10 @@ function renderDepartmentSummary(
 
   const amtStr = formatMoney(contractsAmount);
   const contractsDesc = contractsFact > 0
-    ? `${pluralDeals(contractsFact)}${amtStr ? ` на ${amtStr}` : ""}`
-    : "0 договоров";
+      ? (amtStr
+          ? `${plural(contractsFact, ["договор", "договора", "договоров"])} на ${amtStr}`
+          : `${plural(contractsFact, ["договор", "договора", "договоров"])} · сумма не указана`)
+      : "0 договоров";
 
   const kpSub = !proposalsTracked
     ? `<div class="tile-sub">в CRM пока не отмечают</div>`
@@ -409,7 +474,7 @@ function renderDepartmentTable(
       contractCell = `<td data-label="Подписал"><span class="metric-empty">—</span></td>`;
     } else {
       const amtStr = formatMoney(p.contracts.totalAmount);
-      const amtPart = amtStr ? ` · ${amtStr}` : "";
+      const amtPart = amtStr ? ` · ${amtStr}` : " · сумма не указана";
       const pct = targetContracts > 0 ? Math.min(100, Math.round((p.contracts.uniqueDealsCount / targetContracts) * 100)) : 0;
       contractCell = `<td data-label="Подписал">
         <div class="metric-cell">
@@ -428,7 +493,7 @@ function renderDepartmentTable(
     if (!payload.callsAvailable) {
       callsCell = `<td data-label="Дозвонился"><span class="metric-num muted">нет доступа</span></td>`;
     } else if (p.calls.totalAttempts === 0) {
-      callsCell = `<td data-label="Дозвонился"><span class="metric-num red">не звонил через Битрикс</span></td>`;
+      callsCell = `<td data-label="Дозвонился"><span class="metric-num red">нет звонков через Битрикс</span></td>`;
     } else {
       const pct = targetCalls > 0 ? Math.min(100, Math.round((p.calls.successful / targetCalls) * 100)) : 0;
       callsCell = `<td data-label="Дозвонился">
@@ -504,19 +569,20 @@ function renderTasksSection(payload: SalesPultPayload): string {
 
       const items = m.topTasks.map((t) => {
         const dealUrl = `${payload.portal}/crm/deal/details/${encodeURIComponent(t.dealId)}/`;
-        const planTag = t.planNumber ? `<b>[${esc(t.planNumber)}]</b> ` : "";
+        const hasPlanInTitle = Boolean(t.planNumber && t.title.includes(String(t.planNumber)));
+        const planTag = t.planNumber && !hasPlanInTitle ? `<b>[${esc(t.planNumber)}]</b> ` : "";
         const overdueClass = t.isOverdue ? "overdue" : "";
 
         let overdueBadge = "";
         if (t.isOverdue) {
-          const diffDays = Math.max(1, Math.round((Date.parse(payload.asOfDate) - Date.parse(t.deadline.slice(0, 10))) / 86400000));
-          overdueBadge = `<span class="badge-overdue">просрочено на ${pluralDays(diffDays)}</span>`;
+          const overdueText = formatOverdue(t.deadline, payload.asOfDate);
+          overdueBadge = `<span class="badge-overdue">${esc(overdueText)}</span>`;
         }
 
         const amtStr = formatMoney(t.amount);
         const amountTag = amtStr ? `<span>${amtStr}</span>` : "";
         const deadlineTag = t.deadline ? `<span>${esc(formatTaskDeadline(t.deadline))}</span>` : "";
-        const commentTag = t.lastComment ? `<div class="task-comment">${esc(t.lastComment)}</div>` : "";
+        const commentTag = t.lastComment ? `<div class="task-comment">${esc(decodeHtmlEntities(t.lastComment))}</div>` : "";
 
         return `<div class="task-item ${overdueClass}">
           <div class="task-title-line">
@@ -535,7 +601,7 @@ function renderTasksSection(payload: SalesPultPayload): string {
       cards.push(`<div class="task-card">
         <div class="task-card-header">
           <h3>${esc(cleanFullName(m.name))}</h3>
-          <span class="task-count">${m.topTasks.length} ${pluralDeals(m.topTasks.length).replace("договор", "задач").replace("договора", "задачи").replace("договоров", "задач")}</span>
+          <span class="task-count">${plural(m.topTasks.length, ["задача", "задачи", "задач"])}</span>
         </div>
         ${items}
       </div>`);
@@ -1038,7 +1104,6 @@ table.pult-table tr:hover td { background: var(--panel-subtle); }
   ${chartHtml}
 </div>
 
-<script type="application/json" id="pult-data">${safeJson(payload)}</script>
 <script>
 (function() {
   var buttons = document.querySelectorAll('.tab-btn');

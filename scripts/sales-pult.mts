@@ -11,6 +11,7 @@ import {
 } from "../src/bitrix/salesPult/collect.js";
 import {
   toAlmatyDate,
+  formatAlmatyTime,
   getMonthDates,
   getWorkweekDates,
   getPultCollectionStartDate,
@@ -42,6 +43,7 @@ export interface PultConfig {
   timezoneOffsetHours: number;
   chatDialogId: string;
   pultUrl: string;
+  proposalsTracked?: boolean;
   maxOverdueDays?: number;
   topTaskCategories?: number[];
   holidays?: string[];
@@ -535,12 +537,14 @@ export async function runSalesPult(args: string[]): Promise<void> {
       };
     });
 
-    const generatedTimeStr = `${todayAlmaty} ${nowIso.slice(11, 16)} (UTC+5)`;
+    const almatyTime = formatAlmatyTime(nowIso);
+    const generatedTimeStr = `${todayAlmaty} ${almatyTime} (UTC+5)`;
     const payload: SalesPultPayload = {
       asOfDate: todayAlmaty,
       generatedAt: generatedTimeStr,
       portal: config.portal,
       pultUrl: config.pultUrl,
+      proposalsTracked: config.proposalsTracked ?? false,
       targets: config.targets,
       callsAvailable: collected.callsAvailable,
       callsError: collected.callsError,
@@ -675,3 +679,5 @@ export async function main(): Promise<void> {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   void main();
 }
+
+export { formatAlmatyTime };
