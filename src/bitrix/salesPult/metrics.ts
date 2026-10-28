@@ -105,6 +105,17 @@ export interface ManagerRollups {
 /**
  * Returns date formatted as YYYY-MM-DD in UTC+5 timezone (Asia/Almaty).
  */
+/**
+ * Returns time formatted as HH:mm in UTC+5 timezone (Asia/Almaty).
+ */
+export function formatAlmatyTime(isoOrDate: string | Date): string {
+  const ms = typeof isoOrDate === "string" ? Date.parse(isoOrDate) : isoOrDate.getTime();
+  if (Number.isNaN(ms)) {
+    throw new Error(`Invalid date value: ${String(isoOrDate)}`);
+  }
+  return new Date(ms + 5 * 3600000).toISOString().slice(11, 16);
+}
+
 export function toAlmatyDate(isoOrDate: string | Date): string {
   const ms = typeof isoOrDate === "string" ? Date.parse(isoOrDate) : isoOrDate.getTime();
   if (Number.isNaN(ms)) {
