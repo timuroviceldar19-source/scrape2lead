@@ -2,13 +2,18 @@ import { ReadOnlyBitrixClient } from "../reporting/readOnlyClient.js";
 import {
   toAlmatyEndOfDay,
   toAlmatyStartOfDay,
-  rankTopTasks,
   type CallRecord,
   type StageTransition,
   type DealInfo,
   type RawTask,
   type TopTask
 } from "./metrics.js";
+import {
+  EMPTY_DEBTS,
+  buildManagerDebts,
+  isExcludedProvider,
+  type ManagerDebts
+} from "./debts.js";
 
 export interface CollectPultDataParams {
   client: ReadOnlyBitrixClient;
@@ -20,6 +25,8 @@ export interface CollectPultDataParams {
   nowIso?: string;
   maxOverdueDays?: number;
   topTaskCategories?: number[];
+  /** Non-working days (YYYY-MM-DD) used to age "new" activities in working days. */
+  holidays?: string[];
   webhookUserId?: string | null;
 }
 
@@ -38,6 +45,8 @@ export interface PultCollectedData {
   contractTransitions: StageTransition[];
   deals: Map<string, DealInfo>;
   tasksByManager: Map<string, TopTask[]>;
+  /** Today's debts per manager (independent of the selected period). */
+  debtsByManager: Map<string, ManagerDebts>;
   userProfiles: Map<string, UserProfileInfo>;
   taskErrorsByManager: Map<string, string>;
 }
@@ -58,6 +67,7 @@ interface RawDealItem {
   STAGE_ID?: string | null;
   UF_CRM_PLAN_ID?: string | number | null;
   UF_CRM_1782386293000_IU_XLS?: string | number | null;
+  UF_CRM_PLAN_STATUS?: string | null;
 }
 
 interface RawActivityItem extends Record<string, unknown> {
@@ -66,6 +76,8 @@ interface RawActivityItem extends Record<string, unknown> {
   OWNER_TYPE_ID?: string | number | null;
   RESPONSIBLE_ID?: string | number | null;
   SUBJECT?: string | null;
+  CREATED?: string | null;
+  PROVIDER_ID?: string | null;
   DEADLINE?: string | null;
   COMPLETED?: string | null;
 }
@@ -136,7 +148,8 @@ export async function fetchDealsBatched(
         "CATEGORY_ID",
         "STAGE_ID",
         "UF_CRM_PLAN_ID",
-        "UF_CRM_1782386293000_IU_XLS"
+        "UF_CRM_1782386293000_IU_XLS",
+        "UF_CRM_PLAN_STATUS"
       ]
     })) as RawDealItem[];
 
@@ -157,7 +170,8 @@ export async function fetchDealsBatched(
           assignedById: String(r.ASSIGNED_BY_ID ?? "0"),
           planNumber,
           categoryId: r.CATEGORY_ID,
-          stageId: r.STAGE_ID
+          stageId: r.STAGE_ID,
+          planStatus: String(r.UF_CRM_PLAN_STATUS ?? "").trim() || null
         });
       }
     }
@@ -200,6 +214,11 @@ export async function fetchLatestComment(
   }
 }
 
+function isDealActivity(activity: RawActivityItem): boolean {
+  const type = activity.OWNER_TYPE_ID;
+  return !type || type === 2 || type === "2";
+}
+
 /**
  * Collects all data needed for Sales Pult for the given date range.
  */
@@ -214,6 +233,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     nowIso = new Date().toISOString(),
     maxOverdueDays = 30,
     topTaskCategories,
+    holidays,
     webhookUserId
   } = params;
 
@@ -329,6 +349,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
 
   // 6. Top tasks per manager: crm.activity.list per manager
   const tasksByManager = new Map<string, TopTask[]>();
+  const debtsByManager = new Map<string, ManagerDebts>();
   const taskErrorsByManager = new Map<string, string>();
   const activityDealIds: string[] = [];
 
@@ -349,7 +370,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
             "<=DEADLINE": endOfDayDeadline
           },
           order: { DEADLINE: "ASC" },
-          select: ["ID", "OWNER_ID", "OWNER_TYPE_ID", "SUBJECT", "DEADLINE", "COMPLETED"]
+          select: ["ID", "OWNER_ID", "OWNER_TYPE_ID", "SUBJECT", "CREATED", "PROVIDER_ID", "DEADLINE", "COMPLETED"]
         }
       );
 
@@ -378,6 +399,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
   for (const mId of managerIds) {
     if (taskErrorsByManager.has(mId)) {
       tasksByManager.set(mId, []);
+      debtsByManager.set(mId, EMPTY_DEBTS);
       continue;
     }
 
@@ -385,6 +407,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     const rawTasks: RawTask[] = [];
 
     for (const { item: a } of managerActs) {
+      if (isExcludedProvider(a.PROVIDER_ID) || !a.DEADLINE || !isDealActivity(a)) continue;
       const dealId = String(a.OWNER_ID ?? "");
       const deal = deals.get(dealId);
       const title = deal ? deal.title : String(a.SUBJECT ?? "Задача");
@@ -399,12 +422,21 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         amount,
         planNumber,
         categoryId: deal?.categoryId,
-        stageId: deal?.stageId
+        stageId: deal?.stageId,
+        planStatus: deal?.planStatus ?? null,
+        subject: String(a.SUBJECT ?? "").trim(),
+        created: String(a.CREATED ?? "")
       });
     }
 
-    // Step A: Rank top 5 tasks (filters open deals in funnels 9, 41, 43; overdue <= maxOverdueDays; deduplicates by deal)
-    const top5 = rankTopTasks(rawTasks, nowIso, { maxOverdueDays });
+    // Step A: classify activities into debts and rank the top 5 (one per deal, see debts.ts)
+    const { debts, top: top5 } = buildManagerDebts(rawTasks, {
+      nowIso,
+      holidays,
+      maxOverdueDays,
+      categories: topTaskCategories
+    });
+    debtsByManager.set(mId, debts);
 
     // Step B: Load timeline comments ONLY for the final top-5 deals
     for (const task of top5) {
@@ -425,6 +457,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     contractTransitions,
     deals,
     tasksByManager,
+    debtsByManager,
     userProfiles,
     taskErrorsByManager
   };

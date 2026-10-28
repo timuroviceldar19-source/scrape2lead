@@ -64,9 +64,12 @@ export function buildMorningReport(params: {
     tasks.forEach((t, i) => {
       const planTag = t.planNumber ? `[${t.planNumber}] ` : "";
       const moneyTag = t.amount > 0 ? ` — ${formatMoney(t.amount)}` : "";
-      const timeTag = t.deadline ? ` [до ${formatDeadline(t.deadline, date)}]` : "";
+      // A "new" activity has deadline == creation time: the time is noise and it is not an overdue debt.
+      const isNew = t.kind === "new";
+      const timeTag = t.deadline && !isNew ? ` [до ${formatDeadline(t.deadline, date)}]` : "";
       const overdueTag = t.isOverdue ? " ⚠️ (просрочено)" : "";
-      lines.push(`${i + 1}. ${planTag}${t.title}${moneyTag}${timeTag}${overdueTag}`);
+      const newTag = isNew ? ` 🆕 (новая, без звонка ${Math.max(1, Math.floor(t.ageDays ?? 0))} дн.)` : "";
+      lines.push(`${i + 1}. ${planTag}${t.title}${moneyTag}${timeTag}${overdueTag}${newTag}`);
       if (t.lastComment?.trim()) {
         lines.push(`   💬 ${t.lastComment.trim()}`);
       }

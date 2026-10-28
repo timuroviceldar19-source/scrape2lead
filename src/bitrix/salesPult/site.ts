@@ -1,4 +1,5 @@
 import type { ManagerRollups, TopTask, TargetsConfig, MetricStatus } from "./metrics.js";
+import type { ManagerDebts } from "./debts.js";
 
 export interface PultManagerView {
   id: string;
@@ -6,6 +7,8 @@ export interface PultManagerView {
   active: boolean;
   rollups: ManagerRollups;
   topTasks: TopTask[];
+  /** Today's debts; independent of the selected period. */
+  debts?: ManagerDebts;
 }
 
 export interface PultGroupView {
@@ -245,6 +248,89 @@ function getPeriodTarget(targets: TargetsConfig, period: "day" | "week" | "month
   return targets.monthly[metric];
 }
 
+export interface DebtLine {
+  color: "red" | "yellow" | "gray";
+  text: string;
+}
+
+/** Cell "Долги": up to three lines, empty parts are skipped; "—" when there is nothing. */
+export function formatDebtLines(debts: ManagerDebts | undefined): DebtLine[] {
+  if (!debts) return [];
+  const lines: DebtLine[] = [];
+  if (debts.overdue > 0) {
+    const parts = [`просрочено ${debts.overdue}`];
+    if (debts.overdueOverMonth > 0) parts.push(`больше месяца ${debts.overdueOverMonth}`);
+    lines.push({ color: "red", text: parts.join(" · ") });
+  }
+  if (debts.newDeals > 0) {
+    const oldest = debts.newOldestAgeDays >= 1 ? ` (самой старой ${pluralDays(debts.newOldestAgeDays)})` : "";
+    lines.push({ color: "yellow", text: `новых без звонка ${debts.newDeals}${oldest}` });
+  }
+  const readyToClose = debts.readyToCloseDealIds.length;
+  if (readyToClose > 0) lines.push({ color: "gray", text: `пора закрыть ${readyToClose}` });
+  return lines;
+}
+
+function renderDebtsCell(debts: ManagerDebts | undefined): string {
+  const lines = formatDebtLines(debts);
+  const body = lines.length === 0
+    ? `<span class="metric-empty">—</span>`
+    : lines.map((line) => `<div class="debt-line ${line.color}">${esc(line.text)}</div>`).join("");
+  return `<td data-label="Долги" class="cell-debts">${body}</td>`;
+}
+
+/** Status text of a "what to do today" card: overdue / new without a call / due today. */
+export function formatTaskStatusText(task: TopTask, asOfDate: string): string {
+  if (task.kind === "new") {
+    const age = Math.floor(task.ageDays ?? 0);
+    return age >= 1 ? `новая, без звонка ${pluralDays(age)}` : "новая, без звонка сегодня";
+  }
+  if (task.isOverdue) return formatOverdue(task.deadline, asOfDate);
+  return task.deadline ? formatTaskDeadline(task.deadline) : "";
+}
+
+/** One-line text of a card: «Перезвонить · Жасыл даму — Ноутбук · 74,3 млн ₸ · просрочено на 1 день». */
+export function formatTaskLine(task: TopTask, asOfDate: string): string {
+  return [task.subject?.trim(), task.title, formatMoney(task.amount), formatTaskStatusText(task, asOfDate)]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+const OVERDUE_VERBS: [string, string, string] = ["просрочено", "просрочены", "просрочены"];
+
+function pluralVerb(n: number, forms: [string, string, string]): string {
+  return plural(n, forms).slice(String(n).length + 1);
+}
+
+function buildDebtSignals(payload: SalesPultPayload): { red: SignalItem[]; gray: SignalItem[] } {
+  const red: SignalItem[] = [];
+  const readyToClose = new Set<string>();
+  for (const g of payload.groups) {
+    for (const m of g.managers) {
+      const debts = m.debts;
+      if (!debts) continue;
+      const name = cleanFirstName(m.name);
+      if (debts.newStaleDeals > 0) {
+        const deals = plural(debts.newStaleDeals, ["новая сделка", "новые сделки", "новых сделок"]);
+        red.push({ color: "red", text: `${name}: ${deals} без звонка больше суток` });
+      }
+      if (debts.overdueOngoing > 0) {
+        const todos = plural(debts.overdueOngoing, ["дело", "дела", "дел"]);
+        const verb = pluralVerb(debts.overdueOngoing, OVERDUE_VERBS);
+        red.push({ color: "red", text: `${name}: ${todos} по идущим закупкам ${verb}` });
+      }
+      debts.readyToCloseDealIds.forEach((id) => readyToClose.add(id));
+    }
+  }
+  const gray: SignalItem[] = readyToClose.size > 0
+    ? [{
+        color: "gray",
+        text: `Пора закрыть: ${plural(readyToClose.size, ["сделка", "сделки", "сделок"])}, закупка уже прошла`
+      }]
+    : [];
+  return { red, gray };
+}
+
 interface SignalItem {
   color: "red" | "yellow" | "green" | "gray";
   text: string;
@@ -269,6 +355,9 @@ export function buildSignals(payload: SalesPultPayload): SignalItem[] {
       items.push({ color: "red", text: phrase });
     }
   }
+
+  const debtSignals = buildDebtSignals(payload);
+  items.push(...debtSignals.red);
 
   // 2. Yellow signals: low calls (calls.status === "red" after 14:00 Almaty)
   const hour = getAlmatyHour(payload.generatedAt);
@@ -308,6 +397,8 @@ export function buildSignals(payload: SalesPultPayload): SignalItem[] {
       }
     }
   }
+
+  items.push(...debtSignals.gray);
 
   // 4. Telephony warning (if unavailable)
   if (!payload.callsAvailable) {
@@ -462,7 +553,7 @@ function renderDepartmentTable(
 
   const headerHtml = isTender
     ? `<thead><tr><th>Менеджер</th><th>Подписал</th></tr></thead>`
-    : `<thead><tr><th>Менеджер</th><th>Дозвонился</th><th>Отправил КП</th><th>Подписал</th></tr></thead>`;
+    : `<thead><tr><th>Менеджер</th><th>Дозвонился</th><th>Отправил КП</th><th>Подписал</th><th>Долги</th></tr></thead>`;
 
   const rows = sortedManagers.map((m) => {
     const p = m.rollups[period];
@@ -525,7 +616,7 @@ function renderDepartmentTable(
       </td>`;
     }
 
-    return `<tr>${nameCell}${callsCell}${kpCell}${contractCell}</tr>`;
+    return `<tr>${nameCell}${callsCell}${kpCell}${contractCell}${renderDebtsCell(m.debts)}</tr>`;
   }).join("");
 
   return `<div class="table-card">
@@ -573,26 +664,29 @@ function renderTasksSection(payload: SalesPultPayload): string {
         const planTag = t.planNumber && !hasPlanInTitle ? `<b>[${esc(t.planNumber)}]</b> ` : "";
         const overdueClass = t.isOverdue ? "overdue" : "";
 
-        let overdueBadge = "";
-        if (t.isOverdue) {
-          const overdueText = formatOverdue(t.deadline, payload.asOfDate);
-          overdueBadge = `<span class="badge-overdue">${esc(overdueText)}</span>`;
-        }
+        const statusText = formatTaskStatusText(t, payload.asOfDate);
+        const badgeClass = t.isOverdue ? "badge-overdue" : t.kind === "new" ? "badge-new" : "";
+        const statusTag = statusText
+          ? `<span${badgeClass ? ` class="${badgeClass}"` : ""}>${esc(statusText)}</span>`
+          : "";
+        const subjectTag = t.subject?.trim() ? `<span class="task-subject">${esc(t.subject.trim())}</span> · ` : "";
+        const planStatusTag = t.planStatus?.trim()
+          ? `<span class="chip-status">${esc(t.planStatus.trim())}</span>`
+          : "";
 
         const amtStr = formatMoney(t.amount);
         const amountTag = amtStr ? `<span>${amtStr}</span>` : "";
-        const deadlineTag = t.deadline ? `<span>${esc(formatTaskDeadline(t.deadline))}</span>` : "";
         const commentTag = t.lastComment ? `<div class="task-comment">${esc(decodeHtmlEntities(t.lastComment))}</div>` : "";
 
         return `<div class="task-item ${overdueClass}">
           <div class="task-title-line">
-            ${planTag}
+            ${subjectTag}${planTag}
             <a href="${dealUrl}" target="_blank" rel="noopener">${esc(t.title)}</a>
           </div>
           <div class="task-details">
             ${amountTag}
-            ${deadlineTag}
-            ${overdueBadge}
+            ${statusTag}
+            ${planStatusTag}
           </div>
           ${commentTag}
         </div>`;
@@ -979,6 +1073,13 @@ table.pult-table tr:hover td { background: var(--panel-subtle); }
   margin-top: 2px;
 }
 .badge-overdue { color: var(--red); font-weight: 600; font-size: 11px; }
+.badge-new { color: var(--yellow); font-weight: 600; font-size: 11px; }
+.task-subject { color: var(--text-muted); font-weight: 600; }
+.chip-status { background: var(--gray-bg); color: var(--gray); border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+.cell-debts .debt-line { font-size: 12px; line-height: 1.5; }
+.cell-debts .debt-line.red { color: var(--red); font-weight: 600; }
+.cell-debts .debt-line.yellow { color: var(--yellow); }
+.cell-debts .debt-line.gray { color: var(--text-muted); }
 
 .chart-box {
   background: var(--panel);

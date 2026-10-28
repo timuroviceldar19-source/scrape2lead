@@ -21,6 +21,8 @@ export interface DealInfo {
   planNumber?: string | null;
   categoryId?: string | number | null;
   stageId?: string | null;
+  /** Real procurement status, taken from the deal field UF_CRM_PLAN_STATUS. */
+  planStatus?: string | null;
 }
 
 export interface DailyActivityMetrics {
@@ -54,11 +56,21 @@ export interface RawTask {
   planNumber?: string | null;
   categoryId?: string | number | null;
   stageId?: string | null;
+  /** The essence of the activity ("Перезвонить", "Связаться с клиентом"). */
+  subject?: string;
+  /** Activity creation time as returned by Bitrix. */
+  created?: string;
+  planStatus?: string | null;
 }
 
 export interface TopTask extends RawTask {
   isOverdue: boolean;
   rank: number;
+  /** overdue / today / new — see debts.ts. */
+  kind?: "overdue" | "today" | "new";
+  group?: 1 | 2 | 3 | 4;
+  overdueDays?: number;
+  ageDays?: number;
 }
 
 export interface TargetsConfig {
@@ -395,105 +407,4 @@ export function calculateRollups(params: {
       zeroKpThreeDays
     }
   };
-}
-
-export interface RankTopTasksOptions {
-  maxOverdueDays?: number;
-  topTaskCategories?: number[];
-}
-
-/**
- * Ranks tasks for Top-5:
- * 1. Filter: open deals in funnels specified by topTaskCategories (default 9, 41, 43); overdue not older than maxOverdueDays.
- * 2. Overdue first, then upcoming; inside each group sort by deal amount descending.
- * 3. Deduplicate by dealId (only 1 task per deal).
- * 4. Return at most 5 tasks.
- */
-export function rankTopTasks(
-  tasks: RawTask[],
-  nowIso: string,
-  options: RankTopTasksOptions = {}
-): TopTask[] {
-  const nowMs = Date.parse(nowIso);
-  const maxOverdueDays = options.maxOverdueDays ?? 30;
-  const allowedCategories = options.topTaskCategories ?? [9, 41, 43];
-  const allowedCategoriesSet = new Set(allowedCategories.map(Number));
-
-  const validTasks = tasks.filter((t) => {
-    if (!t.dealId) return false;
-
-    // Check category: must match allowed funnels
-    const cat = Number(t.categoryId);
-    const stage = String(t.stageId ?? "");
-    const stagePrefixMatch = stage.match(/^C(\d+):/i);
-    const stageCat = stagePrefixMatch ? Number(stagePrefixMatch[1]) : null;
-
-    const isValidCategory =
-      allowedCategoriesSet.has(cat) ||
-      (stageCat !== null && allowedCategoriesSet.has(stageCat));
-    if (!isValidCategory) return false;
-
-    // Check open deal: not WON, not LOSE, not APOLOGY
-    const stageUpper = stage.toUpperCase();
-    const isClosed =
-      stageUpper.endsWith(":WON") ||
-      stageUpper === "WON" ||
-      stageUpper.endsWith(":LOSE") ||
-      stageUpper === "LOSE" ||
-      stageUpper.includes("APOLOGY");
-    if (isClosed) return false;
-
-    // Check overdue threshold (not older than maxOverdueDays)
-    if (t.deadline) {
-      const deadlineMs = Date.parse(t.deadline);
-      if (!Number.isNaN(deadlineMs) && deadlineMs < nowMs) {
-        const overdueDays = (nowMs - deadlineMs) / 86400000;
-        if (overdueDays > maxOverdueDays) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  });
-
-  const enriched: TopTask[] = validTasks.map((t) => {
-    const deadlineMs = Date.parse(t.deadline);
-    const isOverdue = !Number.isNaN(deadlineMs) && deadlineMs < nowMs;
-    const rank = isOverdue ? 0 : 1;
-    return {
-      ...t,
-      isOverdue,
-      rank
-    };
-  });
-
-  enriched.sort((a, b) => {
-    // 1. Overdue first (rank 0 before rank 1)
-    if (a.rank !== b.rank) return a.rank - b.rank;
-    // 2. Amount descending
-    if (b.amount !== a.amount) return b.amount - a.amount;
-    // 3. Deadline ascending
-    const aDead = Date.parse(a.deadline) || 0;
-    const bDead = Date.parse(b.deadline) || 0;
-    if (aDead !== bDead) return aDead - bDead;
-    // 4. Stable by id
-    return a.id.localeCompare(b.id);
-  });
-
-  // Deduplicate by dealId
-  const seenDeals = new Set<string>();
-  const topTasks: TopTask[] = [];
-  for (const t of enriched) {
-    if (seenDeals.has(t.dealId)) {
-      continue;
-    }
-    seenDeals.add(t.dealId);
-    topTasks.push(t);
-    if (topTasks.length === 5) {
-      break;
-    }
-  }
-
-  return topTasks;
 }

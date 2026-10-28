@@ -233,6 +233,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       nowIso,
       maxOverdueDays: config.maxOverdueDays ?? 30,
       topTaskCategories: config.topTaskCategories,
+      holidays: config.holidays,
       webhookUserId
     });
 
@@ -456,6 +457,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
     contractStages: config.stages.contracts,
     nowIso,
     maxOverdueDays: config.maxOverdueDays ?? 30,
+    topTaskCategories: config.topTaskCategories,
+    holidays: config.holidays,
     webhookUserId
   });
 
@@ -515,7 +518,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
           name: profile?.name || m.name,
           active: profile?.active ?? true,
           rollups,
-          topTasks
+          topTasks,
+          debts: collected.debtsByManager.get(m.id)
         };
       })
     }));
