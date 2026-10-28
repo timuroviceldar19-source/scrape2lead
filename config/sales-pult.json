@@ -1,0 +1,84 @@
+{
+  "portal": "https://ft3.bitrix24.kz",
+  "timezone": "Asia/Almaty",
+  "timezoneOffsetHours": 5,
+  "chatDialogId": "chat50617",
+  "pultUrl": "https://f3-pult.pages.dev",
+  "maxOverdueDays": 30,
+  "topTaskCategories": [
+    9,
+    41,
+    43
+  ],
+  "holidays": [
+    "2026-01-01",
+    "2026-01-02",
+    "2026-01-07",
+    "2026-03-08",
+    "2026-03-21",
+    "2026-03-22",
+    "2026-03-23",
+    "2026-03-24",
+    "2026-03-25",
+    "2026-05-01",
+    "2026-05-07",
+    "2026-05-09",
+    "2026-07-06",
+    "2026-08-30",
+    "2026-10-25",
+    "2026-12-16"
+  ],
+  "targets": {
+    "daily": {
+      "calls": 15,
+      "proposals": 3,
+      "contracts": 1
+    },
+    "weekly": {
+      "calls": 75,
+      "proposals": 15,
+      "contracts": 5
+    },
+    "monthly": {
+      "calls": 300,
+      "proposals": 60,
+      "contracts": 20
+    }
+  },
+  "stages": {
+    "proposals": [
+      "C9:UC_O85E7B",
+      "C43:EXECUTING"
+    ],
+    "contracts": [
+      "C9:WON",
+      "C41:WON",
+      "C43:WON"
+    ]
+  },
+  "groups": [
+    {
+      "id": "sales",
+      "name": "Отдел продаж",
+      "trackedMetrics": ["calls", "proposals", "contracts"],
+      "managers": [
+        { "id": "147", "name": "Бахтияр" },
+        { "id": "205", "name": "Жанат" },
+        { "id": "725", "name": "Бекзат" },
+        { "id": "1751", "name": "Нурбол" },
+        { "id": "2345", "name": "Турар" },
+        { "id": "2373", "name": "Кайыржан" }
+      ]
+    },
+    {
+      "id": "tenders",
+      "name": "Тендерный отдел",
+      "trackedMetrics": ["contracts"],
+      "managers": [
+        { "id": "559", "name": "Эльмира" },
+        { "id": "2377", "name": "Нурдаулет" },
+        { "id": "2381", "name": "Динара" }
+      ]
+    }
+  ]
+}
