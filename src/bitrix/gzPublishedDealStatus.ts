@@ -85,12 +85,26 @@ export function buildPublishedDealUpdate(
     };
   }
 
+  const fields = buildStatusFieldUpdates(deal, detectedStatus, detectedAt, true);
+
+  return { fields, action: "update-status", skipReason: null };
+}
+
+/**
+ * Only changed fields: both status fields get the same text; the published-at
+ * date is filled when requested and still empty.
+ */
+export function buildStatusFieldUpdates(
+  deal: PublishedDealSnapshot,
+  detectedStatus: string,
+  detectedAt: string,
+  shouldFillPublishedAt: boolean
+): Record<string, string> {
   const fields: Record<string, string> = {};
   if (text(deal.UF_CRM_PLAN_STATUS) !== detectedStatus) fields[GZ_PLAN_STATUS_FIELD] = detectedStatus;
   if (text(deal.UF_CRM_6627AEBD85B4D) !== detectedStatus) fields[GZ_PLAN_STATUS_LEGACY_FIELD] = detectedStatus;
-  if (!text(deal.UF_CRM_S2L_GZ_PUBLISHED_AT)) fields[GZ_PUBLISHED_AT_FIELD] = detectedAt;
-
-  return { fields, action: "update-status", skipReason: null };
+  if (shouldFillPublishedAt && !text(deal.UF_CRM_S2L_GZ_PUBLISHED_AT)) fields[GZ_PUBLISHED_AT_FIELD] = detectedAt;
+  return fields;
 }
 
 export async function applyPublishedDealUpdate(
