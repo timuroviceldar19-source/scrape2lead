@@ -329,15 +329,25 @@ export async function runSalesPult(args: string[]): Promise<void> {
       }
 
       // 2. Deals currently in these stages (covers entered before this month and still there)
+      const discrepancyManagerIds = Array.from(managersWithContractDiscrepancy);
+      const assignedFilter = discrepancyManagerIds.length === 1
+        ? discrepancyManagerIds[0]
+        : discrepancyManagerIds;
+
       for (const stage of stagesToInspect) {
-        const rows = (await reader.call("crm.deal.list", {
-          filter: { STAGE_ID: stage },
-          select: ["ID"]
-        })) as Array<{ ID?: string | number }>;
-        if (Array.isArray(rows)) {
-          for (const r of rows) {
-            if (r.ID) candidateDealIds.add(String(r.ID));
+        const rows = await reader.listAllBatched<{ ID?: string | number }>(
+          "crm.deal.list",
+          {
+            filter: {
+              STAGE_ID: stage,
+              ASSIGNED_BY_ID: assignedFilter
+            },
+            order: { ID: "ASC" },
+            select: ["ID"]
           }
+        );
+        for (const r of rows) {
+          if (r.ID) candidateDealIds.add(String(r.ID));
         }
       }
 
