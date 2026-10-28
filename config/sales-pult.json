@@ -5,6 +5,7 @@
   "chatDialogId": "chat50617",
   "pultUrl": "https://f3-pult.pages.dev",
   "maxOverdueDays": 30,
+  "minCallSeconds": 30,
   "topTaskCategories": [
     9,
     41,

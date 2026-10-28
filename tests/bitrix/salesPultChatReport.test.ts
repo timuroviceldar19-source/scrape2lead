@@ -3,7 +3,8 @@ import {
   buildMorningReport,
   buildEveningReport,
   isReportAlreadySent,
-  parseManualReport
+  parseManualReport,
+  selectEveningManualReports
 } from "../../src/bitrix/salesPult/chatReport.js";
 import type { ManagerRollups, TopTask } from "../../src/bitrix/salesPult/metrics.js";
 
@@ -280,5 +281,99 @@ describe("salesPultChatReport", () => {
     expect(text).toContain("ғ");
     expect(text).toContain("Қызғалдақ балабақшасымен хабарластым");
     expect(text).not.toContain("?");
+  });
+  describe("selectEveningManualReports (real chat50617 samples, task lists trimmed)", () => {
+    const managers = [
+      { id: "1751", name: "Нурбол" },
+      { id: "2373", name: "Кайыржан" },
+      { id: "2377", name: "Нурдаулет" },
+      { id: "725", name: "Бекзат" }
+    ];
+
+    // Нурбол 16.10: both messages say "Ежедневный план"; the evening one carries the day facts.
+    const nurbolMorning = "16.10.2026\nМенеджер: Нурбол\n\nЕжедневный план: 1 500 000 / [0]\nЗвонки: 15/0\nТС/КП выставлено: 3/0\nДоговоров заключено: (0)\n\nЕженедельный план: 7 500 000 / [0]\nЗвонки: 75/0\nТС/КП выставлено: 15/0\nДоговоров заключено: 4/0\n\nЕжемесячный план: 30 000 000 / [2 369 000]\nЗвонки: 300/88\nТС/КП выставлено: 60/28\nДоговоров заключено: 16/2";
+    const nurbolEvening = "16.10.2026\nМенеджер: Нурбол\n\nЕжедневный план: 1 500 000 / [460 000]\nЗвонки: 15/10\nТС/КП выставлено: 3/3\nДоговоров заключено: (1)\n\nЕженедельный план: 7 500 000 / [2 369 000]\nЗвонки: 75/68\nТС/КП выставлено: 15/15\nДоговоров заключено: 4/2\n\nЕжемесячный план: 30 000 000 / [2 369 000]\nЗвонки: 300/98\nТС/КП выставлено: 60/31\nДоговоров заключено: 16/3";
+    // Кайыржан 20.10: the morning post is headed "Ежедневный отчет" with yesterday's 10 calls.
+    const kaiyrzhanMorning = "20/10/2026\nМенеджер: Кайыржан\n\nЕжедневный отчет: 750 000 / [0]\nЗвонки: 15/10\nТС/КП выставлено: 3/0\nДоговоров заключено: 0\n\nЕженедельный отчет: 3 750 000 / [0]\nЗвонки: 75/10\nТС/КП выставлено: 15/12\nДоговоров заключено: 4/0\n\nЕжемесячный отчет: 15 000 000 / [0]\nЗвонки: 300/104\nТС/КП выставлено: 60/24\nДоговоров заключено: 16/0\n";
+    const kaiyrzhanEvening = "20/10/2026\nМенеджер: Кайыржан\n\nЕжедневный отчет: 750 000 / [0]\nЗвонки: 15/10\nТС/КП выставлено: 3/4\nДоговоров заключено: 0\n\nЕженедельный отчет: 3 750 000 / [0]\nЗвонки: 75/20\nТС/КП выставлено: 15/16\nДоговоров заключено: 4/0\n\nЕжемесячный отчет: 15 000 000 / [0]\nЗвонки: 300/114\nТС/КП выставлено: 60/28\nДоговоров заключено: 16/0\n";
+    // Нурдаулет 21.10: no "Менеджер:" line, "план" in both posts.
+    const nurdauletMorning = "21.10.2026\nЕжедневный план: 750 000 / [0]\nПросчетов: 5/0\nПодач: 3/0\nДоговоров заключено: 1/0\n\nЕженедельный план: 3 750 000 / [1 099 500]\nПросчетов: 25/7\nПодач: 15/1\nДоговоров заключено: 3/1\n\nЕжемесячный план: 15 000 000 / [1 099 500]\nПросчетов: 100/12\nПодач: 60/1\nДоговоров заключено: 12/1\n";
+    const nurdauletEvening = "21.10.2026\nЕжедневный план: 750 000 / [0]\nПросчетов: 5/5\nПодач: 3/0\nДоговоров заключено: 1/0\n\nЕженедельный план: 3 750 000 / [1 099 500]\nПросчетов: 25/12\nПодач: 15/1\nДоговоров заключено: 3/1\n\nЕжемесячный план: 15 000 000 / [1 099 500]\nПросчетов: 100/17\nПодач: 60/1\nДоговоров заключено: 12/1\n";
+
+    // Bitrix returns messages newest first with Moscow-time (+03:00) timestamps.
+    const messages = [
+      { id: 7, author_id: 2377, date: "2026-10-21T15:35:24+03:00", text: nurdauletEvening },
+      { id: 6, author_id: 2377, date: "2026-10-21T07:52:23+03:00", text: nurdauletMorning },
+      { id: 5, author_id: 2373, date: "2026-10-20T15:47:08+03:00", text: kaiyrzhanEvening },
+      { id: 4, author_id: 2373, date: "2026-10-20T07:19:50+03:00", text: kaiyrzhanMorning },
+      { id: 3, author_id: 1, date: "2026-10-16T16:00:00+03:00", text: "#автоотчёт 2026-10-16 вечер 1751\n📊 Отчёт за день | Нурбол" },
+      { id: 2, author_id: 1751, date: "2026-10-16T15:35:06+03:00", text: nurbolEvening },
+      { id: 1, author_id: 1751, date: "2026-10-16T07:15:03+03:00", text: nurbolMorning }
+    ];
+
+    it("keeps one evening report per manager and day regardless of the plan/report heading", () => {
+      const selected = selectEveningManualReports(messages, managers, "2026-10-15");
+
+      expect(selected.map((r) => `${r.date} ${r.managerName}`)).toEqual([
+        "2026-10-21 Нурдаулет",
+        "2026-10-20 Кайыржан",
+        "2026-10-16 Нурбол"
+      ]);
+      const [nurdaulet, kaiyrzhan, nurbol] = selected;
+      expect(nurdaulet.managerId).toBe("2377");
+      expect(nurdaulet.report.month.contractsFact).toBe(1);
+      expect(kaiyrzhan.report.day.callsFact).toBe(10);
+      expect(kaiyrzhan.report.day.proposalsFact).toBe(4);
+      expect(kaiyrzhan.report.month.callsFact).toBe(114);
+      expect(nurbol.report.day.callsFact).toBe(10);
+      expect(nurbol.report.day.contractsFact).toBe(1);
+      expect(nurbol.report.day.amountFact).toBe(460_000);
+    });
+
+    it("takes the latest evening post when a manager resends the report", () => {
+      const corrected = kaiyrzhanEvening.replace("ТС/КП выставлено: 3/4", "ТС/КП выставлено: 3/5");
+      const selected = selectEveningManualReports(
+        [{ id: 8, author_id: 2373, date: "2026-10-20T16:10:00+03:00", text: corrected }, ...messages],
+        managers,
+        "2026-10-20"
+      );
+
+      const kaiyrzhan = selected.filter((r) => r.managerId === "2373");
+      expect(kaiyrzhan).toHaveLength(1);
+      expect(kaiyrzhan[0].report.day.proposalsFact).toBe(5);
+      expect(selected.some((r) => r.date < "2026-10-20")).toBe(false);
+    });
+
+    it("dates reports by posting time, not by the often stale header date", () => {
+      // Кайыржан posted the 23.10 evening report headed 24/10, then the 27.10 morning plan also headed 24/10.
+      const evening2310 = "24/10/2026\nМенеджер: Кайыржан\n\nЕжедневный отчет: 750 000 / [0]\nЗвонки: 15/7\nТС/КП выставлено: 3/0\nДоговоров заключено: 0\n\nЕженедельный отчет: 3 750 000 / [0]\nЗвонки: 75/40\nТС/КП выставлено: 15/8\nДоговоров заключено: 4/0\n\nЕжемесячный отчет: 15 000 000 / [0]\nЗвонки: 300/134\nТС/КП выставлено: 60/29\nДоговоров заключено: 16/0\n";
+      const morning2710 = "24/10/2026\nМенеджер: Кайыржан\n\nЕжедневный план: 750 000 / [0]\nЗвонки: 15/0\nТС/КП выставлено: 3/0\nДоговоров заключено: 0\n\nЕженедельный план: 3 750 000 / [0]\nЗвонки: 75/0\nТС/КП выставлено: 15/0\nДоговоров заключено: 4/0\n\nЕжемесячный план: 15 000 000 / [0]\nЗвонки: 300/134\nТС/КП выставлено: 60/29\nДоговоров заключено: 16/0\n";
+
+      const selected = selectEveningManualReports(
+        [
+          { id: 2, author_id: 2373, date: "2026-10-27T07:04:04+03:00", text: morning2710 },
+          { id: 1, author_id: 2373, date: "2026-10-23T15:59:54+03:00", text: evening2310 }
+        ],
+        managers,
+        "2026-10-19"
+      );
+
+      expect(selected).toHaveLength(1);
+      expect(selected[0].date).toBe("2026-10-23");
+      expect(selected[0].report.day.callsFact).toBe(7);
+    });
+
+    it("ignores morning-only days and authors outside the config without a known name", () => {
+      const selected = selectEveningManualReports(
+        [
+          { id: 2, author_id: 999, date: "2026-10-21T15:35:24+03:00", text: nurdauletEvening },
+          { id: 1, author_id: 1751, date: "2026-10-16T07:15:03+03:00", text: nurbolMorning }
+        ],
+        managers,
+        "2026-10-15"
+      );
+
+      expect(selected).toEqual([]);
+    });
   });
 });
