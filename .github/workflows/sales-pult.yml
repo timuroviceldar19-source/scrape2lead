@@ -1,0 +1,99 @@
+name: Sales Pult F3
+
+on:
+  schedule:
+    # Каждый час с 04:00 до 14:00 UTC (09:00 - 19:00 Алматы), пн–пт
+    - cron: "0 4-14 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Mode (site, morning, evening)"
+        required: true
+        default: "site"
+        type: choice
+        options:
+          - site
+          - morning
+          - evening
+
+concurrency:
+  group: sales-pult-${{ github.event.inputs.mode || 'site' }}
+  cancel-in-progress: false
+
+jobs:
+  run-pult:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Sales Pult
+        env:
+          BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
+          MODE: ${{ github.event.inputs.mode || 'site' }}
+        run: |
+          set -eu
+          echo "Running sales pult in mode: $MODE"
+          if [ "$MODE" = "site" ]; then
+            npm run bitrix:sales-pult -- --mode site
+          elif [ "$MODE" = "morning" ]; then
+            npm run bitrix:sales-pult -- --mode morning --execute
+          elif [ "$MODE" = "evening" ]; then
+            npm run bitrix:sales-pult -- --mode evening --execute
+          else
+            echo "Unknown mode: $MODE" >&2
+            exit 1
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        if: ${{ (github.event.inputs.mode || 'site') == 'site' && vars.PULT_ACCESS_READY == 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -eu
+
+          check_access() {
+            local target_url="$1"
+            echo "Checking Cloudflare Access on $target_url..."
+            local status
+            status=$(curl -s -o /dev/null -w "%{http_code}" "$target_url")
+            local location
+            location=$(curl -sI "$target_url" | grep -i '^location:' || true)
+            echo "URL: $target_url -> HTTP $status, Location: $location"
+            if [ "$status" != "302" ] && [ "$status" != "403" ]; then
+              echo "SECURITY ALERT: $target_url returned $status without Cloudflare Access!" >&2
+              exit 1
+            fi
+            if ! echo "$location" | grep -iq "cloudflareaccess.com"; then
+              echo "SECURITY ALERT: $target_url Location ($location) does not redirect to cloudflareaccess.com!" >&2
+              exit 1
+            fi
+          }
+
+          # 1. Проверка Access ДО деплоя
+          check_access "https://f3-pult.pages.dev"
+
+          # 2. Подготовка и деплой
+          mkdir -p exports/sales-pult-deploy
+          cp exports/sales-pult/index.html exports/sales-pult-deploy/index.html
+          DEPLOY_OUTPUT=$(npx wrangler pages deploy exports/sales-pult-deploy --project-name f3-pult)
+          echo "$DEPLOY_OUTPUT"
+
+          # 3. Проверка Access ПОСЛЕ деплоя: главный домен
+          check_access "https://f3-pult.pages.dev"
+
+          # 4. Проверка Access ПОСЛЕ деплоя: URL деплоя из вывода wrangler
+          DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -Eo 'https://[a-zA-Z0-9.-]+\.pages\.dev' | grep -v '^https://f3-pult\.pages\.dev$' | head -n 1 || true)
+          if [ -n "$DEPLOY_URL" ]; then
+            check_access "$DEPLOY_URL"
+          fi

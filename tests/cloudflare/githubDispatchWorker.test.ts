@@ -11,6 +11,7 @@ const TOKEN = "test-token-do-not-use";
 const CRON_MORNING = "40 3 * * *";
 const CRON_HOURLY = "30 4-11 * * *";
 const CRON_AFTERNOON_WATCHDOG = "15 10 * * *";
+const CRON_SALES_PULT = "0 4,13 * * 1-5";
 
 function at(utcTime: string): number {
   return Date.parse(`2026-07-26T${utcTime}:00Z`);
@@ -60,6 +61,14 @@ const WATCHDOG_AFTERNOON: SentDispatch = {
   workflow: "gz-watchdog.yml",
   body: { ref: "main", inputs: { window: "afternoon" } },
 };
+const SALES_PULT_MORNING: SentDispatch = {
+  workflow: "sales-pult.yml",
+  body: { ref: "main", inputs: { mode: "morning" } },
+};
+const SALES_PULT_EVENING: SentDispatch = {
+  workflow: "sales-pult.yml",
+  body: { ref: "main", inputs: { mode: "evening" } },
+};
 
 describe("Cloudflare GitHub workflow dispatcher", () => {
   it.each([
@@ -73,6 +82,8 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     [CRON_HOURLY, "10:30", [PK_HOURLY, MAIN]],
     [CRON_HOURLY, "11:30", [PK_HOURLY, MAIN]],
     [CRON_AFTERNOON_WATCHDOG, "10:15", [WATCHDOG_AFTERNOON]],
+    [CRON_SALES_PULT, "04:00", [SALES_PULT_MORNING]],
+    [CRON_SALES_PULT, "13:00", [SALES_PULT_EVENING]],
   ])("maps %s at %s UTC to the expected authenticated dispatches", async (cron, utcTime, expected) => {
     const deps = dependencies(...accepted(expected.length));
 
@@ -341,6 +352,23 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     expect(deps.fetch).not.toHaveBeenCalled();
     expect(JSON.stringify(deps.log.mock.calls)).not.toContain(TOKEN);
   });
+
+  it.each(["03:00", "05:00", "12:00", "14:00"])(
+    "rejects an unexpected time %s UTC emitted for the sales pult cron",
+    async (utcTime) => {
+      const deps = dependencies(...accepted(1));
+
+      await expect(
+        dispatchScheduled(
+          { cron: CRON_SALES_PULT, scheduledTime: at(utcTime) },
+          { GITHUB_ACTIONS_TOKEN: TOKEN },
+          deps,
+        ),
+      ).rejects.toThrow("Unexpected scheduled time");
+
+      expect(deps.fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["03:30", "12:30", "23:30"])(
     "rejects an unexpected time %s UTC emitted for the hourly cron",

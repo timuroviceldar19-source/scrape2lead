@@ -2,7 +2,8 @@ export interface BitrixTransport { call(method: string, body?: unknown): Promise
 
 export const READ_ONLY_METHODS = [
   "batch", "crm.category.list", "crm.status.list", "crm.deal.fields", "crm.deal.userfield.list",
-  "crm.deal.list", "crm.stagehistory.list", "crm.company.list", "crm.activity.list"
+  "crm.deal.list", "crm.stagehistory.list", "crm.company.list", "crm.activity.list",
+  "voximplant.statistic.get", "im.user.get", "im.dialog.messages.get", "crm.timeline.comment.list"
 ] as const;
 
 const allowed = new Set<string>(READ_ONLY_METHODS);

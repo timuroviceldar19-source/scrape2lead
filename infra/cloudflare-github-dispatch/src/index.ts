@@ -22,7 +22,7 @@ const RETRY_DELAYS_MS = [5_000, 20_000] as const;
 // Сторож стоит в 11:30 (06:30 UTC) и 15:15: утренний слот проверяет сбор с начала суток,
 // дневной — с 13:00/13:30.
 //
-// Cloudflare Free allows five cron triggers per account. Три выражения ниже покрывают
+// Cloudflare Free allows five cron triggers per account. Четыре выражения ниже покрывают
 // все слоты: расписание «какие workflow запускать» хранится в коде, а не в числе триггеров.
 //
 // F3 B2B отключён и в GitHub Actions, и здесь.
@@ -34,6 +34,7 @@ export interface DispatchTarget {
 const PK_WORKFLOW = "gz-daily-pk.yml";
 const MAIN_WORKFLOW = "gz-daily-main.yml";
 const WATCHDOG_WORKFLOW = "gz-watchdog.yml";
+const SALES_PULT_WORKFLOW = "sales-pult.yml";
 
 function collection(dealOutcomes: boolean): DispatchTarget[] {
   return [
@@ -50,8 +51,14 @@ const MORNING_WATCHDOG_HOUR_UTC = 6;
 const CRON_MORNING = "40 3 * * *"; // 08:40 Алматы
 const CRON_HOURLY = "30 4-11 * * *"; // 09:30 ... 16:30 Алматы
 const CRON_AFTERNOON_WATCHDOG = "15 10 * * *"; // 15:15 Алматы
+const CRON_SALES_PULT = "0 4,13 * * 1-5"; // 09:00 и 18:00 Алматы (04:00 и 13:00 UTC)
 
-export const SCHEDULED_CRONS = [CRON_MORNING, CRON_HOURLY, CRON_AFTERNOON_WATCHDOG] as const;
+export const SCHEDULED_CRONS = [
+  CRON_MORNING,
+  CRON_HOURLY,
+  CRON_AFTERNOON_WATCHDOG,
+  CRON_SALES_PULT,
+] as const;
 
 export interface DispatchEnvironment {
   GITHUB_ACTIONS_TOKEN: string;
@@ -98,6 +105,16 @@ function targetsForSchedule(cron: string, scheduledTime: number): DispatchTarget
       targets.push({ workflow: WATCHDOG_WORKFLOW });
     }
     return targets;
+  }
+  if (cron === CRON_SALES_PULT) {
+    const scheduledHour = new Date(scheduledTime).getUTCHours();
+    if (scheduledHour === 4) {
+      return [{ workflow: SALES_PULT_WORKFLOW, inputs: { mode: "morning" } }];
+    }
+    if (scheduledHour === 13) {
+      return [{ workflow: SALES_PULT_WORKFLOW, inputs: { mode: "evening" } }];
+    }
+    throw new Error(`Unexpected scheduled time for cron ${cron}: ${scheduledTime}`);
   }
   throw new Error(`Unknown cron trigger: ${cron}`);
 }
