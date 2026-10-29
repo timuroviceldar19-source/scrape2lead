@@ -12,6 +12,10 @@ on:
           - site
           - morning
           - evening
+      market_backfill_from:
+        description: "Initial market backfill start date (YYYY-MM-DD, e.g. 2026-01-01)"
+        required: false
+        type: string
 
 concurrency:
   group: sales-pult-${{ github.event.inputs.mode || 'site' }}
@@ -33,16 +37,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cache market data
+        uses: actions/cache@v4
+        with:
+          path: data/market
+          key: gz-market-v1-${{ github.run_id }}
+          restore-keys: |
+            gz-market-v1-
+
       - name: Run Sales Pult
         env:
           BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
+          GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
           MODE: ${{ github.event.inputs.mode || 'site' }}
+          MARKET_BACKFILL: ${{ github.event.inputs.market_backfill_from || '' }}
           PULT_CHAT_ENABLED: ${{ vars.PULT_CHAT_ENABLED }}
         run: |
           set -eu
           echo "Running sales pult in mode: $MODE"
+          BACKFILL_FLAG=""
+          if [ -n "$MARKET_BACKFILL" ]; then
+            BACKFILL_FLAG="--market-backfill-from $MARKET_BACKFILL"
+          fi
           if [ "$MODE" = "site" ]; then
-            npm run bitrix:sales-pult -- --mode site
+            npm run bitrix:sales-pult -- --mode site $BACKFILL_FLAG
           else
             EXECUTE_FLAG=""
             if [ "${PULT_CHAT_ENABLED:-}" = "true" ]; then
@@ -89,18 +107,22 @@ jobs:
 
           # 1. Проверка Access ДО деплоя
           check_access "https://f3-pult.pages.dev"
+          check_access "https://f3-pult.pages.dev/reg"
 
           # 2. Подготовка и деплой
           mkdir -p exports/sales-pult-deploy
           cp exports/sales-pult/index.html exports/sales-pult-deploy/index.html
+          cp exports/sales-pult/reg.html exports/sales-pult-deploy/reg.html
           DEPLOY_OUTPUT=$(npx wrangler pages deploy exports/sales-pult-deploy --project-name f3-pult)
           echo "$DEPLOY_OUTPUT"
 
           # 3. Проверка Access ПОСЛЕ деплоя: главный домен
           check_access "https://f3-pult.pages.dev"
+          check_access "https://f3-pult.pages.dev/reg"
 
           # 4. Проверка Access ПОСЛЕ деплоя: URL деплоя из вывода wrangler
           DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -Eo 'https://[a-zA-Z0-9.-]+\.pages\.dev' | grep -v '^https://f3-pult\.pages\.dev$' | head -n 1 || true)
           if [ -n "$DEPLOY_URL" ]; then
             check_access "$DEPLOY_URL"
+            check_access "$DEPLOY_URL/reg"
           fi

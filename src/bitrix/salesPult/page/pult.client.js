@@ -427,6 +427,7 @@
   }
   function animate(root) {
     root.querySelectorAll("[data-w]").forEach((b) => { b.style.width = b.dataset.w + "%"; });
+    root.querySelectorAll("[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });
     root.querySelectorAll("[data-count]").forEach(countUp);
     root.querySelectorAll(".burn-line, .burn-fc").forEach((p) => {
       if (reduce) return;
@@ -458,11 +459,105 @@
     try { if (fromUser) localStorage.setItem("pult-period", p); } catch (e) {}
   }
   btns.forEach((b) => b.addEventListener("click", () => setPeriod(b.dataset.p, true)));
-  addEventListener("resize", moveInd);
+  addEventListener("resize", () => { moveInd(); if (typeof moveSecInd === "function") moveSecInd(); });
   addEventListener("keydown", (e) => {
     if (e.target.closest("input, textarea")) return;
     if (e.key === "1") setPeriod("day", true); else if (e.key === "2") setPeriod("week", true); else if (e.key === "3") setPeriod("month", true);
     else if (e.key === "t" || e.key === "T" || e.key === "е" || e.key === "Е") toggleTv();
+  });
+
+  /* ================= tabs ================= */
+  const tabLinks = [...document.querySelectorAll(".sections a[data-t]")];
+  const tabPanes = {
+    pult: document.getElementById("tab-pult"),
+    ip: document.getElementById("tab-ip"),
+    kt: document.getElementById("tab-kt")
+  };
+  const secInd = document.querySelector(".sections .ind");
+  const periodsNav = document.getElementById("periodsNav");
+  let currentTab = "pult";
+  let preTvTab = "pult";
+  const renderedTabs = new Set();
+
+  function moveSecInd() {
+    const a = tabLinks.find((x) => x.dataset.t === currentTab);
+    if (!a || !secInd) return;
+    secInd.style.left = a.offsetLeft + 14 + "px";
+    secInd.style.width = a.offsetWidth - 28 + "px";
+  }
+
+  function renderTabContent(tab) {
+    if (renderedTabs.has(tab)) return;
+    if (tab === "ip") {
+      if (window.__renderMarketTab) {
+        window.__renderMarketTab("ip", P.market, tabPanes.ip);
+        renderedTabs.add(tab);
+      }
+    } else if (tab === "kt") {
+      if (window.__renderMarketTab) {
+        window.__renderMarketTab("kt", P.market, tabPanes.kt);
+        renderedTabs.add(tab);
+      }
+    }
+  }
+
+  function setTab(tab, fromUser) {
+    if (tab === "reg" || !tabPanes[tab]) tab = "pult";
+    currentTab = tab;
+    tabLinks.forEach((link) => {
+      const active = link.dataset.t === tab;
+      link.classList.toggle("active", active);
+      if (active) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
+    Object.keys(tabPanes).forEach((key) => {
+      const pane = tabPanes[key];
+      if (pane) pane.classList.toggle("on", key === tab);
+    });
+    if (periodsNav) {
+      periodsNav.hidden = tab !== "pult";
+    }
+    renderTabContent(tab);
+    moveSecInd();
+
+    const srcLabel = document.getElementById("srcLabel");
+    const foot = document.getElementById("foot");
+    if (tab === "ip" || tab === "kt") {
+      if (srcLabel) srcLabel.textContent = "госзакупки · ows.goszakup.gov.kz";
+      if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
+    } else {
+      if (srcLabel) srcLabel.textContent = "CRM Битрикс24";
+      if (foot) foot.innerHTML = `<span>Источник: Битрикс24 · ft3.bitrix24.kz</span><span>Обновляется каждый час с 09:00 до 19:00 в будни · клавиши 1 2 3 и T</span>`;
+    }
+
+    if (tab === "pult") {
+      setTimeout(moveInd, 0);
+    }
+    observe();
+    if (fromUser) {
+      try { localStorage.setItem("pult-tab", tab); } catch (e) {}
+      if (history.replaceState) {
+        history.replaceState(null, "", `#${tab}`);
+      } else {
+        location.hash = tab;
+      }
+    }
+  }
+
+  tabLinks.forEach((link) => {
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      setTab(link.dataset.t, true);
+    });
+  });
+
+  window.addEventListener("hashchange", () => {
+    const h = location.hash.replace(/^#/, "");
+    if (h === "reg") {
+      setTab("pult", false);
+    } else if (h && tabPanes[h] && h !== currentTab) {
+      setTab(h, false);
+    }
   });
 
   /* ================= TV ================= */
@@ -498,6 +593,8 @@
     SCENES.forEach((id) => { const el = document.getElementById(id); if (el) el.classList.remove("scene"); });
     fitTv();
     if (on) {
+      preTvTab = currentTab;
+      if (currentTab !== "pult") setTab("pult", false);
       if (period !== "day") setPeriod("day");
       let i = 0, t0 = Date.now(); const every = 15000;
       showScene(i);
@@ -505,7 +602,12 @@
         const p = (Date.now() - t0) / every; if (bar) bar.style.width = Math.min(100, p * 100) + "%";
         if (p >= 1) { i = (i + 1) % SCENES.length; showScene(i); t0 = Date.now(); }
       }, 200);
-    } else if (bar) bar.style.width = "0";
+    } else {
+      if (bar) bar.style.width = "0";
+      if (preTvTab && preTvTab !== "pult") {
+        setTab(preTvTab, false);
+      }
+    }
   }
   const tvBtn = document.getElementById("tvBtn");
   if (tvBtn) tvBtn.addEventListener("click", toggleTv);
@@ -516,7 +618,15 @@
   renderChrome(); renderSignals(); renderMonth(); renderTasks();
   let saved = null; try { saved = localStorage.getItem("pult-period"); } catch (e) {}
   setPeriod(/period=(day|week|month)/.exec(location.search)?.[1] || saved || "day");
+  
+  let hashTab = location.hash.replace(/^#/, "");
+  if (hashTab === "reg") hashTab = "pult";
+  let savedTab = null; try { savedTab = localStorage.getItem("pult-tab"); } catch (e) {}
+  if (savedTab === "reg") savedTab = "pult";
+  const initialTab = tabPanes[hashTab] ? hashTab : (tabPanes[savedTab] ? savedTab : "pult");
+  setTab(initialTab, false);
+
   observe();
   if (/tv=1/.test(location.search)) toggleTv();
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(moveInd);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { moveInd(); moveSecInd(); });
 })();

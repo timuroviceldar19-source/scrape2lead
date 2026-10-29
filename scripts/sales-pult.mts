@@ -32,10 +32,22 @@ import {
 } from "../src/bitrix/salesPult/chatReport.js";
 import {
   renderPultHtml,
+  renderRegisterHtml,
   type SalesPultPayload,
+  type RegisterPagePayload,
   type PultGroupView,
   type DayDynamic
 } from "../src/bitrix/salesPult/site.js";
+import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
+import { loadMarketView } from "../src/kz/market/load.js";
+import {
+  loadStoredMarketUnits,
+  saveStoredMarketUnits,
+  fetchMarketContracts,
+  mergeMarketUnits,
+  backfillMarketByMonths,
+  DEFAULT_MARKET_UNITS_PATH
+} from "../src/kz/market/fetchMarket.js";
 
 export interface PultConfig {
   portal: string;
@@ -62,6 +74,10 @@ export interface PultConfig {
     trackedMetrics: string[];
     managers: Array<{ id: string; name: string }>;
   }>;
+  register?: {
+    diskFolderId?: number;
+    managerAliases?: Record<string, string>;
+  };
 }
 
 export function loadConfig(customPath?: string): PultConfig {
@@ -167,6 +183,11 @@ export async function runSalesPult(args: string[]): Promise<void> {
   const compareManual = args.includes("--compare-manual");
   const daysIdx = args.indexOf("--days");
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
+  const registerFileIdx = args.indexOf("--register-file");
+  const registerFilePath = registerFileIdx !== -1 && args[registerFileIdx + 1] ? args[registerFileIdx + 1] : undefined;
+  const backfillIdx = args.indexOf("--market-backfill-from");
+  const backfillFromDate = backfillIdx !== -1 && args[backfillIdx + 1] ? args[backfillIdx + 1] : undefined;
+  const marketUpdate = args.includes("--market-update");
 
   const config = loadConfig();
   const webhookUrl = process.env.BITRIX24_WEBHOOK_URL?.trim();
@@ -179,6 +200,53 @@ export async function runSalesPult(args: string[]): Promise<void> {
 
   const nowIso = new Date().toISOString();
   const todayAlmaty = toAlmatyDate(nowIso);
+
+  if (backfillFromDate) {
+    const gzToken = process.env.GOSZAKUP_TOKEN?.trim();
+    if (!gzToken) {
+      throw new Error("GOSZAKUP_TOKEN is required in .env for market backfill");
+    }
+    console.log(`[Рынок] Начало загрузки с ${backfillFromDate} по месяцам с сохранением прогресса...`);
+    try {
+      const units = await backfillMarketByMonths({
+        token: gzToken,
+        fromDate: backfillFromDate,
+        toDate: todayAlmaty,
+        onProgress: (info) => {
+          console.log(`[Рынок] Месяц ${info.month}: страниц ${info.pages}, отобрано ${info.matched}, всего сохранено ${info.totalSaved}`);
+        }
+      });
+      console.log(`[Рынок] Завершено. Сохранено ${units.length} позиций в ${DEFAULT_MARKET_UNITS_PATH}`);
+    } catch (err: any) {
+      console.warn(`::warning::[Рынок] Ошибка при докачке рынка: ${err?.message || err}`);
+    }
+    if (args.length <= 2) return;
+  }
+
+  if (mode === "morning" || marketUpdate) {
+    const gzToken = process.env.GOSZAKUP_TOKEN?.trim();
+    if (gzToken) {
+      const d = new Date(Date.parse(`${todayAlmaty}T12:00:00Z`));
+      d.setDate(d.getDate() - 45);
+      const cutoffDate = d.toISOString().slice(0, 10);
+      try {
+        console.log(`[Рынок] Утреннее обновление за последние 45 дней (с ${cutoffDate})...`);
+        const freshUnits = await fetchMarketContracts({
+          token: gzToken,
+          fromDate: cutoffDate,
+          toDate: todayAlmaty
+        });
+        const existingUnits = loadStoredMarketUnits(DEFAULT_MARKET_UNITS_PATH);
+        const merged = mergeMarketUnits(existingUnits, freshUnits, cutoffDate, todayAlmaty);
+        saveStoredMarketUnits(merged, DEFAULT_MARKET_UNITS_PATH);
+        console.log(`[Рынок] Утреннее обновление: свежих ${freshUnits.length}, всего ${merged.length}`);
+      } catch (marketErr) {
+        console.warn(`[Рынок] Ошибка при утреннем обновлении рынка:`, marketErr);
+      }
+    } else {
+      console.log(`[Рынок] GOSZAKUP_TOKEN не задан, пропуск утреннего обновления рынка`);
+    }
+  }
 
   // Weekend and holiday check for scheduled reporting modes
   if (mode === "morning" || mode === "evening") {
@@ -234,6 +302,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       maxOverdueDays: config.maxOverdueDays ?? 30,
       topTaskCategories: config.topTaskCategories,
       holidays: config.holidays,
+
       webhookUserId
     });
 
@@ -543,6 +612,23 @@ export async function runSalesPult(args: string[]): Promise<void> {
 
     const almatyTime = formatAlmatyTime(nowIso);
     const generatedTimeStr = `${todayAlmaty} ${almatyTime} (UTC+5)`;
+
+    // Register
+    const registerView = await loadRegisterView({
+      reader,
+      diskFolderId: config.register?.diskFolderId,
+      managerAliases: config.register?.managerAliases,
+      registerFilePath,
+      todayAlmaty,
+      contractTransitions: collected.contractTransitions,
+      userProfiles: collected.userProfiles
+    });
+
+    // Market
+    const marketView = loadMarketView({
+      todayAlmaty
+    });
+
     const payload: SalesPultPayload = {
       asOfDate: todayAlmaty,
       generatedAt: generatedTimeStr,
@@ -554,17 +640,31 @@ export async function runSalesPult(args: string[]): Promise<void> {
       callsError: collected.callsError,
       groups: groupsView,
       dynamics,
-      holidays: config.holidays
+      holidays: config.holidays,
+      market: marketView
     };
 
     const outDir = path.resolve("exports/sales-pult");
     fs.mkdirSync(outDir, { recursive: true });
 
+    // 1. Main pult page (no register in payload or DOM)
     const html = renderPultHtml(payload);
     fs.writeFileSync(path.join(outDir, "index.html"), html, "utf8");
     fs.writeFileSync(path.join(outDir, "payload.json"), JSON.stringify(payload, null, 2), "utf8");
 
-    console.log(`[Sales Pult] Готово: ${path.join(outDir, "index.html")} и payload.json`);
+    // 2. Standalone register page
+    const regPayload: RegisterPagePayload = {
+      asOfDate: todayAlmaty,
+      generatedAt: generatedTimeStr,
+      portal: config.portal,
+      pultUrl: config.pultUrl,
+      register: registerView
+    };
+    const regHtml = renderRegisterHtml(regPayload);
+    fs.writeFileSync(path.join(outDir, "reg.html"), regHtml, "utf8");
+    fs.writeFileSync(path.join(outDir, "payload-reg.json"), JSON.stringify(regPayload, null, 2), "utf8");
+
+    console.log(`[Sales Pult] Готово: index.html, reg.html и payload.json`);
     if (hasTaskErrors) {
       process.exitCode = 1;
     }
