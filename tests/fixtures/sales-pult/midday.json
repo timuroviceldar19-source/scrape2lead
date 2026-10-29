@@ -773,15 +773,15 @@
       "date": "2026-10-01",
       "calls": 47,
       "proposals": 1,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 2,
+      "amount": 6200000
     },
     {
       "date": "2026-10-02",
       "calls": 54,
       "proposals": 2,
-      "contracts": 1,
-      "amount": 1700000
+      "contracts": 2,
+      "amount": 6100000
     },
     {
       "date": "2026-10-03",
@@ -801,36 +801,36 @@
       "date": "2026-10-05",
       "calls": 40,
       "proposals": 2,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 2,
+      "amount": 5800000
     },
     {
       "date": "2026-10-06",
       "calls": 47,
       "proposals": 0,
-      "contracts": 1,
-      "amount": 2100000
+      "contracts": 2,
+      "amount": 6400000
     },
     {
       "date": "2026-10-07",
       "calls": 54,
       "proposals": 1,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 3,
+      "amount": 9500000
     },
     {
       "date": "2026-10-08",
       "calls": 61,
       "proposals": 2,
       "contracts": 2,
-      "amount": 2300000
+      "amount": 6300000
     },
     {
       "date": "2026-10-09",
       "calls": 68,
       "proposals": 0,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 2,
+      "amount": 6200000
     },
     {
       "date": "2026-10-10",
@@ -851,35 +851,35 @@
       "calls": 54,
       "proposals": 0,
       "contracts": 2,
-      "amount": 2700000
+      "amount": 6700000
     },
     {
       "date": "2026-10-13",
       "calls": 61,
       "proposals": 1,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 3,
+      "amount": 9800000
     },
     {
       "date": "2026-10-14",
       "calls": 68,
       "proposals": 2,
-      "contracts": 1,
-      "amount": 2900000
+      "contracts": 2,
+      "amount": 6500000
     },
     {
       "date": "2026-10-15",
       "calls": 40,
       "proposals": 0,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 2,
+      "amount": 6100000
     },
     {
       "date": "2026-10-16",
       "calls": 47,
       "proposals": 1,
       "contracts": 2,
-      "amount": 3100000
+      "amount": 6600000
     },
     {
       "date": "2026-10-17",
@@ -899,36 +899,36 @@
       "date": "2026-10-19",
       "calls": 68,
       "proposals": 1,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 2,
+      "amount": 6300000
     },
     {
       "date": "2026-10-20",
       "calls": 40,
       "proposals": 2,
-      "contracts": 2,
-      "amount": 3500000
+      "contracts": 3,
+      "amount": 9900000
     },
     {
       "date": "2026-10-21",
       "calls": 47,
       "proposals": 0,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 2,
+      "amount": 6400000
     },
     {
       "date": "2026-10-22",
       "calls": 54,
       "proposals": 1,
-      "contracts": 1,
-      "amount": 3700000
+      "contracts": 2,
+      "amount": 6500000
     },
     {
       "date": "2026-10-23",
       "calls": 61,
       "proposals": 2,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 2,
+      "amount": 6200000
     },
     {
       "date": "2026-10-24",
@@ -955,22 +955,22 @@
       "date": "2026-10-27",
       "calls": 54,
       "proposals": 0,
-      "contracts": 0,
-      "amount": 0
+      "contracts": 2,
+      "amount": 6550000
     },
     {
       "date": "2026-10-28",
       "calls": 61,
       "proposals": 1,
-      "contracts": 2,
-      "amount": 4300000
+      "contracts": 3,
+      "amount": 9500000
     },
     {
       "date": "2026-10-29",
       "calls": 56,
       "proposals": 2,
-      "contracts": 2,
-      "amount": 4650000
+      "contracts": 3,
+      "amount": 6950000
     }
   ]
 }

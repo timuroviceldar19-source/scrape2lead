@@ -424,4 +424,55 @@ describe("salesPultSite", () => {
     expect(html).not.toContain("HOLIDAYS");
     expect(html).not.toContain("2026-12-16");
   });
+
+  it("safely handles placeholder strings inside payload comments and titles without breaking page", () => {
+    const dangerousComment = "см. __VIEW__ и __PAYLOAD__ и /*__CLIENT_JS__*/ и /*__CSS__*/";
+    const dangerousTitle = "Закупка /*__CSS__*/ и __VIEW__ для клиента";
+
+    const payloadWithPlaceholders: SalesPultPayload = {
+      ...basePayload,
+      groups: [
+        {
+          ...basePayload.groups[0],
+          managers: [
+            {
+              ...basePayload.groups[0].managers[0],
+              topTasks: [
+                {
+                  id: "task-1",
+                  dealId: "deal-1",
+                  title: dangerousTitle,
+                  deadline: "2026-10-28 18:00",
+                  amount: 2500000,
+                  lastComment: dangerousComment,
+                  isOverdue: true,
+                  rank: 1
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    const html = renderPultHtml(payloadWithPlaceholders);
+    expect(html).toBeDefined();
+
+    // Extract PAYLOAD JSON from the assembled html
+    const payloadMatch = html.match(/const PAYLOAD = (\{[\s\S]*?\});\s*const VIEW/);
+    expect(payloadMatch).toBeTruthy();
+    const parsedPayload = JSON.parse(payloadMatch![1]);
+    const task = parsedPayload.groups[0].managers[0].topTasks[0];
+    expect(task.lastComment).toBe(dangerousComment);
+    expect(task.title).toBe(dangerousTitle);
+
+    // Extract VIEW JSON from the assembled html
+    const viewMatch = html.match(/const VIEW = (\{[\s\S]*?\});/);
+    expect(viewMatch).toBeTruthy();
+    expect(() => JSON.parse(viewMatch![1])).not.toThrow();
+
+    // Raw HTML contains the comment and title as text
+    expect(html).toContain(dangerousComment);
+    expect(html).toContain(dangerousTitle);
+  });
 });

@@ -80,6 +80,27 @@ describe("salesPultPace", () => {
       expect(res.verdict).toContain("Идём в темпе");
       expect(res.verdict).toContain("план закроем");
     });
+
+    it("outputs 'План месяца уже не закрыть' when needed pace exceeds 2x current pace", () => {
+      // 2 days left, 40 contracts left
+      const res2 = calculateMonthForecast(60, 20, 19, 21);
+      expect(res2.pacePerDay).toBeCloseTo(1.05, 2);
+      expect(res2.need).toBe(20);
+      expect(res2.need).toBeGreaterThan(2 * res2.pacePerDay);
+      expect(res2.verdict).toBe("План месяца уже не закрыть: осталось 40 договоров за 2 рабочих дня.");
+
+      // 1 day left, 5 contracts left
+      const res1 = calculateMonthForecast(25, 20, 20, 21);
+      expect(res1.need).toBe(5);
+      expect(res1.need).toBeGreaterThan(2 * res1.pacePerDay);
+      expect(res1.verdict).toBe("План месяца уже не закрыть: осталось 5 договоров за 1 рабочий день.");
+
+      // 5 days left, 40 contracts left
+      const res5 = calculateMonthForecast(50, 10, 15, 20);
+      expect(res5.need).toBe(8);
+      expect(res5.need).toBeGreaterThan(2 * res5.pacePerDay);
+      expect(res5.verdict).toBe("План месяца уже не закрыть: осталось 40 договоров за 5 рабочих дней.");
+    });
   });
 
   describe("morning state (before 10:00 and zero day metrics)", () => {

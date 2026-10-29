@@ -45,20 +45,22 @@ const pultHtml = fs.readFileSync(new URL("./page/pult.html", import.meta.url), "
 const pultCss = fs.readFileSync(new URL("./page/pult.css", import.meta.url), "utf8");
 const pultClientJs = fs.readFileSync(new URL("./page/pult.client.js", import.meta.url), "utf8");
 
+const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|\/\*__CLIENT_JS__\*\//g;
+
 export function buildSignals(payload: SalesPultPayload): SignalItem[] {
   return buildPultSignals(payload);
 }
 
 export function renderPultHtml(payload: SalesPultPayload): string {
   const view = buildPultView(payload);
-  const jsonPayload = safeJson(payload);
-  const jsonView = safeJson(view);
+  const replacements: Record<string, string> = {
+    "/*__CSS__*/": pultCss,
+    "__PAYLOAD__": safeJson(payload),
+    "__VIEW__": safeJson(view),
+    "/*__CLIENT_JS__*/": pultClientJs
+  };
 
-  return pultHtml
-    .replace("/*__CSS__*/", () => pultCss)
-    .replace("__PAYLOAD__", () => jsonPayload)
-    .replace("__VIEW__", () => jsonView)
-    .replace("/*__CLIENT_JS__*/", () => pultClientJs);
+  return pultHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
 }
 
 export {
