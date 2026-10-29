@@ -18,7 +18,7 @@ import {
   getTaskStatus,
   DEFAULT_HOLIDAYS
 } from "../../src/bitrix/salesPult/pace.js";
-import type { SalesPultPayload } from "../../src/bitrix/salesPult/site.js";
+import { renderPultHtml, type SalesPultPayload } from "../../src/bitrix/salesPult/site.js";
 
 describe("salesPultPace", () => {
   describe("October 2026 working days, pace and forecast", () => {
@@ -50,26 +50,48 @@ describe("salesPultPace", () => {
       expect(paceCtx.isEarly).toBe(false);
       // (15 - 9) / 9 = 6 / 9 = 2/3
       expect(paceCtx.dayFrac).toBeCloseTo(2 / 3, 4);
-      // Today counts as passed only from 18:00
-      expect(paceCtx.monthDone).toBe(19);
-      expect(paceCtx.pace.month).toBeCloseTo(19 / 21, 4);
+      // Fractional monthDone includes today's dayFrac
+      expect(paceCtx.monthDone).toBeCloseTo(19 + 2 / 3, 4);
+      expect(paceCtx.pace.month).toBeCloseTo((19 + 2 / 3) / 21, 4);
     });
 
-    it("counts passed working days correctly (today counts as passed only from 18:00)", () => {
-      // 30.10 08:00 → 20 из 21
+    it("calculates fractional monthDone and integer label N = Math.floor(monthDone)", () => {
+      // 29.10 15:10 → monthDone ≈ 19,69, подпись 19
+      const cMid = calculatePace("2026-10-29", "2026-10-29 15:10 (UTC+5)", DEFAULT_HOLIDAYS);
+      expect(cMid.monthDone).toBeCloseTo(19.685, 2);
+      expect(Math.floor(cMid.monthDone)).toBe(19);
+
+      // 30.10 08:00 → 20
       const c1 = calculatePace("2026-10-30", "2026-10-30 08:00 (UTC+5)", DEFAULT_HOLIDAYS);
       expect(c1.monthDone).toBe(20);
-      expect(c1.monthTotal).toBe(21);
+      expect(Math.floor(c1.monthDone)).toBe(20);
 
-      // 30.10 19:00 → 21 из 21
+      // 30.10 19:00 → 21
       const c2 = calculatePace("2026-10-30", "2026-10-30 19:00 (UTC+5)", DEFAULT_HOLIDAYS);
       expect(c2.monthDone).toBe(21);
-      expect(c2.monthTotal).toBe(21);
+      expect(Math.floor(c2.monthDone)).toBe(21);
 
-      // 29.10 05:55 → 19 из 21
-      const c3 = calculatePace("2026-10-29", "2026-10-29 05:55 (UTC+5)", DEFAULT_HOLIDAYS);
-      expect(c3.monthDone).toBe(19);
-      expect(c3.monthTotal).toBe(21);
+      // 31.10 12:00 → 21 (weekend)
+      const c3 = calculatePace("2026-10-31", "2026-10-31 12:00 (UTC+5)", DEFAULT_HOLIDAYS);
+      expect(c3.monthDone).toBe(21);
+      expect(Math.floor(c3.monthDone)).toBe(21);
+    });
+
+    it("forecasts within 168 ± 2 at steady 8 contracts/day on 06.10 15:00 and 29.10 15:10", () => {
+      // 06.10 15:00: 3 days before, dayFrac 6/9 = 2/3 -> monthDone = 3.6667
+      const p1 = calculatePace("2026-10-06", "2026-10-06 15:00 (UTC+5)", DEFAULT_HOLIDAYS);
+      expect(p1.monthDone).toBeCloseTo(3 + 2 / 3, 4);
+      const fact1 = 8 * p1.monthDone;
+      const res1 = calculateMonthForecast(168, fact1, p1.monthDone, 21);
+      expect(res1.forecast).toBeGreaterThanOrEqual(166);
+      expect(res1.forecast).toBeLessThanOrEqual(170);
+
+      // 29.10 15:10: 19 days before, dayFrac ~0.685 -> monthDone = 19.685
+      const p2 = calculatePace("2026-10-29", "2026-10-29 15:10 (UTC+5)", DEFAULT_HOLIDAYS);
+      const fact2 = 8 * p2.monthDone;
+      const res2 = calculateMonthForecast(168, fact2, p2.monthDone, 21);
+      expect(res2.forecast).toBeGreaterThanOrEqual(166);
+      expect(res2.forecast).toBeLessThanOrEqual(170);
     });
 
     it("calculates forecast, left to plan, and daily need accurately", () => {
@@ -103,15 +125,23 @@ describe("salesPultPace", () => {
     });
 
     it("outputs 'Месяц только начался' when 0 or 1 working days passed (less than 3)", () => {
-      // 0 days passed
+      // 0 days passed: left = 160, daysLeft = 21 -> 160 / 21 ≈ 7.6
       const res0 = calculateMonthForecast(160, 0, 0, 21);
       expect(res0.hasForecast).toBe(false);
       expect(res0.verdict).toBe("Месяц только начался. Чтобы закрыть план, нужно 7,6 договора в рабочий день.");
 
-      // 1 day passed
+      // 1 day passed: left = 158, daysLeft = 20 -> 158 / 20 = 7.9
       const res1 = calculateMonthForecast(160, 2, 1, 21);
       expect(res1.hasForecast).toBe(false);
-      expect(res1.verdict).toBe("Месяц только начался. Чтобы закрыть план, нужно 7,6 договора в рабочий день.");
+      expect(res1.verdict).toBe("Месяц только начался. Чтобы закрыть план, нужно 7,9 договора в рабочий день.");
+    });
+
+    it("calculates daily need in 'Месяц только начался' with lag (3 of 180 at monthDone 2 -> 9,3 договора)", () => {
+      // left = 177, daysLeft = 19 -> 177 / 19 ≈ 9.3157... -> 9,3 договора
+      const res = calculateMonthForecast(180, 3, 2, 21);
+      expect(res.hasForecast).toBe(false);
+      expect(res.daysLeft).toBe(19);
+      expect(res.verdict).toBe("Месяц только начался. Чтобы закрыть план, нужно 9,3 договора в рабочий день.");
     });
 
     it("outputs normal phrase when 10 days left and 45 contracts of 180 (daysLeft > 5)", () => {
@@ -127,6 +157,19 @@ describe("salesPultPace", () => {
       expect(res.daysLeft).toBe(2);
       expect(res.hasForecast).toBe(true);
       expect(res.verdict).toBe("План месяца уже не закрыть: осталось 93 договора за 2 рабочих дня.");
+    });
+
+    it("handles 30.10 15:00 (87 of 180) as 'уже не закрыть … за 1 рабочий день' and 19:00 as 'Рабочие дни закончились'", () => {
+      // 30.10 15:00: monthDone = 20 + 2/3, daysLeft = 1/3, Math.ceil(daysLeft) = 1
+      const res15 = calculateMonthForecast(180, 87, 20 + 2 / 3, 21);
+      expect(res15.daysLeft).toBeCloseTo(1 / 3, 4);
+      expect(Math.ceil(res15.daysLeft)).toBe(1);
+      expect(res15.verdict).toBe("План месяца уже не закрыть: осталось 93 договора за 1 рабочий день.");
+
+      // 30.10 19:00: monthDone = 21, daysLeft = 0
+      const res19 = calculateMonthForecast(180, 87, 21, 21);
+      expect(res19.daysLeft).toBe(0);
+      expect(res19.verdict).toBe("Рабочие дни месяца закончились: подписано 87 из 180, это 48% плана.");
     });
 
     it("outputs 'Рабочие дни месяца закончились' when 0 days left and plan not fulfilled", () => {
@@ -154,6 +197,21 @@ describe("salesPultPace", () => {
       expect(res5.need).toBe(8);
       expect(res5.need).toBeGreaterThan(2 * res5.pacePerDay);
       expect(res5.verdict).toBe("План месяца уже не закрыть: осталось 40 договоров за 5 рабочих дней.");
+    });
+
+    it("renders '—' for pace when hasForecast is false", () => {
+      const fixturePayload = JSON.parse(
+        fs.readFileSync("tests/fixtures/sales-pult/midday.json", "utf8")
+      );
+      const earlyPayload = {
+        ...fixturePayload,
+        asOfDate: "2026-11-02",
+        generatedAt: "2026-11-02 06:00 (UTC+5)",
+        dynamics: []
+      };
+      const html = renderPultHtml(earlyPayload);
+      expect(html).toContain('m.hasForecast ? `${fmt1(m.pacePerDay)}<small> в день</small>` : "—"');
+      expect(html).toContain('"hasForecast":false');
     });
   });
 

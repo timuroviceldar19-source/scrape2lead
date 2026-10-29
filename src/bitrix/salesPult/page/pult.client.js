@@ -52,11 +52,11 @@
         <div>
           <span class="label">Подписано с 1 ${MONTHS_GEN[M - 1]}</span>
           <div class="hero-num"><span class="big" data-count="${m.fact}">0</span><span class="of">/ ${fmt(m.plan)}</span></div>
-          <div class="hero-amt">${money(m.amount)} <span class="muted">· ${m.pct}% плана</span></div>
+          <div class="hero-amt">${money(m.amount) || "0 ₸"} <span class="muted">· ${m.pct}% плана</span></div>
           <div class="readout">
-            <div><span class="label">Темп</span><div class="v">${fmt1(m.pacePerDay)}<small> в день</small></div></div>
-            <div><span class="label">Прогноз</span><div class="v">${m.hasForecast ? `≈ ${fmt(m.forecast)}<small> к ${m.daysInMonth}.${String(M).padStart(2, "0")}</small>` : `—<small> с 3-го рабочего дня</small>`}</div></div>
-            <div><span class="label">До плана</span><div class="v">${fmt(m.left)}<small>${m.daysLeft === 0 ? " не добрали" : ` за ${plural(m.daysLeft, ["день", "дня", "дней"])}`}</small></div></div>
+            <div><span class="label">Темп</span><div class="v">${m.hasForecast ? `${fmt1(m.pacePerDay)}<small> в день</small>` : "—"}</div></div>
+            <div><span class="label">Прогноз</span><div class="v">${m.hasForecast ? `≈ ${fmt(m.forecast)}<small> к ${m.daysInMonth}.${String(M).padStart(2, "0")}</small>` : `—<small> с 3-го дня</small>`}</div></div>
+            <div><span class="label">До плана</span><div class="v">${fmt(m.left)}<small>${m.daysLeft <= 0 ? " не добрали" : ` за ${plural(Math.ceil(m.daysLeft), ["день", "дня", "дней"])}`}</small></div></div>
           </div>
           <p class="verdict">${m.verdict}</p>
           <div class="split">${m.split.map((x) => `<div class="split-row"><span>${esc(x.name)}</span><span class="trk"><span data-w="${x.widthPct}"></span></span><span class="num">${fmt(x.c)} · ${money(x.a) || "—"}</span></div>`).join("")}</div>
@@ -82,7 +82,7 @@
     const isWorkMap = new Set(m.workDays);
     let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Договоры накопительно за месяц: факт, темп плана и прогноз">`;
     for (let d = 1; d <= daysInMonth; d++) if (!isWorkMap.has(d)) s += `<rect x="${x(d - 1)}" y="${T}" width="${iw / daysInMonth}" height="${ih}" fill="rgba(20,20,20,.03)"/>`;
-    for (let i = 0; i <= 4; i++) { const v = (plan / 4) * i; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="rgba(20,20,20,${i === 0 ? .3 : .08})"/>`; if (i) s += `<text x="${L + 4}" y="${y(v) - 6}" font-family="JetBrains Mono" font-size="11" fill="#8c8981">${fmt(v)}</text>`; }
+    for (let i = 0; i <= 4; i++) { const v = (plan / 4) * i; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="rgba(20,20,20,${i === 0 ? .3 : .08})"/>`; }
     let ideal = `M${x(0)},${y(0)}`; let n = 0;
     for (let d = 1; d <= daysInMonth; d++) { if (isWorkMap.has(d)) n++; ideal += ` L${x(d)},${y((plan * n) / m.monthTotal)}`; }
     s += `<path d="${ideal}" fill="none" stroke="#8c8981" stroke-width="1.5" stroke-dasharray="5 5"/>`;
@@ -94,6 +94,7 @@
     s += `<path d="${act}" fill="none" stroke="#141414" stroke-width="2.2" stroke-linejoin="round" class="burn-line"/>`;
     if (m.hasForecast) s += `<path d="M${x(lastDay)},${y(fact)} L${x(daysInMonth)},${y(forecast)}" fill="none" stroke="#141414" stroke-width="2" stroke-dasharray="1.5 5" stroke-linecap="round" class="burn-fc"/>`;
     s += `<line x1="${nowX}" x2="${nowX}" y1="${T - 6}" y2="${T + ih}" stroke="#141414" stroke-width="1"/>`;
+    for (let i = 1; i <= 4; i++) { const v = (plan / 4) * i; s += `<text x="${L + 4}" y="${y(v) - 6}" class="burn-axis" font-family="JetBrains Mono" font-size="11" fill="#8c8981" style="paint-order:stroke;stroke:var(--paper,#f1efe9);stroke-width:3px;stroke-linejoin:round">${fmt(v)}</text>`; }
     s += `<text x="${nowX}" y="${T - 10}" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#141414">сегодня</text>`;
     s += `<circle cx="${x(lastDay)}" cy="${y(fact)}" r="4.5" fill="#faf9f5" stroke="#141414" stroke-width="2"/>`;
     let yp = y(plan);
