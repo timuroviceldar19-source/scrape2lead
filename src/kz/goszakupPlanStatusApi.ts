@@ -1,4 +1,6 @@
 import { GoszakupAuthError } from "./goszakupClient.js";
+import { fetchGzPlans, type GzPlanLookupOptions } from "./zakupGzPlans.js";
+import { withGzSourceFallback } from "./zakupGzRegistry.js";
 
 export const GZ_GRAPHQL_URL = "https://ows.goszakup.gov.kz/v3/graphql";
 export const PLAN_STATUS_BATCH_SIZE = 50;
@@ -7,10 +9,7 @@ export const PLAN_STATUS_QUERY_LIMIT = 200;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const DEFAULT_MAX_RETRIES = 3;
 
-export interface PlanStatusApiOptions {
-  token: string;
-  fetchFn?: typeof fetch;
-  maxRetries?: number;
+export interface PlanStatusApiOptions extends GzPlanLookupOptions {
   sleepFn?: (ms: number) => Promise<void>;
 }
 
@@ -83,7 +82,12 @@ export async function fetchPlanStatusBatch(
   if (planNumbers.length > PLAN_STATUS_BATCH_SIZE) {
     throw new Error(`batch supports at most ${PLAN_STATUS_BATCH_SIZE} plan numbers, got ${planNumbers.length}`);
   }
-  return fetchChunk([...planNumbers], options);
+  buildPlanStatusQuery(planNumbers);
+  return withGzSourceFallback(async () => {
+    const plans = await fetchGzPlans(planNumbers.map(Number), "root", { ...options, token: null });
+    return new Map(plans.filter(plan => plan.RefPlnPointStatus?.nameRu && !plan.isDeleted && plan.isActive !== 0)
+      .map(plan => [String(plan.rootrecordId), plan.RefPlnPointStatus!.nameRu!]));
+  }, () => fetchChunk([...planNumbers], options), options.token);
 }
 
 async function fetchChunk(chunk: string[], options: PlanStatusApiOptions): Promise<Map<string, string>> {

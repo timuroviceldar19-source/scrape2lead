@@ -1,4 +1,6 @@
 import { goszakupGraphqlAll, type GoszakupGraphqlOptions } from "./goszakupGraphql.js";
+import { fetchGzPlans, GzPlanLookup, type GzPlanLookupOptions } from "./zakupGzPlans.js";
+import { mapWithConcurrency } from "./zakupPublicApi.js";
 
 /** Действующая версия пункта плана под номером, который показывает портал. */
 export interface CurrentPlanItem {
@@ -44,6 +46,30 @@ function text(value: unknown): string {
  * Номера, которых реестр не знает, в результат не попадают; номера пачки, которую не удалось прочитать, идут в `failed`.
  */
 export async function fetchCurrentPlanItems(
+  roots: number[],
+  options: GzPlanLookupOptions
+): Promise<{ items: Map<number, CurrentPlanItem>; failed: number[] }> {
+  // Сохраняем пакетный резерв для старых потребителей, ещё не передающих контекст сделки.
+  if (!options.contexts && !options.lookup && options.token) return fetchCurrentPlanItemsOws(roots, { ...options, token: options.token });
+  const lookup = options.lookup ?? new GzPlanLookup(options);
+  const items = new Map<number, CurrentPlanItem>();
+  const failed: number[] = [];
+  await mapWithConcurrency([...new Set(roots.filter(root => Number.isSafeInteger(root) && root > 0))], options.concurrency ?? 4, async root => {
+    try {
+      const rows = await fetchGzPlans([root], "root", { ...options, lookup });
+      for (const row of rows) {
+        if (row.isActive === 0 || row.isDeleted) continue;
+        // Дату синхронизации нельзя выдавать за дату версии и разрешать по ней правку старого товара.
+        if (!row.dateCreate) { failed.push(root); continue; }
+        items.set(root, { id: row.id, rootId: root, code: text(row.refEnstruCode), name: text(row.nameRu),
+          bin: row.subjectBiin ?? null, year: row.plnPointYear ?? null, createdAt: row.dateCreate });
+      }
+    } catch { failed.push(root); }
+  });
+  return { items, failed };
+}
+
+async function fetchCurrentPlanItemsOws(
   roots: number[],
   options: GoszakupGraphqlOptions
 ): Promise<{ items: Map<number, CurrentPlanItem>; failed: number[] }> {

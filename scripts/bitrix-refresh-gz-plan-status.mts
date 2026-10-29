@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { BitrixClient } from "../src/bitrix/client.js";
 import { ReadOnlyBitrixClient } from "../src/bitrix/reporting/readOnlyClient.js";
 import { fetchPlanStatusBatch } from "../src/kz/goszakupPlanStatusApi.js";
+import { GzPlanLookup, type GzPlanContext } from "../src/kz/zakupGzPlans.js";
 import {
   GZ_REFRESH_DEAL_SELECT,
   GZ_REFRESH_PIPELINE_IDS,
@@ -23,7 +24,8 @@ async function main(): Promise<void> {
   const webhookUrl = process.env.BITRIX24_WEBHOOK_URL?.trim();
   const token = process.env.GOSZAKUP_TOKEN?.trim();
   if (!webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
-  if (!token) throw new Error("GOSZAKUP_TOKEN is required");
+  const contexts = new Map<number, GzPlanContext>();
+  const lookup = new GzPlanLookup({ token });
 
   const reader = new ReadOnlyBitrixClient(new BitrixClient(webhookUrl, { requestDelayMs: 550, maxRetries: 5 }));
   const updateDeals = createBatchDealUpdater(webhookUrl);
@@ -43,15 +45,20 @@ async function main(): Promise<void> {
           const deals = await reader.listAllBatched<RefreshDeal & Record<string, unknown>>("crm.deal.list", {
             order: { ID: "ASC" },
             filter,
-            select: [...GZ_REFRESH_DEAL_SELECT]
+            select: [...GZ_REFRESH_DEAL_SELECT, "DATE_CREATE", "UF_CRM_6627AEBD7C2D2"]
           });
           console.error(`Fetched ${deals.length} deals in category ${categoryId}.`);
           allDeals.push(...deals);
+          for (const deal of deals) {
+            const bin = String(deal.UF_CRM_6627AEBD7C2D2 ?? "");
+            const year = Number(String(deal.DATE_CREATE ?? "").slice(0, 4));
+            if (/^\d{12}$/.test(bin) && year) contexts.set(Number(deal.UF_CRM_PLAN_ID), { bin, year });
+          }
           if (cli.dealId && allDeals.length > 0) break;
         }
         return allDeals;
       },
-      fetchStatuses: (planNumbers) => fetchPlanStatusBatch(planNumbers, { token }),
+      fetchStatuses: (planNumbers) => fetchPlanStatusBatch(planNumbers, { token, contexts, lookup }),
       writeUpdates: updateDeals,
       now: () => new Date()
     },

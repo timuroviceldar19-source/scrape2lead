@@ -8,13 +8,15 @@
  *   npx tsx scripts/bitrix-sync-gz-plan-items.mts --execute --limit 5  записать первые 5 (пробный прогон)
  *   npx tsx scripts/bitrix-sync-gz-plan-items.mts --execute            записать все
  *
- * Нужны BITRIX24_WEBHOOK_URL (или --webhook-url) и GOSZAKUP_TOKEN.
+ * Нужен BITRIX24_WEBHOOK_URL (или --webhook-url); GOSZAKUP_TOKEN — только для резерва.
  */
 
 import dotenv from "dotenv";
 import { BitrixClient } from "../src/bitrix/client.js";
 import { PLAN_ITEM_DEAL_SELECT, planItemSync, planRootsOf, type PlanItemDeal } from "../src/bitrix/gzPlanItemChange.js";
 import { fetchCurrentPlanItems } from "../src/kz/goszakupPlanItems.js";
+import { GzPlanLookup, type GzPlanContext } from "../src/kz/zakupGzPlans.js";
+import fs from "node:fs";
 
 dotenv.config();
 
@@ -24,14 +26,16 @@ interface CliArgs {
   execute: boolean;
   limit: number | null;
   webhookUrl: string | null;
+  reportPath: string | null;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { execute: false, limit: null, webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null };
+  const args: CliArgs = { execute: false, limit: null, webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null, reportPath: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--execute") args.execute = true;
     else if (argv[i] === "--limit") args.limit = Number(argv[++i]) || null;
     else if (argv[i] === "--webhook-url") args.webhookUrl = argv[++i]?.trim() || null;
+    else if (argv[i] === "--report") args.reportPath = argv[++i] ?? null;
     else throw new Error(`Неизвестный параметр: ${argv[i]}`);
   }
   return args;
@@ -41,7 +45,6 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (!args.webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
   const token = process.env.GOSZAKUP_TOKEN?.trim();
-  if (!token) throw new Error("GOSZAKUP_TOKEN is required");
 
   const client = new BitrixClient(args.webhookUrl);
   console.log(`gz plan items sync: mode=${args.execute ? "execute" : "dry-run"}${args.limit ? ` limit=${args.limit}` : ""}`);
@@ -50,8 +53,15 @@ async function main(): Promise<void> {
   console.log(`открытых сделок по плану: ${deals.length}`);
 
   const roots = deals.flatMap((deal) => planRootsOf(deal));
-  const { items, failed } = await fetchCurrentPlanItems(roots, { token });
+  const contexts = new Map<number, GzPlanContext>();
+  for (const deal of deals) {
+    const bin = deal.UF_CRM_6627AEBD7C2D2 || /BIN:\s*(\d{12})/.exec(deal.COMMENTS ?? "")?.[1] || "";
+    const year = Number(deal.DATE_CREATE?.slice(0, 4));
+    if (/^\d{12}$/.test(bin) && year) for (const root of planRootsOf(deal)) contexts.set(root, { bin, year });
+  }
+  const { items, failed } = await fetchCurrentPlanItems(roots, { token, contexts, lookup: new GzPlanLookup({ token }) });
   const plan = planItemSync(deals, items, new Set(failed));
+  if (args.reportPath) fs.writeFileSync(args.reportPath, JSON.stringify({ mode: args.execute ? "execute" : "dry-run", ...plan, failed }, null, 2));
   console.log(`план: ${JSON.stringify(plan.stats)}`);
 
   const updates = args.limit ? plan.updates.slice(0, args.limit) : plan.updates;
