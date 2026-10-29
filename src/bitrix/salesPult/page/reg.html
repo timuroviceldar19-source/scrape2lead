@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Реестр ОП · Пульт продаж F3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geologica:wght@200;300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="bar-in">
+    <a class="mark" href="./#pult" aria-label="Пульт продаж F3">
+      <span class="mark-box">F3</span><span class="mark-name">Пульт продаж</span>
+    </a>
+    <nav class="sections" aria-label="Разделы">
+      <a href="./#pult">Пульт</a>
+      <a href="./reg.html" aria-current="page" class="active">Реестр ОП</a>
+      <a href="./#ip">Рынок ИП</a>
+      <a href="./#kt">Рынок КТ</a>
+      <span class="ind" aria-hidden="true"></span>
+    </nav>
+    <div class="bar-right">
+      <div class="live" id="live"><i></i><span id="liveText"></span></div>
+    </div>
+  </div>
+</header>
+
+<main class="page" id="top">
+  <div class="dateline">
+    <div class="date-left">
+      <span class="label" id="dateLabel"></span>
+      <span class="label" id="srcLabel"></span>
+    </div>
+  </div>
+
+  <div class="tab on" id="tab-reg"></div>
+
+  <footer id="foot">
+    <span id="footSource">Источник: реестр РОПа на Диске Битрикс24 · сверка со сделками Битрикс24</span>
+    <span>Только для руководства · отдельная страница, на ТВ не выводится</span>
+  </footer>
+</main>
+
+<script>
+const PAYLOAD = __PAYLOAD__;
+</script>
+<script>
+/*__CLIENT_JS__*/
+</script>
+</body>
+</html>

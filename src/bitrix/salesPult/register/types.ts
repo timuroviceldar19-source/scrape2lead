@@ -97,7 +97,7 @@ export interface RegisterMissingContract {
   type: string;
 }
 
-export interface RegisterView {
+export interface RegisterSuccessView {
   file: string;
   asOf: string;
   month: string;
@@ -110,8 +110,26 @@ export interface RegisterView {
   missing: RegisterMissingContract[];
   crmExtra: number;
   rows: RegisterRow[];
-  error?: string;
+  error?: undefined;
 }
+
+export interface RegisterErrorView {
+  error: string;
+  file?: string;
+  asOf?: string;
+  month?: string;
+  total?: RegisterTotal;
+  daily?: RegisterDailyPoint[];
+  managers?: RegisterManagerSummary[];
+  mix?: RegisterMixItem[];
+  channels?: RegisterChannelItem[];
+  groups?: RegisterGroupItem[];
+  missing?: RegisterMissingContract[];
+  crmExtra?: number;
+  rows?: RegisterRow[];
+}
+
+export type RegisterView = RegisterSuccessView | RegisterErrorView;
 
 export interface CrmWonDeal {
   id: string;

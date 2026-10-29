@@ -23,6 +23,7 @@ export interface MarketConfig {
 
 export interface MarketUnit {
   id: number;
+  unitIndex?: number;
   month: string;
   date: string;
   group: "ИП" | "КТ";
@@ -129,8 +130,12 @@ export interface MarketGroupView {
 
 export interface MarketView {
   asOf: string;
-  months: string[];
-  "ИП": MarketGroupView | null;
-  "КТ": MarketGroupView | null;
+  months?: string[];
+  "ИП"?: MarketGroupView | null;
+  "КТ"?: MarketGroupView | null;
+  ip?: MarketGroupView | null;
+  kt?: MarketGroupView | null;
+  updatedAt?: string;
+  stale?: boolean;
   error?: string;
 }

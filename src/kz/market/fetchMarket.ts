@@ -104,12 +104,108 @@ export function mergeMarketUnits(
   const olderUnits = existingUnits.filter((u) => u.date < cutoffDate);
   const byKey = new Map<string, MarketUnit>();
 
+  const unitKey = (u: MarketUnit) => `${u.id}|${u.unitIndex ?? 0}|${u.code}|${u.price}|${u.qty}`;
+
   for (const u of olderUnits) {
-    byKey.set(`${u.id}|${u.code}|${u.price}|${u.qty}`, u);
+    byKey.set(unitKey(u), u);
   }
   for (const u of freshUnits) {
-    byKey.set(`${u.id}|${u.code}|${u.price}|${u.qty}`, u);
+    byKey.set(unitKey(u), u);
   }
 
   return [...byKey.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export function getMonthIntervals(
+  fromDate: string,
+  toDate: string
+): Array<{ from: string; to: string; month: string }> {
+  const intervals: Array<{ from: string; to: string; month: string }> = [];
+  const start = new Date(Date.parse(`${fromDate}T00:00:00Z`));
+  const end = new Date(Date.parse(`${toDate}T23:59:59Z`));
+
+  let cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  while (cur <= end) {
+    const y = cur.getUTCFullYear();
+    const m = cur.getUTCMonth();
+    const monthStr = `${y}-${String(m + 1).padStart(2, "0")}`;
+    const firstDay = new Date(Date.UTC(y, m, 1));
+    const lastDay = new Date(Date.UTC(y, m + 1, 0));
+
+    const from = (firstDay < start ? start : firstDay).toISOString().slice(0, 10);
+    const to = (lastDay > end ? end : lastDay).toISOString().slice(0, 10);
+
+    intervals.push({ from, to, month: monthStr });
+    cur = new Date(Date.UTC(y, m + 1, 1));
+  }
+  return intervals;
+}
+
+export interface BackfillMarketOptions {
+  token: string;
+  fromDate: string;
+  toDate?: string;
+  filePath?: string;
+  cfg?: MarketConfig;
+  onProgress?: (info: { month: string; pages: number; seen: number; matched: number; totalSaved: number }) => void;
+}
+
+/**
+ * Downloads market data by monthly intervals and saves progress after each month.
+ * If interrupted, rerunning picks up from where it left off without losing already downloaded months.
+ */
+export async function backfillMarketByMonths(options: BackfillMarketOptions): Promise<MarketUnit[]> {
+  const {
+    token,
+    fromDate,
+    toDate = new Date().toISOString().slice(0, 10),
+    filePath = DEFAULT_MARKET_UNITS_PATH,
+    cfg = loadMarketConfig(),
+    onProgress
+  } = options;
+
+  let currentUnits = loadStoredMarketUnits(filePath);
+  const intervals = getMonthIntervals(fromDate, toDate);
+
+  for (const interval of intervals) {
+    // Check if month already exists in stored units (for past months)
+    const isCurrentMonth = interval.month === toDate.slice(0, 7);
+    const alreadyLoaded = currentUnits.some((u) => u.month === interval.month);
+
+    if (alreadyLoaded && !isCurrentMonth) {
+      if (onProgress) {
+        onProgress({
+          month: interval.month,
+          pages: 0,
+          seen: 0,
+          matched: currentUnits.filter((u) => u.month === interval.month).length,
+          totalSaved: currentUnits.length
+        });
+      }
+      continue;
+    }
+
+    const monthUnits = await fetchMarketContracts({
+      token,
+      fromDate: interval.from,
+      toDate: interval.to,
+      cfg,
+      onProgress: (pages, seen, matched) => {
+        if (onProgress) {
+          onProgress({
+            month: interval.month,
+            pages,
+            seen,
+            matched,
+            totalSaved: currentUnits.length + matched
+          });
+        }
+      }
+    });
+
+    currentUnits = mergeMarketUnits(currentUnits, monthUnits, interval.from);
+    saveStoredMarketUnits(currentUnits, filePath);
+  }
+
+  return currentUnits;
 }

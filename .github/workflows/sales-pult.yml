@@ -107,18 +107,22 @@ jobs:
 
           # 1. Проверка Access ДО деплоя
           check_access "https://f3-pult.pages.dev"
+          check_access "https://f3-pult.pages.dev/reg"
 
           # 2. Подготовка и деплой
           mkdir -p exports/sales-pult-deploy
           cp exports/sales-pult/index.html exports/sales-pult-deploy/index.html
+          cp exports/sales-pult/reg.html exports/sales-pult-deploy/reg.html
           DEPLOY_OUTPUT=$(npx wrangler pages deploy exports/sales-pult-deploy --project-name f3-pult)
           echo "$DEPLOY_OUTPUT"
 
           # 3. Проверка Access ПОСЛЕ деплоя: главный домен
           check_access "https://f3-pult.pages.dev"
+          check_access "https://f3-pult.pages.dev/reg"
 
           # 4. Проверка Access ПОСЛЕ деплоя: URL деплоя из вывода wrangler
           DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -Eo 'https://[a-zA-Z0-9.-]+\.pages\.dev' | grep -v '^https://f3-pult\.pages\.dev$' | head -n 1 || true)
           if [ -n "$DEPLOY_URL" ]; then
             check_access "$DEPLOY_URL"
+            check_access "$DEPLOY_URL/reg"
           fi

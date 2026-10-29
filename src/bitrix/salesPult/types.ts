@@ -37,6 +37,7 @@ export interface SalesPultPayload {
   pultUrl?: string;
   targets: TargetsConfig;
   callsAvailable: boolean;
+  callsError?: string;
   proposalsTracked?: boolean;
   groups: PultGroupView[];
   dynamics: DayDynamic[];

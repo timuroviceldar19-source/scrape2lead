@@ -469,7 +469,6 @@
   const tabLinks = [...document.querySelectorAll(".sections a[data-t]")];
   const tabPanes = {
     pult: document.getElementById("tab-pult"),
-    reg: document.getElementById("tab-reg"),
     ip: document.getElementById("tab-ip"),
     kt: document.getElementById("tab-kt")
   };
@@ -488,12 +487,7 @@
 
   function renderTabContent(tab) {
     if (renderedTabs.has(tab)) return;
-    if (tab === "reg") {
-      if (window.__renderRegisterTab) {
-        window.__renderRegisterTab(P.register, tabPanes.reg);
-        renderedTabs.add(tab);
-      }
-    } else if (tab === "ip") {
+    if (tab === "ip") {
       if (window.__renderMarketTab) {
         window.__renderMarketTab("ip", P.market, tabPanes.ip);
         renderedTabs.add(tab);
@@ -507,7 +501,7 @@
   }
 
   function setTab(tab, fromUser) {
-    if (!tabPanes[tab]) tab = "pult";
+    if (tab === "reg" || !tabPanes[tab]) tab = "pult";
     currentTab = tab;
     tabLinks.forEach((link) => {
       const active = link.dataset.t === tab;
@@ -527,10 +521,7 @@
 
     const srcLabel = document.getElementById("srcLabel");
     const foot = document.getElementById("foot");
-    if (tab === "reg") {
-      if (srcLabel) srcLabel.textContent = `${P.register?.file || "Реестр"} · Диск Битрикс24`;
-      if (foot) foot.innerHTML = `<span>Источник: реестр РОПа «${esc(P.register?.file || "Реестр")}», папка «Реестр ОП» на Диске Битрикс24 · сверка со сделками Битрикс24</span><span>Только для руководства · в режиме ТВ не показывается</span>`;
-    } else if (tab === "ip" || tab === "kt") {
+    if (tab === "ip" || tab === "kt") {
       if (srcLabel) srcLabel.textContent = "госзакупки · ows.goszakup.gov.kz";
       if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
     } else {
@@ -561,22 +552,10 @@
 
   window.addEventListener("hashchange", () => {
     const h = location.hash.replace(/^#/, "");
-    if (h && tabPanes[h] && h !== currentTab) {
+    if (h === "reg") {
+      setTab("pult", false);
+    } else if (h && tabPanes[h] && h !== currentTab) {
       setTab(h, false);
-    }
-  });
-
-  document.addEventListener("click", (e) => {
-    const row = e.target.closest(".mgr .r.body");
-    if (row) {
-      const open = row.getAttribute("aria-expanded") !== "true";
-      row.setAttribute("aria-expanded", String(open));
-      if (row.nextElementSibling) row.nextElementSibling.classList.toggle("open", open);
-    }
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && e.target.matches(".mgr .r.body")) {
-      e.target.click();
     }
   });
 
@@ -639,8 +618,10 @@
   let saved = null; try { saved = localStorage.getItem("pult-period"); } catch (e) {}
   setPeriod(/period=(day|week|month)/.exec(location.search)?.[1] || saved || "day");
   
-  const hashTab = location.hash.replace(/^#/, "");
+  let hashTab = location.hash.replace(/^#/, "");
+  if (hashTab === "reg") hashTab = "pult";
   let savedTab = null; try { savedTab = localStorage.getItem("pult-tab"); } catch (e) {}
+  if (savedTab === "reg") savedTab = "pult";
   const initialTab = tabPanes[hashTab] ? hashTab : (tabPanes[savedTab] ? savedTab : "pult");
   setTab(initialTab, false);
 

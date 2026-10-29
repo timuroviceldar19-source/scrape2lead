@@ -47,7 +47,7 @@ export function filterContractUnits(
     const isUs = supplierBin === cfg.bin;
 
     const rawUnits = c.ContractUnits ?? [];
-    for (const u of rawUnits) {
+    for (const [unitIdx, u] of rawUnits.entries()) {
       const codes = Array.isArray(u.refEnstruCode)
         ? u.refEnstruCode
         : u.refEnstruCode
@@ -74,6 +74,7 @@ export function filterContractUnits(
 
       units.push({
         id: c.id,
+        unitIndex: unitIdx,
         month: monthStr,
         date: dateStr,
         group: classification.group,

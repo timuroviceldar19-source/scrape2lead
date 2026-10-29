@@ -41,30 +41,57 @@ import {
   type PultTenderManagerView
 } from "./pace.js";
 
+import type { RegisterView } from "./register/types.js";
+
 const pultHtml = fs.readFileSync(new URL("./page/pult.html", import.meta.url), "utf8");
+const regHtml = fs.readFileSync(new URL("./page/reg.html", import.meta.url), "utf8");
 const pultCss = fs.readFileSync(new URL("./page/pult.css", import.meta.url), "utf8");
 const pultClientJs = fs.readFileSync(new URL("./page/pult.client.js", import.meta.url), "utf8");
 const registerClientJs = fs.readFileSync(new URL("./page/register.client.js", import.meta.url), "utf8");
+const regRunnerClientJs = fs.readFileSync(new URL("./page/reg.client.js", import.meta.url), "utf8");
 const marketClientJs = fs.readFileSync(new URL("./page/market.client.js", import.meta.url), "utf8");
 
-const fullClientJs = `${registerClientJs}\n${marketClientJs}\n${pultClientJs}`;
+const pultPageClientJs = `${marketClientJs}\n${pultClientJs}`;
+const regPageClientJs = `${registerClientJs}\n${regRunnerClientJs}`;
 
 const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|\/\*__CLIENT_JS__\*\//g;
+
+export interface RegisterPagePayload {
+  asOfDate: string;
+  generatedAt: string;
+  portal?: string;
+  pultUrl?: string;
+  register: RegisterView;
+}
 
 export function buildSignals(payload: SalesPultPayload): SignalItem[] {
   return buildPultSignals(payload);
 }
 
 export function renderPultHtml(payload: SalesPultPayload): string {
-  const view = buildPultView(payload);
+  // Strip register data so it never leaks onto the pult page or office TV
+  const sanitizedPayload = { ...payload };
+  delete (sanitizedPayload as any).register;
+
+  const view = buildPultView(sanitizedPayload);
   const replacements: Record<string, string> = {
     "/*__CSS__*/": pultCss,
-    "__PAYLOAD__": safeJson(payload),
+    "__PAYLOAD__": safeJson(sanitizedPayload),
     "__VIEW__": safeJson(view),
-    "/*__CLIENT_JS__*/": fullClientJs
+    "/*__CLIENT_JS__*/": pultPageClientJs
   };
 
   return pultHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
+}
+
+export function renderRegisterHtml(payload: RegisterPagePayload): string {
+  const replacements: Record<string, string> = {
+    "/*__CSS__*/": pultCss,
+    "__PAYLOAD__": safeJson(payload),
+    "/*__CLIENT_JS__*/": regPageClientJs
+  };
+
+  return regHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
 }
 
 export {

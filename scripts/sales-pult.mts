@@ -32,26 +32,22 @@ import {
 } from "../src/bitrix/salesPult/chatReport.js";
 import {
   renderPultHtml,
+  renderRegisterHtml,
   type SalesPultPayload,
+  type RegisterPagePayload,
   type PultGroupView,
   type DayDynamic
 } from "../src/bitrix/salesPult/site.js";
-import { parseRegisterExcel } from "../src/bitrix/salesPult/register/parseExcel.js";
-import { groupRegisterContracts, matchRegisterWithCrm } from "../src/bitrix/salesPult/register/matchCrm.js";
-import { buildRegisterView } from "../src/bitrix/salesPult/register/buildView.js";
-import { fetchLatestRegisterFromDisk } from "../src/bitrix/salesPult/register/diskClient.js";
-import { fetchCrmWonDealsForRegister } from "../src/bitrix/salesPult/register/fetchCrmWon.js";
-import type { RegisterView } from "../src/bitrix/salesPult/register/types.js";
-import { loadMarketConfig } from "../src/kz/market/config.js";
-import { buildMarketGroupView } from "../src/kz/market/aggregate.js";
+import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
+import { loadMarketView } from "../src/kz/market/load.js";
 import {
   loadStoredMarketUnits,
   saveStoredMarketUnits,
   fetchMarketContracts,
   mergeMarketUnits,
+  backfillMarketByMonths,
   DEFAULT_MARKET_UNITS_PATH
 } from "../src/kz/market/fetchMarket.js";
-import type { MarketPayload } from "../src/kz/market/types.js";
 
 export interface PultConfig {
   portal: string;
@@ -82,7 +78,6 @@ export interface PultConfig {
     diskFolderId?: number;
     managerAliases?: Record<string, string>;
   };
-  }>;
 }
 
 export function loadConfig(customPath?: string): PultConfig {
@@ -211,16 +206,16 @@ export async function runSalesPult(args: string[]): Promise<void> {
     if (!gzToken) {
       throw new Error("GOSZAKUP_TOKEN is required in .env for market backfill");
     }
-    console.log(`[Рынок] Начало загрузки с ${backfillFromDate}...`);
-    const units = await fetchMarketContracts({
+    console.log(`[Рынок] Начало загрузки с ${backfillFromDate} по месяцам с сохранением прогресса...`);
+    const units = await backfillMarketByMonths({
       token: gzToken,
       fromDate: backfillFromDate,
-      onProgress: (pages, seen, matched) => {
-        console.log(`[Рынок] страниц: ${pages}, просмотрено: ${seen}, отобрано: ${matched}`);
+      toDate: todayAlmaty,
+      onProgress: (info) => {
+        console.log(`[Рынок] Месяц ${info.month}: страниц ${info.pages}, отобрано ${info.matched}, всего сохранено ${info.totalSaved}`);
       }
     });
-    saveStoredMarketUnits(units, DEFAULT_MARKET_UNITS_PATH);
-    console.log(`[Рынок] Сохранено ${units.length} позиций в ${DEFAULT_MARKET_UNITS_PATH}`);
+    console.log(`[Рынок] Завершено. Сохранено ${units.length} позиций в ${DEFAULT_MARKET_UNITS_PATH}`);
     if (args.length <= 2) return;
   }
 
@@ -615,97 +610,21 @@ export async function runSalesPult(args: string[]): Promise<void> {
     const generatedTimeStr = `${todayAlmaty} ${almatyTime} (UTC+5)`;
 
     // Register
-    let registerView: RegisterView | null = null;
-    try {
-      let excelBuffer: Buffer | null = null;
-      let registerFileName = "";
-      let asOf = todayAlmaty;
-
-      if (registerFilePath) {
-        if (fs.existsSync(registerFilePath)) {
-          excelBuffer = fs.readFileSync(registerFilePath);
-          registerFileName = path.basename(registerFilePath);
-        } else {
-          registerView = { error: `Файл не найден: ${registerFilePath}` } as any;
-        }
-      } else if (config.register?.diskFolderId) {
-        try {
-          const diskFile = await fetchLatestRegisterFromDisk(reader, config.register.diskFolderId);
-          if (diskFile) {
-            excelBuffer = diskFile.buffer;
-            registerFileName = diskFile.fileName;
-          } else {
-            registerView = { error: "Реестр не подключён: файл в папке не найден" } as any;
-          }
-        } catch (diskErr) {
-          registerView = {
-            error: `Реестр не подключён: ${diskErr instanceof Error ? diskErr.message : String(diskErr)}`
-          } as any;
-        }
-      } else {
-        registerView = { error: "Реестр не подключён: папка на Диске не настроена" } as any;
-      }
-
-      if (excelBuffer && !registerView) {
-        const parsed = await parseRegisterExcel(excelBuffer, config.register?.managerAliases);
-        asOf = parsed.asOf || todayAlmaty;
-        const contracts = groupRegisterContracts(parsed.rows);
-
-        const wonDeals = await fetchCrmWonDealsForRegister(
-          reader,
-          collected.contractTransitions,
-          collected.userProfiles
-        );
-
-        const matchResult = matchRegisterWithCrm(contracts, wonDeals, {
-          managerAliases: config.register?.managerAliases
-        });
-
-        registerView = buildRegisterView({
-          rows: parsed.rows,
-          plans: parsed.plans,
-          missing: matchResult.missing,
-          extraDealsCount: matchResult.extra.length,
-          fileName: registerFileName,
-          asOf,
-          month: parsed.month || todayAlmaty.slice(0, 7)
-        });
-
-        console.log(
-          `[Реестр] строк: ${parsed.rows.length}, договоров: ${contracts.length}, найдено в CRM: ${matchResult.matched.length}, нет в CRM: ${matchResult.missing.length}`
-        );
-      }
-    } catch (err) {
-      console.error("[Реестр] Ошибка обработки реестра:", err);
-      registerView = {
-        error: `Реестр не подключён: ${err instanceof Error ? err.message : String(err)}`
-      } as any;
-    }
+    const registerView = await loadRegisterView({
+      reader,
+      diskFolderId: config.register?.diskFolderId,
+      managerAliases: config.register?.managerAliases,
+      registerFilePath,
+      todayAlmaty,
+      contractTransitions: collected.contractTransitions,
+      userProfiles: collected.userProfiles
+    });
 
     // Market
-    let marketPayload: MarketPayload | null = null;
-    const storedUnits = loadStoredMarketUnits(DEFAULT_MARKET_UNITS_PATH);
-    if (storedUnits.length > 0) {
-      const mConfig = loadMarketConfig();
-      const ipView = buildMarketGroupView(storedUnits, "ИП", todayAlmaty, mConfig);
-      const ktView = buildMarketGroupView(storedUnits, "КТ", todayAlmaty, mConfig);
-      marketPayload = {
-        asOfDate: todayAlmaty,
-        ip: ipView,
-        kt: ktView
-      };
-      console.log(
-        `[Рынок] позиций: ${storedUnits.length}, ИП договоров: ${ipView.total.contracts}, КТ договоров: ${ktView.total.contracts}`
-      );
-    } else {
-      marketPayload = {
-        asOfDate: todayAlmaty,
-        ip: null as any,
-        kt: null as any,
-        error: "Данные рынка ещё собираются."
-      };
-      console.log("[Рынок] Кэш data/market/units-2026.json не найден");
-    }
+    const marketView = loadMarketView({
+      todayAlmaty
+    });
+
     const payload: SalesPultPayload = {
       asOfDate: todayAlmaty,
       generatedAt: generatedTimeStr,
@@ -718,18 +637,30 @@ export async function runSalesPult(args: string[]): Promise<void> {
       groups: groupsView,
       dynamics,
       holidays: config.holidays,
-      register: registerView,
-      market: marketPayload
+      market: marketView
     };
 
     const outDir = path.resolve("exports/sales-pult");
     fs.mkdirSync(outDir, { recursive: true });
 
+    // 1. Main pult page (no register in payload or DOM)
     const html = renderPultHtml(payload);
     fs.writeFileSync(path.join(outDir, "index.html"), html, "utf8");
     fs.writeFileSync(path.join(outDir, "payload.json"), JSON.stringify(payload, null, 2), "utf8");
 
-    console.log(`[Sales Pult] Готово: ${path.join(outDir, "index.html")} и payload.json`);
+    // 2. Standalone register page
+    const regPayload: RegisterPagePayload = {
+      asOfDate: todayAlmaty,
+      generatedAt: generatedTimeStr,
+      portal: config.portal,
+      pultUrl: config.pultUrl,
+      register: registerView
+    };
+    const regHtml = renderRegisterHtml(regPayload);
+    fs.writeFileSync(path.join(outDir, "reg.html"), regHtml, "utf8");
+    fs.writeFileSync(path.join(outDir, "payload-reg.json"), JSON.stringify(regPayload, null, 2), "utf8");
+
+    console.log(`[Sales Pult] Готово: index.html, reg.html и payload.json`);
     if (hasTaskErrors) {
       process.exitCode = 1;
     }

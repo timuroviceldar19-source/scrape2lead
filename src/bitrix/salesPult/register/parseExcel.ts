@@ -91,8 +91,17 @@ export interface ParsedRegisterResult {
 
 export function parseRegisterWorkbook(
   workbook: ExcelJS.Workbook,
-  fileName?: string
+  fileNameOrAliases?: string | Record<string, string>,
+  managerAliases?: Record<string, string>
 ): ParsedRegisterResult {
+  let fileName: string | undefined;
+  let aliases = managerAliases;
+  if (typeof fileNameOrAliases === "string") {
+    fileName = fileNameOrAliases;
+  } else if (fileNameOrAliases && typeof fileNameOrAliases === "object") {
+    aliases = fileNameOrAliases;
+  }
+
   const ws = workbook.worksheets[0];
   if (!ws) throw new Error("В файле Excel нет листов");
 
@@ -155,7 +164,8 @@ export function parseRegisterWorkbook(
     const parsedDate = parseCellDate(dateVal, month);
     if (!parsedDate) continue;
 
-    const manager = String(colManager ? getCellValue(row.getCell(colManager)) ?? "" : "").trim();
+    const rawManager = String(colManager ? getCellValue(row.getCell(colManager)) ?? "" : "").trim();
+    const manager = (aliases && aliases[rawManager]) || rawManager;
     const customer = String(colCustomer ? getCellValue(row.getCell(colCustomer)) ?? "" : "").trim();
     const type = String(colType ? getCellValue(row.getCell(colType)) ?? "" : "").trim();
     const product = String(colProduct ? getCellValue(row.getCell(colProduct)) ?? "" : "").trim();
@@ -219,8 +229,9 @@ export function parseRegisterWorkbook(
   if (summaryHeaderRowNum !== -1 && summaryColMgr !== -1 && summaryColPlan !== -1) {
     for (let r = summaryHeaderRowNum + 1; r <= ws.rowCount; r++) {
       const row = ws.getRow(r);
-      const mgr = String(getCellValue(row.getCell(summaryColMgr)) ?? "").trim();
-      if (!mgr) break;
+      const rawMgr = String(getCellValue(row.getCell(summaryColMgr)) ?? "").trim();
+      if (!rawMgr) break;
+      const mgr = (aliases && aliases[rawMgr]) || rawMgr;
       const planVal = Number(getCellValue(row.getCell(summaryColPlan))) || 0;
       plans[mgr] = planVal;
     }
@@ -231,10 +242,18 @@ export function parseRegisterWorkbook(
 
 export async function parseRegisterExcel(
   buffer: Buffer,
+  fileNameOrAliases?: string | Record<string, string>,
   managerAliases?: Record<string, string>
-): Promise<{ rows: RegisterRow[]; plans: Record<string, number>; asOf: string; month: string }> {
+): Promise<ParsedRegisterResult> {
+  let fileName: string | undefined;
+  let aliases = managerAliases;
+  if (typeof fileNameOrAliases === "string") {
+    fileName = fileNameOrAliases;
+  } else if (fileNameOrAliases && typeof fileNameOrAliases === "object") {
+    aliases = fileNameOrAliases;
+  }
   const ExcelJS = await import("exceljs");
   const workbook = new ExcelJS.default.Workbook();
   await workbook.xlsx.load(buffer as any);
-  return parseRegisterWorkbook(workbook, managerAliases);
+  return parseRegisterWorkbook(workbook, fileName, aliases);
 }

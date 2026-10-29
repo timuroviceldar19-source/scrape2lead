@@ -57,9 +57,21 @@ export function buildMarketGroupView(
   const prevMonth = getPreviousMonthKey(curMonth);
 
   const groupUnits = allUnits.filter((u) => u.group === group);
-  const cur = groupUnits.filter((u) => u.month === curMonth);
-  const lastDay = cur.reduce((m, l) => (l.date > m ? l.date : m), "").slice(8, 10) || "31";
-  const prev = groupUnits.filter((u) => u.month === prevMonth && u.date.slice(8, 10) <= lastDay);
+  const curCandidate = groupUnits.filter((u) => u.month === curMonth);
+  const prevUnits = groupUnits.filter((u) => u.month === prevMonth);
+
+  // If early in the month and few contracts arrived, or no contracts in current month yet:
+  // show previous month in full.
+  const curCandidateContracts = countContracts(curCandidate);
+  const isEarlyMonth = Number(asOfDate.slice(8, 10)) <= 5;
+  const usePrevMonth = prevUnits.length > 0 && (curCandidateContracts === 0 || (isEarlyMonth && curCandidateContracts < 5));
+  const displayMonth = usePrevMonth ? prevMonth : curMonth;
+  const comparisonMonth = getPreviousMonthKey(displayMonth);
+
+  const cur = groupUnits.filter((u) => u.month === displayMonth);
+  const lastDate = cur.reduce((m, l) => (l.date > m ? l.date : m), "");
+  const lastDay = lastDate ? lastDate.slice(8, 10) : (usePrevMonth ? "31" : asOfDate.slice(8, 10));
+  const prev = groupUnits.filter((u) => u.month === comparisonMonth && u.date.slice(8, 10) <= lastDay);
   const us = cur.filter((u) => u.us);
 
   // Suppliers
@@ -157,7 +169,7 @@ export function buildMarketGroupView(
 
   return {
     group,
-    month: curMonth,
+    month: displayMonth,
     total: {
       sum: curTotalSum,
       contracts: countContracts(cur),
@@ -191,14 +203,22 @@ export function buildMarketView(
   units: MarketUnit[],
   asOfDate: string,
   cfg: MarketConfig = loadMarketConfig(),
-  error?: string
+  error?: string,
+  updatedAt?: string
 ): MarketView {
   const months = [...new Set(units.map((u) => u.month))].sort();
+  const ip = units.length > 0 ? buildMarketGroupView("ИП", units, asOfDate, cfg) : null;
+  const kt = units.length > 0 ? buildMarketGroupView("КТ", units, asOfDate, cfg) : null;
+  const isStale = Boolean(updatedAt && updatedAt < asOfDate);
   return {
     asOf: asOfDate,
     months,
-    "ИП": units.length > 0 ? buildMarketGroupView("ИП", units, asOfDate, cfg) : null,
-    "КТ": units.length > 0 ? buildMarketGroupView("КТ", units, asOfDate, cfg) : null,
+    ip,
+    kt,
+    "ИП": ip,
+    "КТ": kt,
+    updatedAt: updatedAt || asOfDate,
+    stale: isStale,
     error
   };
 }
