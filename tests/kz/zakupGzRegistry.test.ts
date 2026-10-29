@@ -51,6 +51,19 @@ describe("выбор источника", () => {
 });
 
 describe("справочники, неполные данные и общий кэш", () => {
+  it("фильтрует по обоим полным кодам и началу года, не отправляя префикс; договор с двух кодов читает один раз", async () => {
+    const base = api(); const listed: URL[] = []; let subjects = 0;
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      const u = new URL(url);
+      if (u.pathname.endsWith("/contracts/")) listed.push(u);
+      if (u.pathname.endsWith("/subjects/")) subjects++;
+      return base(url, init);
+    }) as typeof fetch;
+    await fetchGzCustomerContracts("990000000001", [2026], { ...opts, fetchFn, enstruCodes: ["262040", "262030.100.000043", "279020.100.000002", "279020.100.000002"] });
+    expect(listed.map(u => u.searchParams.get("enstru_code")).sort()).toEqual(["262030.100.000043", "279020.100.000002"]);
+    expect(listed.every(u => u.searchParams.get("sign_date__gte") === "2026-01-01")).toBe(true);
+    expect(subjects).toBe(1);
+  });
   function api(over: Record<string, unknown> = {}, subjects: unknown = [], status = { id: 6, egz_code: "190", name: "Действует" }): typeof fetch {
     return (async (url: string) => {
       const p = new URL(url).pathname;
