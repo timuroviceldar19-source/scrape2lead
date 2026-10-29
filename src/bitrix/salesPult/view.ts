@@ -70,6 +70,7 @@ export function buildMonthView(
     pacePerDay: forecastRes.pacePerDay, forecast: forecastRes.forecast,
     left: forecastRes.left, daysLeft: forecastRes.daysLeft,
     pct: forecastRes.pct, fpct: forecastRes.fpct,
+    hasForecast: forecastRes.hasForecast,
     monthDone: ctx.monthDone, monthTotal: ctx.monthTotal, wdBefore: ctx.wdBefore,
     daysInMonth: ctx.daysInMonth, targetContracts: targetMonthlyContracts,
     totalActiveCount: combinedGroups.reduce((s, g) => s + g.managers.filter((m) => m.active).length, 0),
@@ -294,7 +295,7 @@ export function buildPultView(payload: SalesPultPayload): PultView {
   const [Y, M, D] = payload.asOfDate.split("-").map(Number);
   const dow = new Date(Date.UTC(Y, M - 1, D)).getUTCDay();
   const dateLabel = `${DOW[dow]}, ${D} ${MONTHS_GEN[M - 1]} ${Y}`;
-  const wdLabel = `Рабочих дней прошло ${ctx.wdBefore} из ${ctx.monthTotal}`;
+  const wdLabel = `Рабочих дней прошло ${ctx.monthDone} из ${ctx.monthTotal}`;
   const monthFillPct = (ctx.monthDone / ctx.monthTotal) * 100;
 
   const { signals, signalsUrgent, signalsMeta } = formatSignals(buildPultSignals(payload));

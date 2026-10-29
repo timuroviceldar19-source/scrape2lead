@@ -50,8 +50,26 @@ describe("salesPultPace", () => {
       expect(paceCtx.isEarly).toBe(false);
       // (15 - 9) / 9 = 6 / 9 = 2/3
       expect(paceCtx.dayFrac).toBeCloseTo(2 / 3, 4);
-      expect(paceCtx.monthDone).toBeCloseTo(19 + 2 / 3, 4);
-      expect(paceCtx.pace.month).toBeCloseTo((19 + 2 / 3) / 21, 4);
+      // Today counts as passed only from 18:00
+      expect(paceCtx.monthDone).toBe(19);
+      expect(paceCtx.pace.month).toBeCloseTo(19 / 21, 4);
+    });
+
+    it("counts passed working days correctly (today counts as passed only from 18:00)", () => {
+      // 30.10 08:00 → 20 из 21
+      const c1 = calculatePace("2026-10-30", "2026-10-30 08:00 (UTC+5)", DEFAULT_HOLIDAYS);
+      expect(c1.monthDone).toBe(20);
+      expect(c1.monthTotal).toBe(21);
+
+      // 30.10 19:00 → 21 из 21
+      const c2 = calculatePace("2026-10-30", "2026-10-30 19:00 (UTC+5)", DEFAULT_HOLIDAYS);
+      expect(c2.monthDone).toBe(21);
+      expect(c2.monthTotal).toBe(21);
+
+      // 29.10 05:55 → 19 из 21
+      const c3 = calculatePace("2026-10-29", "2026-10-29 05:55 (UTC+5)", DEFAULT_HOLIDAYS);
+      expect(c3.monthDone).toBe(19);
+      expect(c3.monthTotal).toBe(21);
     });
 
     it("calculates forecast, left to plan, and daily need accurately", () => {
@@ -72,6 +90,9 @@ describe("salesPultPace", () => {
       const res = calculateMonthForecast(40, 42, 19, 21);
       expect(res.left).toBe(0);
       expect(res.verdict).toContain("План месяца <b>выполнен</b>");
+
+      const resZeroLeft = calculateMonthForecast(180, 180, 21, 21);
+      expect(resZeroLeft.verdict).toContain("План месяца <b>выполнен</b>");
     });
 
     it("handles on-track scenario in verdict when forecast meets plan", () => {
@@ -81,7 +102,40 @@ describe("salesPultPace", () => {
       expect(res.verdict).toContain("план закроем");
     });
 
-    it("outputs 'План месяца уже не закрыть' when needed pace exceeds 2x current pace", () => {
+    it("outputs 'Месяц только начался' when 0 or 1 working days passed (less than 3)", () => {
+      // 0 days passed
+      const res0 = calculateMonthForecast(160, 0, 0, 21);
+      expect(res0.hasForecast).toBe(false);
+      expect(res0.verdict).toBe("Месяц только начался. Чтобы закрыть план, нужно 7,6 договора в рабочий день.");
+
+      // 1 day passed
+      const res1 = calculateMonthForecast(160, 2, 1, 21);
+      expect(res1.hasForecast).toBe(false);
+      expect(res1.verdict).toBe("Месяц только начался. Чтобы закрыть план, нужно 7,6 договора в рабочий день.");
+    });
+
+    it("outputs normal phrase when 10 days left and 45 contracts of 180 (daysLeft > 5)", () => {
+      const res = calculateMonthForecast(180, 45, 11, 21);
+      expect(res.daysLeft).toBe(10);
+      expect(res.hasForecast).toBe(true);
+      expect(res.verdict).toContain("При нынешнем темпе к концу месяца будет");
+      expect(res.verdict).not.toContain("уже не закрыть");
+    });
+
+    it("outputs 'уже не закрыть' when 2 days left and 87 of 180 contracts (daysLeft <= 5 and need > 2*pace)", () => {
+      const res = calculateMonthForecast(180, 87, 19, 21);
+      expect(res.daysLeft).toBe(2);
+      expect(res.hasForecast).toBe(true);
+      expect(res.verdict).toBe("План месяца уже не закрыть: осталось 93 договора за 2 рабочих дня.");
+    });
+
+    it("outputs 'Рабочие дни месяца закончились' when 0 days left and plan not fulfilled", () => {
+      const res = calculateMonthForecast(180, 100, 21, 21);
+      expect(res.daysLeft).toBe(0);
+      expect(res.verdict).toBe("Рабочие дни месяца закончились: подписано 100 из 180, это 56% плана.");
+    });
+
+    it("outputs 'План месяца уже не закрыть' only in last 5 days when needed pace exceeds 2x current pace", () => {
       // 2 days left, 40 contracts left
       const res2 = calculateMonthForecast(60, 20, 19, 21);
       expect(res2.pacePerDay).toBeCloseTo(1.05, 2);

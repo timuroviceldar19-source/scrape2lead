@@ -220,6 +220,7 @@ export interface PultMonthView {
   daysLeft: number;
   pct: number;
   fpct: number;
+  hasForecast: boolean;
   monthDone: number;
   monthTotal: number;
   wdBefore: number;

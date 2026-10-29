@@ -55,8 +55,8 @@
           <div class="hero-amt">${money(m.amount)} <span class="muted">· ${m.pct}% плана</span></div>
           <div class="readout">
             <div><span class="label">Темп</span><div class="v">${fmt1(m.pacePerDay)}<small> в день</small></div></div>
-            <div><span class="label">Прогноз</span><div class="v">≈ ${fmt(m.forecast)}<small> к ${m.daysInMonth}.${String(M).padStart(2, "0")}</small></div></div>
-            <div><span class="label">До плана</span><div class="v">${fmt(m.left)}<small> за ${plural(Math.ceil(m.daysLeft), ["день", "дня", "дней"])}</small></div></div>
+            <div><span class="label">Прогноз</span><div class="v">${m.hasForecast ? `≈ ${fmt(m.forecast)}<small> к ${m.daysInMonth}.${String(M).padStart(2, "0")}</small>` : `—<small> с 3-го рабочего дня</small>`}</div></div>
+            <div><span class="label">До плана</span><div class="v">${fmt(m.left)}<small>${m.daysLeft === 0 ? " не добрали" : ` за ${plural(m.daysLeft, ["день", "дня", "дней"])}`}</small></div></div>
           </div>
           <p class="verdict">${m.verdict}</p>
           <div class="split">${m.split.map((x) => `<div class="split-row"><span>${esc(x.name)}</span><span class="trk"><span data-w="${x.widthPct}"></span></span><span class="num">${fmt(x.c)} · ${money(x.a) || "—"}</span></div>`).join("")}</div>
@@ -76,7 +76,7 @@
     const W = innerWidth < 760 ? 420 : 760, H = innerWidth < 760 ? 300 : 340, L = 8, R = innerWidth < 760 ? 72 : 96, T = 18, B = 30;
     const iw = W - L - R, ih = H - T - B;
     const cum = m.points;
-    const yMax = Math.max(plan, forecast, fact) * 1.06;
+    const yMax = Math.max(plan, m.hasForecast ? forecast : 0, fact) * 1.06;
     const x = (d) => L + (d / daysInMonth) * iw;
     const y = (v) => T + ih - (v / yMax) * ih;
     const isWorkMap = new Set(m.workDays);
@@ -92,15 +92,20 @@
     const area = act + ` L${x(lastDay)},${y(0)} Z`;
     s += `<path d="${area}" fill="rgba(20,20,20,.06)" class="burn-area"/>`;
     s += `<path d="${act}" fill="none" stroke="#141414" stroke-width="2.2" stroke-linejoin="round" class="burn-line"/>`;
-    s += `<path d="M${x(lastDay)},${y(fact)} L${x(daysInMonth)},${y(forecast)}" fill="none" stroke="#141414" stroke-width="2" stroke-dasharray="1.5 5" stroke-linecap="round" class="burn-fc"/>`;
+    if (m.hasForecast) s += `<path d="M${x(lastDay)},${y(fact)} L${x(daysInMonth)},${y(forecast)}" fill="none" stroke="#141414" stroke-width="2" stroke-dasharray="1.5 5" stroke-linecap="round" class="burn-fc"/>`;
     s += `<line x1="${nowX}" x2="${nowX}" y1="${T - 6}" y2="${T + ih}" stroke="#141414" stroke-width="1"/>`;
     s += `<text x="${nowX}" y="${T - 10}" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#141414">сегодня</text>`;
     s += `<circle cx="${x(lastDay)}" cy="${y(fact)}" r="4.5" fill="#faf9f5" stroke="#141414" stroke-width="2"/>`;
-    let yp = y(plan), yf = y(forecast);
-    if (Math.abs(yp - yf) < 30) { if (yf >= yp) yf = yp + 30; else yp = yf + 30; }
-    s += `<text x="${x(daysInMonth) + 10}" y="${yp + 4}" font-family="JetBrains Mono" font-size="12" fill="#55534e">план ${fmt(plan)}</text>`;
-    s += `<text x="${x(daysInMonth) + 10}" y="${yf + 4}" font-family="JetBrains Mono" font-size="12" fill="#141414" font-weight="500">≈ ${fmt(forecast)}</text>`;
-    s += `<circle cx="${x(daysInMonth)}" cy="${y(forecast)}" r="3" fill="#141414"/>`;
+    let yp = y(plan);
+    if (m.hasForecast) {
+      let yf = y(forecast);
+      if (Math.abs(yp - yf) < 30) { if (yf >= yp) yf = yp + 30; else yp = yf + 30; }
+      s += `<text x="${x(daysInMonth) + 10}" y="${yp + 4}" font-family="JetBrains Mono" font-size="12" fill="#55534e">план ${fmt(plan)}</text>`;
+      s += `<text x="${x(daysInMonth) + 10}" y="${yf + 4}" font-family="JetBrains Mono" font-size="12" fill="#141414" font-weight="500">≈ ${fmt(forecast)}</text>`;
+      s += `<circle cx="${x(daysInMonth)}" cy="${y(forecast)}" r="3" fill="#141414"/>`;
+    } else {
+      s += `<text x="${x(daysInMonth) + 10}" y="${yp + 4}" font-family="JetBrains Mono" font-size="12" fill="#55534e">план ${fmt(plan)}</text>`;
+    }
     for (const d of [1, 8, 15, 22, 29].filter((d) => d <= daysInMonth)) s += `<text x="${x(d - 0.5)}" y="${H - 8}" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#8c8981">${d}</text>`;
     for (let d = 1; d <= daysInMonth; d++) s += `<rect class="hit" data-d="${d}" x="${x(d - 1)}" y="${T}" width="${iw / daysInMonth}" height="${ih}" fill="transparent"/>`;
     return s + `</svg>`;

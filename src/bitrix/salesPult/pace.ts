@@ -86,7 +86,7 @@ export function calculatePace(
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const workDays = getMonthWorkDays(year, month, holidays);
   const wdBefore = workDays.filter((d) => d < day).length;
-  const monthDone = wdBefore + (todayIsWork ? dayFrac : 0);
+  const monthDone = wdBefore + (todayIsWork && genHour >= 18 ? 1 : 0);
   const monthTotal = workDays.length;
 
   const current = new Date(Date.UTC(year, month - 1, day));
@@ -157,6 +157,19 @@ export function judgeMetricStatus(
   return { cls: "bad", text: `Отстаём от темпа на ${fmtNumber(gap)}`, expected };
 }
 
+function formatDailyRate(rate: number): string {
+  const rounded10 = Math.round(rate * 10);
+  const isFraction = rounded10 % 10 !== 0;
+  if (isFraction) {
+    return `${fmtNumber1(rate)} договора`;
+  }
+  const whole = Math.round(rate);
+  const a = whole % 100;
+  const b = a % 10;
+  const word = (a > 10 && a < 20) ? "договоров" : (b === 1) ? "договор" : (b > 1 && b < 5) ? "договора" : "договоров";
+  return `${fmtNumber(whole)} ${word}`;
+}
+
 export interface MonthForecastResult {
   pacePerDay: number;
   daysLeft: number;
@@ -166,6 +179,7 @@ export interface MonthForecastResult {
   pct: number;
   fpct: number;
   verdict: string;
+  hasForecast: boolean;
 }
 
 export function calculateMonthForecast(
@@ -181,20 +195,25 @@ export function calculateMonthForecast(
   const need = daysLeft > 0 ? left / daysLeft : 0;
   const pct = plan ? Math.round((fact / plan) * 100) : 0;
   const fpct = plan ? Math.round((forecast / plan) * 100) : 0;
+  const hasForecast = monthDone >= 3;
 
   let verdict: string;
   if (fact >= plan) {
     verdict = "План месяца <b>выполнен</b>. Всё, что подпишем дальше, сверху.";
+  } else if (daysLeft === 0) {
+    verdict = `Рабочие дни месяца закончились: подписано ${fmtNumber(fact)} из ${fmtNumber(plan)}, это ${pct}% плана.`;
+  } else if (monthDone < 3) {
+    const startRate = monthTotal > 0 ? plan / monthTotal : 0;
+    verdict = `Месяц только начался. Чтобы закрыть план, нужно ${formatDailyRate(startRate)} в рабочий день.`;
   } else if (forecast >= plan) {
     verdict = `Идём в темпе: при нынешней скорости к концу месяца будет <b>≈ ${fmtNumber(forecast)}</b>, план закроем.`;
-  } else if (pacePerDay > 0 && need > 2 * pacePerDay) {
-    const days = Math.ceil(daysLeft);
-    verdict = `План месяца уже не закрыть: осталось ${plural(left, ["договор", "договора", "договоров"])} за ${plural(days, ["рабочий день", "рабочих дня", "рабочих дней"])}.`;
+  } else if (daysLeft <= 5 && pacePerDay > 0 && need > 2 * pacePerDay) {
+    verdict = `План месяца уже не закрыть: осталось ${plural(left, ["договор", "договора", "договоров"])} за ${plural(daysLeft, ["рабочий день", "рабочих дня", "рабочих дней"])}.`;
   } else {
     verdict = `При нынешнем темпе к концу месяца будет <b>≈ ${fmtNumber(forecast)} из ${fmtNumber(plan)}</b>, это ${fpct}% плана. Чтобы закрыть план, нужно <b>${fmtNumber1(need)} в день</b> вместо ${fmtNumber1(pacePerDay)}.`;
   }
 
-  return { pacePerDay, daysLeft, forecast, left, need, pct, fpct, verdict };
+  return { pacePerDay, daysLeft, forecast, left, need, pct, fpct, verdict, hasForecast };
 }
 
 export interface GroupTotals {
