@@ -49,6 +49,7 @@ export class ZakupOrganizations {
   remember(org: Organization | null | undefined): void {
     if (org?.id && /^\d{12}$/.test(org.iin_bin ?? "")) this.cache[String(org.id)] = org.iin_bin!;
   }
+  knownBin(id: number): string | null { return this.cache[String(id)] ?? null; }
   async idForBin(bin: string): Promise<number> {
     if (!/^\d{12}$/.test(bin)) throw new Error("БИН должен содержать 12 цифр");
     const known = Object.entries(this.cache).find(([, value]) => value === bin);
@@ -104,6 +105,10 @@ export async function fetchGzCustomerContracts(bin: string, years: number[], opt
       }
       for (const subject of subjects) orgs.remember(subject.contract?.supplier_organization);
       if (!row.supplier_organization_id) throw new Error("zakup: договор без поставщика");
+      if (!orgs.knownBin(row.supplier_organization_id)) {
+        const detail = await zakupGet<{ supplier_organization?: Organization | null; customer_organization?: Organization | null }>(`/public/contracts/${row.id}/`, {}, options);
+        orgs.remember(detail.supplier_organization); orgs.remember(detail.customer_organization);
+      }
       const supplierBin = await orgs.binForId(row.supplier_organization_id);
       if (!row.contract_number_sys) throw new Error("zakup: договор без системного номера");
       return {

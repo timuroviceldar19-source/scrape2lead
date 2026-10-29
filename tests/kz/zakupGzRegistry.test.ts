@@ -60,6 +60,7 @@ describe("справочники, неполные данные и общий к
       if (p.endsWith("/contract-statuses/")) return json([status]);
       if (p.endsWith("/contracts/")) return json(page([{ id: 7, external_id: 3, status_id: status.id, supplier_organization_id: 8, contract_number_sys: "990000000001/260001/00", ...over }]));
       if (p.endsWith("/subjects/")) return json(subjects);
+      if (p.endsWith("/contracts/7/")) return json({ supplier_organization: { id: 8, iin_bin: "990000000002" } });
       throw Error("unexpected path");
     }) as typeof fetch;
   }
@@ -76,6 +77,14 @@ describe("справочники, неполные данные и общий к
   it("сохраняет явное удаление договора", async () => {
     const [row] = await fetchGzCustomerContracts("990000000001", [2026], { ...opts, fetchFn: api({ is_externally_deleted: true }) });
     expect(row.deleted).toBe(1);
+  });
+
+  it("читает БИН из карточки договора, если организация не найдена отдельным запросом", async () => {
+    const base = api();
+    const fetchFn = (async (url: string, init?: RequestInit) => new URL(url).pathname.endsWith("/organizations/8/")
+      ? new Response("not found", { status: 404 }) : base(url, init)) as typeof fetch;
+    const [row] = await fetchGzCustomerContracts("990000000001", [2026], { ...opts, fetchFn });
+    expect(row.supplierBiin).toBe("990000000002");
   });
 
   it.each([
