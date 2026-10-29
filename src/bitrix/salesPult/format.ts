@@ -191,6 +191,10 @@ export function getTaskStatus(task: Partial<TopTask>): { cls: string; text: stri
 export function formatDebtLines(debts: ManagerDebts | undefined): DebtLine[] {
   if (!debts) return [];
   const lines: DebtLine[] = [];
+  if (debts.wonOnPortalNotClosed && debts.wonOnPortalNotClosed > 0) {
+    const dealsWord = plural(debts.wonOnPortalNotClosed, ["сделка", "сделки", "сделок"]);
+    lines.push({ color: "red", text: `выиграно на портале, не закрыто в CRM: ${dealsWord}` });
+  }
   if (debts.overdue > 0) {
     const parts = [`просрочено ${debts.overdue}`];
     if (debts.overdueOverMonth > 0) parts.push(`больше месяца ${debts.overdueOverMonth}`);

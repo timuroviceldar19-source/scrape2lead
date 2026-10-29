@@ -19,6 +19,12 @@ function collectDebtSignals(
       const d = m.debts;
       if (!d) continue;
 
+      if (d.wonOnPortalNotClosed && d.wonOnPortalNotClosed > 0) {
+        const dealsWord = pluralNbsp(d.wonOnPortalNotClosed, ["сделка", "сделки", "сделок"]);
+        bad.push(
+          `<b>${escapeHtml(cleanFirstName(m.name))}</b>: выиграно на портале, не закрыто в CRM — ${dealsWord}`
+        );
+      }
       if (d.newStaleDeals > 0) {
         const extra = d.newOldestAgeDays >= 2
           ? `, самой старой ${pluralNbsp(d.newOldestAgeDays, ["день", "дня", "дней"])}`
@@ -109,6 +115,14 @@ export function buildPultSignals(
   const good: string[] = [];
   const info: string[] = [];
 
+  if (payload.outcomeMismatches && payload.outcomeMismatches.length > 0) {
+    const count = payload.outcomeMismatches.length;
+    const dealsWord = pluralNbsp(count, ["сделка выиграна", "сделки выиграны", "сделок выиграно"]);
+    const closedWord = count === 1 ? "закрыта как проигрыш" : "закрыты как проигрыш";
+    bad.push(
+      `<b>Ошибка в CRM:</b> ${dealsWord} на портале, но ${closedWord}`
+    );
+  }
   collectCallSignals(payload, ctx, bad, warn);
   const readyToClose = collectDebtSignals(payload, bad, warn);
   collectContractSignals(payload, good);

@@ -2,6 +2,19 @@ import type { TargetsConfig, ManagerRollups, TopTask } from "./metrics.js";
 import type { ManagerDebts } from "./debts.js";
 import type { MarketView } from "../../kz/market/types.js";
 
+
+export interface WonLostMismatchDeal {
+  id: string;
+  title: string;
+  amount: number;
+  managerId: string;
+  managerName: string;
+  stageId?: string | null;
+  stageTitle?: string | null;
+  outcome: string;
+  portalSignDate?: string | null;
+}
+
 export interface DayDynamic {
   date: string;
   calls: number;
@@ -42,6 +55,7 @@ export interface SalesPultPayload {
   dynamics: DayDynamic[];
   holidays?: string[];
   market?: MarketView | null;
+  outcomeMismatches?: WonLostMismatchDeal[];
 }
 
 export interface PaceContext {

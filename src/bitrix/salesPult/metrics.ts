@@ -25,6 +25,10 @@ export interface DealInfo {
   closed?: string | boolean | null;
   /** Real procurement status, taken from the deal field UF_CRM_PLAN_STATUS. */
   planStatus?: string | null;
+  outcome?: string | null;
+  portalSignDate?: string | null;
+  closeDate?: string | null;
+  dateCreate?: string | null;
 }
 
 export interface DailyActivityMetrics {
@@ -198,13 +202,34 @@ export function calculateDailyMetrics(params: {
   });
   const uniqueKpDealIds = [...new Set(dayKpTransitions.map((t) => String(t.dealId)))];
 
-  // 3. Contracts (unique deals transitioned into won stages)
-  const dayContractTransitions = contractTransitions.filter((t) => {
-    if (toAlmatyDate(t.createdTime) !== date) return false;
+  // 3. Contracts
+  // 3a. From CRM stage transitions to WON (unless overridden by a different portal sign date)
+  const contractDealIdSet = new Set<string>();
+
+  for (const t of contractTransitions) {
+    if (toAlmatyDate(t.createdTime) !== date) continue;
     const deal = deals.get(String(t.dealId));
-    return deal && String(deal.assignedById) === String(managerId);
-  });
-  const uniqueContractDealIds = [...new Set(dayContractTransitions.map((t) => String(t.dealId)))];
+    if (!deal || String(deal.assignedById) !== String(managerId)) continue;
+    if (deal.stageSemanticId === "F") continue;
+    // If the deal has a portal sign date that is different from this date,
+    // it will be counted on that portal sign date instead.
+    if (deal.portalSignDate && deal.portalSignDate !== date) continue;
+    contractDealIdSet.add(String(t.dealId));
+  }
+
+  // 3b. From portal contracts (won: or partner:) where portal sign date is today
+  for (const deal of deals.values()) {
+    if (String(deal.assignedById) !== String(managerId)) continue;
+    if (deal.stageSemanticId === "F") continue;
+    const outcome = String(deal.outcome ?? "");
+    const isPortalWon = outcome.startsWith("won:") || outcome.startsWith("partner:");
+    if (!isPortalWon) continue;
+    if (deal.portalSignDate === date) {
+      contractDealIdSet.add(deal.id);
+    }
+  }
+
+  const uniqueContractDealIds = [...contractDealIdSet];
   const totalContractAmount = uniqueContractDealIds.reduce((sum, dealId) => {
     const deal = deals.get(dealId);
     return sum + (deal ? deal.amount : 0);

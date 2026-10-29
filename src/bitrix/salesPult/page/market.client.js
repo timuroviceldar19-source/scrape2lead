@@ -52,6 +52,17 @@
     const deltaText = roundedDelta === 0 ? "0%" : `${roundedDelta > 0 ? "+" : "−"}${Math.abs(roundedDelta)}%`;
     const deltaCls = roundedDelta === 0 ? "" : (roundedDelta > 0 ? "good" : "bad");
 
+    const ytdHtml = V.ytd
+      ? `<div class="ytd-box" style="margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--rule-2);">
+          <span class="label" style="display:block;margin-bottom:8px;">С начала года</span>
+          <div class="readout" style="border:0;padding:0;">
+            <div><span class="label">Доля группы</span><div class="v">${pct1(V.ytd.share)}<small> · ${mln(V.ytd.sum)} млн</small></div></div>
+            <div><span class="label">Место группы</span><div class="v">${V.ytd.rank || "—"}<small> из ${V.ytd.totalSuppliers}</small></div></div>
+            <div><span class="label">По компаниям</span><div class="v" style="font-size:12px;line-height:1.4;margin-top:4px;">${V.ytd.companies.map((c) => `<div><b>${esc(c.name)}:</b> ${mln(c.sum)} млн <span class="dim">(${pct1(c.share)})</span></div>`).join("")}</div></div>
+          </div>
+        </div>`
+      : "";
+
     let s = `${staleWarning}<section class="block reveal">${head("01", `Рынок ${title} · ${MONTHS[M - 1]}`, "госзакупки, все каналы · без НДС")}
     <div class="hero"><div>
       <span class="label">Объём рынка</span>
@@ -63,6 +74,7 @@
         <div><span class="label">К 1–${Number(V.prev.toDay)} ${MONTHS_S[M >= 2 ? M - 2 : 11]}</span><div class="v ${deltaCls}">${deltaText}<small> рынок</small></div></div>
       </div>
       <p class="verdict">${verdict}</p>
+      ${ytdHtml}
     </div><div><div class="share rows"><div class="r head"><span></span><span class="label">Поставщик</span><span class="label">Доля рынка</span><span class="label">Сумма</span><span class="label">Дог.</span></div>
       ${V.suppliers.slice(0, 10).map((x, i) => `<div class="r${x.us ? " us" : ""}"><span class="rk">${i + 1}</span><span class="nm" title="${esc(x.name + (x.details ? ` (${x.details})` : ""))}"><span>${esc(short(x.name.replace(/^Товарищество с ограниченной ответственностью/i, "ТОО"), 44))}</span>${x.details ? `<span class="dim" style="display:block;font-size:10px;line-height:1.2;margin-top:2px;">${esc(x.details)}</span>` : ""}</span>${bar(V.suppliers[0]?.sum ? x.sum / V.suppliers[0].sum * 100 : 0, x.us ? "ink" : "")}<span class="num">${mln(x.sum)} млн</span><span class="num">${x.contracts}</span></div>`).join("")}
       <div class="r"><span></span><span class="dim">Остальные ${Math.max(0, V.total.suppliers - 10)}</span><span></span><span class="num">${mln(V.othersSum + V.suppliers.slice(10).reduce((a, x) => a + x.sum, 0))} млн</span><span></span></div>
@@ -80,15 +92,35 @@
       ? `<p class="note-src mobile-note" style="margin-top: 6px; font-size: 11px;">* Данные за текущий месяц по ${toDayNum}-е число.</p>`
       : "";
 
-    const metaUnits = isIp
-      ? "весь рынок · наша часть тёмным · млн ₸"
-      : `весь рынок · наша часть тёмным · <span class="desktop">млн ₸</span><span class="mobile">млрд ₸</span>`;
+    const ourCompanies = V.ourCompanies || [];
+    const unitLabel = isIp ? "млн ₸" : '<span class="desktop">млн ₸</span><span class="mobile">млрд ₸</span>';
+    const darkLabel = ourCompanies.length > 1
+      ? `${ourCompanies.map((c) => esc(c.name)).join(" и ")} тёмным`
+      : "наша часть тёмным";
+    const metaUnits = `весь рынок · ${darkLabel} · ${unitLabel}`;
+
+    const legendHtml = ourCompanies.length > 0
+      ? `<div class="legend" style="margin-top: 14px;">
+          ${ourCompanies.map((c, i) => `<span><i class="sq our-${i}"></i>${esc(c.name)}</span>`).join("")}
+          <span><i class="sq other"></i>остальной рынок</span>
+        </div>`
+      : "";
 
     s += `<section class="block reveal">${head("02", "По месяцам", metaUnits)}
     <div class="months">${months.map((m) => {
       const desktopLab = fmt(m.sum / 1e6);
       const mobileLab = !isIp ? nf1.format(m.sum / 1e9) : desktopLab;
-      return `<div class="col" title="${MONTHS[Number(m.m.slice(5)) - 1]}: рынок ${money(m.sum)}, мы ${money(m.us)}"><div class="tot" data-h="${(m.sum / mMax * 100).toFixed(1)}"><span class="lab"><span class="desktop">${desktopLab}</span><span class="mobile">${mobileLab}</span></span><div class="our" data-h="${(m.sum ? m.us / m.sum * 100 : 0).toFixed(1)}"></div></div></div>`;
+      let cumBottom = 0;
+      const bars = (m.ourCompanies && m.ourCompanies.length > 0)
+        ? m.ourCompanies.map((c, i) => {
+            const hPct = m.sum > 0 ? (c.sum / m.sum * 100) : 0;
+            const bPct = cumBottom;
+            cumBottom += hPct;
+            const cSlug = c.name.toLowerCase().replace(/[^a-z0-9а-яё]+/g, "-");
+            return `<div class="our our-${i} our-${cSlug}" data-company="${esc(c.name)}" data-h="${hPct.toFixed(1)}" style="bottom:${bPct.toFixed(1)}%" title="${esc(c.name)}: ${money(c.sum)}"></div>`;
+          }).join("")
+        : `<div class="our" data-h="${(m.sum ? m.us / m.sum * 100 : 0).toFixed(1)}"></div>`;
+      return `<div class="col" data-m="${m.m}" title="${MONTHS[Number(m.m.slice(5)) - 1]}: рынок ${money(m.sum)}, мы ${money(m.us)}"><div class="tot" data-h="${(m.sum / mMax * 100).toFixed(1)}"><span class="lab"><span class="desktop">${desktopLab}</span><span class="mobile">${mobileLab}</span></span>${bars}</div></div>`;
     }).join("")}</div>
     <div class="mlabels">${months.map((m) => {
       const isCurrent = m.m === V.month;
@@ -98,6 +130,7 @@
       const mPct = pct(m.sum ? m.us / m.sum : 0);
       return `<span><span class="m-name"><span class="desktop">${desktopName}</span><span class="mobile">${mobileName}</span></span><span class="m-pct">${mPct}</span></span>`;
     }).join("")}</div>
+    ${legendHtml}
     ${incompleteMonthNote}${firstMonthWithUsNote}</section>`;
 
     // 03 Каналы и цены

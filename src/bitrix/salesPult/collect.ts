@@ -1,4 +1,5 @@
-import { ReadOnlyBitrixClient } from "../reporting/readOnlyClient.js";
+import { ReadOnlyBitrixClient, flattenBitrixParams } from "../reporting/readOnlyClient.js";
+import type { WonLostMismatchDeal } from "./types.js";
 import {
   toAlmatyEndOfDay,
   toAlmatyStartOfDay,
@@ -50,6 +51,7 @@ export interface PultCollectedData {
   debtsByManager: Map<string, ManagerDebts>;
   userProfiles: Map<string, UserProfileInfo>;
   taskErrorsByManager: Map<string, string>;
+  outcomeMismatches: WonLostMismatchDeal[];
 }
 
 interface RawHistoryItem extends Record<string, unknown> {
@@ -59,7 +61,7 @@ interface RawHistoryItem extends Record<string, unknown> {
   CREATED_TIME: string;
 }
 
-interface RawDealItem {
+interface RawDealItem extends Record<string, unknown> {
   ID: string | number;
   TITLE?: string | null;
   ASSIGNED_BY_ID?: string | number | null;
@@ -71,6 +73,9 @@ interface RawDealItem {
   UF_CRM_PLAN_ID?: string | number | null;
   UF_CRM_1782386293000_IU_XLS?: string | number | null;
   UF_CRM_PLAN_STATUS?: string | null;
+  UF_CRM_S2L_GZ_OUTCOME?: string | null;
+  CLOSEDATE?: string | null;
+  DATE_CREATE?: string | null;
 }
 
 interface RawActivityItem extends Record<string, unknown> {
@@ -97,6 +102,21 @@ const SERVICE_PREFIXES = [
   "информация по закупке",
   "[b]информация по закупке"
 ];
+
+/**
+ * Extracts portal sign date (YYYY-MM-DD) from Goszakup outcome timeline comments.
+ * Requires the comment to start with "Итог закупки:".
+ */
+export function parsePortalSignDate(comment: string | null | undefined): string | null {
+  if (!comment) return null;
+  const text = comment.trim();
+  if (!text.toLowerCase().startsWith("итог закупки")) return null;
+  const match = /договор\s+№[^\s]+\s+от\s+(\d{2})\.(\d{2})\.(\d{4})/i.exec(text)
+    || /от\s+(\d{2})\.(\d{2})\.(\d{4})/i.exec(text);
+  if (!match) return null;
+  const [, d, m, y] = match;
+  return `${y}-${m}-${d}`;
+}
 
 /**
  * Checks if a timeline comment was generated automatically by system/bot or webhook user.
@@ -131,6 +151,23 @@ export function extractWebhookUserId(webhookUrl?: string): string | null {
 /**
  * Loads deals in chunks of at most 50 IDs.
  */
+const DEAL_SELECT_FIELDS = [
+  "ID",
+  "TITLE",
+  "ASSIGNED_BY_ID",
+  "OPPORTUNITY",
+  "CATEGORY_ID",
+  "STAGE_ID",
+  "STAGE_SEMANTIC_ID",
+  "CLOSED",
+  "UF_CRM_PLAN_ID",
+  "UF_CRM_1782386293000_IU_XLS",
+  "UF_CRM_PLAN_STATUS",
+  "UF_CRM_S2L_GZ_OUTCOME",
+  "CLOSEDATE",
+  "DATE_CREATE"
+];
+
 export async function fetchDealsBatched(
   client: ReadOnlyBitrixClient,
   dealIds: string[]
@@ -143,19 +180,7 @@ export async function fetchDealsBatched(
     const chunk = uniqueIds.slice(i, i + chunkSize);
     const rows = (await client.call("crm.deal.list", {
       filter: { ID: chunk },
-      select: [
-        "ID",
-        "TITLE",
-        "ASSIGNED_BY_ID",
-        "OPPORTUNITY",
-        "CATEGORY_ID",
-        "STAGE_ID",
-        "STAGE_SEMANTIC_ID",
-        "CLOSED",
-        "UF_CRM_PLAN_ID",
-        "UF_CRM_1782386293000_IU_XLS",
-        "UF_CRM_PLAN_STATUS"
-      ]
+      select: DEAL_SELECT_FIELDS
     })) as RawDealItem[];
 
     if (Array.isArray(rows)) {
@@ -178,7 +203,10 @@ export async function fetchDealsBatched(
           stageId: r.STAGE_ID,
           stageSemanticId: r.STAGE_SEMANTIC_ID,
           closed: r.CLOSED,
-          planStatus: String(r.UF_CRM_PLAN_STATUS ?? "").trim() || null
+          planStatus: String(r.UF_CRM_PLAN_STATUS ?? "").trim() || null,
+          outcome: r.UF_CRM_S2L_GZ_OUTCOME ? String(r.UF_CRM_S2L_GZ_OUTCOME).trim() : null,
+          closeDate: r.CLOSEDATE ? String(r.CLOSEDATE) : null,
+          dateCreate: r.DATE_CREATE ? String(r.DATE_CREATE) : null
         });
       }
     }
@@ -299,6 +327,101 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     ...contractTransitions.map((t) => t.dealId)
   ];
   const deals = await fetchDealsBatched(client, transitionDealIds);
+
+  // 3b. Collect deals with Goszakup outcome won: or partner:
+  const outcomeDealsRaw: RawDealItem[] = [];
+  try {
+    const wonList = await client.listAllBatched<RawDealItem>("crm.deal.list", {
+      filter: { "%UF_CRM_S2L_GZ_OUTCOME": "won:" },
+      select: DEAL_SELECT_FIELDS
+    });
+    outcomeDealsRaw.push(...wonList.filter((d) => String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("won:")));
+  } catch (err) {
+    console.warn("[collectPultData] Failed to load won: outcome deals:", err);
+  }
+
+  try {
+    const partnerList = await client.listAllBatched<RawDealItem>("crm.deal.list", {
+      filter: { "%UF_CRM_S2L_GZ_OUTCOME": "partner:" },
+      select: DEAL_SELECT_FIELDS
+    });
+    outcomeDealsRaw.push(...partnerList.filter((d) => String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("partner:")));
+  } catch (err) {
+    console.warn("[collectPultData] Failed to load partner: outcome deals:", err);
+  }
+
+  for (const r of outcomeDealsRaw) {
+    const id = String(r.ID);
+    const amountNum = parseFloat(String(r.OPPORTUNITY ?? "0").replace(/\s+/g, ""));
+    const planNumber =
+      String(r.UF_CRM_PLAN_ID ?? "").trim() ||
+      String(r.UF_CRM_1782386293000_IU_XLS ?? "").trim() ||
+      String(r.TITLE ?? "").match(/\[GZ\s*(\d+)\]/i)?.[1] ||
+      null;
+
+    const existing = deals.get(id);
+    if (!existing) {
+      deals.set(id, {
+        id,
+        title: String(r.TITLE ?? `Сделка #${id}`).trim(),
+        amount: Number.isFinite(amountNum) ? amountNum : 0,
+        assignedById: String(r.ASSIGNED_BY_ID ?? "0"),
+        planNumber,
+        categoryId: r.CATEGORY_ID,
+        stageId: r.STAGE_ID,
+        stageSemanticId: r.STAGE_SEMANTIC_ID,
+        closed: r.CLOSED,
+        planStatus: String(r.UF_CRM_PLAN_STATUS ?? "").trim() || null,
+        outcome: r.UF_CRM_S2L_GZ_OUTCOME ? String(r.UF_CRM_S2L_GZ_OUTCOME).trim() : null,
+        closeDate: r.CLOSEDATE ? String(r.CLOSEDATE) : null,
+        dateCreate: r.DATE_CREATE ? String(r.DATE_CREATE) : null
+      });
+    } else {
+      existing.outcome = r.UF_CRM_S2L_GZ_OUTCOME ? String(r.UF_CRM_S2L_GZ_OUTCOME).trim() : existing.outcome;
+      existing.closeDate = r.CLOSEDATE ? String(r.CLOSEDATE) : existing.closeDate;
+      existing.dateCreate = r.DATE_CREATE ? String(r.DATE_CREATE) : existing.dateCreate;
+    }
+  }
+
+  // 3c. Extract portalSignDate for all won/partner deals by reading their timeline comments in batch
+  const portalWonDeals = Array.from(deals.values()).filter((d) => {
+    const oc = String(d.outcome ?? "");
+    return oc.startsWith("won:") || oc.startsWith("partner:");
+  });
+
+  if (portalWonDeals.length > 0) {
+    const batchChunkSize = 50;
+    for (let i = 0; i < portalWonDeals.length; i += batchChunkSize) {
+      const chunk = portalWonDeals.slice(i, i + batchChunkSize);
+      const cmd: Record<string, string> = {};
+      for (const d of chunk) {
+        cmd[`c${d.id}`] = `crm.timeline.comment.list?${flattenBitrixParams({
+          filter: { ENTITY_ID: Number(d.id), ENTITY_TYPE: "deal" },
+          select: ["ID", "COMMENT", "CREATED"]
+        })}`;
+      }
+      try {
+        const batchRes = (await client.call("batch", { halt: 0, cmd })) as {
+          result?: Record<string, Array<{ COMMENT?: string }>>;
+        };
+        const results = batchRes?.result || {};
+        for (const d of chunk) {
+          const comments = results[`c${d.id}`];
+          if (Array.isArray(comments)) {
+            for (const c of comments) {
+              const signDate = parsePortalSignDate(c.COMMENT);
+              if (signDate) {
+                d.portalSignDate = signDate;
+                break;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[collectPultData] Failed to batch load comments for won deals:", err);
+      }
+    }
+  }
 
   // 4. Calls via voximplant.statistic.get
   let calls: CallRecord[] = [];
@@ -477,6 +600,41 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     tasksByManager.set(mId, top5);
   }
 
+  // 8. Identify outcome mismatches (won on portal, but stage is lost in CRM; duplicates are excluded)
+  const outcomeMismatches: WonLostMismatchDeal[] = [];
+  for (const d of deals.values()) {
+    const oc = String(d.outcome ?? "");
+    if ((oc.startsWith("won:") || oc.startsWith("partner:")) && d.stageSemanticId === "F") {
+      const stageUpper = String(d.stageId ?? "").toUpperCase();
+      if (stageUpper.includes("DUPLICATE") || stageUpper.includes("DOUBLE")) continue;
+      const mgrName = userProfiles.get(String(d.assignedById))?.name || `Менеджер ${d.assignedById}`;
+      outcomeMismatches.push({
+        id: d.id,
+        title: d.title,
+        amount: d.amount,
+        managerId: d.assignedById,
+        managerName: mgrName,
+        stageId: d.stageId,
+        outcome: oc,
+        portalSignDate: d.portalSignDate
+      });
+    }
+  }
+
+  // 9. Update debts.wonOnPortalNotClosed for each manager
+  for (const mId of managerIds) {
+    const debts = debtsByManager.get(mId) || { ...EMPTY_DEBTS };
+    const wonNotClosed = Array.from(deals.values()).filter((d) => {
+      if (String(d.assignedById) !== String(mId)) return false;
+      const oc = String(d.outcome ?? "");
+      const isWon = oc.startsWith("won:") || oc.startsWith("partner:");
+      if (!isWon) return false;
+      return d.stageSemanticId !== "S" && d.stageSemanticId !== "F";
+    }).length;
+    debts.wonOnPortalNotClosed = wonNotClosed;
+    debtsByManager.set(mId, debts);
+  }
+
   return {
     asOfDate: toDate,
     calls,
@@ -488,6 +646,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     tasksByManager,
     debtsByManager,
     userProfiles,
-    taskErrorsByManager
+    taskErrorsByManager,
+    outcomeMismatches
   };
 }
