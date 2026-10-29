@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { GzOutcomeContract } from "../bitrix/gzDealOutcome.js";
+import { contractBaseNumber, type GzOutcomeContract } from "../bitrix/gzDealOutcome.js";
 import { dedupeSubjects, DEFAULT_ORG_CACHE_PATH } from "./market/fetchZakupMarket.js";
 import { mapWithConcurrency, zakupGet, zakupListAll, type ZakupApiOptions } from "./zakupPublicApi.js";
 import { goszakupGraphqlAll } from "./goszakupGraphql.js";
@@ -12,10 +12,11 @@ export interface GzRegistryOptions extends ZakupApiOptions {
   enstruCodes?: readonly string[];
   contractNumbers?: readonly string[];
   contractIds?: ReadonlySet<number>;
+  contractLookupPath?: "lots" | "recorded";
   onPlanItem?: (item: ZakupContractPlan) => void;
 }
 
-export type GzContractLookupPath = "enstru" | "lots" | "full" | "ows";
+export type GzContractLookupPath = "enstru" | "lots" | "recorded" | "full" | "ows";
 export interface ZakupContractPlan { id: number; external_id: number; root?: { external_id?: number | null } | null; lookupPath?: GzContractLookupPath }
 
 /** Префиксы не подходят публичному фильтру: нужен полный код, включая обе точки. */
@@ -105,13 +106,16 @@ export async function loadZakupCustomerContracts(bin: string, years: number[], o
   const numbers = [...new Set(options.contractNumbers?.filter(Boolean) ?? [])];
   const filters = numbers.length ? numbers.map(contract_number => ({ contract_number }))
     : codes.length ? codes.map(enstru_code => ({ enstru_code })) : [{}];
-  const lookupPath: GzContractLookupPath = numbers.length ? "lots" : codes.length ? "enstru" : "full";
+  const lookupPath: GzContractLookupPath = numbers.length ? options.contractLookupPath ?? "lots" : codes.length ? "enstru" : "full";
   for (const year of new Set(years)) {
     const yearId = yearDict.find(row => row.year === year)?.id;
     if (!yearId) throw new Error(`zakup: год ${year} не найден в справочнике`);
     for (const filter of filters) {
       const rows = await zakupListAll<ContractRow>('/public/contracts/', { customer_organization_id: customerId, year_id: yearId, system_id: 1, sign_date__gte: `${year}-01-01`, ...filter }, options);
-      for (const row of rows) if (!options.contractIds || options.contractIds.has(row.id)) byId.set(row.id, row);
+      for (const row of rows) {
+        if (numbers.length && !numbers.some(number => contractBaseNumber(number) === contractBaseNumber(row.contract_number_sys ?? ""))) continue;
+        if (!options.contractIds || options.contractIds.has(row.id)) byId.set(row.id, row);
+      }
     }
   }
   return mapWithConcurrency([...byId.values()], options.concurrency ?? 4, async contract => {

@@ -223,6 +223,7 @@ async function main(): Promise<void> {
     : await fillCustomerRegisters(checks.filter((check) => check.planMissing && check.bin), args.htmlDelayMs);
   const coverage: OutcomeCoverageInput = { planPages, status: htmlStatus, registers: { failed: registersFailed } };
   const htmlFailed = planPages.failed + htmlStatus.failed + registersFailed;
+  const recorded = await fillRecordedContracts(checks, contractsByBin, lookup, currentYear);
 
   // A plan that already has a deal is another purchase, never the new home of a missing plan.
   const dealsByPlan = await bitrix.dealsByPlanNumbers(uniqueInts(checks.flatMap((check) => check.registerRows
@@ -230,6 +231,7 @@ async function main(): Promise<void> {
     : [])));
 
   for (const check of checks) {
+    if (check.skipped) continue;
     // Without this customer's contracts the plan status would pass for news.
     if (check.bin && contractsByBin.failedBins.has(check.bin)) {
       check.skipped = "contracts unavailable";
@@ -244,7 +246,7 @@ async function main(): Promise<void> {
       const paths = findPlanContracts(check.ref, contractsByBin.get(check.bin ?? "") ?? [], config.itemFamilies)
         .filter(contract => contractBaseNumber(String(contract.contractNumberSys ?? "")) === outcome.contractNumber)
         .map(contract => lookup.sourceForContract(contract));
-      check.contractSource = (["enstru", "lots", "full", "ows"] as const).find(path => paths.includes(path)) ?? null;
+      check.contractSource = (["enstru", "lots", "recorded", "full", "ows"] as const).find(path => paths.includes(path)) ?? null;
     }
     // Two deals of one customer must not move onto the same plan.
     if (check.outcome?.kind === "plan-renumbered" || check.outcome?.kind === "plan-moved") {
@@ -289,9 +291,10 @@ async function main(): Promise<void> {
   const summary = summarize(checks, htmlFailed, contractsByBin.failedBins.size, coverage);
   const lookupStats = {
     input_without_enstru: inputWithoutEnstru, without_enstru_after_plan_lookup: withoutEnstru,
+    recorded_contract_deals_checked: recorded.deals, recorded_contract_numbers_checked: recorded.numbers, recorded_contract_lookup_failed: recorded.failed,
     full_scan_deals_attempted: checks.filter(check => lookup.fullScanPlans.has(check.ref.planNumber ?? 0)).length,
     full_scan_customers: lookup.fullScanBins.size,
-    ...Object.fromEntries((["enstru", "lots", "full", "ows"] as const).map(path => [`contract_${path}_found`, checks.filter(check => check.contractSource === path).length])),
+    ...Object.fromEntries((["enstru", "lots", "recorded", "full", "ows"] as const).map(path => [`contract_${path}_found`, checks.filter(check => check.contractSource === path).length])),
     ...Object.fromEntries((["q", "enstru", "lots", "full", "ows"] as const).map(path => [`plan_${path}_found`, checks.filter(check => lookup.planSources.get(check.ref.planNumber ?? 0) === path).length]))
   };
   console.log(`lookup_stats=${JSON.stringify(lookupStats)}`);
@@ -299,6 +302,46 @@ async function main(): Promise<void> {
   if (summary.warning) console.log(`::warning::${summary.warning}`);
   writeReport(args.reportPath, args.execute, checks, summary.markdown, lookupStats);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary.markdown}\n`);
+}
+
+/** Проверяем текущие публичные данные по известному номеру, когда индекс ЕНС ТРУ не вернул прежний договор. */
+async function fillRecordedContracts(
+  checks: DealCheck[],
+  contracts: Map<string, GzOutcomeContract[]> & { failedBins: Set<string> },
+  lookup: GzPlanLookup,
+  currentYear: number
+): Promise<{ deals: number; numbers: number; failed: number }> {
+  const groups = new Map<string, { bin: string; number: string; checks: DealCheck[] }>();
+  for (const check of checks) {
+    const marker = /^(?:won|lost|partner|terminated):(.+)$/.exec(check.deal.UF_CRM_S2L_GZ_OUTCOME ?? "");
+    if (!marker || !check.bin || contracts.failedBins.has(check.bin)) continue;
+    const number = contractBaseNumber(marker[1]);
+    if ((contracts.get(check.bin) ?? []).some(contract => contractBaseNumber(String(contract.contractNumberSys ?? "")) === number)) continue;
+    const key = `${check.bin}:${number}`;
+    const group = groups.get(key) ?? { bin: check.bin, number, checks: [] };
+    group.checks.push(check); groups.set(key, group);
+  }
+  const stats = { deals: [...groups.values()].reduce((sum, group) => sum + group.checks.length, 0), numbers: groups.size, failed: 0 };
+  console.log(`recorded contract lookup: deals=${stats.deals} numbers=${stats.numbers}`);
+  await mapLimit([...groups.values()], 4, async group => {
+    const years = new Set<number>();
+    for (const check of checks.filter(check => check.bin === group.bin)) {
+      const year = Number(check.deal.DATE_CREATE?.slice(0, 4)) || currentYear;
+      years.add(year); if (year < currentYear) years.add(year + 1);
+    }
+    try {
+      const found = await lookup.contractsByNumbers(group.bin, [...years], [group.number]);
+      const rows = contracts.get(group.bin) ?? [];
+      const known = new Set(rows.map(row => JSON.stringify(row)));
+      for (const row of found) if (!known.has(JSON.stringify(row))) rows.push(row);
+      contracts.set(group.bin, rows);
+    } catch (error) {
+      stats.failed += group.checks.length;
+      for (const check of group.checks) check.skipped = "recorded contract unavailable";
+      console.warn(`[recorded-contract] BIN ${group.bin}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+  return stats;
 }
 
 function fillLookupContexts(checks: DealCheck[], contexts: Map<number, GzPlanContext>): void {
@@ -662,6 +705,10 @@ function writeReport(reportPath: string, execute: boolean, checks: DealCheck[], 
       assignedById: check.deal.ASSIGNED_BY_ID ?? null,
       planNumber: check.ref.planNumber,
       pointIds: check.ref.pointIds,
+      revisionIds: check.ref.revisionIds,
+      enstruCode: check.ref.enstruCode,
+      itemName: check.ref.itemName,
+      planNumberVerified: check.ref.planNumberVerified,
       bin: check.bin,
       plan: check.plan,
       statusSource: check.statusSource,
