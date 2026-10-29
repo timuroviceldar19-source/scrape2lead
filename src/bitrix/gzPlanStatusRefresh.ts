@@ -4,6 +4,7 @@ import {
   type PublishedDealSnapshot
 } from "./gzPublishedDealStatus.js";
 import { chunkPlanNumbers, type PlanStatusBatchResult } from "../kz/goszakupPlanStatusApi.js";
+import type { GzPlanContext } from "../kz/zakupGzPlans.js";
 
 export const GZ_REFRESH_PIPELINE_IDS = [9, 41, 29] as const;
 export const GZ_REFRESH_PLAN_NUMBER_FIELD = "UF_CRM_PLAN_ID";
@@ -80,6 +81,16 @@ export interface RefreshDeal extends PublishedDealSnapshot {
   ID?: string | number | null;
   TITLE?: string | null;
   UF_CRM_PLAN_ID?: string | number | null;
+  COMPANY_ID?: string | number | null;
+  DATE_CREATE?: string | null;
+  UF_CRM_6627AEBD7C2D2?: string | null;
+}
+
+export function planStatusContextOf(deal: RefreshDeal, companyBins: ReadonlyMap<string, string>): GzPlanContext | null {
+  const own = String(deal.UF_CRM_6627AEBD7C2D2 ?? "").trim();
+  const bin = /^\d{12}$/.test(own) ? own : companyBins.get(String(deal.COMPANY_ID)) ?? "";
+  const year = Number(deal.DATE_CREATE?.slice(0, 4));
+  return /^\d{12}$/.test(bin) && Number.isInteger(year) && year >= 2000 ? { bin, year } : null;
 }
 
 export interface DealFieldUpdate {

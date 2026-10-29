@@ -6,6 +6,7 @@ import {
   formatReportLines,
   getStatusRank,
   parseCliArgs,
+  planStatusContextOf,
   runPlanStatusRefresh,
   type PlanStatusRefreshDeps,
   type RefreshDeal
@@ -15,6 +16,13 @@ import { buildDealUpdateCommands, createBatchDealUpdater } from "../../src/bitri
 const NOW = new Date("2026-10-28T10:00:00.000Z");
 
 describe("частичная недоступность открытого API", () => {
+  it("проверяет БИН самой сделки или её компании и год создания", () => {
+    const companyBins = new Map([["10", "990000000001"], ["11", "bad"]]);
+    expect(planStatusContextOf({ ID: 1, COMPANY_ID: "10", DATE_CREATE: "2026-10-01" }, companyBins)).toEqual({ bin: "990000000001", year: 2026 });
+    expect(planStatusContextOf({ ID: 1, COMPANY_ID: "10", DATE_CREATE: "2026-10-01", UF_CRM_6627AEBD7C2D2: "990000000002" }, companyBins)).toEqual({ bin: "990000000002", year: 2026 });
+    expect(planStatusContextOf({ ID: 2, COMPANY_ID: "11", DATE_CREATE: "2026-10-01" }, companyBins)).toBeNull();
+    expect(planStatusContextOf({ ID: 3, COMPANY_ID: "10" }, companyBins)).toBeNull();
+  });
   it("учитывает ошибку отдельного пункта, сохраняя успешные изменения пачки", async () => {
     const statuses = Object.assign(new Map([["100", "Опубликован"]]), { failed: new Map([["101", "zakup: HTTP 404"]]) });
     const deps = makeDeps([deal(1, "100"), deal(2, "101")], {}, { fetchStatuses: async () => statuses });
