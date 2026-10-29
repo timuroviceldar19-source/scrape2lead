@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import ExcelJS from "exceljs";
 import { parseRegisterWorkbook } from "../../src/bitrix/salesPult/register/parseExcel.js";
 
@@ -180,7 +180,8 @@ describe("parseRegisterWorkbook", () => {
   });
 });
 
-import { pickLatestRegisterFile, parseDateKeyFromFileName } from "../../src/bitrix/salesPult/register/diskClient.js";
+import { fetchLatestRegisterFromDisk, pickLatestRegisterFile, parseDateKeyFromFileName } from "../../src/bitrix/salesPult/register/diskClient.js";
+import { ReadOnlyBitrixClient } from "../../src/bitrix/reporting/readOnlyClient.js";
 
 describe("pickLatestRegisterFile", () => {
   it("picks latest file by date from filename, then by UPDATE_TIME", () => {
@@ -196,5 +197,37 @@ describe("pickLatestRegisterFile", () => {
 
     const latest = pickLatestRegisterFile(items);
     expect(latest?.ID).toBe(3);
+  });
+});
+
+describe("fetchLatestRegisterFromDisk", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads every page of the folder and downloads the latest register even when it is on the second page", async () => {
+    const files = Array.from({ length: 60 }, (_, i) => {
+      const day = new Date(Date.UTC(2026, 7, 1) + i * 86_400_000);
+      const name = `ОП ${String(day.getUTCDate()).padStart(2, "0")}.${String(day.getUTCMonth() + 1).padStart(2, "0")}.26.xlsx`;
+      return { ID: 1000 + i, NAME: name, TYPE: "file", DOWNLOAD_URL: `https://disk.example/${1000 + i}` };
+    });
+    // BitrixClient.call returns the unwrapped `result`; a batch answers { result: { p0: [...] }, result_error: {} }.
+    const transport = {
+      call: vi.fn(async (method: string, body: any) => {
+        if (method !== "batch") throw new Error(`unexpected ${method}`);
+        const result: Record<string, unknown> = {};
+        for (const [key, command] of Object.entries(body.cmd as Record<string, string>)) {
+          const start = Number(new URLSearchParams(command.split("?")[1]).get("start") ?? 0);
+          result[key] = files.slice(start, start + 50);
+        }
+        return { result, result_error: {} };
+      })
+    };
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array([0x50, 0x4b, 3, 4])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = await fetchLatestRegisterFromDisk(new ReadOnlyBitrixClient(transport), 89975);
+
+    expect(file?.fileName).toBe("ОП 29.09.26.xlsx");
+    expect(fetchMock).toHaveBeenCalledWith("https://disk.example/1059");
+    expect(file?.buffer.subarray(0, 2).toString()).toBe("PK");
   });
 });
