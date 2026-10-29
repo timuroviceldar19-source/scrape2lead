@@ -62,25 +62,62 @@
     {
       "id": "sales",
       "name": "Отдел продаж",
-      "trackedMetrics": ["calls", "proposals", "contracts"],
+      "trackedMetrics": [
+        "calls",
+        "proposals",
+        "contracts"
+      ],
       "managers": [
-        { "id": "147", "name": "Бахтияр" },
-        { "id": "205", "name": "Жанат" },
-        { "id": "725", "name": "Бекзат" },
-        { "id": "1751", "name": "Нурбол" },
-        { "id": "2345", "name": "Турар" },
-        { "id": "2373", "name": "Кайыржан" }
+        {
+          "id": "147",
+          "name": "Бахтияр"
+        },
+        {
+          "id": "205",
+          "name": "Жанат"
+        },
+        {
+          "id": "725",
+          "name": "Бекзат"
+        },
+        {
+          "id": "1751",
+          "name": "Нурбол"
+        },
+        {
+          "id": "2345",
+          "name": "Турар"
+        },
+        {
+          "id": "2373",
+          "name": "Кайыржан"
+        }
       ]
     },
     {
       "id": "tenders",
       "name": "Тендерный отдел",
-      "trackedMetrics": ["contracts"],
+      "trackedMetrics": [
+        "contracts"
+      ],
       "managers": [
-        { "id": "559", "name": "Эльмира" },
-        { "id": "2377", "name": "Нурдаулет" },
-        { "id": "2381", "name": "Динара" }
+        {
+          "id": "559",
+          "name": "Эльмира"
+        },
+        {
+          "id": "2377",
+          "name": "Нурдаулет"
+        },
+        {
+          "id": "2381",
+          "name": "Динара"
+        }
       ]
     }
-  ]
+  ],
+  "register": {
+    "diskFolderId": 0,
+    "managerAliases": {}
+  }
 }

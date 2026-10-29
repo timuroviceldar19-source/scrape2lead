@@ -12,6 +12,10 @@ on:
           - site
           - morning
           - evening
+      market_backfill_from:
+        description: "Initial market backfill start date (YYYY-MM-DD, e.g. 2026-01-01)"
+        required: false
+        type: string
 
 concurrency:
   group: sales-pult-${{ github.event.inputs.mode || 'site' }}
@@ -33,16 +37,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cache market data
+        uses: actions/cache@v4
+        with:
+          path: data/market
+          key: gz-market-v1-${{ github.run_id }}
+          restore-keys: |
+            gz-market-v1-
+
       - name: Run Sales Pult
         env:
           BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
+          GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
           MODE: ${{ github.event.inputs.mode || 'site' }}
+          MARKET_BACKFILL: ${{ github.event.inputs.market_backfill_from || '' }}
           PULT_CHAT_ENABLED: ${{ vars.PULT_CHAT_ENABLED }}
         run: |
           set -eu
           echo "Running sales pult in mode: $MODE"
+          BACKFILL_FLAG=""
+          if [ -n "$MARKET_BACKFILL" ]; then
+            BACKFILL_FLAG="--market-backfill-from $MARKET_BACKFILL"
+          fi
           if [ "$MODE" = "site" ]; then
-            npm run bitrix:sales-pult -- --mode site
+            npm run bitrix:sales-pult -- --mode site $BACKFILL_FLAG
           else
             EXECUTE_FLAG=""
             if [ "${PULT_CHAT_ENABLED:-}" = "true" ]; then

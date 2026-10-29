@@ -15,13 +15,14 @@
 <body>
 <header class="bar">
   <div class="bar-in">
-    <a class="mark" href="#top" aria-label="Пульт продаж F3">
+    <a class="mark" href="#pult" aria-label="Пульт продаж F3">
       <span class="mark-box">F3</span><span class="mark-name">Пульт продаж</span>
     </a>
-    <nav class="periods" aria-label="Период">
-      <button data-p="day">Сегодня<span class="kbd">1</span></button>
-      <button data-p="week">Неделя<span class="kbd">2</span></button>
-      <button data-p="month">Месяц<span class="kbd">3</span></button>
+    <nav class="sections" aria-label="Разделы">
+      <a href="#pult" data-t="pult">Пульт</a>
+      <a href="#reg" data-t="reg">Реестр ОП</a>
+      <a href="#ip" data-t="ip">Рынок ИП</a>
+      <a href="#kt" data-t="kt">Рынок КТ</a>
       <span class="ind" aria-hidden="true"></span>
     </nav>
     <div class="bar-right">
@@ -33,17 +34,30 @@
 </header>
 
 <main class="page" id="top">
-  <div class="dateline"><span class="label" id="dateLabel"></span><span class="label" id="wdLabel"></span></div>
+  <div class="dateline">
+    <div class="date-left"><span class="label" id="dateLabel"></span><span class="label" id="wdLabel"></span><span class="label" id="srcLabel"></span></div>
+    <nav class="periods" id="periodsNav" aria-label="Период">
+      <button data-p="day">Сегодня<span class="kbd">1</span></button>
+      <button data-p="week">Неделя<span class="kbd">2</span></button>
+      <button data-p="month">Месяц<span class="kbd">3</span></button>
+      <span class="ind" aria-hidden="true"></span>
+    </nav>
+  </div>
   <div class="monthtrack" aria-hidden="true"><span id="monthFill"></span></div>
 
-  <section class="block reveal" id="month"></section>
-  <section class="block reveal" id="signals"></section>
-  <section class="block reveal" id="sales"></section>
-  <section class="block reveal" id="calls"></section>
-  <section class="block reveal" id="tenders"></section>
-  <section class="block reveal" id="tasks"></section>
+  <div class="tab on" id="tab-pult">
+    <section class="block reveal" id="month"></section>
+    <section class="block reveal" id="signals"></section>
+    <section class="block reveal" id="sales"></section>
+    <section class="block reveal" id="calls"></section>
+    <section class="block reveal" id="tenders"></section>
+    <section class="block reveal" id="tasks"></section>
+  </div>
+  <div class="tab" id="tab-reg"></div>
+  <div class="tab" id="tab-ip"></div>
+  <div class="tab" id="tab-kt"></div>
 
-  <footer>
+  <footer id="foot">
     <span>Источник: Битрикс24 · ft3.bitrix24.kz</span>
     <span>Обновляется каждый час с 09:00 до 19:00 в будни · клавиши 1 2 3 и T</span>
   </footer>

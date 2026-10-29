@@ -36,6 +36,22 @@ import {
   type PultGroupView,
   type DayDynamic
 } from "../src/bitrix/salesPult/site.js";
+import { parseRegisterExcel } from "../src/bitrix/salesPult/register/parseExcel.js";
+import { groupRegisterContracts, matchRegisterWithCrm } from "../src/bitrix/salesPult/register/matchCrm.js";
+import { buildRegisterView } from "../src/bitrix/salesPult/register/buildView.js";
+import { fetchLatestRegisterFromDisk } from "../src/bitrix/salesPult/register/diskClient.js";
+import { fetchCrmWonDealsForRegister } from "../src/bitrix/salesPult/register/fetchCrmWon.js";
+import type { RegisterView } from "../src/bitrix/salesPult/register/types.js";
+import { loadMarketConfig } from "../src/kz/market/config.js";
+import { buildMarketGroupView } from "../src/kz/market/aggregate.js";
+import {
+  loadStoredMarketUnits,
+  saveStoredMarketUnits,
+  fetchMarketContracts,
+  mergeMarketUnits,
+  DEFAULT_MARKET_UNITS_PATH
+} from "../src/kz/market/fetchMarket.js";
+import type { MarketPayload } from "../src/kz/market/types.js";
 
 export interface PultConfig {
   portal: string;
@@ -61,6 +77,11 @@ export interface PultConfig {
     name: string;
     trackedMetrics: string[];
     managers: Array<{ id: string; name: string }>;
+  }>;
+  register?: {
+    diskFolderId?: number;
+    managerAliases?: Record<string, string>;
+  };
   }>;
 }
 
@@ -167,6 +188,11 @@ export async function runSalesPult(args: string[]): Promise<void> {
   const compareManual = args.includes("--compare-manual");
   const daysIdx = args.indexOf("--days");
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
+  const registerFileIdx = args.indexOf("--register-file");
+  const registerFilePath = registerFileIdx !== -1 && args[registerFileIdx + 1] ? args[registerFileIdx + 1] : undefined;
+  const backfillIdx = args.indexOf("--market-backfill-from");
+  const backfillFromDate = backfillIdx !== -1 && args[backfillIdx + 1] ? args[backfillIdx + 1] : undefined;
+  const marketUpdate = args.includes("--market-update");
 
   const config = loadConfig();
   const webhookUrl = process.env.BITRIX24_WEBHOOK_URL?.trim();
@@ -179,6 +205,49 @@ export async function runSalesPult(args: string[]): Promise<void> {
 
   const nowIso = new Date().toISOString();
   const todayAlmaty = toAlmatyDate(nowIso);
+
+  if (backfillFromDate) {
+    const gzToken = process.env.GOSZAKUP_TOKEN?.trim();
+    if (!gzToken) {
+      throw new Error("GOSZAKUP_TOKEN is required in .env for market backfill");
+    }
+    console.log(`[Рынок] Начало загрузки с ${backfillFromDate}...`);
+    const units = await fetchMarketContracts({
+      token: gzToken,
+      fromDate: backfillFromDate,
+      onProgress: (pages, seen, matched) => {
+        console.log(`[Рынок] страниц: ${pages}, просмотрено: ${seen}, отобрано: ${matched}`);
+      }
+    });
+    saveStoredMarketUnits(units, DEFAULT_MARKET_UNITS_PATH);
+    console.log(`[Рынок] Сохранено ${units.length} позиций в ${DEFAULT_MARKET_UNITS_PATH}`);
+    if (args.length <= 2) return;
+  }
+
+  if (mode === "morning" || marketUpdate) {
+    const gzToken = process.env.GOSZAKUP_TOKEN?.trim();
+    if (gzToken) {
+      const d = new Date(Date.parse(`${todayAlmaty}T12:00:00Z`));
+      d.setDate(d.getDate() - 45);
+      const cutoffDate = d.toISOString().slice(0, 10);
+      try {
+        console.log(`[Рынок] Утреннее обновление за последние 45 дней (с ${cutoffDate})...`);
+        const freshUnits = await fetchMarketContracts({
+          token: gzToken,
+          fromDate: cutoffDate,
+          toDate: todayAlmaty
+        });
+        const existingUnits = loadStoredMarketUnits(DEFAULT_MARKET_UNITS_PATH);
+        const merged = mergeMarketUnits(existingUnits, freshUnits, cutoffDate);
+        saveStoredMarketUnits(merged, DEFAULT_MARKET_UNITS_PATH);
+        console.log(`[Рынок] Утреннее обновление: свежих ${freshUnits.length}, всего ${merged.length}`);
+      } catch (marketErr) {
+        console.warn(`[Рынок] Ошибка при утреннем обновлении рынка:`, marketErr);
+      }
+    } else {
+      console.log(`[Рынок] GOSZAKUP_TOKEN не задан, пропуск утреннего обновления рынка`);
+    }
+  }
 
   // Weekend and holiday check for scheduled reporting modes
   if (mode === "morning" || mode === "evening") {
@@ -234,6 +303,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       maxOverdueDays: config.maxOverdueDays ?? 30,
       topTaskCategories: config.topTaskCategories,
       holidays: config.holidays,
+
       webhookUserId
     });
 
@@ -543,6 +613,99 @@ export async function runSalesPult(args: string[]): Promise<void> {
 
     const almatyTime = formatAlmatyTime(nowIso);
     const generatedTimeStr = `${todayAlmaty} ${almatyTime} (UTC+5)`;
+
+    // Register
+    let registerView: RegisterView | null = null;
+    try {
+      let excelBuffer: Buffer | null = null;
+      let registerFileName = "";
+      let asOf = todayAlmaty;
+
+      if (registerFilePath) {
+        if (fs.existsSync(registerFilePath)) {
+          excelBuffer = fs.readFileSync(registerFilePath);
+          registerFileName = path.basename(registerFilePath);
+        } else {
+          registerView = { error: `Файл не найден: ${registerFilePath}` } as any;
+        }
+      } else if (config.register?.diskFolderId) {
+        try {
+          const diskFile = await fetchLatestRegisterFromDisk(reader, config.register.diskFolderId);
+          if (diskFile) {
+            excelBuffer = diskFile.buffer;
+            registerFileName = diskFile.fileName;
+          } else {
+            registerView = { error: "Реестр не подключён: файл в папке не найден" } as any;
+          }
+        } catch (diskErr) {
+          registerView = {
+            error: `Реестр не подключён: ${diskErr instanceof Error ? diskErr.message : String(diskErr)}`
+          } as any;
+        }
+      } else {
+        registerView = { error: "Реестр не подключён: папка на Диске не настроена" } as any;
+      }
+
+      if (excelBuffer && !registerView) {
+        const parsed = await parseRegisterExcel(excelBuffer, config.register?.managerAliases);
+        asOf = parsed.asOf || todayAlmaty;
+        const contracts = groupRegisterContracts(parsed.rows);
+
+        const wonDeals = await fetchCrmWonDealsForRegister(
+          reader,
+          collected.contractTransitions,
+          collected.userProfiles
+        );
+
+        const matchResult = matchRegisterWithCrm(contracts, wonDeals, {
+          managerAliases: config.register?.managerAliases
+        });
+
+        registerView = buildRegisterView({
+          rows: parsed.rows,
+          plans: parsed.plans,
+          missing: matchResult.missing,
+          extraDealsCount: matchResult.extra.length,
+          fileName: registerFileName,
+          asOf,
+          month: parsed.month || todayAlmaty.slice(0, 7)
+        });
+
+        console.log(
+          `[Реестр] строк: ${parsed.rows.length}, договоров: ${contracts.length}, найдено в CRM: ${matchResult.matched.length}, нет в CRM: ${matchResult.missing.length}`
+        );
+      }
+    } catch (err) {
+      console.error("[Реестр] Ошибка обработки реестра:", err);
+      registerView = {
+        error: `Реестр не подключён: ${err instanceof Error ? err.message : String(err)}`
+      } as any;
+    }
+
+    // Market
+    let marketPayload: MarketPayload | null = null;
+    const storedUnits = loadStoredMarketUnits(DEFAULT_MARKET_UNITS_PATH);
+    if (storedUnits.length > 0) {
+      const mConfig = loadMarketConfig();
+      const ipView = buildMarketGroupView(storedUnits, "ИП", todayAlmaty, mConfig);
+      const ktView = buildMarketGroupView(storedUnits, "КТ", todayAlmaty, mConfig);
+      marketPayload = {
+        asOfDate: todayAlmaty,
+        ip: ipView,
+        kt: ktView
+      };
+      console.log(
+        `[Рынок] позиций: ${storedUnits.length}, ИП договоров: ${ipView.total.contracts}, КТ договоров: ${ktView.total.contracts}`
+      );
+    } else {
+      marketPayload = {
+        asOfDate: todayAlmaty,
+        ip: null as any,
+        kt: null as any,
+        error: "Данные рынка ещё собираются."
+      };
+      console.log("[Рынок] Кэш data/market/units-2026.json не найден");
+    }
     const payload: SalesPultPayload = {
       asOfDate: todayAlmaty,
       generatedAt: generatedTimeStr,
@@ -554,7 +717,9 @@ export async function runSalesPult(args: string[]): Promise<void> {
       callsError: collected.callsError,
       groups: groupsView,
       dynamics,
-      holidays: config.holidays
+      holidays: config.holidays,
+      register: registerView,
+      market: marketPayload
     };
 
     const outDir = path.resolve("exports/sales-pult");

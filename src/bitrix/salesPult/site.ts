@@ -44,6 +44,10 @@ import {
 const pultHtml = fs.readFileSync(new URL("./page/pult.html", import.meta.url), "utf8");
 const pultCss = fs.readFileSync(new URL("./page/pult.css", import.meta.url), "utf8");
 const pultClientJs = fs.readFileSync(new URL("./page/pult.client.js", import.meta.url), "utf8");
+const registerClientJs = fs.readFileSync(new URL("./page/register.client.js", import.meta.url), "utf8");
+const marketClientJs = fs.readFileSync(new URL("./page/market.client.js", import.meta.url), "utf8");
+
+const fullClientJs = `${registerClientJs}\n${marketClientJs}\n${pultClientJs}`;
 
 const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|\/\*__CLIENT_JS__\*\//g;
 
@@ -57,7 +61,7 @@ export function renderPultHtml(payload: SalesPultPayload): string {
     "/*__CSS__*/": pultCss,
     "__PAYLOAD__": safeJson(payload),
     "__VIEW__": safeJson(view),
-    "/*__CLIENT_JS__*/": pultClientJs
+    "/*__CLIENT_JS__*/": fullClientJs
   };
 
   return pultHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
