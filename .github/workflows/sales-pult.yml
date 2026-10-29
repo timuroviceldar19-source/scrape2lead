@@ -1,9 +1,6 @@
 name: Sales Pult F3
 
 on:
-  schedule:
-    # Каждый час с 04:00 до 14:00 UTC (09:00 - 19:00 Алматы), пн–пт
-    - cron: "0 4-14 * * 1-5"
   workflow_dispatch:
     inputs:
       mode:
