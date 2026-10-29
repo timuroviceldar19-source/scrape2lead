@@ -3,7 +3,7 @@ import {
   buildStatusFieldUpdates,
   type PublishedDealSnapshot
 } from "./gzPublishedDealStatus.js";
-import { chunkPlanNumbers } from "../kz/goszakupPlanStatusApi.js";
+import { chunkPlanNumbers, type PlanStatusBatchResult } from "../kz/goszakupPlanStatusApi.js";
 
 export const GZ_REFRESH_PIPELINE_IDS = [9, 41, 29] as const;
 export const GZ_REFRESH_PLAN_NUMBER_FIELD = "UF_CRM_PLAN_ID";
@@ -95,7 +95,7 @@ export interface DealUpdateResult {
 export interface PlanStatusRefreshDeps {
   listDeals: () => Promise<RefreshDeal[]>;
   /** Called with at most 50 plan numbers; returns rootrecordId → status. */
-  fetchStatuses: (planNumbers: string[]) => Promise<Map<string, string>>;
+  fetchStatuses: (planNumbers: string[]) => Promise<PlanStatusBatchResult>;
   /** Only invoked in execute mode. */
   writeUpdates: (updates: DealFieldUpdate[]) => Promise<DealUpdateResult[]>;
   now: () => Date;
@@ -258,7 +258,7 @@ export async function fetchBatchWithRetry(
   numbers: string[],
   fetchStatuses: (nums: string[]) => Promise<Map<string, string>>,
   sleep: (ms: number) => Promise<void>
-): Promise<Map<string, string>> {
+): Promise<PlanStatusBatchResult> {
   try {
     return await fetchStatuses(numbers);
   } catch (error) {
@@ -306,6 +306,10 @@ export async function runPlanStatusRefresh(
     try {
       const batchStatuses = await fetchBatchWithRetry(batch, deps.fetchStatuses, sleep);
       for (const [root, status] of batchStatuses) statuses.set(root, status);
+      for (const [number, message] of batchStatuses.failed ?? []) {
+        failedNumbers.add(number);
+        errors.push({ dealId: null, planNumber: number, message });
+      }
     } catch (batchError) {
       if (batchError instanceof Error && batchError.name === "GoszakupAuthError") throw batchError;
 
@@ -317,6 +321,10 @@ export async function runPlanStatusRefresh(
           try {
             const halfStatuses = await fetchBatchWithRetry(half, deps.fetchStatuses, sleep);
             for (const [root, status] of halfStatuses) statuses.set(root, status);
+            for (const [number, message] of halfStatuses.failed ?? []) {
+              failedNumbers.add(number);
+              errors.push({ dealId: null, planNumber: number, message });
+            }
           } catch (halfError) {
             if (halfError instanceof Error && halfError.name === "GoszakupAuthError") throw halfError;
             half.forEach((number) => failedNumbers.add(number));

@@ -88,6 +88,17 @@ describe("batching", () => {
 });
 
 describe("fetchPlanStatusBatch", () => {
+  it("сохраняет успешные статусы пачки при недоступности одного пункта", async () => {
+    const fetchFn = (async (url: string) => {
+      const u = new URL(url);
+      if (u.searchParams.get("q") === "101") return new Response("bad", { status: 404 });
+      return jsonResponse(u.pathname.endsWith("/plan-items/") ? { count: 1, results: [{ id: 500, external_id: 200 }] }
+        : { id: 500, external_id: 200, organization: { iin_bin: "990000000001" }, year: { year: 2026 }, status: { name: "Утвержден", egz_code: "2" } });
+    }) as typeof fetch;
+    const result = await fetchPlanStatusBatch(["100", "101"], { fetchFn, pauseMs: 0, maxRetries: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }], [101, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.get("100")).toBe("Утвержден");
+    expect(result.failed?.get("101")).toContain("404");
+  });
   it("читает zakup без токена, проверяя БИН и год сделки", async () => {
     const fetchFn = (async (url: string) => {
       expect(new URL(url).hostname).toBe("zakup.gov.kz");

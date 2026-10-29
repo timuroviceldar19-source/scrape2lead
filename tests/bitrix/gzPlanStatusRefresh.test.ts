@@ -14,6 +14,18 @@ import { buildDealUpdateCommands, createBatchDealUpdater } from "../../src/bitri
 
 const NOW = new Date("2026-10-28T10:00:00.000Z");
 
+describe("частичная недоступность открытого API", () => {
+  it("учитывает ошибку отдельного пункта, сохраняя успешные изменения пачки", async () => {
+    const statuses = Object.assign(new Map([["100", "Опубликован"]]), { failed: new Map([["101", "zakup: HTTP 404"]]) });
+    const deps = makeDeps([deal(1, "100"), deal(2, "101")], {}, { fetchStatuses: async () => statuses });
+    const report = await runPlanStatusRefresh(deps, { execute: false });
+    expect(report.foundInApi).toBe(1);
+    expect(report.toUpdate).toBe(1);
+    expect(report.notFound).toBe(0);
+    expect(report.errors).toEqual([{ dealId: null, planNumber: "101", message: "zakup: HTTP 404" }]);
+  });
+});
+
 function deal(id: number, planNumber: string, status = "Утвержден", extra: Partial<RefreshDeal> = {}): RefreshDeal {
   return {
     ID: id, TITLE: `Сделка ${id}`, UF_CRM_PLAN_ID: planNumber,

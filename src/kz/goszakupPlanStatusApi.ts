@@ -1,6 +1,7 @@
 import { GoszakupAuthError } from "./goszakupClient.js";
 import { fetchGzPlans, type GzPlanLookupOptions } from "./zakupGzPlans.js";
 import { withGzSourceFallback } from "./zakupGzRegistry.js";
+import { mapWithConcurrency } from "./zakupPublicApi.js";
 
 export const GZ_GRAPHQL_URL = "https://ows.goszakup.gov.kz/v3/graphql";
 export const PLAN_STATUS_BATCH_SIZE = 50;
@@ -12,6 +13,8 @@ const DEFAULT_MAX_RETRIES = 3;
 export interface PlanStatusApiOptions extends GzPlanLookupOptions {
   sleepFn?: (ms: number) => Promise<void>;
 }
+
+export type PlanStatusBatchResult = Map<string, string> & { failed?: Map<string, string> };
 
 interface PlanRow {
   id?: unknown;
@@ -78,11 +81,23 @@ export function parsePlanStatusResponse(payload: unknown): ParsedPlanStatuses {
 export async function fetchPlanStatusBatch(
   planNumbers: readonly string[],
   options: PlanStatusApiOptions
-): Promise<Map<string, string>> {
+): Promise<PlanStatusBatchResult> {
   if (planNumbers.length > PLAN_STATUS_BATCH_SIZE) {
     throw new Error(`batch supports at most ${PLAN_STATUS_BATCH_SIZE} plan numbers, got ${planNumbers.length}`);
   }
   buildPlanStatusQuery(planNumbers);
+  if (options.contexts || options.lookup) {
+    const result: PlanStatusBatchResult = Object.assign(new Map<string, string>(), { failed: new Map<string, string>() });
+    await mapWithConcurrency(planNumbers, options.concurrency ?? 4, async number => {
+      try {
+        for (const plan of await fetchGzPlans([Number(number)], "root", options)) {
+          const status = plan.RefPlnPointStatus?.nameRu;
+          if (status && !plan.isDeleted && plan.isActive !== 0) result.set(number, status);
+        }
+      } catch (error) { result.failed!.set(number, error instanceof Error ? error.message : String(error)); }
+    });
+    return result;
+  }
   return withGzSourceFallback(async () => {
     const plans = await fetchGzPlans(planNumbers.map(Number), "root", { ...options, token: null });
     return new Map(plans.filter(plan => plan.RefPlnPointStatus?.nameRu && !plan.isDeleted && plan.isActive !== 0)

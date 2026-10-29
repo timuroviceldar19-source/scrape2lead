@@ -21,6 +21,23 @@ function fakeRegistry(rows: Array<Record<string, unknown>>, failFor: number[] = 
 }
 
 describe("fetchCurrentPlanItems", () => {
+  it("не разрешает менять товар по timestamp, если нет даты акта", async () => {
+    const fetchFn = (async (url: string) => new Response(JSON.stringify(new URL(url).pathname.endsWith("/plan-items/")
+      ? { count: 1, results: [{ id: 500, external_id: 200 }] }
+      : { id: 500, external_id: 200, organization: { iin_bin: "990000000001" }, year: { year: 2026 }, status: { name: "Утвержден", egz_code: "2" }, timestamp: 1792042214 }))) as typeof fetch;
+    const result = await fetchCurrentPlanItems([100], { fetchFn, pauseMs: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.items.size).toBe(0);
+    expect(result.failed).toEqual([100]);
+  });
+
+  it("отмечает ошибку одного пункта и продолжает остальные", async () => {
+    const fetchFn = (async (url: string) => {
+      if (new URL(url).searchParams.get("q") === "100") return new Response("down", { status: 404 });
+      return new Response(JSON.stringify({ count: 0, results: [] }));
+    }) as typeof fetch;
+    const result = await fetchCurrentPlanItems([100], { fetchFn, maxRetries: 0, pauseMs: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.failed).toEqual([100]);
+  });
   it("читает товар из zakup без токена, сохраняя проверки заказчика и даты", async () => {
     const fetchFn = (async (url: string) => new Response(JSON.stringify(new URL(url).pathname.endsWith("/plan-items/")
       ? { count: 1, results: [{ id: 500, external_id: 200 }] }
