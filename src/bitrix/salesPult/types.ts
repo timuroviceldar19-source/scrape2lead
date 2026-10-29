@@ -1,6 +1,5 @@
 import type { TargetsConfig, ManagerRollups, TopTask } from "./metrics.js";
 import type { ManagerDebts } from "./debts.js";
-import type { RegisterView } from "./register/types.js";
 import type { MarketView } from "../../kz/market/types.js";
 
 export interface DayDynamic {
@@ -42,7 +41,6 @@ export interface SalesPultPayload {
   groups: PultGroupView[];
   dynamics: DayDynamic[];
   holidays?: string[];
-  register?: RegisterView | null;
   market?: MarketView | null;
 }
 

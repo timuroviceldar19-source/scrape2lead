@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { MarketConfig, MarketView } from "./types.js";
 import { loadMarketConfig } from "./config.js";
-import { DEFAULT_MARKET_UNITS_PATH, loadStoredMarketUnits } from "./fetchMarket.js";
+import { DEFAULT_MARKET_UNITS_PATH, loadStoredMarketData } from "./fetchMarket.js";
 import { buildMarketView } from "./aggregate.js";
 
 export interface LoadMarketOptions {
@@ -18,24 +18,26 @@ export function loadMarketView(options: LoadMarketOptions): MarketView {
     cfg = loadMarketConfig()
   } = options;
 
-  const resolved = path.resolve(unitsFilePath);
-  let updatedAt: string | undefined;
-  if (fs.existsSync(resolved)) {
-    try {
-      const stat = fs.statSync(resolved);
-      updatedAt = stat.mtime.toISOString().slice(0, 10);
-    } catch {}
+  const storedData = loadStoredMarketData(unitsFilePath);
+  const storedUnits = storedData.units;
+  let updatedAt = storedData.updatedAt;
+
+  if (!updatedAt) {
+    const resolved = path.resolve(unitsFilePath);
+    if (fs.existsSync(resolved)) {
+      try {
+        const stat = fs.statSync(resolved);
+        updatedAt = stat.mtime.toISOString().slice(0, 10);
+      } catch {}
+    }
   }
 
-  const storedUnits = loadStoredMarketUnits(unitsFilePath);
   if (storedUnits.length === 0) {
     console.log(`[Рынок] Кэш ${unitsFilePath} не найден или пуст`);
     return {
       asOf: todayAlmaty,
       ip: null,
       kt: null,
-      "ИП": null,
-      "КТ": null,
       months: [],
       error: "Данные рынка ещё собираются."
     };

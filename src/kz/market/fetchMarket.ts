@@ -15,25 +15,66 @@ const CONTRACT_QUERY = `query($d: [String], $after: Int) {
 
 export const DEFAULT_MARKET_UNITS_PATH = "data/market/units-2026.json";
 
-export function loadStoredMarketUnits(filePath = DEFAULT_MARKET_UNITS_PATH): MarketUnit[] {
+export interface StoredMarketData {
+  updatedAt: string;
+  completeMonths?: string[];
+  units: MarketUnit[];
+}
+
+export function loadStoredMarketData(filePath = DEFAULT_MARKET_UNITS_PATH): {
+  units: MarketUnit[];
+  completeMonths: string[];
+  updatedAt?: string;
+} {
   const resolved = path.resolve(filePath);
-  if (!fs.existsSync(resolved)) return [];
+  if (!fs.existsSync(resolved)) return { units: [], completeMonths: [] };
   try {
     const raw = fs.readFileSync(resolved, "utf8");
     const data = JSON.parse(raw);
-    return Array.isArray(data) ? data : Array.isArray(data.units) ? data.units : [];
+    if (Array.isArray(data)) {
+      return { units: data, completeMonths: [] };
+    }
+    return {
+      units: Array.isArray(data.units) ? data.units : [],
+      completeMonths: Array.isArray(data.completeMonths) ? data.completeMonths : [],
+      updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : undefined
+    };
   } catch {
-    return [];
+    return { units: [], completeMonths: [] };
   }
+}
+
+export function saveStoredMarketData(
+  data: { units: MarketUnit[]; completeMonths?: string[]; updatedAt?: string },
+  filePath = DEFAULT_MARKET_UNITS_PATH
+): void {
+  const resolved = path.resolve(filePath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  const payload: StoredMarketData = {
+    updatedAt: data.updatedAt || new Date().toISOString().slice(0, 10),
+    completeMonths: data.completeMonths || [],
+    units: data.units
+  };
+  fs.writeFileSync(resolved, JSON.stringify(payload, null, 2), "utf8");
+}
+
+export function loadStoredMarketUnits(filePath = DEFAULT_MARKET_UNITS_PATH): MarketUnit[] {
+  return loadStoredMarketData(filePath).units;
 }
 
 export function saveStoredMarketUnits(
   units: MarketUnit[],
   filePath = DEFAULT_MARKET_UNITS_PATH
 ): void {
-  const resolved = path.resolve(filePath);
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  fs.writeFileSync(resolved, JSON.stringify(units), "utf8");
+  const existing = loadStoredMarketData(filePath);
+  saveStoredMarketData(
+    {
+      units,
+      completeMonths: existing.completeMonths,
+      updatedAt: new Date().toISOString().slice(0, 10)
+    },
+    filePath
+  );
 }
 
 export interface FetchMarketOptions {
@@ -98,15 +139,16 @@ export async function fetchMarketContracts(options: FetchMarketOptions): Promise
 export function mergeMarketUnits(
   existingUnits: MarketUnit[],
   freshUnits: MarketUnit[],
-  cutoffDate: string
+  fromDate: string,
+  toDate?: string
 ): MarketUnit[] {
-  // Retain units strictly older than cutoffDate, plus all fresh units
-  const olderUnits = existingUnits.filter((u) => u.date < cutoffDate);
+  // Retain units strictly outside the [fromDate, toDate] window
+  const outsideWindowUnits = existingUnits.filter((u) => u.date < fromDate || (toDate ? u.date > toDate : false));
   const byKey = new Map<string, MarketUnit>();
 
   const unitKey = (u: MarketUnit) => `${u.id}|${u.unitIndex ?? 0}|${u.code}|${u.price}|${u.qty}`;
 
-  for (const u of olderUnits) {
+  for (const u of outsideWindowUnits) {
     byKey.set(unitKey(u), u);
   }
   for (const u of freshUnits) {
@@ -164,15 +206,16 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
     onProgress
   } = options;
 
-  let currentUnits = loadStoredMarketUnits(filePath);
+  const storedData = loadStoredMarketData(filePath);
+  let currentUnits = storedData.units;
+  const completeMonths = new Set(storedData.completeMonths);
   const intervals = getMonthIntervals(fromDate, toDate);
 
   for (const interval of intervals) {
-    // Check if month already exists in stored units (for past months)
     const isCurrentMonth = interval.month === toDate.slice(0, 7);
-    const alreadyLoaded = currentUnits.some((u) => u.month === interval.month);
+    const isComplete = completeMonths.has(interval.month);
 
-    if (alreadyLoaded && !isCurrentMonth) {
+    if (isComplete && !isCurrentMonth) {
       if (onProgress) {
         onProgress({
           month: interval.month,
@@ -203,8 +246,18 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
       }
     });
 
-    currentUnits = mergeMarketUnits(currentUnits, monthUnits, interval.from);
-    saveStoredMarketUnits(currentUnits, filePath);
+    currentUnits = mergeMarketUnits(currentUnits, monthUnits, interval.from, interval.to);
+    if (!isCurrentMonth) {
+      completeMonths.add(interval.month);
+    }
+    saveStoredMarketData(
+      {
+        units: currentUnits,
+        completeMonths: [...completeMonths].sort(),
+        updatedAt: toDate
+      },
+      filePath
+    );
   }
 
   return currentUnits;

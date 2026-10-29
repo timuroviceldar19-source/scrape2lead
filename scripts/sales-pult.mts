@@ -207,15 +207,19 @@ export async function runSalesPult(args: string[]): Promise<void> {
       throw new Error("GOSZAKUP_TOKEN is required in .env for market backfill");
     }
     console.log(`[Рынок] Начало загрузки с ${backfillFromDate} по месяцам с сохранением прогресса...`);
-    const units = await backfillMarketByMonths({
-      token: gzToken,
-      fromDate: backfillFromDate,
-      toDate: todayAlmaty,
-      onProgress: (info) => {
-        console.log(`[Рынок] Месяц ${info.month}: страниц ${info.pages}, отобрано ${info.matched}, всего сохранено ${info.totalSaved}`);
-      }
-    });
-    console.log(`[Рынок] Завершено. Сохранено ${units.length} позиций в ${DEFAULT_MARKET_UNITS_PATH}`);
+    try {
+      const units = await backfillMarketByMonths({
+        token: gzToken,
+        fromDate: backfillFromDate,
+        toDate: todayAlmaty,
+        onProgress: (info) => {
+          console.log(`[Рынок] Месяц ${info.month}: страниц ${info.pages}, отобрано ${info.matched}, всего сохранено ${info.totalSaved}`);
+        }
+      });
+      console.log(`[Рынок] Завершено. Сохранено ${units.length} позиций в ${DEFAULT_MARKET_UNITS_PATH}`);
+    } catch (err: any) {
+      console.warn(`::warning::[Рынок] Ошибка при докачке рынка: ${err?.message || err}`);
+    }
     if (args.length <= 2) return;
   }
 
@@ -233,7 +237,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
           toDate: todayAlmaty
         });
         const existingUnits = loadStoredMarketUnits(DEFAULT_MARKET_UNITS_PATH);
-        const merged = mergeMarketUnits(existingUnits, freshUnits, cutoffDate);
+        const merged = mergeMarketUnits(existingUnits, freshUnits, cutoffDate, todayAlmaty);
         saveStoredMarketUnits(merged, DEFAULT_MARKET_UNITS_PATH);
         console.log(`[Рынок] Утреннее обновление: свежих ${freshUnits.length}, всего ${merged.length}`);
       } catch (marketErr) {

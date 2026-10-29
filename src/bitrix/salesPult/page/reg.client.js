@@ -10,6 +10,34 @@
     window.__renderRegisterTab(R, regEl);
   }
 
+  function animate(root) {
+    if (!root) return;
+    root.querySelectorAll("[data-w]").forEach((b) => { b.style.width = b.dataset.w + "%"; });
+    root.querySelectorAll("[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });
+  }
+
+  const io = "IntersectionObserver" in window
+    ? new IntersectionObserver((es) => es.forEach((e) => {
+        if (e.isIntersecting) {
+          e.target.classList.add("in");
+          animate(e.target);
+          io.unobserve(e.target);
+        }
+      }), { threshold: 0.08 })
+    : null;
+
+  function observe() {
+    document.querySelectorAll(".reveal:not(.in)").forEach((s) => {
+      if (io) io.observe(s);
+      else {
+        s.classList.add("in");
+        animate(s);
+      }
+    });
+  }
+
+  observe();
+
   const dateLabel = document.getElementById("dateLabel");
   if (dateLabel) {
     dateLabel.textContent = `Данные на ${R?.asOf || P.asOfDate || ""}`;

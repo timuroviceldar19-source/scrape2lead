@@ -46,7 +46,7 @@ describe("buildMarketGroupView", () => {
         sum: 2000000,
         qty: 4,
         price: 500000,
-        supplier: cfg.bin,
+        supplier: cfg.bin || cfg.ourBins[0],
         customer: "222222222222",
         supplierName: 'ТОО "F3.kz"',
         customerName: "Заказчик 2",
@@ -102,5 +102,89 @@ describe("buildMarketGroupView", () => {
     expect(view.lost).toHaveLength(1);
     expect(view.lost[0].id).toBe(3);
     expect(view.lost[0].sum).toBe(1000000);
+  });
+
+  it("combines group companies (F3 + Amanat Asia) into a single row, ignores stale us:false in cache, excludes both from lost", () => {
+    const testCfg: MarketConfig = {
+      ...cfg,
+      ourBins: ["061140003942", "130540000688"]
+    };
+
+    const units: MarketUnit[] = [
+      // F3 company unit (with us: true)
+      {
+        id: 101,
+        month: "2026-10",
+        date: "2026-10-10",
+        group: "ИП",
+        code: "262030.100.000021",
+        kind: "Интерактивные панели",
+        sum: 88200000,
+        qty: 100,
+        price: 882000,
+        supplier: "061140003942",
+        customer: "111111111111",
+        supplierName: 'ТОО "F3.kz"',
+        customerName: "Заказчик 1",
+        method: "Открытый конкурс",
+        us: true
+      },
+      // Amanat Asia company unit (simulating OLD cache where us was false!)
+      {
+        id: 102,
+        month: "2026-10",
+        date: "2026-10-12",
+        group: "ИП",
+        code: "262030.100.000021",
+        kind: "Интерактивные панели",
+        sum: 11800000,
+        qty: 20,
+        price: 590000,
+        supplier: "130540000688",
+        customer: "222222222222",
+        supplierName: 'ТОО "Amanat Asia"',
+        customerName: "Заказчик 2",
+        method: "Электронный магазин",
+        us: false // old cache flag must be ignored
+      },
+      // Competitor with 50m
+      {
+        id: 103,
+        month: "2026-10",
+        date: "2026-10-15",
+        group: "ИП",
+        code: "262030.100.000021",
+        kind: "Интерактивные панели",
+        sum: 50000000,
+        qty: 60,
+        price: 833333,
+        supplier: "777777777777",
+        customer: "333333333333",
+        supplierName: "ТОО Конкурент",
+        customerName: "Заказчик 3",
+        method: "Запрос ценовых предложений",
+        us: false
+      }
+    ];
+
+    const view = buildMarketGroupView("ИП", units, "2026-10-25", testCfg);
+
+    // Group ranking: exactly 1 row for our group with combined sum
+    const ourSuppliers = view.suppliers.filter((s) => s.us);
+    expect(ourSuppliers).toHaveLength(1);
+    expect(ourSuppliers[0].name).toBe("Группа F3");
+    expect(ourSuppliers[0].sum).toBe(88200000 + 11800000);
+    expect(ourSuppliers[0].details).toContain("F3");
+    expect(ourSuppliers[0].details).toContain("Amanat Asia");
+
+    // Total suppliers: 2 (Группа F3 + ТОО Конкурент)
+    expect(view.suppliers).toHaveLength(2);
+    expect(view.us.rank).toBe(1); // 100m > 50m
+    expect(view.us.sum).toBe(100000000);
+
+    // Neither F3 nor Amanat Asia contracts appear in lost contracts
+    expect(view.lost).toHaveLength(1);
+    expect(view.lost[0].id).toBe(103);
+    expect(view.lost.some((l) => l.supplierBin === "061140003942" || l.supplierBin === "130540000688")).toBe(false);
   });
 });

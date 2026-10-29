@@ -10,6 +10,25 @@ export function loadMarketConfig(customPath?: string): MarketConfig {
   const cfgPath = customPath || path.resolve("config/market-monitor.json");
   const raw = fs.readFileSync(cfgPath, "utf8");
   const cfg = JSON.parse(raw) as MarketConfig;
+
+  if (!Array.isArray(cfg.ourBins) || cfg.ourBins.length === 0) {
+    if (typeof (cfg as any).bin === "string" && /^\d{12}$/.test((cfg as any).bin)) {
+      cfg.ourBins = [(cfg as any).bin];
+    } else {
+      throw new Error(`Invalid market config at ${cfgPath}: ourBins must be a non-empty array of 12-digit BINs`);
+    }
+  }
+
+  for (const b of cfg.ourBins) {
+    if (typeof b !== "string" || !/^\d{12}$/.test(b)) {
+      throw new Error(`Invalid BIN "${b}" in ourBins: must be exactly 12 digits`);
+    }
+  }
+
+  if (!cfg.bin && cfg.ourBins.length > 0) {
+    cfg.bin = cfg.ourBins[0];
+  }
+
   if (!customPath) cachedConfig = cfg;
   return cfg;
 }

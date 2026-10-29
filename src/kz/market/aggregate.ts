@@ -47,12 +47,29 @@ function getPreviousMonthKey(monthKey: string): string {
   return `${y}-${String(m - 1).padStart(2, "0")}`;
 }
 
+function getOurBinsSet(cfg: MarketConfig): Set<string> {
+  const bins = cfg.ourBins || (cfg.bin ? [cfg.bin] : []);
+  return new Set(bins);
+}
+
+function getOurCompanyName(bin: string, rawName?: string): string {
+  if (bin === "061140003942") return "F3";
+  if (bin === "130540000688") return "Amanat Asia";
+  if (rawName) {
+    return rawName.replace(/^Товарищество с ограниченной ответственностью\s*/i, "ТОО ").replace(/"/g, "").trim();
+  }
+  return bin;
+}
+
 export function buildMarketGroupView(
   group: "ИП" | "КТ",
   allUnits: MarketUnit[],
   asOfDate: string,
   cfg: MarketConfig = loadMarketConfig()
 ): MarketGroupView {
+  const ourBins = getOurBinsSet(cfg);
+  const isOurUnit = (u: MarketUnit) => ourBins.has(u.supplier);
+
   const curMonth = asOfDate.slice(0, 7);
   const prevMonth = getPreviousMonthKey(curMonth);
 
@@ -72,20 +89,45 @@ export function buildMarketGroupView(
   const lastDate = cur.reduce((m, l) => (l.date > m ? l.date : m), "");
   const lastDay = lastDate ? lastDate.slice(8, 10) : (usePrevMonth ? "31" : asOfDate.slice(8, 10));
   const prev = groupUnits.filter((u) => u.month === comparisonMonth && u.date.slice(8, 10) <= lastDay);
-  const us = cur.filter((u) => u.us);
+  const ourUnits = cur.filter(isOurUnit);
+  const competitorUnits = cur.filter((u) => !isOurUnit(u));
 
-  // Suppliers
-  const bySupplier = groupBy(cur, (u) => u.supplier);
-  const suppliers: MarketSupplierItem[] = Object.entries(bySupplier)
-    .map(([bin, xs]) => ({
+  // Suppliers ranking: collapse all our companies into single row "Группа F3"
+  const suppliers: MarketSupplierItem[] = [];
+  if (ourUnits.length > 0) {
+    const ourBySupplier = groupBy(ourUnits, (u) => u.supplier);
+    const ourDetailsList = Object.entries(ourBySupplier)
+      .map(([b, xs]) => {
+        const cName = getOurCompanyName(b, xs[0]?.supplierName);
+        const cSum = sumBy(xs, (u) => u.sum);
+        return `${cName}: ${(cSum / 1e6).toLocaleString("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} млн`;
+      });
+    const details = ourDetailsList.length > 0 ? ourDetailsList.join(" · ") : undefined;
+
+    suppliers.push({
+      bin: cfg.ourBins?.[0] || cfg.bin || "our-group",
+      name: "Группа F3",
+      details,
+      sum: sumBy(ourUnits, (u) => u.sum),
+      contracts: countContracts(ourUnits),
+      qty: sumBy(ourUnits, (u) => u.qty),
+      us: true
+    });
+  }
+
+  const byCompetitor = groupBy(competitorUnits, (u) => u.supplier);
+  for (const [bin, xs] of Object.entries(byCompetitor)) {
+    suppliers.push({
       bin,
       name: xs[0]?.supplierName || bin,
       sum: sumBy(xs, (u) => u.sum),
       contracts: countContracts(xs),
       qty: sumBy(xs, (u) => u.qty),
-      us: bin === cfg.bin
-    }))
-    .sort((a, b) => b.sum - a.sum);
+      us: false
+    });
+  }
+
+  suppliers.sort((a, b) => b.sum - a.sum);
 
   const rank = suppliers.findIndex((s) => s.us) + 1;
   const top12Suppliers = suppliers.slice(0, 12);
@@ -99,7 +141,7 @@ export function buildMarketGroupView(
     .map(([m, xs]) => ({
       m,
       sum: sumBy(xs, (u) => u.sum),
-      us: sumBy(xs.filter((u) => u.us), (u) => u.sum),
+      us: sumBy(xs.filter(isOurUnit), (u) => u.sum),
       contracts: countContracts(xs)
     }))
     .sort((a, b) => a.m.localeCompare(b.m));
@@ -110,7 +152,7 @@ export function buildMarketGroupView(
     .map(([name, xs]) => ({
       name,
       sum: sumBy(xs, (u) => u.sum),
-      us: sumBy(xs.filter((u) => u.us), (u) => u.sum),
+      us: sumBy(xs.filter(isOurUnit), (u) => u.sum),
       contracts: countContracts(xs)
     }))
     .sort((a, b) => b.sum - a.sum);
@@ -120,12 +162,12 @@ export function buildMarketGroupView(
   const kinds: MarketKindItem[] = Object.entries(byKind)
     .map(([kind, xs]) => {
       const prices = xs.filter((u) => u.price > 0).map((u) => u.price);
-      const usPrices = xs.filter((u) => u.us && u.price > 0).map((u) => u.price);
+      const usPrices = xs.filter((u) => isOurUnit(u) && u.price > 0).map((u) => u.price);
       return {
         kind,
         sum: sumBy(xs, (u) => u.sum),
         qty: sumBy(xs, (u) => u.qty),
-        us: sumBy(xs.filter((u) => u.us), (u) => u.sum),
+        us: sumBy(xs.filter(isOurUnit), (u) => u.sum),
         p25: calculateQuantile(prices, 0.25),
         med: calculateQuantile(prices, 0.5),
         p75: calculateQuantile(prices, 0.75),
@@ -135,8 +177,8 @@ export function buildMarketGroupView(
     })
     .sort((a, b) => b.sum - a.sum);
 
-  // Lost contracts
-  const byContractId = groupBy(cur.filter((u) => !u.us), (u) => String(u.id));
+  // Lost contracts (exclude all companies from our group)
+  const byContractId = groupBy(cur.filter((u) => !isOurUnit(u)), (u) => String(u.id));
   const lost: MarketLostItem[] = Object.entries(byContractId)
     .map(([idStr, xs]) => ({
       id: Number(idStr),
@@ -161,7 +203,7 @@ export function buildMarketGroupView(
       bin,
       name: xs[0]?.customerName || bin,
       sum: sumBy(xs, (u) => u.sum),
-      us: sumBy(xs.filter((u) => u.us), (u) => u.sum),
+      us: sumBy(xs.filter(isOurUnit), (u) => u.sum),
       contracts: countContracts(xs)
     }))
     .sort((a, b) => b.sum - a.sum)
@@ -183,11 +225,11 @@ export function buildMarketGroupView(
       toDay: lastDay
     },
     us: {
-      sum: sumBy(us, (u) => u.sum),
-      contracts: countContracts(us),
-      qty: sumBy(us, (u) => u.qty),
+      sum: sumBy(ourUnits, (u) => u.sum),
+      contracts: countContracts(ourUnits),
+      qty: sumBy(ourUnits, (u) => u.qty),
       rank,
-      share: curTotalSum > 0 ? sumBy(us, (u) => u.sum) / curTotalSum : 0
+      share: curTotalSum > 0 ? sumBy(ourUnits, (u) => u.sum) / curTotalSum : 0
     },
     suppliers: top12Suppliers,
     othersSum,
@@ -215,8 +257,6 @@ export function buildMarketView(
     months,
     ip,
     kt,
-    "ИП": ip,
-    "КТ": kt,
     updatedAt: updatedAt || asOfDate,
     stale: isStale,
     error

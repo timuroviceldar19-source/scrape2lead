@@ -427,6 +427,7 @@
   }
   function animate(root) {
     root.querySelectorAll("[data-w]").forEach((b) => { b.style.width = b.dataset.w + "%"; });
+    root.querySelectorAll("[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });
     root.querySelectorAll("[data-count]").forEach(countUp);
     root.querySelectorAll(".burn-line, .burn-fc").forEach((p) => {
       if (reduce) return;

@@ -413,10 +413,16 @@ body.tv .sections, body.tv #periodsNav { display: none !important; }
   .months .col .lab { font-size: 10px; }
   .months .col .lab .desktop { display: none; }
   .months .col .lab .mobile { display: inline; }
+  .mlabels .m-name .desktop { display: none; }
+  .mlabels .m-name .mobile { display: inline; }
+  .mobile-note { display: block; }
 }
 @media (min-width: 481px) {
   .months .col .lab .desktop { display: inline; }
   .months .col .lab .mobile { display: none; }
+  .mlabels .m-name .desktop { display: inline; }
+  .mlabels .m-name .mobile { display: none; }
+  .mobile-note { display: none; }
 }
 @media (max-width: 375px) {
   .months .col .lab { font-size: 9px; }

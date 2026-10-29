@@ -1,5 +1,5 @@
 {
-  "bin": "061140003942",
+  "ourBins": ["061140003942", "130540000688"],
   "minUnitPrice": 10000,
   "excludedStatuses": [455, 350, 340],
   "allowedStatuses": [190, 390, 375, 450],

@@ -69,14 +69,14 @@ export function buildSignals(payload: SalesPultPayload): SignalItem[] {
 }
 
 export function renderPultHtml(payload: SalesPultPayload): string {
-  // Strip register data so it never leaks onto the pult page or office TV
-  const sanitizedPayload = { ...payload };
-  delete (sanitizedPayload as any).register;
-
-  const view = buildPultView(sanitizedPayload);
+  const safePayload = { ...payload };
+  if ("register" in safePayload) {
+    delete (safePayload as Record<string, unknown>).register;
+  }
+  const view = buildPultView(safePayload);
   const replacements: Record<string, string> = {
     "/*__CSS__*/": pultCss,
-    "__PAYLOAD__": safeJson(sanitizedPayload),
+    "__PAYLOAD__": safeJson(safePayload),
     "__VIEW__": safeJson(view),
     "/*__CLIENT_JS__*/": pultPageClientJs
   };

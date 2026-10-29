@@ -163,8 +163,6 @@ describe("salesPult tabs & standalone register page rendering", () => {
       market: {
         asOf: "2026-10-28",
         months: [],
-        "ИП": null,
-        "КТ": null,
         ip: null,
         kt: null,
         error: "Данные рынка ещё собираются."

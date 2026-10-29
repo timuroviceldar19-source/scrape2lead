@@ -44,7 +44,7 @@ export function filterContractUnits(
     const supplierName = cleanEntityName(c.Supplier?.nameRu) || supplierBin;
     const customerName = cleanEntityName(c.Customer?.nameRu) || customerBin;
     const method = getMethodName(c.faktTradeMethodsId ?? 0, cfg);
-    const isUs = supplierBin === cfg.bin;
+    const isUs = Boolean(cfg.ourBins ? cfg.ourBins.includes(supplierBin) : (cfg.bin && supplierBin === cfg.bin));
 
     const rawUnits = c.ContractUnits ?? [];
     for (const [unitIdx, u] of rawUnits.entries()) {

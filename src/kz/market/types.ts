@@ -10,7 +10,8 @@ export interface MarketGroupConfig {
 }
 
 export interface MarketConfig {
-  bin: string;
+  ourBins: string[];
+  bin?: string;
   minUnitPrice: number;
   excludedStatuses: number[];
   allowedStatuses: number[];
@@ -43,6 +44,7 @@ export interface MarketUnit {
 export interface MarketSupplierItem {
   bin: string;
   name: string;
+  details?: string;
   sum: number;
   contracts: number;
   qty: number;
@@ -131,10 +133,8 @@ export interface MarketGroupView {
 export interface MarketView {
   asOf: string;
   months?: string[];
-  "ИП"?: MarketGroupView | null;
-  "КТ"?: MarketGroupView | null;
-  ip?: MarketGroupView | null;
-  kt?: MarketGroupView | null;
+  ip: MarketGroupView | null;
+  kt: MarketGroupView | null;
   updatedAt?: string;
   stale?: boolean;
   error?: string;

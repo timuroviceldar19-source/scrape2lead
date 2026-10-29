@@ -28,7 +28,7 @@
   window.__renderMarketTab = function (key, MK, el) {
     if (!el) return;
     const isIp = key === "ip" || key === "ИП";
-    const V = isIp ? (MK?.ip || MK?.["ИП"]) : (MK?.kt || MK?.["КТ"]);
+    const V = isIp ? MK?.ip : MK?.kt;
     if (!V) {
       el.innerHTML = `<section class="block"><p class="lead">${esc(MK?.error || "Данные рынка ещё собираются.")}</p></section>`;
       return;
@@ -60,28 +60,37 @@
       </div>
       <p class="verdict">${verdict}</p>
     </div><div><div class="share rows"><div class="r head"><span></span><span class="label">Поставщик</span><span class="label">Доля рынка</span><span class="label">Сумма</span><span class="label">Дог.</span></div>
-      ${V.suppliers.slice(0, 10).map((x, i) => `<div class="r${x.us ? " us" : ""}"><span class="rk">${i + 1}</span><span class="nm" title="${esc(x.name)}">${esc(short(x.name.replace(/^Товарищество с ограниченной ответственностью/i, "ТОО"), 44))}</span>${bar(V.suppliers[0]?.sum ? x.sum / V.suppliers[0].sum * 100 : 0, x.us ? "ink" : "")}<span class="num">${mln(x.sum)} млн</span><span class="num">${x.contracts}</span></div>`).join("")}
+      ${V.suppliers.slice(0, 10).map((x, i) => `<div class="r${x.us ? " us" : ""}"><span class="rk">${i + 1}</span><span class="nm" title="${esc(x.name + (x.details ? ` (${x.details})` : ""))}"><span>${esc(short(x.name.replace(/^Товарищество с ограниченной ответственностью/i, "ТОО"), 44))}</span>${x.details ? `<span class="dim" style="display:block;font-size:10px;line-height:1.2;margin-top:2px;">${esc(x.details)}</span>` : ""}</span>${bar(V.suppliers[0]?.sum ? x.sum / V.suppliers[0].sum * 100 : 0, x.us ? "ink" : "")}<span class="num">${mln(x.sum)} млн</span><span class="num">${x.contracts}</span></div>`).join("")}
       <div class="r"><span></span><span class="dim">Остальные ${Math.max(0, V.total.suppliers - 10)}</span><span></span><span class="num">${mln(V.othersSum + V.suppliers.slice(10).reduce((a, x) => a + x.sum, 0))} млн</span><span></span></div>
     </div></div></div></section>`;
 
     // 02 По месяцам
-    const months = V.months.filter((m) => m.m >= "2026-01");
+    const months = (V.months || []).slice(-12);
     const mMax = months.length ? Math.max(...months.map((m) => m.sum)) : 1;
     const toDayNum = V.prev?.toDay ? Number(V.prev.toDay) : null;
+    const firstOurMonth = months.find((m) => m.us > 0)?.m;
+    const firstMonthWithUsNote = (firstOurMonth && months.length > 0 && firstOurMonth > months[0]?.m)
+      ? `<p class="note-src" style="margin-top: 6px; font-size: 11px;">* До ${MONTHS[Number(firstOurMonth.slice(5)) - 1]} ${firstOurMonth.slice(0, 4)} года договоров группы на портале госзакупок нет.</p>`
+      : "";
+    const incompleteMonthNote = toDayNum
+      ? `<p class="note-src mobile-note" style="margin-top: 6px; font-size: 11px;">* Данные за текущий месяц по ${toDayNum}-е число.</p>`
+      : "";
 
     s += `<section class="block reveal">${head("02", "По месяцам", "весь рынок · наша часть тёмным")}
     <div class="months">${months.map((m) => {
       const desktopLab = fmt(m.sum / 1e6);
-      const mobileLab = (!isIp && m.sum >= 1e9) ? nf1.format(m.sum / 1e9) : desktopLab;
+      const mobileLab = !isIp ? nf1.format(m.sum / 1e9) : desktopLab;
       return `<div class="col" title="${MONTHS[Number(m.m.slice(5)) - 1]}: рынок ${money(m.sum)}, мы ${money(m.us)}"><div class="tot" data-h="${(m.sum / mMax * 100).toFixed(1)}"><span class="lab"><span class="desktop">${desktopLab}</span><span class="mobile">${mobileLab}</span></span><div class="our" data-h="${(m.sum ? m.us / m.sum * 100 : 0).toFixed(1)}"></div></div></div>`;
     }).join("")}</div>
     <div class="mlabels">${months.map((m) => {
       const isCurrent = m.m === V.month;
-      const mName = isCurrent && toDayNum ? `${MONTHS_S[Number(m.m.slice(5)) - 1]} · по ${toDayNum}` : MONTHS_S[Number(m.m.slice(5)) - 1];
+      const mIdx = Number(m.m.slice(5)) - 1;
+      const desktopName = isCurrent && toDayNum ? `${MONTHS_S[mIdx]} · по ${toDayNum}` : MONTHS_S[mIdx];
+      const mobileName = isCurrent && toDayNum ? `${MONTHS_S[mIdx]}*` : MONTHS_S[mIdx];
       const mPct = pct(m.sum ? m.us / m.sum : 0);
-      return `<span><span class="m-name">${mName}</span><span class="m-pct">${mPct}</span></span>`;
+      return `<span><span class="m-name"><span class="desktop">${desktopName}</span><span class="mobile">${mobileName}</span></span><span class="m-pct">${mPct}</span></span>`;
     }).join("")}</div>
-    <p class="note-src" style="margin-top: 10px; font-size: 11px;">* До июня 2026 года договоров F3 на портале госзакупок нет.</p></section>`;
+    ${incompleteMonthNote}${firstMonthWithUsNote}</section>`;
 
     // 03 Каналы и цены
     const big = V.methods[0] ?? { name: "—", sum: 0, us: 0 };
@@ -113,5 +122,7 @@
     <p class="note-src">Договоры госзакупок по дате подписания, все способы закупки, включая электронный магазин. Суммы позиций без НДС. Расторгнутые и заменённые доп. соглашением версии не считаются. ${isIp ? "Коды ЕНС ТРУ: 262030.100.000021 панель интерактивная, 262030.100.000043 доска интерактивная, 262030.100.000011/13 система мультимедийная." : "Коды ЕНС ТРУ: компьютеры 262013.000.000011/12, системные блоки 262040.000.000267/268, ноутбуки 262011.100.*, МФУ 262018.900.*, принтеры 262016.300.000015–19, мониторы 262017.100.*."}</p></section>`;
 
     el.innerHTML = s;
+    el.querySelectorAll("[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });
+    el.querySelectorAll("[data-w]").forEach((b) => { b.style.width = b.dataset.w + "%"; });
   };
 })();
