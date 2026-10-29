@@ -553,7 +553,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
       callsAvailable: collected.callsAvailable,
       callsError: collected.callsError,
       groups: groupsView,
-      dynamics
+      dynamics,
+      holidays: config.holidays
     };
 
     const outDir = path.resolve("exports/sales-pult");

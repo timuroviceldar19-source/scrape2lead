@@ -1,0 +1,976 @@
+{
+  "asOfDate": "2026-10-29",
+  "generatedAt": "2026-10-29 15:10 (UTC+5)",
+  "portal": "https://test.bitrix24.kz",
+  "pultUrl": "",
+  "targets": {
+    "daily": {
+      "calls": 15,
+      "proposals": 3,
+      "contracts": 1
+    },
+    "weekly": {
+      "calls": 75,
+      "proposals": 15,
+      "contracts": 5
+    },
+    "monthly": {
+      "calls": 300,
+      "proposals": 60,
+      "contracts": 20
+    }
+  },
+  "callsAvailable": true,
+  "proposalsTracked": false,
+  "holidays": [
+    "2026-01-01",
+    "2026-01-02",
+    "2026-01-07",
+    "2026-03-08",
+    "2026-03-21",
+    "2026-03-22",
+    "2026-03-23",
+    "2026-03-24",
+    "2026-03-25",
+    "2026-05-01",
+    "2026-05-07",
+    "2026-05-09",
+    "2026-07-06",
+    "2026-08-30",
+    "2026-10-25",
+    "2026-10-26",
+    "2026-12-16"
+  ],
+  "groups": [
+    {
+      "id": "sales",
+      "name": "Отдел продаж",
+      "managers": [
+        {
+          "id": "101",
+          "name": "Алексей Смирнов",
+          "active": true,
+          "rollups": {
+            "managerId": "101",
+            "asOfDate": "2026-10-29",
+            "day": {
+              "calls": {
+                "successful": 16,
+                "totalAttempts": 25,
+                "durationSeconds": 1920,
+                "durationMinutes": 32,
+                "hasBitrixCalls": true,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 1,
+                "dealIds": [
+                  "101101"
+                ],
+                "status": "red"
+              },
+              "contracts": {
+                "uniqueDealsCount": 1,
+                "totalAmount": 3200000,
+                "dealIds": [
+                  "201101"
+                ],
+                "status": "green"
+              }
+            },
+            "week": {
+              "calls": {
+                "successful": 55,
+                "totalAttempts": 70,
+                "durationSeconds": 4950,
+                "durationMinutes": 83,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 4,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 2,
+                "totalAmount": 6400000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "month": {
+              "calls": {
+                "successful": 220,
+                "totalAttempts": 270,
+                "durationSeconds": 22000,
+                "durationMinutes": 367,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 16,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 7,
+                "totalAmount": 24000000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "signals": {
+              "zeroBitrixCallsToday": false,
+              "zeroKpThreeDays": false
+            }
+          },
+          "topTasks": [
+            {
+              "id": "task-1",
+              "dealId": "deal-101",
+              "title": "[GZ 10020030] ТОО «Казахстан Телеком» - Поставка серверов",
+              "deadline": "2026-10-29T17:00:00+05:00",
+              "amount": 3200000,
+              "planNumber": "10020030",
+              "planStatus": "Утвержден",
+              "subject": "Звонок клиенту",
+              "isOverdue": false,
+              "kind": "today",
+              "lastComment": "Согласовано техническое задание, готовим спецификацию"
+            }
+          ],
+          "debts": {
+            "overdue": 2,
+            "overdueOverMonth": 0,
+            "overdueOngoing": 0,
+            "newDeals": 1,
+            "newStaleDeals": 1,
+            "newOldestAgeDays": 1,
+            "readyToCloseDealIds": []
+          }
+        },
+        {
+          "id": "102",
+          "name": "Дмитрий Ковалёв",
+          "active": true,
+          "rollups": {
+            "managerId": "102",
+            "asOfDate": "2026-10-29",
+            "day": {
+              "calls": {
+                "successful": 12,
+                "totalAttempts": 18,
+                "durationSeconds": 1320,
+                "durationMinutes": 22,
+                "hasBitrixCalls": true,
+                "status": "yellow"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "red"
+              },
+              "contracts": {
+                "uniqueDealsCount": 0,
+                "totalAmount": 0,
+                "dealIds": [],
+                "status": "red"
+              }
+            },
+            "week": {
+              "calls": {
+                "successful": 46,
+                "totalAttempts": 61,
+                "durationSeconds": 4140,
+                "durationMinutes": 69,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 3,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 1,
+                "totalAmount": 1800000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "month": {
+              "calls": {
+                "successful": 195,
+                "totalAttempts": 245,
+                "durationSeconds": 19500,
+                "durationMinutes": 325,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 12,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 5,
+                "totalAmount": 14500000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "signals": {
+              "zeroBitrixCallsToday": false,
+              "zeroKpThreeDays": false
+            }
+          },
+          "topTasks": [
+            {
+              "id": "task-2",
+              "dealId": "deal-102",
+              "title": "[GZ 20030040] АО «Центр развития» - Компьютеры и МФУ",
+              "deadline": "2026-10-28T14:00:00+05:00",
+              "amount": 1800000,
+              "planNumber": "20030040",
+              "planStatus": "Опубликован",
+              "subject": "КП отправлено",
+              "isOverdue": true,
+              "overdueDays": 1,
+              "kind": "overdue",
+              "lastComment": "Ждём обратной связи от замдиректора"
+            }
+          ],
+          "debts": {
+            "overdue": 1,
+            "overdueOverMonth": 0,
+            "overdueOngoing": 0,
+            "newDeals": 0,
+            "newStaleDeals": 0,
+            "newOldestAgeDays": 0,
+            "readyToCloseDealIds": []
+          }
+        },
+        {
+          "id": "103",
+          "name": "Сергей Морозов",
+          "active": true,
+          "rollups": {
+            "managerId": "103",
+            "asOfDate": "2026-10-29",
+            "day": {
+              "calls": {
+                "successful": 9,
+                "totalAttempts": 15,
+                "durationSeconds": 840,
+                "durationMinutes": 14,
+                "hasBitrixCalls": true,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 1,
+                "dealIds": [
+                  "101103"
+                ],
+                "status": "red"
+              },
+              "contracts": {
+                "uniqueDealsCount": 0,
+                "totalAmount": 0,
+                "dealIds": [],
+                "status": "red"
+              }
+            },
+            "week": {
+              "calls": {
+                "successful": 38,
+                "totalAttempts": 53,
+                "durationSeconds": 3420,
+                "durationMinutes": 57,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 2,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 1,
+                "totalAmount": 2100000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "month": {
+              "calls": {
+                "successful": 160,
+                "totalAttempts": 210,
+                "durationSeconds": 16000,
+                "durationMinutes": 267,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 9,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 4,
+                "totalAmount": 11000000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "signals": {
+              "zeroBitrixCallsToday": false,
+              "zeroKpThreeDays": false
+            }
+          },
+          "topTasks": [],
+          "debts": {
+            "overdue": 4,
+            "overdueOverMonth": 1,
+            "overdueOngoing": 0,
+            "newDeals": 1,
+            "newStaleDeals": 0,
+            "newOldestAgeDays": 0,
+            "readyToCloseDealIds": [
+              "deal-close-1"
+            ]
+          }
+        },
+        {
+          "id": "104",
+          "name": "Иван Васильев",
+          "active": true,
+          "rollups": {
+            "managerId": "104",
+            "asOfDate": "2026-10-29",
+            "day": {
+              "calls": {
+                "successful": 4,
+                "totalAttempts": 12,
+                "durationSeconds": 360,
+                "durationMinutes": 6,
+                "hasBitrixCalls": true,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "red"
+              },
+              "contracts": {
+                "uniqueDealsCount": 0,
+                "totalAmount": 0,
+                "dealIds": [],
+                "status": "red"
+              }
+            },
+            "week": {
+              "calls": {
+                "successful": 24,
+                "totalAttempts": 39,
+                "durationSeconds": 2160,
+                "durationMinutes": 36,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 1,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 0,
+                "totalAmount": 0,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "month": {
+              "calls": {
+                "successful": 110,
+                "totalAttempts": 160,
+                "durationSeconds": 11000,
+                "durationMinutes": 183,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 5,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 2,
+                "totalAmount": 5000000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "signals": {
+              "zeroBitrixCallsToday": false,
+              "zeroKpThreeDays": false
+            }
+          },
+          "topTasks": [],
+          "debts": {
+            "overdue": 8,
+            "overdueOverMonth": 3,
+            "overdueOngoing": 0,
+            "newDeals": 2,
+            "newStaleDeals": 1,
+            "newOldestAgeDays": 3,
+            "readyToCloseDealIds": []
+          }
+        },
+        {
+          "id": "105",
+          "name": "Михаил Попов",
+          "active": true,
+          "rollups": {
+            "managerId": "105",
+            "asOfDate": "2026-10-29",
+            "day": {
+              "calls": {
+                "successful": 0,
+                "totalAttempts": 0,
+                "durationSeconds": 0,
+                "durationMinutes": 0,
+                "hasBitrixCalls": false,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "red"
+              },
+              "contracts": {
+                "uniqueDealsCount": 0,
+                "totalAmount": 0,
+                "dealIds": [],
+                "status": "red"
+              }
+            },
+            "week": {
+              "calls": {
+                "successful": 15,
+                "totalAttempts": 30,
+                "durationSeconds": 1350,
+                "durationMinutes": 23,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 1,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 0,
+                "totalAmount": 0,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "month": {
+              "calls": {
+                "successful": 75,
+                "totalAttempts": 125,
+                "durationSeconds": 7500,
+                "durationMinutes": 125,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 3,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 1,
+                "totalAmount": 3000000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "signals": {
+              "zeroBitrixCallsToday": true,
+              "zeroKpThreeDays": false
+            }
+          },
+          "topTasks": [],
+          "debts": {
+            "overdue": 5,
+            "overdueOverMonth": 2,
+            "overdueOngoing": 0,
+            "newDeals": 0,
+            "newStaleDeals": 0,
+            "newOldestAgeDays": 0,
+            "readyToCloseDealIds": []
+          }
+        },
+        {
+          "id": "106",
+          "name": "Константин Фёдоров",
+          "active": true,
+          "rollups": {
+            "managerId": "106",
+            "asOfDate": "2026-10-29",
+            "day": {
+              "calls": {
+                "successful": 15,
+                "totalAttempts": 22,
+                "durationSeconds": 1680,
+                "durationMinutes": 28,
+                "hasBitrixCalls": true,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "red"
+              },
+              "contracts": {
+                "uniqueDealsCount": 1,
+                "totalAmount": 1450000,
+                "dealIds": [
+                  "201106"
+                ],
+                "status": "green"
+              }
+            },
+            "week": {
+              "calls": {
+                "successful": 52,
+                "totalAttempts": 67,
+                "durationSeconds": 4680,
+                "durationMinutes": 78,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 3,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 2,
+                "totalAmount": 4200000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "month": {
+              "calls": {
+                "successful": 210,
+                "totalAttempts": 260,
+                "durationSeconds": 21000,
+                "durationMinutes": 350,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 14,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 6,
+                "totalAmount": 19000000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "signals": {
+              "zeroBitrixCallsToday": false,
+              "zeroKpThreeDays": false
+            }
+          },
+          "topTasks": [],
+          "debts": {
+            "overdue": 0,
+            "overdueOverMonth": 0,
+            "overdueOngoing": 0,
+            "newDeals": 0,
+            "newStaleDeals": 0,
+            "newOldestAgeDays": 0,
+            "readyToCloseDealIds": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "tenders",
+      "name": "Тендерный отдел",
+      "managers": [
+        {
+          "id": "201",
+          "name": "Елена Соколова",
+          "active": true,
+          "rollups": {
+            "managerId": "201",
+            "asOfDate": "2026-10-29",
+            "day": {
+              "calls": {
+                "successful": 0,
+                "totalAttempts": 0,
+                "durationSeconds": 0,
+                "durationMinutes": 0,
+                "hasBitrixCalls": false,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "red"
+              },
+              "contracts": {
+                "uniqueDealsCount": 1,
+                "totalAmount": 2300000,
+                "dealIds": [
+                  "201201"
+                ],
+                "status": "green"
+              }
+            },
+            "week": {
+              "calls": {
+                "successful": 0,
+                "totalAttempts": 15,
+                "durationSeconds": 0,
+                "durationMinutes": 0,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 3,
+                "totalAmount": 7800000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "month": {
+              "calls": {
+                "successful": 0,
+                "totalAttempts": 50,
+                "durationSeconds": 0,
+                "durationMinutes": 0,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 12,
+                "totalAmount": 38000000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "signals": {
+              "zeroBitrixCallsToday": false,
+              "zeroKpThreeDays": false
+            }
+          },
+          "topTasks": [],
+          "debts": {
+            "overdue": 1,
+            "overdueOverMonth": 0,
+            "overdueOngoing": 0,
+            "newDeals": 0,
+            "newStaleDeals": 0,
+            "newOldestAgeDays": 0,
+            "readyToCloseDealIds": []
+          }
+        },
+        {
+          "id": "202",
+          "name": "Ольга Новикова",
+          "active": true,
+          "rollups": {
+            "managerId": "202",
+            "asOfDate": "2026-10-29",
+            "day": {
+              "calls": {
+                "successful": 0,
+                "totalAttempts": 0,
+                "durationSeconds": 0,
+                "durationMinutes": 0,
+                "hasBitrixCalls": false,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "red"
+              },
+              "contracts": {
+                "uniqueDealsCount": 0,
+                "totalAmount": 0,
+                "dealIds": [],
+                "status": "red"
+              }
+            },
+            "week": {
+              "calls": {
+                "successful": 0,
+                "totalAttempts": 15,
+                "durationSeconds": 0,
+                "durationMinutes": 0,
+                "status": "red"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 2,
+                "totalAmount": 5400000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "month": {
+              "calls": {
+                "successful": 0,
+                "totalAttempts": 50,
+                "durationSeconds": 0,
+                "durationMinutes": 0,
+                "status": "green"
+              },
+              "proposals": {
+                "uniqueDealsCount": 0,
+                "dealIds": [],
+                "status": "green"
+              },
+              "contracts": {
+                "uniqueDealsCount": 8,
+                "totalAmount": 26000000,
+                "dealIds": [],
+                "status": "green"
+              }
+            },
+            "signals": {
+              "zeroBitrixCallsToday": false,
+              "zeroKpThreeDays": false
+            }
+          },
+          "topTasks": [],
+          "debts": {
+            "overdue": 0,
+            "overdueOverMonth": 0,
+            "overdueOngoing": 0,
+            "newDeals": 0,
+            "newStaleDeals": 0,
+            "newOldestAgeDays": 0,
+            "readyToCloseDealIds": []
+          }
+        }
+      ]
+    }
+  ],
+  "dynamics": [
+    {
+      "date": "2026-10-01",
+      "calls": 47,
+      "proposals": 1,
+      "contracts": 2,
+      "amount": 6200000
+    },
+    {
+      "date": "2026-10-02",
+      "calls": 54,
+      "proposals": 2,
+      "contracts": 2,
+      "amount": 6100000
+    },
+    {
+      "date": "2026-10-03",
+      "calls": 0,
+      "proposals": 0,
+      "contracts": 0,
+      "amount": 0
+    },
+    {
+      "date": "2026-10-04",
+      "calls": 0,
+      "proposals": 0,
+      "contracts": 0,
+      "amount": 0
+    },
+    {
+      "date": "2026-10-05",
+      "calls": 40,
+      "proposals": 2,
+      "contracts": 2,
+      "amount": 5800000
+    },
+    {
+      "date": "2026-10-06",
+      "calls": 47,
+      "proposals": 0,
+      "contracts": 2,
+      "amount": 6400000
+    },
+    {
+      "date": "2026-10-07",
+      "calls": 54,
+      "proposals": 1,
+      "contracts": 3,
+      "amount": 9500000
+    },
+    {
+      "date": "2026-10-08",
+      "calls": 61,
+      "proposals": 2,
+      "contracts": 2,
+      "amount": 6300000
+    },
+    {
+      "date": "2026-10-09",
+      "calls": 68,
+      "proposals": 0,
+      "contracts": 2,
+      "amount": 6200000
+    },
+    {
+      "date": "2026-10-10",
+      "calls": 0,
+      "proposals": 0,
+      "contracts": 0,
+      "amount": 0
+    },
+    {
+      "date": "2026-10-11",
+      "calls": 0,
+      "proposals": 0,
+      "contracts": 0,
+      "amount": 0
+    },
+    {
+      "date": "2026-10-12",
+      "calls": 54,
+      "proposals": 0,
+      "contracts": 2,
+      "amount": 6700000
+    },
+    {
+      "date": "2026-10-13",
+      "calls": 61,
+      "proposals": 1,
+      "contracts": 3,
+      "amount": 9800000
+    },
+    {
+      "date": "2026-10-14",
+      "calls": 68,
+      "proposals": 2,
+      "contracts": 2,
+      "amount": 6500000
+    },
+    {
+      "date": "2026-10-15",
+      "calls": 40,
+      "proposals": 0,
+      "contracts": 2,
+      "amount": 6100000
+    },
+    {
+      "date": "2026-10-16",
+      "calls": 47,
+      "proposals": 1,
+      "contracts": 2,
+      "amount": 6600000
+    },
+    {
+      "date": "2026-10-17",
+      "calls": 0,
+      "proposals": 0,
+      "contracts": 0,
+      "amount": 0
+    },
+    {
+      "date": "2026-10-18",
+      "calls": 0,
+      "proposals": 0,
+      "contracts": 0,
+      "amount": 0
+    },
+    {
+      "date": "2026-10-19",
+      "calls": 68,
+      "proposals": 1,
+      "contracts": 2,
+      "amount": 6300000
+    },
+    {
+      "date": "2026-10-20",
+      "calls": 40,
+      "proposals": 2,
+      "contracts": 3,
+      "amount": 9900000
+    },
+    {
+      "date": "2026-10-21",
+      "calls": 47,
+      "proposals": 0,
+      "contracts": 2,
+      "amount": 6400000
+    },
+    {
+      "date": "2026-10-22",
+      "calls": 54,
+      "proposals": 1,
+      "contracts": 2,
+      "amount": 6500000
+    },
+    {
+      "date": "2026-10-23",
+      "calls": 61,
+      "proposals": 2,
+      "contracts": 2,
+      "amount": 6200000
+    },
+    {
+      "date": "2026-10-24",
+      "calls": 0,
+      "proposals": 0,
+      "contracts": 0,
+      "amount": 0
+    },
+    {
+      "date": "2026-10-25",
+      "calls": 0,
+      "proposals": 0,
+      "contracts": 0,
+      "amount": 0
+    },
+    {
+      "date": "2026-10-26",
+      "calls": 0,
+      "proposals": 0,
+      "contracts": 0,
+      "amount": 0
+    },
+    {
+      "date": "2026-10-27",
+      "calls": 54,
+      "proposals": 0,
+      "contracts": 2,
+      "amount": 6550000
+    },
+    {
+      "date": "2026-10-28",
+      "calls": 61,
+      "proposals": 1,
+      "contracts": 3,
+      "amount": 9500000
+    },
+    {
+      "date": "2026-10-29",
+      "calls": 56,
+      "proposals": 2,
+      "contracts": 3,
+      "amount": 6950000
+    }
+  ]
+}
