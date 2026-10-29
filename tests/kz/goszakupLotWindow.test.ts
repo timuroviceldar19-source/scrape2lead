@@ -25,6 +25,14 @@ const OPTIONS = { token: "t", retryDelayMs: 0, maxRetries: 0, pauseMs: 0 };
 const WINDOW = { startDate: "2026-10-13 10:00:00", endDate: "2026-10-15 15:35:00" };
 
 describe("fetchLotBidWindow", () => {
+  it("резерв ows также не выбирает произвольное объявление при разных сроках", async () => {
+    const fetchFn = (async (url: string) => new URL(url).hostname === "zakup.gov.kz" ? new Response("down", { status: 503 }) : jsonResponse({ data: { Lots: [
+      { TrdBuy: { id: 1000, startDate: "2026-10-15 08:00:00", endDate: null } },
+      { TrdBuy: { id: 2000, startDate: "2026-10-16 15:10:00", endDate: null } }
+    ] } })) as typeof fetch;
+    await expect(fetchLotBidWindow("100-ЗЦП1", { ...OPTIONS, fetchFn })).rejects.toThrow(/несколько объявлений/);
+    await expect(fetchLotBidWindow("100-ЗЦП1", { ...OPTIONS, fetchFn, announcementId: 2000 })).resolves.toEqual({ startDate: "2026-10-16 15:10:00", endDate: null });
+  });
   it("при повторе номера выбирает объявление сделки; без него неоднозначность — ошибка", async () => {
     const fetchFn = (async () => jsonResponse({ count: 2, results: [
       { id: 99, external_id: 200, announcement_external_id: 2000, lot_number: "100-ЗЦП1", offer_start_date: "2026-10-16T10:10:00Z" },

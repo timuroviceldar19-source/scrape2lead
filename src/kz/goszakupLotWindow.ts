@@ -21,6 +21,12 @@ function clean(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function uniqueWindow(windows: LotBidWindow[], lotNumber: string): LotBidWindow | null {
+  const populated = windows.filter(window => window.startDate || window.endDate);
+  if (new Set(populated.map(window => JSON.stringify(window))).size > 1) throw new Error(`у лота ${lotNumber} несколько объявлений с разными сроками`);
+  return populated[0] ?? null;
+}
+
 /**
  * Срок приёма заявок лота по его номеру. `null`, если лота нет в реестре или у него нет ни одной даты.
  * Номер лота ищем самим номером: число до дефиса — старый пункт плана, а не ключ.
@@ -30,10 +36,7 @@ export async function fetchLotBidWindow(lotNumber: string, options: LotWindowOpt
     const rows = await zakupListAll<{ lot_number?: string; announcement_external_id?: number; offer_start_date?: string | null; offer_end_date?: string | null }>(
       "/public/lots/", { lot_number: lotNumber, system_id: 1 }, options);
     const exact = rows.filter(row => row.lot_number === lotNumber && (!options.announcementId || Number(row.announcement_external_id) === options.announcementId));
-    if (new Set(exact.map(row => `${row.offer_start_date ?? ""}|${row.offer_end_date ?? ""}`)).size > 1) throw new Error(`zakup: у лота ${lotNumber} несколько объявлений с разными сроками`);
-    const lot = exact[0];
-    const window = { startDate: zakupDateToAlmaty(lot?.offer_start_date), endDate: zakupDateToAlmaty(lot?.offer_end_date) };
-    return window.startDate || window.endDate ? window : null;
+    return uniqueWindow(exact.map(lot => ({ startDate: zakupDateToAlmaty(lot.offer_start_date), endDate: zakupDateToAlmaty(lot.offer_end_date) })), lotNumber);
   }, async () => {
     const lots = await goszakupGraphqlAll<{ TrdBuy?: { id?: number; startDate?: unknown; endDate?: unknown } | null }>(
       LOT_WINDOW,
@@ -41,9 +44,8 @@ export async function fetchLotBidWindow(lotNumber: string, options: LotWindowOpt
       "Lots",
       { ...options, token: options.token! }
     );
-    const buy = lots.find(lot => !options.announcementId || Number(lot.TrdBuy?.id) === options.announcementId)?.TrdBuy;
-    const window = { startDate: clean(buy?.startDate), endDate: clean(buy?.endDate) };
-    return window.startDate || window.endDate ? window : null;
+    const matching = lots.filter(lot => !options.announcementId || Number(lot.TrdBuy?.id) === options.announcementId);
+    return uniqueWindow(matching.map(lot => ({ startDate: clean(lot.TrdBuy?.startDate), endDate: clean(lot.TrdBuy?.endDate) })), lotNumber);
   }, options.token);
 }
 
