@@ -99,6 +99,7 @@ export interface PlanStatusRefreshDeps {
   /** Only invoked in execute mode. */
   writeUpdates: (updates: DealFieldUpdate[]) => Promise<DealUpdateResult[]>;
   now: () => Date;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export type RefreshDecision =
@@ -186,6 +187,87 @@ export interface PlanStatusRefreshOptions {
   dealId?: string | null;
 }
 
+export interface ParsedCliArgs {
+  execute: boolean;
+  dealId: string | null;
+  limit: number | null;
+}
+
+export const BATCH_RETRY_DELAY_MS = 2000;
+
+export function parseCliArgs(argv: readonly string[]): ParsedCliArgs {
+  let execute = false;
+  let dealId: string | null = null;
+  let limit: number | null = null;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+
+    if (arg === "--execute") {
+      execute = true;
+    } else if (arg === "--deal" || arg.startsWith("--deal=")) {
+      let val: string;
+      if (arg === "--deal") {
+        const next = argv[i + 1];
+        if (!next || next.startsWith("--")) {
+          throw new Error("--deal requires a numeric deal ID");
+        }
+        val = next.trim();
+        i++;
+      } else {
+        val = arg.slice("--deal=".length).trim();
+      }
+      if (!val || !/^\d+$/.test(val)) {
+        throw new Error(`--deal must be a numeric deal ID, got "${val}"`);
+      }
+      dealId = val;
+    } else if (arg === "--limit" || arg.startsWith("--limit=")) {
+      let val: string;
+      if (arg === "--limit") {
+        const next = argv[i + 1];
+        if (!next || next.startsWith("--")) {
+          throw new Error("--limit requires a positive integer");
+        }
+        val = next.trim();
+        i++;
+      } else {
+        val = arg.slice("--limit=".length).trim();
+      }
+      if (!/^\d+$/.test(val) || parseInt(val, 10) <= 0) {
+        throw new Error(`--limit must be a positive integer, got "${val}"`);
+      }
+      limit = parseInt(val, 10);
+    } else {
+      throw new Error(`unknown argument: ${arg}`);
+    }
+  }
+
+  return { execute, dealId, limit };
+}
+
+export function buildReportFilename(
+  date: string,
+  options: { dealId?: string | null; limit?: number | null }
+): string {
+  if (options.dealId) return `${date}-deal-${options.dealId}.json`;
+  if (options.limit != null && options.limit > 0) return `${date}-limit-${options.limit}.json`;
+  return `${date}.json`;
+}
+
+export async function fetchBatchWithRetry(
+  numbers: string[],
+  fetchStatuses: (nums: string[]) => Promise<Map<string, string>>,
+  sleep: (ms: number) => Promise<void>
+): Promise<Map<string, string>> {
+  try {
+    return await fetchStatuses(numbers);
+  } catch (error) {
+    if (error instanceof Error && error.name === "GoszakupAuthError") throw error;
+    await sleep(BATCH_RETRY_DELAY_MS);
+    return await fetchStatuses(numbers);
+  }
+}
+
 interface PreparedDeal {
   deal: RefreshDeal;
   dealId: string;
@@ -199,6 +281,7 @@ export async function runPlanStatusRefresh(
 ): Promise<PlanStatusRefreshReport> {
   const startedAt = deps.now();
   const detectedAt = startedAt.toISOString();
+  const sleep = deps.sleep ?? defaultSleep;
   const allDeals = await deps.listDeals();
   const normalizedDealId = options.dealId ? String(options.dealId).trim() : null;
   const deals = normalizedDealId
@@ -218,15 +301,32 @@ export async function runPlanStatusRefresh(
   const failedNumbers = new Set<string>();
   const uniquePlanNumbers = [...new Set(prepared.map((entry) => entry.planNumber))];
   const planBatches = chunkPlanNumbers(uniquePlanNumbers);
-  let batchIdx = 0;
+
   for (const batch of planBatches) {
-    batchIdx++;
     try {
-      for (const [root, status] of await deps.fetchStatuses(batch)) statuses.set(root, status);
-    } catch (error) {
-      if (error instanceof Error && error.name === "GoszakupAuthError") throw error;
-      batch.forEach((number) => failedNumbers.add(number));
-      errors.push({ dealId: null, planNumber: batch.join(","), message: messageOf(error) });
+      const batchStatuses = await fetchBatchWithRetry(batch, deps.fetchStatuses, sleep);
+      for (const [root, status] of batchStatuses) statuses.set(root, status);
+    } catch (batchError) {
+      if (batchError instanceof Error && batchError.name === "GoszakupAuthError") throw batchError;
+
+      // On second failure: split in half and try halves; only then record error
+      if (batch.length > 1) {
+        const mid = Math.ceil(batch.length / 2);
+        const halves = [batch.slice(0, mid), batch.slice(mid)];
+        for (const half of halves) {
+          try {
+            const halfStatuses = await fetchBatchWithRetry(half, deps.fetchStatuses, sleep);
+            for (const [root, status] of halfStatuses) statuses.set(root, status);
+          } catch (halfError) {
+            if (halfError instanceof Error && halfError.name === "GoszakupAuthError") throw halfError;
+            half.forEach((number) => failedNumbers.add(number));
+            errors.push({ dealId: null, planNumber: half.join(","), message: messageOf(halfError) });
+          }
+        }
+      } else {
+        batch.forEach((number) => failedNumbers.add(number));
+        errors.push({ dealId: null, planNumber: batch.join(","), message: messageOf(batchError) });
+      }
     }
   }
 
@@ -423,4 +523,8 @@ function normalizeRu(value: string): string {
 
 function text(value: unknown): string {
   return value === null || value === undefined ? "" : String(value).trim();
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

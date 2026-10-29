@@ -8,38 +8,15 @@ import {
   GZ_REFRESH_DEAL_SELECT,
   GZ_REFRESH_PIPELINE_IDS,
   GZ_REFRESH_PLAN_NUMBER_FIELD,
+  buildReportFilename,
   formatReportLines,
+  parseCliArgs,
   runPlanStatusRefresh,
   type RefreshDeal
 } from "../src/bitrix/gzPlanStatusRefresh.js";
 import { createBatchDealUpdater } from "../src/bitrix/gzPlanStatusWriter.js";
 
 const REPORT_DIR = join("runs", "gz-plan-status");
-
-function parseCliArgs(argv: string[]): { execute: boolean; dealId: string | null; limit: number | null } {
-  const execute = argv.includes("--execute");
-  let dealId: string | null = null;
-  let limit: number | null = null;
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--deal" && i + 1 < argv.length) {
-      dealId = argv[i + 1].trim();
-      i++;
-    } else if (arg.startsWith("--deal=")) {
-      dealId = arg.slice("--deal=".length).trim();
-    } else if (arg === "--limit" && i + 1 < argv.length) {
-      const parsed = parseInt(argv[i + 1], 10);
-      if (!Number.isNaN(parsed) && parsed > 0) limit = parsed;
-      i++;
-    } else if (arg.startsWith("--limit=")) {
-      const parsed = parseInt(arg.slice("--limit=".length), 10);
-      if (!Number.isNaN(parsed) && parsed > 0) limit = parsed;
-    }
-  }
-
-  return { execute, dealId: dealId || null, limit };
-}
 
 async function main(): Promise<void> {
   const cli = parseCliArgs(process.argv.slice(2));
@@ -82,7 +59,8 @@ async function main(): Promise<void> {
   );
 
   await mkdir(REPORT_DIR, { recursive: true });
-  const reportPath = join(REPORT_DIR, `${report.date}.json`);
+  const filename = buildReportFilename(report.date, { dealId: report.dealId, limit: report.limit });
+  const reportPath = join(REPORT_DIR, filename);
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
   for (const line of formatReportLines(report)) console.log(line);
