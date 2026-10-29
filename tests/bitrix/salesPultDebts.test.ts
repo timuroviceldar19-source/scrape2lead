@@ -44,7 +44,10 @@ describe("classifyTodo", () => {
   });
 
   it("puts finished procurements into «passed» regardless of deadline, case-insensitive", () => {
-    for (const status of ["Проект договора", "договор действует", "Закупка состоялась", "Договор заключен", "ИСПОЛНЕН"]) {
+    for (const status of [
+      "Проект договора", "договор действует", "Закупка состоялась", "Договор заключен", "ИСПОЛНЕН",
+      "Отказ от закупки", "Отменен", "Договор изменен", "Договор частично исполнен", "Договор не исполнен. Нет платежей"
+    ]) {
       expect(classifyTodo(todo({ id: "p", planStatus: status, deadline: "2026-10-01T10:00:00+05:00" }), context)?.kind)
         .toBe("passed");
     }

@@ -596,6 +596,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
               date: todayAlmaty,
               targets: config.targets.daily,
               tasks: topTasks,
+              debts: collected.debtsByManager.get(m.id),
               pultUrl: config.pultUrl,
               taskError
             })

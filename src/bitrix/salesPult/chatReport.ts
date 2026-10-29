@@ -1,4 +1,6 @@
 import type { ManagerRollups, TopTask, TargetsConfig } from "./metrics.js";
+import type { ManagerDebts } from "./debts.js";
+import { decodeHtmlEntities } from "./site.js";
 
 export function formatMoney(amount: number): string {
   if (!amount || Number.isNaN(amount)) return "0 ₸";
@@ -41,10 +43,11 @@ export function buildMorningReport(params: {
   date: string;
   targets: { calls: number; proposals: number; contracts: number };
   tasks: TopTask[];
+  debts?: ManagerDebts;
   pultUrl: string;
   taskError?: string | null;
 }): string {
-  const { managerId, managerName, date, targets, tasks, pultUrl, taskError } = params;
+  const { managerId, managerName, date, targets, tasks, debts, pultUrl, taskError } = params;
 
   const lines: string[] = [
     `#автоотчёт ${date} утро ${managerId}`,
@@ -56,6 +59,15 @@ export function buildMorningReport(params: {
     `• Договоры: ${targets.contracts}`,
     ""
   ];
+
+  const hasNewDeals = Boolean(debts && debts.newDeals > 0);
+  if (hasNewDeals && debts) {
+    const oldestStr = debts.newOldestAgeDays >= 1 ? ` (самой старой ${debts.newOldestAgeDays} дн.)` : "";
+    lines.push(`🆕 Новых сделок без звонка: ${debts.newDeals}${oldestStr}`);
+    if (tasks.length > 0 || taskError) {
+      lines.push("");
+    }
+  }
 
   if (taskError) {
     lines.push("🔥 Топ-5 задач: ⚠️ не удалось загрузить задачи (ошибка API)");
@@ -71,10 +83,10 @@ export function buildMorningReport(params: {
       const newTag = isNew ? ` 🆕 (новая, без звонка ${Math.max(1, Math.floor(t.ageDays ?? 0))} дн.)` : "";
       lines.push(`${i + 1}. ${planTag}${t.title}${moneyTag}${timeTag}${overdueTag}${newTag}`);
       if (t.lastComment?.trim()) {
-        lines.push(`   💬 ${t.lastComment.trim()}`);
+        lines.push(`   💬 ${decodeHtmlEntities(t.lastComment.trim())}`);
       }
     });
-  } else {
+  } else if (!hasNewDeals) {
     lines.push("🔥 Топ-5 задач: нет открытых задач на сегодня");
   }
 
