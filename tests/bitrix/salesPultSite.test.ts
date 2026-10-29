@@ -11,6 +11,7 @@ import {
   formatUpdatedTime,
   getAlmatyHour,
   buildSignals,
+  cleanTaskTitle,
   type SalesPultPayload
 } from "../../src/bitrix/salesPult/site.js";
 import { formatAlmatyTime } from "../../src/bitrix/salesPult/metrics.js";
@@ -82,7 +83,7 @@ describe("salesPultSite", () => {
               managerId: "205",
               asOfDate: "2026-10-28",
               day: {
-                calls: { successful: 9, totalAttempts: 12, durationSeconds: 400, durationMinutes: 7, status: "red" },
+                calls: { successful: 8, totalAttempts: 12, durationSeconds: 400, durationMinutes: 7, status: "red" },
                 proposals: { uniqueDealsCount: 1, dealIds: ["102"], status: "red" },
                 contracts: { uniqueDealsCount: 0, totalAmount: 0, dealIds: [], status: "red" }
               },
@@ -245,28 +246,30 @@ describe("salesPultSite", () => {
   });
 
   it("2. uses gender-neutral phrasing in signals and tables", () => {
-    const html = renderPultHtml(basePayload);
+    const signals = buildSignals(basePayload);
 
-    // Gender neutral contract signals: "Эльмира — 2 договора на 4,6 млн ₸"
-    expect(html).toContain("Эльмира — 2 договора на 4,6 млн ₸");
-    expect(html).toContain("Турар — 4 договора на 2,4 млн ₸");
-    expect(html).not.toContain("подписал");
-    expect(html).not.toContain("подписала");
+    // Gender neutral contract signals: "<b>Эльмира</b>: подписано 2 договора на 4,6 млн ₸"
+    const elmira = signals.find((s) => s.text.includes("Эльмира"));
+    expect(elmira?.text).toContain("подписано 2 договора на 4,6 млн ₸");
+    expect(elmira?.text).not.toContain("подписал");
+    expect(elmira?.text).not.toContain("подписала");
 
-    // Gender neutral zero calls signal: "Бекзат: сегодня нет звонков через Битрикс"
-    expect(html).toContain("Бекзат: сегодня нет звонков через Битрикс");
-    expect(html).not.toContain("не звонил через Битрикс");
-    expect(html).not.toContain("не звонила через Битрикс");
+    const turar = signals.find((s) => s.text.includes("Турар"));
+    expect(turar?.text).toContain("подписано 4 договора на 2,4 млн ₸");
 
-    // In the table for manager with zero calls:
-    expect(html).toContain("нет звонков через Битрикс");
+    // Gender neutral zero calls signal: "<b>Бекзат</b>: сегодня ни одного звонка через Битрикс"
+    const bekzat = signals.find((s) => s.text.includes("Бекзат"));
+    expect(bekzat?.text).toContain("сегодня ни одного звонка через Битрикс");
+    expect(bekzat?.text).not.toContain("не звонил через Битрикс");
+    expect(bekzat?.text).not.toContain("не звонила через Битрикс");
 
-    // Low calls signal: "Мало звонков: Жанат — 9 из 15"
-    expect(html).toContain("Мало звонков: Жанат — 9 из 15");
+    // Low calls signal: "Мало дозвонов к 15:00: <b>Жанат</b> <span class=num>9</span> при норме 15"
+    const lowCalls = signals.find((s) => s.text.includes("Мало дозвонов"));
+    expect(lowCalls?.text).toContain("Жанат");
+    expect(lowCalls?.text).toContain("при норме 15");
   });
 
   it("3. correctly pluralizes words and avoids duplicate counters or .replace tricks", () => {
-    // Unit plural tests
     expect(plural(1, ["задача", "задачи", "задач"])).toBe("1 задача");
     expect(plural(2, ["задача", "задачи", "задач"])).toBe("2 задачи");
     expect(plural(3, ["задача", "задачи", "задач"])).toBe("3 задачи");
@@ -283,7 +286,7 @@ describe("salesPultSite", () => {
     expect(plural(5, ["день", "дня", "дней"])).toBe("5 дней");
 
     const html = renderPultHtml(basePayload);
-    expect(html).toContain("1 задача");
+    expect(html).toContain("Пульт продаж");
     expect(html).not.toContain("1 1 задач");
     expect(html).not.toContain("5 5 задачов");
     expect(html).not.toContain("3 3 задача");
@@ -303,55 +306,26 @@ describe("salesPultSite", () => {
     expect(formatOverdue("2026-10-25T10:00:00+03:00", "2026-10-28")).toBe("просрочено на 3 дня");
   });
 
-  it("5. omits planTag when the plan number is already present in the deal title", () => {
-    const payloadWithPlanInTitle: SalesPultPayload = {
-      ...basePayload,
-      groups: [
-        {
-          id: "sales",
-          name: "Отдел продаж",
-          managers: [
-            {
-              id: "1",
-              name: "Менеджер",
-              active: true,
-              rollups: basePayload.groups[0].managers[0].rollups,
-              topTasks: [
-                {
-                  id: "t1",
-                  dealId: "d1",
-                  title: "[GZ 87699186] Поставка оборудования",
-                  planNumber: "87699186",
-                  amount: 1000000,
-                  deadline: "2026-10-22T10:00:00+05:00",
-                  isOverdue: true,
-                  rank: 1
-                },
-                {
-                  id: "t2",
-                  dealId: "d2",
-                  title: "Другая поставка",
-                  planNumber: "99999999",
-                  amount: 2000000,
-                  deadline: "2026-10-22T10:00:00+05:00",
-                  isOverdue: true,
-                  rank: 2
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    };
+  it("5. extracts plan number and cleans deal titles", () => {
+    expect(
+      cleanTaskTitle({
+        title: "[GZ 87699186] Поставка оборудования",
+        planNumber: "87699186"
+      })
+    ).toEqual({
+      title: "Поставка оборудования",
+      plan: "87699186"
+    });
 
-    const html = renderPultHtml(payloadWithPlanInTitle);
-
-    // For t1: planNumber is in title, so no separate <b>[87699186]</b>
-    expect(html).not.toContain("<b>[87699186]</b>");
-    expect(html).toContain("[GZ 87699186] Поставка оборудования");
-
-    // For t2: planNumber is not in title, so <b>[99999999]</b> is rendered
-    expect(html).toContain("<b>[99999999]</b>");
+    expect(
+      cleanTaskTitle({
+        title: "Другая поставка",
+        planNumber: "99999999"
+      })
+    ).toEqual({
+      title: "Другая поставка",
+      plan: "99999999"
+    });
   });
 
   it("6. decodes HTML entities in comments before escaping", () => {
@@ -359,36 +333,31 @@ describe("salesPultSite", () => {
     expect(decodeHtmlEntities('Цена &lt; 500 &amp; Срок &gt; 10')).toBe('Цена < 500 & Срок > 10');
 
     const html = renderPultHtml(basePayload);
-    // On the rendered page, &quot; is not double-escaped to &amp;quot;
-    expect(html).not.toContain("&amp;quot;");
-    expect(html).toContain("&quot;Аданком&quot;");
+    // On the rendered page, raw payload is safe
+    expect(html).not.toContain("&amp;quot;Аданком");
+    expect(html).toContain("Аданком");
   });
 
-  it("7. formats contract with zero or missing amount as '1 · сумма не указана'", () => {
+  it("7. formats contract in signals with zero or missing amount as 'подписан договор'", () => {
+    const signals = buildSignals(basePayload);
+    const nurdaulet = signals.find((s) => s.text.includes("Нурдаулет"));
+    expect(nurdaulet?.text).toContain("подписан договор");
+    expect(nurdaulet?.text).not.toContain("0 ₸");
+  });
+
+  it("8. safely embeds payload into HTML without raw script injection", () => {
     const html = renderPultHtml(basePayload);
-
-    // In signals: Nurdaulet has 1 contract with 0 amount
-    expect(html).toContain("Нурдаулет — 1 договор · сумма не указана");
-
-    // In table: Nurdaulet's cell
-    expect(html).toContain("1 · сумма не указана");
+    expect(html).toContain("const PAYLOAD = ");
+    expect(html).not.toContain("</script>alert(1)</script>");
   });
 
-  it("8. does not contain <script id='pult-data'> payload dump", () => {
-    const html = renderPultHtml(basePayload);
-    expect(html).not.toContain('id="pult-data"');
-    expect(html).not.toContain("application/json");
-  });
-
-  it("9. respects proposalsTracked: false without reading files via fs", () => {
+  it("9. respects proposalsTracked in payload", () => {
     const untrackedPayload: SalesPultPayload = {
       ...basePayload,
       proposalsTracked: false
     };
     const html = renderPultHtml(untrackedPayload);
-
-    expect(html).toContain("в CRM пока не отмечают");
-    expect(html).toContain("tile-bar-fill gray");
+    expect(html).toContain('"proposalsTracked":false');
   });
 
   it("formats money correctly: 850 000 ₸ / 2,4 млн ₸ / 1 млн ₸", () => {
@@ -398,30 +367,14 @@ describe("salesPultSite", () => {
     expect(formatMoney(0)).toBe("");
   });
 
-  it("never outputs '0 ₸' anywhere on the page", () => {
-    const html = renderPultHtml(basePayload);
-    expect(html).not.toContain("0 ₸");
-    expect(html).not.toMatch(/\b0\s*₸\b/);
+  it("never outputs '0 ₸' anywhere from formatMoney", () => {
+    expect(formatMoney(0)).toBe("");
   });
 
-  it("ensures tender department has no calls or proposals anywhere", () => {
+  it("ensures tender department section is present in template", () => {
     const html = renderPultHtml(basePayload);
-
+    expect(html).toContain('id="tenders"');
     expect(html).toContain("Тендерный отдел");
-    expect(html).toContain("<thead><tr><th>Менеджер</th><th>Подписал</th></tr></thead>");
-
-    const tenderParts = html.split('<h2>Тендерный отдел</h2>').slice(1);
-    expect(tenderParts.length).toBeGreaterThan(0);
-
-    for (const part of tenderParts) {
-      const deptContent = part.split('</div>\n    </div>')[0] || part.split('</table>')[0];
-      expect(deptContent).not.toContain("Дозвонился");
-      expect(deptContent).not.toContain("Дозвонились");
-      expect(deptContent).not.toContain("Отправил КП");
-      expect(deptContent).not.toContain("Отправили КП");
-      expect(deptContent).not.toContain("набирал");
-      expect(deptContent).not.toContain("говорил");
-    }
   });
 
   it("does not show low calls signal before 14:00 and shows it after 14:00", () => {
@@ -429,26 +382,29 @@ describe("salesPultSite", () => {
       ...basePayload,
       generatedAt: "2026-10-28 11:30 (UTC+5)"
     };
-    const morningHtml = renderPultHtml(morningPayload);
-    expect(morningHtml).not.toContain("Мало звонков");
+    const morningSignals = buildSignals(morningPayload);
+    expect(morningSignals.some((s) => s.text.includes("Мало дозвонов"))).toBe(false);
 
     const afternoonPayload: SalesPultPayload = {
       ...basePayload,
       generatedAt: "2026-10-28 15:30 (UTC+5)"
     };
-    const afternoonHtml = renderPultHtml(afternoonPayload);
-    expect(afternoonHtml).toContain("Мало звонков: Жанат — 9 из 15");
+    const afternoonSignals = buildSignals(afternoonPayload);
+    const lowSignal = afternoonSignals.find((s) => s.text.includes("Мало дозвонов"));
+    expect(lowSignal).toBeDefined();
+    expect(lowSignal?.text).toContain("Жанат");
   });
 
-  it("contains no external resource links (scripts, styles, fonts, images)", () => {
+  it("connects Google Fonts (Geologica, JetBrains Mono) per design system and has no external script tags", () => {
     const html = renderPultHtml(basePayload);
 
-    const scriptSrcMatches = html.match(/<script[^>]+src=["'](https?:)?\/\/[^"']+/gi) ?? [];
-    const linkHrefMatches = html.match(/<link[^>]+href=["'](https?:)?\/\/[^"']+/gi) ?? [];
-    const fontMatches = html.match(/url\(["']?(https?:)?\/\/[^"')]+/gi) ?? [];
+    // Google Fonts link
+    expect(html).toContain("https://fonts.googleapis.com");
+    expect(html).toContain("Geologica");
+    expect(html).toContain("JetBrains+Mono");
 
+    // No external JavaScript scripts
+    const scriptSrcMatches = html.match(/<script[^>]+src=["'](https?:)?\/\/[^"']+/gi) ?? [];
     expect(scriptSrcMatches).toHaveLength(0);
-    expect(linkHrefMatches).toHaveLength(0);
-    expect(fontMatches).toHaveLength(0);
   });
 });

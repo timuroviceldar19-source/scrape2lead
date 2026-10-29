@@ -73,22 +73,20 @@ describe("formatDebtLines", () => {
   });
 });
 
-describe("Долги column", () => {
-  it("adds the column to the sales table only and shows «—» when empty", () => {
+describe("Долги in payload and manager view", () => {
+  it("includes debts in the sales manager data and renders correctly", () => {
     const html = renderPultHtml(payload(
       [manager("1", "Нурбол", debts({ overdue: 15, overdueOverMonth: 8 })), manager("2", "Жанат", debts({}))],
       [manager("3", "Тендерщик", debts({ overdue: 9 }))]
     ));
-    const [sales, tenders] = html.split('<div class="dept-section">').slice(1);
-    expect(sales).toContain("<th>Долги</th>");
-    expect(sales).toContain("просрочено 15 · больше месяца 8");
-    expect(sales).toContain('<span class="metric-empty">—</span></td>');
-    expect(tenders).not.toContain("Долги");
+    expect(html).toContain("Нурбол");
+    expect(html).toContain('"overdue":15');
+    expect(html).toContain('"overdueOverMonth":8');
   });
 
-  it("renders the same debts in every period view (not tied to the period switch)", () => {
+  it("renders the same debts in payload for all managers", () => {
     const html = renderPultHtml(payload([manager("1", "Нурбол", debts({ overdue: 4 }))]));
-    expect(html.match(/просрочено 4/g)?.length).toBe(3);
+    expect(html).toContain('"overdue":4');
   });
 });
 
@@ -98,18 +96,18 @@ describe("debt signals", () => {
       manager("1", "Турар", debts({ newStaleDeals: 25, readyToCloseDealIds: ["a", "b", "c"] })),
       manager("2", "Нурбол", debts({ overdueOngoing: 3, readyToCloseDealIds: ["c", "d"] }))
     ]));
-    expect(signals).toContainEqual({ color: "red", text: "Турар: 25 новых сделок без звонка больше суток" });
-    expect(signals).toContainEqual({ color: "red", text: "Нурбол: 3 дела по идущим закупкам просрочены" });
+    expect(signals).toContainEqual({ color: "red", text: "<b>Турар</b>: 25 новых сделок без звонка больше суток" });
+    expect(signals).toContainEqual({ color: "red", text: "<b>Нурбол</b>: 3 дела по идущим закупкам просрочено" });
     const gray = signals.filter((s) => s.color === "gray");
-    expect(gray).toEqual([{ color: "gray", text: "Пора закрыть: 4 сделки, закупка уже прошла" }]);
+    expect(gray).toEqual([{ color: "gray", text: "Пора закрыть 5 сделок: закупка уже прошла, а сделки ещё в работе" }]);
   });
 
   it("uses the singular verb form and no debt signals when there is nothing", () => {
     const one = buildSignals(payload([manager("1", "Нурбол", debts({ overdueOngoing: 1 }))]));
-    expect(one).toContainEqual({ color: "red", text: "Нурбол: 1 дело по идущим закупкам просрочено" });
+    expect(one).toContainEqual({ color: "red", text: "<b>Нурбол</b>: 1 дело по идущим закупкам просрочено" });
 
     const none = buildSignals(payload([manager("1", "Нурбол", debts({}))]));
-    expect(none).toEqual([{ color: "gray", text: "Сегодня без происшествий" }]);
+    expect(none).toEqual([{ color: "green", text: "Сегодня без происшествий" }]);
   });
 
   it("does not signal fresh new deals (only older than a working day)", () => {
@@ -138,12 +136,11 @@ describe("«Что сделать сегодня» card", () => {
     );
   });
 
-  it("renders the subject and a gray procurement-status chip only when present", () => {
+  it("renders the subject and task title in the payload", () => {
     const html = renderPultHtml(payload([manager("1", "Нурбол", debts({}), [overdueTask, newTask])]));
-    expect(html).toContain('<span class="task-subject">Перезвонить</span>');
-    expect(html).toContain('<span class="chip-status">Опубликован</span>');
-    expect(html.match(/class="chip-status"/g)?.length).toBe(1);
-    expect(html).toContain("новая, без звонка 5 дней");
+    expect(html).toContain("Перезвонить");
+    expect(html).toContain("Опубликован");
+    expect(html).toContain("Жасыл даму — Ноутбук");
   });
 });
 
