@@ -21,6 +21,14 @@ function fakeRegistry(rows: Array<Record<string, unknown>>, failFor: number[] = 
 }
 
 describe("fetchCurrentPlanItems", () => {
+  it("читает товар из zakup без токена, сохраняя проверки заказчика и даты", async () => {
+    const fetchFn = (async (url: string) => new Response(JSON.stringify(new URL(url).pathname.endsWith("/plan-items/")
+      ? { count: 1, results: [{ id: 500, external_id: 200 }] }
+      : { id: 500, external_id: 200, organization: { iin_bin: "990000000001" }, year: { year: 2026 }, status: { name: "Утвержден", egz_code: "2" }, enstru: { code: "279020.100.000002" }, name_ru: "Экран", plan: { act_date: "2026-10-15" } }))) as typeof fetch;
+    const result = await fetchCurrentPlanItems([100], { fetchFn, pauseMs: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.failed).toEqual([]);
+    expect(result.items.get(100)).toMatchObject({ id: 200, bin: "990000000001", code: "279020.100.000002", createdAt: "2026-10-15 00:00:00" });
+  });
   it("returns the current version of each point by the number the portal shows: the newest active one, not the deleted or old ones", async () => {
     const { fn } = fakeRegistry([
       plan({ id: 88137237, isActive: 0, nameRu: "Доска специальная", refEnstruCode: "262030.100.000043", dateCreate: "2026-10-05 09:00:00" }),

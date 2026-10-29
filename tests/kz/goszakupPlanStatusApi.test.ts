@@ -88,6 +88,16 @@ describe("batching", () => {
 });
 
 describe("fetchPlanStatusBatch", () => {
+  it("читает zakup без токена, проверяя БИН и год сделки", async () => {
+    const fetchFn = (async (url: string) => {
+      expect(new URL(url).hostname).toBe("zakup.gov.kz");
+      return jsonResponse(new URL(url).pathname.endsWith("/plan-items/")
+        ? { count: 1, results: [{ id: 500, external_id: 200 }] }
+        : { id: 500, external_id: 200, organization: { iin_bin: "990000000001" }, year: { year: 2026 }, status: { name: "Проект договора", egz_code: "310" } });
+    }) as typeof fetch;
+    const result = await fetchPlanStatusBatch(["100"], { fetchFn, pauseMs: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.get("100")).toBe("Проект договора");
+  });
   it("posts to v3 graphql with the bearer token", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
       jsonResponse({ data: { Plans: [{ id: 1, rootrecordId: 7, RefPlnPointStatus: { nameRu: "Заявка" } }] } })
