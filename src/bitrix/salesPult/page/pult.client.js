@@ -238,13 +238,15 @@
   }
 
   function managerDetail(m) {
-    const d = m.debts || { overdue: 0, overdueOverMonth: 0, newDeals: 0, newOldestAgeDays: 0, readyToCloseDealIds: [] };
+    const d = m.debts || { overdue: 0, overdueOverMonth: 0, overdueOverMonthTasks: [], newDeals: 0, newOldestAgeDays: 0, readyToCloseDealIds: [] };
+    const oldList = d.overdueOverMonthTasks && d.overdueOverMonthTasks.length ? `<details class="old-tasks" style="grid-column:1/-1"><summary class="old-tasks-sum">Показать список 30+ дней (${fmt(d.overdueOverMonthTasks.length)})</summary><div class="old-tasks-list">${d.overdueOverMonthTasks.map((ot) => { const ct = cleanTitle(ot); const url = P.portal + "/crm/deal/details/" + encodeURIComponent(ot.dealId) + "/"; return `<div class="old-task-item"><a href="${url}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || ot.title || ot.dealId)}</a><span class="old-task-meta">${plural(ot.overdueDays || 0, ["день", "дня", "дней"])} · ${money(ot.amount) || "сумма не указана"}</span></div>`; }).join("")}</div></details>` : "";
     const tasks = (m.topTasks || []).map((t) => taskRow(t, m, true)).join("");
     return `<div class="detail-in">
       <div class="dstats">
         ${d.wonOnPortalNotClosed ? `<div style="grid-column:1/-1"><span class="label">Выиграно на портале, не закрыто в CRM</span><span class="num bad">${fmt(d.wonOnPortalNotClosed)}</span></div>` : ""}
         <div><span class="label">Просрочено</span><span class="num ${d.overdue ? "bad" : ""}">${fmt(d.overdue)}</span></div>
         <div><span class="label">30+ дней</span><span class="num">${fmt(d.overdueOverMonth)}</span></div>
+        ${oldList}
         <div><span class="label">Без звонка</span><span class="num ${d.newDeals ? "warn" : ""}">${fmt(d.newDeals)}</span></div>
         <div><span class="label">Самой старой</span><span class="num">${d.newDeals ? fmt(d.newOldestAgeDays) + " дн." : "—"}</span></div>
         <div style="grid-column:1/-1"><span class="label">Пора закрыть</span><span class="num">${fmt(d.readyToCloseDealIds.length)}</span></div>
@@ -400,7 +402,7 @@
     return `<article class="task s-${st.cls || "none"}">
       <span class="sev"></span>
       <div>
-        <div class="kick"><span class="label">${esc(t.subject || "Дело")}</span>${ct.plan ? `<span class="tag">план ${esc(ct.plan)}</span>` : ""}${t.planStatus ? `<span class="tag">${esc(t.planStatus)}</span>` : ""}${t.responsibleNote ? `<span class="tag">${esc(t.responsibleNote)}</span>` : ""}</div>
+        <div class="kick"><span class="label">${esc(t.subject || "Дело")}</span>${ct.plan ? `<span class="tag">план ${esc(ct.plan)}</span>` : ""}${t.planStatus ? `<span class="tag">${esc(t.planStatus)}</span>` : ""}${t.passedPlanMonthNote ? `<span class="tag warn">${esc(t.passedPlanMonthNote)}</span>` : ""}${t.contactedAfterDeadlineNote ? `<span class="tag good">${esc(t.contactedAfterDeadlineNote)}</span>` : ""}${t.responsibleNote ? `<span class="tag">${esc(t.responsibleNote)}</span>` : ""}</div>
         <h3 class="ttl"><a href="${url}" target="_blank" rel="noopener">${esc(ct.title)}</a></h3>
         ${t.lastComment ? `<div class="cm">${esc(decode(t.lastComment))}</div>` : ""}
       </div>
@@ -419,7 +421,7 @@
     if (!all.length) { el.innerHTML = `<div class="block-head"><h2><span class="idx">06</span>Что сделать сегодня</h2></div><div class="mini-empty">Срочных задач нет.</div>`; return; }
     const owners = [...new Map(all.map((x) => [x.m.id, x.m])).values()];
     const list = all.filter((x) => taskFilter === "all" || x.m.id === taskFilter)
-      .sort((a, b) => (a.t.group || 9) - (b.t.group || 9) || (b.t.overdueDays || 0) - (a.t.overdueDays || 0) || (b.t.amount || 0) - (a.t.amount || 0));
+      .sort((a, b) => (a.t.group || 9) - (b.t.group || 9) || (a.t.passedPlanMonthNote ? 1 : 0) - (b.t.passedPlanMonthNote ? 1 : 0) || (b.t.amount || 0) - (a.t.amount || 0) || String(a.t.deadline || "").localeCompare(String(b.t.deadline || "")));
     const sumAmt = list.reduce((s, x) => s + (x.t.amount || 0), 0);
     el.innerHTML = `
       <div class="block-head"><h2><span class="idx">06</span>Что сделать сегодня</h2><span class="meta">${plural(list.length, ["задача", "задачи", "задач"])} · сделки на ${money(sumAmt)}</span></div>

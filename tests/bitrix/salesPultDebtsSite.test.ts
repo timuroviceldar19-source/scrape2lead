@@ -164,3 +164,45 @@ describe("morning report", () => {
     expect(newLine).not.toContain("[до");
   });
 });
+
+
+describe("stage 2 UI and sorting rules (Req 2, 3, 4, 5)", () => {
+  it("does not re-sort tasks by overdueDays in pult.client.js and renders 30+ days list and new tags", () => {
+    const taskWithNotes: TopTask = {
+      id: "t1",
+      dealId: "1001",
+      title: "Тестовая поставка А",
+      subject: "Перезвонить",
+      amount: 5_000_000,
+      deadline: "2026-10-27T10:00:00+05:00",
+      isOverdue: true,
+      rank: 1,
+      kind: "overdue",
+      group: 2,
+      overdueDays: 1,
+      planStatus: "Утвержден",
+      passedPlanMonthNote: "план на апрель прошёл",
+      contactedAfterDeadlineNote: "связался — закрыть дело / поставить следующий шаг"
+    };
+    const mgrDebts = debts({
+      overdue: 2,
+      overdueOverMonth: 1,
+      overdueOverMonthTasks: [
+        {
+          id: "old-99",
+          dealId: "2002",
+          title: "Давняя закупка моноблоков",
+          overdueDays: 42,
+          amount: 3_200_000,
+          deadline: "2026-09-16T10:00:00+05:00"
+        }
+      ]
+    });
+    const html = renderPultHtml(payload([manager("1", "ТестМенеджер", mgrDebts, [taskWithNotes])]));
+    expect(html).toContain("план на апрель прошёл");
+    expect(html).toContain("связался — закрыть дело / поставить следующий шаг");
+    expect(html).toContain("Давняя закупка моноблоков");
+    expect(html).toContain("old-tasks");
+    expect(html).not.toContain("(b.t.overdueDays || 0) - (a.t.overdueDays || 0)");
+  });
+});

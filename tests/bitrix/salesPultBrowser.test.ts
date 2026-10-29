@@ -152,7 +152,33 @@ describe("salesPult in-browser Playwright test", () => {
     const basePayload: SalesPultPayload = JSON.parse(
       fs.readFileSync("tests/fixtures/sales-pult/midday.json", "utf8")
     );
-        basePayload.portal = "https://ft3.bitrix24.kz";
+    basePayload.portal = "https://ft3.bitrix24.kz";
+    const firstMgr = basePayload.groups[0].managers[0];
+    if (firstMgr.debts) {
+      firstMgr.debts.overdueOverMonth = 2;
+      firstMgr.debts.overdueOverMonthTasks = [
+        {
+          dealId: "900501",
+          title: "[GZ 9000501] Тестовая школа №101 — Моноблоки",
+          amount: 4500000,
+          currency: "KZT",
+          overdueDays: 42,
+          deadline: "2026-09-10T12:00:00+05:00"
+        },
+        {
+          dealId: "900502",
+          title: "[GZ 9000502] Тестовый лицей №102 — Принтеры",
+          amount: 1200000,
+          currency: "KZT",
+          overdueDays: 35,
+          deadline: "2026-09-17T12:00:00+05:00"
+        }
+      ];
+    }
+    if (firstMgr.topTasks && firstMgr.topTasks.length > 0) {
+      firstMgr.topTasks[0].passedPlanMonthNote = "план на сентябрь прошёл";
+      firstMgr.topTasks[0].contactedAfterDeadlineNote = "связался — закрыть дело / поставить следующий шаг";
+    }
     basePayload.outcomeMismatches = [
       {
         id: "45477",
@@ -532,8 +558,65 @@ describe("salesPult in-browser Playwright test", () => {
     expect(mobileRow!.flexDirection).toBe("column");
     expect(mobileRow!.metaBelowInfo).toBe(true);
     expect(mobileRow!.rowFitsInBox).toBe(true);
-
-    await page.close();
   }, 20_000);
 
+  it("renders collapsed 30+ days list in manager card, expands on click, hides in TV mode, and shows task badges", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const consoleErrors: string[] = [];
+    page.on("pageerror", (err) => consoleErrors.push(err.message));
+    page.on("console", (msg) => {
+      if (msg.type() === "error") consoleErrors.push(msg.text());
+    });
+
+    await page.goto(pathToFileURL(indexPath).href);
+    await page.waitForTimeout(300);
+
+    await page.evaluate(() => (document.querySelector(".trow.body") as HTMLElement)?.click());
+    await page.waitForTimeout(100);
+
+    const detailsInfo = await page.evaluate(() => {
+      const det = document.querySelector("details.old-tasks") as HTMLDetailsElement | null;
+      if (!det) return null;
+      const sum = det.querySelector("summary.old-tasks-sum");
+      const items = [...det.querySelectorAll(".old-task-item")];
+      return {
+        open: det.open,
+        summaryText: sum?.textContent || "",
+        itemCount: items.length,
+        firstItemText: items[0]?.textContent || "",
+        firstItemHref: (items[0]?.querySelector("a") as HTMLAnchorElement | null)?.href || ""
+      };
+    });
+    expect(detailsInfo).not.toBeNull();
+    expect(detailsInfo!.open).toBe(false);
+    expect(detailsInfo!.summaryText).toContain("30+ дней (2)");
+    expect(detailsInfo!.itemCount).toBe(2);
+    expect(detailsInfo!.firstItemText).toContain("Тестовая школа №101");
+    expect(detailsInfo!.firstItemText.replace(/\u00a0/g, " ")).toContain("42 дня");
+    expect(detailsInfo!.firstItemHref).toBe("https://ft3.bitrix24.kz/crm/deal/details/900501/");
+
+    await page.evaluate(() => (document.querySelector("details.old-tasks > summary.old-tasks-sum") as HTMLElement)?.click());
+    const isOpenAfterClick = await page.evaluate(() => {
+      const det = document.querySelector("details.old-tasks") as HTMLDetailsElement | null;
+      return det ? det.open : false;
+    });
+    expect(isOpenAfterClick).toBe(true);
+
+    const badgesText = await page.evaluate(() => {
+      const warnTags = [...document.querySelectorAll(".task .kick .tag.warn")].map((el) => el.textContent);
+      const goodTags = [...document.querySelectorAll(".task .kick .tag.good")].map((el) => el.textContent);
+      return { warnTags, goodTags };
+    });
+    expect(badgesText.warnTags).toContain("план на сентябрь прошёл");
+    expect(badgesText.goodTags).toContain("связался — закрыть дело / поставить следующий шаг");
+
+    await page.evaluate(() => document.body.classList.add("tv"));
+    const tvDisplay = await page.evaluate(() => {
+      const det = document.querySelector("details.old-tasks");
+      return det ? window.getComputedStyle(det).display : "";
+    });
+    expect(tvDisplay).toBe("none");
+    expect(consoleErrors).toEqual([]);
+    await page.close();
+  }, 20_000);
 });

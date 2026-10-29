@@ -10,19 +10,51 @@
  *  4. today   — the deadline is today and has not come yet.
  */
 
+import type { GzDealOutcome } from "../gzDealOutcome.js";
 import type { RawTask, TopTask } from "./metrics.js";
 import { cleanFirstName } from "./format.js";
 
 export type TodoKind = "passed" | "new" | "overdue" | "today";
 export type TopTaskGroup = 1 | 2 | 3 | 4;
+export type GzDealOutcomeKind = GzDealOutcome["kind"];
 
 export const NEW_TODO_MAX_GAP_MS = 5 * 60_000;
 export const NEW_TODO_PROBLEM_AGE_DAYS = 1;
 export const DEFAULT_MAX_OVERDUE_DAYS = 30;
 export const DEFAULT_DEBT_CATEGORIES = [9, 41, 43];
 export const TOP_TASKS_PER_MANAGER = 5;
+export const CONTACTED_AFTER_DEADLINE_NOTE = "связался — закрыть дело / поставить следующий шаг";
 /** Activities of these providers are not "calls to make" and stay out of the debt logic. */
 export const EXCLUDED_ACTIVITY_PROVIDERS = ["CRM_TASKS_TASK", "VOXIMPLANT_CALL"];
+
+const PASSED_OUTCOME_BY_KIND: Record<GzDealOutcomeKind, boolean> = {
+  lost: true,
+  failed: true,
+  cancelled: true,
+  repurposed: true,
+  terminated: true,
+  won: false,
+  partner: false,
+  published: false,
+  "contract-draft": false,
+  "plan-renumbered": false,
+  "plan-moved": false
+};
+
+const PLAN_MONTH_NUMBERS: Record<string, { num: number; label: string }> = {
+  январь: { num: 1, label: "январь" },
+  февраль: { num: 2, label: "февраль" },
+  март: { num: 3, label: "март" },
+  апрель: { num: 4, label: "апрель" },
+  май: { num: 5, label: "май" },
+  июнь: { num: 6, label: "июнь" },
+  июль: { num: 7, label: "июль" },
+  август: { num: 8, label: "август" },
+  сентябрь: { num: 9, label: "сентябрь" },
+  октябрь: { num: 10, label: "октябрь" },
+  ноябрь: { num: 11, label: "ноябрь" },
+  декабрь: { num: 12, label: "декабрь" }
+};
 
 const PASSED_PURCHASE_STATUSES = [
   "Проект договора",
@@ -54,11 +86,25 @@ export interface ClassifiedTodo {
   ageDays: number;
 }
 
+export interface OverdueOverMonthTask {
+  id?: string;
+  dealId: string;
+  title: string;
+  overdueDays: number;
+  amount: number;
+  currency?: string;
+  deadline: string;
+  subject?: string;
+  planNumber?: string | null;
+}
+
 export interface ManagerDebts {
   /** Overdue activities (all ages), excluding new and passed. */
   overdue: number;
   /** Subset of `overdue` older than the month threshold. */
   overdueOverMonth: number;
+  /** Overdue activities older than the month threshold for display under «30+ дней». */
+  overdueOverMonthTasks?: OverdueOverMonthTask[];
   /** Overdue activities on deals with an ongoing procurement. */
   overdueOngoing: number;
   /** Deals with a new activity and no first contact (any age). */
@@ -78,6 +124,8 @@ export interface DebtTopTask extends TopTask {
   group: TopTaskGroup;
   overdueDays: number;
   ageDays: number;
+  passedPlanMonthNote?: string | null;
+  contactedAfterDeadlineNote?: string | null;
 }
 
 export interface DebtContext {
@@ -90,6 +138,7 @@ export interface DebtContext {
 export const EMPTY_DEBTS: ManagerDebts = {
   overdue: 0,
   overdueOverMonth: 0,
+  overdueOverMonthTasks: [],
   overdueOngoing: 0,
   newDeals: 0,
   newStaleDeals: 0,
@@ -138,6 +187,50 @@ export function workingAgeDays(fromMs: number, toMs: number, holidays: readonly 
 
 export function isPurchasePassed(planStatus: string | null | undefined): boolean {
   return includesStatus(PASSED_PURCHASE_STATUSES, planStatus);
+}
+
+export function isOutcomePassed(outcome: string | null | undefined): boolean {
+  if (!outcome) return false;
+  const kind = outcome.trim().split(":")[0].toLowerCase() as GzDealOutcomeKind;
+  return PASSED_OUTCOME_BY_KIND[kind] === true;
+}
+
+export function getPassedPlanMonthNote(
+  planStatus: string | null | undefined,
+  planMonth: string | null | undefined,
+  nowIso: string,
+  dealCreated?: string | null
+): string | null {
+  const normStatus = normalize(planStatus).replace(/ё/g, "е");
+  if (normStatus !== "утвержден") return null;
+  const normMonth = normalize(planMonth);
+  if (!normMonth) return null;
+  const entry = PLAN_MONTH_NUMBERS[normMonth];
+  if (!entry) return null;
+  const nowMs = Date.parse(nowIso);
+  if (Number.isNaN(nowMs)) return null;
+  const todayDay = toAlmatyDay(nowMs);
+  const currentYear = parseInt(todayDay.slice(0, 4), 10);
+  const currentMonth = parseInt(todayDay.slice(5, 7), 10);
+  if (!Number.isFinite(currentMonth) || currentMonth < 1 || currentMonth > 12) return null;
+  // The plan month belongs to the year the deal was created; unknown creation date -> current year.
+  const createdMs = dealCreated ? parseBitrixTime(dealCreated) : Number.NaN;
+  const planYear = Number.isNaN(createdMs) ? currentYear : parseInt(toAlmatyDay(createdMs).slice(0, 4), 10);
+  const isPassed = planYear * 12 + entry.num < currentYear * 12 + currentMonth;
+  return isPassed ? `план на ${entry.label} прошёл` : null;
+}
+
+export function getContactedAfterDeadlineNote(item: ClassifiedTodo): string | null {
+  if (item.kind !== "overdue") return null;
+  const c = item.candidate;
+  if (c.hasContactAfterDeadline === true) return CONTACTED_AFTER_DEADLINE_NOTE;
+  const deadlineMs = parseBitrixTime(c.deadline);
+  if (Number.isNaN(deadlineMs)) return null;
+  const commentMs = parseBitrixTime(c.lastHumanCommentAt);
+  if (!Number.isNaN(commentMs) && commentMs > deadlineMs) return CONTACTED_AFTER_DEADLINE_NOTE;
+  const callMs = parseBitrixTime(c.lastCallAt);
+  if (!Number.isNaN(callMs) && callMs > deadlineMs) return CONTACTED_AFTER_DEADLINE_NOTE;
+  return null;
 }
 
 export function isPurchaseOngoing(planStatus: string | null | undefined): boolean {
@@ -222,7 +315,9 @@ export function classifyTodo(candidate: DebtCandidate, context: DebtContext): Cl
   if (Number.isNaN(deadlineMs)) return null;
 
   const base = { candidate, overdueDays: 0, ageDays: 0 };
-  if (isPurchasePassed(candidate.planStatus)) return { ...base, kind: "passed" };
+  if (isPurchasePassed(candidate.planStatus) || isOutcomePassed(candidate.outcome)) {
+    return { ...base, kind: "passed" };
+  }
 
   const createdMs = parseBitrixTime(candidate.created);
   if (!Number.isNaN(createdMs) && Math.abs(deadlineMs - createdMs) < NEW_TODO_MAX_GAP_MS) {
@@ -240,12 +335,32 @@ export function classifyTodo(candidate: DebtCandidate, context: DebtContext): Cl
 export function summarizeDebts(classified: readonly ClassifiedTodo[], context: DebtContext): ManagerDebts {
   const maxOverdueDays = context.maxOverdueDays ?? DEFAULT_MAX_OVERDUE_DAYS;
   const overdue = classified.filter((item) => item.kind === "overdue");
+  const overMonthItems = overdue.filter((item) => isOverMonth(item, context, maxOverdueDays));
+  const overdueOverMonthTasks: OverdueOverMonthTask[] = [...overMonthItems]
+    .sort(
+      (a, b) =>
+        b.candidate.amount - a.candidate.amount ||
+        b.overdueDays - a.overdueDays ||
+        deadlineOf(a) - deadlineOf(b) ||
+        a.candidate.id.localeCompare(b.candidate.id)
+    )
+    .map((item) => ({
+      id: item.candidate.id,
+      dealId: item.candidate.dealId,
+      title: item.candidate.title,
+      overdueDays: item.overdueDays,
+      amount: item.candidate.amount,
+      deadline: item.candidate.deadline,
+      subject: item.candidate.subject,
+      planNumber: item.candidate.planNumber ?? null
+    }));
   const newTodos = classified.filter((item) => item.kind === "new");
   const dealIds = (items: readonly ClassifiedTodo[]) => [...new Set(items.map((item) => item.candidate.dealId))];
 
   return {
     overdue: overdue.length,
-    overdueOverMonth: overdue.filter((item) => isOverMonth(item, context, maxOverdueDays)).length,
+    overdueOverMonth: overMonthItems.length,
+    overdueOverMonthTasks,
     overdueOngoing: overdue.filter((item) => isPurchaseOngoing(item.candidate.planStatus)).length,
     newDeals: dealIds(newTodos).length,
     newStaleDeals: dealIds(newTodos.filter((item) => item.ageDays > NEW_TODO_PROBLEM_AGE_DAYS)).length,
@@ -274,16 +389,29 @@ function topGroup(item: ClassifiedTodo, context: DebtContext, maxOverdueDays: nu
  * "What to do today": at most 5 per manager, one activity per deal.
  * Order: 1) overdue on ongoing procurements, 2) other overdue up to the month cap,
  * 3) due today, 4) new without a first contact for more than one working day;
- * inside a group by deal amount. Passed procurements and month-old overdue stay out.
+ * inside a group: current/future plan months first (passed plan months after), then by deal amount desc, then by deadline asc.
+ * Passed procurements and month-old overdue stay out.
  */
 export function rankDebtTopTasks(classified: readonly ClassifiedTodo[], context: DebtContext): DebtTopTask[] {
   const maxOverdueDays = context.maxOverdueDays ?? DEFAULT_MAX_OVERDUE_DAYS;
   const entries = classified.flatMap((item) => {
     const group = topGroup(item, context, maxOverdueDays);
-    return group === null || item.kind === "passed" ? [] : [{ item, group }];
+    if (group === null || item.kind === "passed") return [];
+    const passedPlanMonthNote = getPassedPlanMonthNote(
+      item.candidate.planStatus,
+      item.candidate.planMonth,
+      context.nowIso,
+      item.candidate.dealCreated
+    );
+    const contactedAfterDeadlineNote = getContactedAfterDeadlineNote(item);
+    return [{ item, group, passedPlanMonthNote, contactedAfterDeadlineNote }];
   });
   const byPriority = [...entries].sort(
-    (a, b) => a.group - b.group || deadlineOf(a.item) - deadlineOf(b.item) || a.item.candidate.id.localeCompare(b.item.candidate.id)
+    (a, b) =>
+      a.group - b.group ||
+      (a.passedPlanMonthNote ? 1 : 0) - (b.passedPlanMonthNote ? 1 : 0) ||
+      deadlineOf(a.item) - deadlineOf(b.item) ||
+      a.item.candidate.id.localeCompare(b.item.candidate.id)
   );
   const bestPerDeal = new Map<string, (typeof entries)[number]>();
   for (const entry of byPriority) {
@@ -294,19 +422,22 @@ export function rankDebtTopTasks(classified: readonly ClassifiedTodo[], context:
     .sort(
       (a, b) =>
         a.group - b.group ||
+        (a.passedPlanMonthNote ? 1 : 0) - (b.passedPlanMonthNote ? 1 : 0) ||
         b.item.candidate.amount - a.item.candidate.amount ||
         deadlineOf(a.item) - deadlineOf(b.item) ||
         a.item.candidate.id.localeCompare(b.item.candidate.id)
     )
     .slice(0, TOP_TASKS_PER_MANAGER)
-    .map(({ item, group }) => ({
+    .map(({ item, group, passedPlanMonthNote, contactedAfterDeadlineNote }) => ({
       ...item.candidate,
       isOverdue: item.kind === "overdue",
       rank: group,
       kind: item.kind as DebtTopTask["kind"],
       group,
       overdueDays: item.overdueDays,
-      ageDays: item.ageDays
+      ageDays: item.ageDays,
+      passedPlanMonthNote,
+      contactedAfterDeadlineNote
     }));
 }
 

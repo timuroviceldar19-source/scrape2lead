@@ -25,6 +25,8 @@ export interface DealInfo {
   closed?: string | boolean | null;
   /** Real procurement status, taken from the deal field UF_CRM_PLAN_STATUS. */
   planStatus?: string | null;
+  /** Planned procurement month name from UF_CRM_1715597726664. */
+  planMonth?: string | null;
   outcome?: string | null;
   portalSignDate?: string | null;
   closeDate?: string | null;
@@ -69,6 +71,13 @@ export interface RawTask {
   /** Activity creation time as returned by Bitrix. */
   created?: string;
   planStatus?: string | null;
+  planMonth?: string | null;
+  /** Deal creation time (DATE_CREATE); its year is the year of the plan month. */
+  dealCreated?: string | null;
+  outcome?: string | null;
+  hasContactAfterDeadline?: boolean;
+  lastHumanCommentAt?: string | null;
+  lastCallAt?: string | null;
   responsibleNote?: string | null;
 }
 
@@ -80,6 +89,8 @@ export interface TopTask extends RawTask {
   group?: 1 | 2 | 3 | 4;
   overdueDays?: number;
   ageDays?: number;
+  passedPlanMonthNote?: string | null;
+  contactedAfterDeadlineNote?: string | null;
 }
 
 export interface TargetsConfig {

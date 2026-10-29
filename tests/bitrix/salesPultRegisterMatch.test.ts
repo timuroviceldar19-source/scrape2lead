@@ -111,7 +111,7 @@ describe("matchRegisterWithCrm", () => {
         val: 2000000,
         bonusMop: 60000,
         bonusRop: 10000,
-        manager: "Мухаметжан", // Not in CRM
+        manager: "Ерболат", // Not in CRM
         note: null,
         group: "КТ",
         kind: "Ноутбуки",
@@ -142,9 +142,56 @@ describe("matchRegisterWithCrm", () => {
     expect(res.matched[0].deal.id).toBe("101");
 
     expect(res.missing).toHaveLength(1);
-    expect(res.missing[0].manager).toBe("Мухаметжан");
+    expect(res.missing[0].manager).toBe("Ерболат");
 
     expect(res.extra).toHaveLength(1);
     expect(res.extra[0].id).toBe("102");
+  });
+});
+
+
+describe("managerAliases matching", () => {
+  it("matches a register name to a CRM name that differs in one letter when an alias is configured", () => {
+    const contracts = groupRegisterContracts([
+      {
+        date: "2026-10-12",
+        type: "зцп",
+        customer: "НАО Тестовый университет",
+        qty: 10,
+        product: "моноблок",
+        cost: 10000000,
+        extras: 0,
+        sale: 12000000,
+        portal: 12000000,
+        val: 2000000,
+        bonusMop: 60000,
+        bonusRop: 10000,
+        manager: "Ерболат",
+        note: null,
+        group: "КТ",
+        kind: "Моноблоки",
+        channel: "Запрос ценовых предложений"
+      }
+    ]);
+
+    const deals: CrmWonDeal[] = [
+      {
+        id: "9001",
+        title: "НАО Тестовый университет — Моноблоки",
+        amount: 13440000,
+        company: "НАО Тестовый университет",
+        manager: "Ербөлат Тестов"
+      }
+    ];
+
+    const withoutAlias = matchRegisterWithCrm(contracts, deals);
+    expect(withoutAlias.matched).toHaveLength(0);
+    expect(withoutAlias.missing).toHaveLength(1);
+
+    const withAlias = matchRegisterWithCrm(contracts, deals, {
+      managerAliases: { Ерболат: "Ербөлат" }
+    });
+    expect(withAlias.matched).toHaveLength(1);
+    expect(withAlias.missing).toHaveLength(0);
   });
 });
