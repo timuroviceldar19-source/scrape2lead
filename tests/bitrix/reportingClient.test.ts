@@ -6,6 +6,24 @@ import {
 } from "../../src/bitrix/reporting/readOnlyClient.js";
 
 describe("ReadOnlyBitrixClient", () => {
+  it("останавливается по total, когда количество кратно странице, а лишний offset повторяет первую страницу", async () => {
+    const call = vi.fn(async (_method: string, body: unknown) => {
+      const commands = (body as { cmd: Record<string, string> }).cmd;
+      return {
+        result: Object.fromEntries(Object.entries(commands).map(([key, command]) => {
+          const requested = Number(new URLSearchParams(command.split("?")[1]).get("start"));
+          const offset = requested < 300 ? requested : 0;
+          return [key, Array.from({ length: 50 }, (_, index) => ({ ID: String(offset + index + 1) }))];
+        })),
+        result_total: Object.fromEntries(Object.keys(commands).map(key => [key, 300])),
+        result_error: {}
+      };
+    });
+    const rows = await new ReadOnlyBitrixClient({ call }).listAllBatched("crm.deal.list", {}, undefined, 1);
+    expect(rows).toHaveLength(300);
+    expect(new Set(rows.map(row => row.ID)).size).toBe(300);
+    expect(call).toHaveBeenCalledTimes(1);
+  });
   it("rejects mutation methods before they reach the transport", async () => {
     const call = vi.fn();
     const client = new ReadOnlyBitrixClient({ call });
