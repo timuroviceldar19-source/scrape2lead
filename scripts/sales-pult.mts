@@ -43,7 +43,7 @@ import { loadMarketView } from "../src/kz/market/load.js";
 import {
   loadStoredMarketUnits,
   saveStoredMarketUnits,
-  fetchMarketContracts,
+  fetchMarketUnits,
   mergeMarketUnits,
   backfillMarketByMonths,
   DEFAULT_MARKET_UNITS_PATH
@@ -202,10 +202,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
   const todayAlmaty = toAlmatyDate(nowIso);
 
   if (backfillFromDate) {
-    const gzToken = process.env.GOSZAKUP_TOKEN?.trim();
-    if (!gzToken) {
-      throw new Error("GOSZAKUP_TOKEN is required in .env for market backfill");
-    }
+    // Рынок берём из открытого API zakup.gov.kz; токен нужен только запасному ows.
+    const gzToken = process.env.GOSZAKUP_TOKEN?.trim() || null;
     console.log(`[Рынок] Начало загрузки с ${backfillFromDate} по месяцам с сохранением прогресса...`);
     try {
       const units = await backfillMarketByMonths({
@@ -213,7 +211,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
         fromDate: backfillFromDate,
         toDate: todayAlmaty,
         onProgress: (info) => {
-          console.log(`[Рынок] Месяц ${info.month}: страниц ${info.pages}, отобрано ${info.matched}, всего сохранено ${info.totalSaved}`);
+          const source = info.source ? `, источник ${info.source}` : "";
+          console.log(`[Рынок] Месяц ${info.month}: отобрано ${info.matched}, всего сохранено ${info.totalSaved}${source}`);
         }
       });
       console.log(`[Рынок] Завершено. Сохранено ${units.length} позиций в ${DEFAULT_MARKET_UNITS_PATH}`);
@@ -224,27 +223,23 @@ export async function runSalesPult(args: string[]): Promise<void> {
   }
 
   if (mode === "morning" || marketUpdate) {
-    const gzToken = process.env.GOSZAKUP_TOKEN?.trim();
-    if (gzToken) {
-      const d = new Date(Date.parse(`${todayAlmaty}T12:00:00Z`));
-      d.setDate(d.getDate() - 45);
-      const cutoffDate = d.toISOString().slice(0, 10);
-      try {
-        console.log(`[Рынок] Утреннее обновление за последние 45 дней (с ${cutoffDate})...`);
-        const freshUnits = await fetchMarketContracts({
-          token: gzToken,
-          fromDate: cutoffDate,
-          toDate: todayAlmaty
-        });
-        const existingUnits = loadStoredMarketUnits(DEFAULT_MARKET_UNITS_PATH);
-        const merged = mergeMarketUnits(existingUnits, freshUnits, cutoffDate, todayAlmaty);
-        saveStoredMarketUnits(merged, DEFAULT_MARKET_UNITS_PATH);
-        console.log(`[Рынок] Утреннее обновление: свежих ${freshUnits.length}, всего ${merged.length}`);
-      } catch (marketErr) {
-        console.warn(`[Рынок] Ошибка при утреннем обновлении рынка:`, marketErr);
-      }
-    } else {
-      console.log(`[Рынок] GOSZAKUP_TOKEN не задан, пропуск утреннего обновления рынка`);
+    const gzToken = process.env.GOSZAKUP_TOKEN?.trim() || null;
+    const d = new Date(Date.parse(`${todayAlmaty}T12:00:00Z`));
+    d.setDate(d.getDate() - 45);
+    const cutoffDate = d.toISOString().slice(0, 10);
+    try {
+      console.log(`[Рынок] Утреннее обновление за последние 45 дней (с ${cutoffDate})...`);
+      const { units: freshUnits, source } = await fetchMarketUnits({
+        token: gzToken,
+        fromDate: cutoffDate,
+        toDate: todayAlmaty
+      });
+      const existingUnits = loadStoredMarketUnits(DEFAULT_MARKET_UNITS_PATH);
+      const merged = mergeMarketUnits(existingUnits, freshUnits, cutoffDate, todayAlmaty);
+      saveStoredMarketUnits(merged, DEFAULT_MARKET_UNITS_PATH);
+      console.log(`[Рынок] Утреннее обновление (${source}): свежих ${freshUnits.length}, всего ${merged.length}`);
+    } catch (marketErr: any) {
+      console.warn(`::warning::[Рынок] Ошибка при утреннем обновлении рынка: ${marketErr?.message || marketErr}`);
     }
   }
 

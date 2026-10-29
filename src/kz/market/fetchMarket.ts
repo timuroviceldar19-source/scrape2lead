@@ -4,6 +4,7 @@ import { goszakupGraphqlPage } from "../goszakupGraphql.js";
 import type { MarketConfig, MarketUnit } from "./types.js";
 import { loadMarketConfig } from "./config.js";
 import { filterContractUnits, type RawContractItem } from "./filterUnits.js";
+import { fetchZakupMarketUnits, type FetchZakupMarketOptions } from "./fetchZakupMarket.js";
 
 const CONTRACT_QUERY = `query($d: [String], $after: Int) {
   Contract(filter: { signDate: $d }, limit: 200, after: $after) {
@@ -136,6 +137,47 @@ export async function fetchMarketContracts(options: FetchMarketOptions): Promise
   return allUnits;
 }
 
+export type MarketSource = "zakup" | "ows";
+
+export interface FetchMarketUnitsOptions {
+  fromDate: string;
+  toDate: string;
+  /** GOSZAKUP_TOKEN: without it there is no backup source. */
+  token?: string | null;
+  cfg?: MarketConfig;
+  /** For tests: replace the real sources. */
+  sources?: {
+    zakup?: (options: FetchZakupMarketOptions) => Promise<MarketUnit[]>;
+    ows?: (options: FetchMarketOptions) => Promise<MarketUnit[]>;
+  };
+}
+
+/**
+ * Main source is the public API of zakup.gov.kz (no token). The ows API with GOSZAKUP_TOKEN is the backup:
+ * it is tried only when zakup fails, so one dead source does not leave the market tabs stale.
+ */
+export async function fetchMarketUnits(options: FetchMarketUnitsOptions): Promise<{ units: MarketUnit[]; source: MarketSource }> {
+  const { fromDate, toDate, cfg, token } = options;
+  const zakup = options.sources?.zakup ?? fetchZakupMarketUnits;
+  const ows = options.sources?.ows ?? fetchMarketContracts;
+  try {
+    return { units: await zakup({ fromDate, toDate, ...(cfg ? { cfg } : {}) }), source: "zakup" };
+  } catch (zakupErr) {
+    const zakupMessage = zakupErr instanceof Error ? zakupErr.message : String(zakupErr);
+    if (!token) {
+      console.warn(`[Рынок] zakup.gov.kz не ответил (${zakupMessage}), а GOSZAKUP_TOKEN для запасного API не задан`);
+      throw zakupErr;
+    }
+    console.warn(`[Рынок] zakup.gov.kz не ответил (${zakupMessage}), берём запасной API ows.goszakup.gov.kz`);
+    try {
+      return { units: await ows({ token, fromDate, toDate, ...(cfg ? { cfg } : {}) }), source: "ows" };
+    } catch (owsErr) {
+      const owsMessage = owsErr instanceof Error ? owsErr.message : String(owsErr);
+      throw new Error(`Рынок: не ответили оба источника. zakup: ${zakupMessage}; ows: ${owsMessage}`);
+    }
+  }
+}
+
 export function mergeMarketUnits(
   existingUnits: MarketUnit[],
   freshUnits: MarketUnit[],
@@ -187,12 +229,14 @@ export function getMonthIntervals(
 }
 
 export interface BackfillMarketOptions {
-  token: string;
+  /** Only for the ows backup; zakup.gov.kz needs no token. */
+  token?: string | null;
   fromDate: string;
   toDate?: string;
   filePath?: string;
   cfg?: MarketConfig;
-  onProgress?: (info: { month: string; pages: number; seen: number; matched: number; totalSaved: number }) => void;
+  onProgress?: (info: { month: string; matched: number; totalSaved: number; source?: MarketSource }) => void;
+  fetchUnits?: (options: FetchMarketUnitsOptions) => Promise<{ units: MarketUnit[]; source: MarketSource }>;
 }
 
 /**
@@ -206,7 +250,8 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
     toDate = new Date().toISOString().slice(0, 10),
     filePath = DEFAULT_MARKET_UNITS_PATH,
     cfg = loadMarketConfig(),
-    onProgress
+    onProgress,
+    fetchUnits = fetchMarketUnits
   } = options;
 
   const storedData = loadStoredMarketData(filePath);
@@ -222,8 +267,6 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
       if (onProgress) {
         onProgress({
           month: interval.month,
-          pages: 0,
-          seen: 0,
           matched: currentUnits.filter((u) => u.month === interval.month).length,
           totalSaved: currentUnits.length
         });
@@ -231,23 +274,10 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
       continue;
     }
 
-    const monthUnits = await fetchMarketContracts({
-      token,
-      fromDate: interval.from,
-      toDate: interval.to,
-      cfg,
-      onProgress: (pages, seen, matched) => {
-        if (onProgress) {
-          onProgress({
-            month: interval.month,
-            pages,
-            seen,
-            matched,
-            totalSaved: currentUnits.length + matched
-          });
-        }
-      }
-    });
+    const { units: monthUnits, source } = await fetchUnits({ token, fromDate: interval.from, toDate: interval.to, cfg });
+    if (onProgress) {
+      onProgress({ month: interval.month, matched: monthUnits.length, totalSaved: currentUnits.length + monthUnits.length, source });
+    }
 
     currentUnits = mergeMarketUnits(currentUnits, monthUnits, interval.from, interval.to);
     if (!isCurrentMonth && interval.isFullMonth) {
