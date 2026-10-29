@@ -25,6 +25,15 @@ const OPTIONS = { token: "t", retryDelayMs: 0, maxRetries: 0, pauseMs: 0 };
 const WINDOW = { startDate: "2026-10-13 10:00:00", endDate: "2026-10-15 15:35:00" };
 
 describe("fetchLotBidWindow", () => {
+  it.each([undefined, 2])("не принимает дочерний лот без подтверждения системы ЭГЗ: %s", async systemId => {
+    const fetchFn = (async (url: string) => {
+      const p = new URL(url).pathname;
+      if (p.includes("/announcements/") && p.endsWith("/lots/")) return jsonResponse([{ lot_number: "100-ЗЦП1", system: systemId == null ? null : { id: systemId } }]);
+      if (p.endsWith("/announcements/")) return jsonResponse({ count: 1, results: [{ id: 50, external_id: 1000, offer_start_date: "2026-10-15T03:00:00Z" }] });
+      return jsonResponse({ count: 0, results: [] });
+    }) as typeof fetch;
+    await expect(fetchLotBidWindow("100-ЗЦП1", { fetchFn, pauseMs: 0, announcementId: 1000 })).resolves.toBeNull();
+  });
   it("восстанавливает отсутствующий в поиске лот через объявление, проверяя оба внешних номера", async () => {
     const fetchFn = (async (url: string) => {
       const u = new URL(url);

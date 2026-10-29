@@ -49,7 +49,7 @@ export async function fetchLotBidWindow(lotNumber: string, options: LotWindowOpt
         `/public/announcements/${announcement.id}/lots/`, {}, options);
       if (!Array.isArray(body) && (!Array.isArray(body?.results) || body.next)) throw new Error("zakup: неполный список лотов объявления");
       const lots = Array.isArray(body) ? body : body.results;
-      if (!lots.some(lot => lot.lot_number === lotNumber && (lot.system?.id == null || lot.system.id === 1) && !lot.is_externally_deleted)) continue;
+      if (!lots.some(lot => lot.lot_number === lotNumber && lot.system?.id === 1 && !lot.is_externally_deleted)) continue;
       recovered.push({ startDate: zakupDateToAlmaty(announcement.offer_start_date), endDate: zakupDateToAlmaty(announcement.offer_end_date) });
     }
     return uniqueWindow(recovered, lotNumber);
