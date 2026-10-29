@@ -25,6 +25,14 @@ const OPTIONS = { token: "t", retryDelayMs: 0, maxRetries: 0, pauseMs: 0 };
 const WINDOW = { startDate: "2026-10-13 10:00:00", endDate: "2026-10-15 15:35:00" };
 
 describe("fetchLotBidWindow", () => {
+  it("при повторе номера выбирает объявление сделки; без него неоднозначность — ошибка", async () => {
+    const fetchFn = (async () => jsonResponse({ count: 2, results: [
+      { id: 99, external_id: 200, announcement_external_id: 2000, lot_number: "100-ЗЦП1", offer_start_date: "2026-10-16T10:10:00Z" },
+      { id: 90, external_id: 100, announcement_external_id: 1000, lot_number: "100-ЗЦП1", offer_start_date: "2026-10-15T03:00:00Z" }
+    ] })) as typeof fetch;
+    await expect(fetchLotBidWindow("100-ЗЦП1", { fetchFn, pauseMs: 0, announcementId: 1000 })).resolves.toEqual({ startDate: "2026-10-15 08:00:00", endDate: null });
+    await expect(fetchLotBidWindow("100-ЗЦП1", { fetchFn, pauseMs: 0 })).rejects.toThrow(/несколько объявлений/);
+  });
   it("читает zakup без токена и переводит UTC в Алматы, включая переход даты и года", async () => {
     const fetchFn = (async (url: string, init?: RequestInit) => {
       const u = new URL(url);
@@ -53,7 +61,7 @@ describe("fetchLotBidWindow", () => {
   it("asks the registry for the lot by its number and returns the bid period", async () => {
     const fetchFn = fakeRegistry({ "83132229-ЗЦП1": WINDOW });
     await expect(fetchLotBidWindow("83132229-ЗЦП1", { ...OPTIONS, fetchFn })).resolves.toEqual(WINDOW);
-    expect(fetchFn.calls[0].variables).toEqual({ lot: "83132229-ЗЦП1" });
+    expect(fetchFn.calls[0].variables).toEqual({ lot: "83132229-ЗЦП1", after: 0 });
   });
 
   it("returns null for an unknown lot and for a lot without dates", async () => {
