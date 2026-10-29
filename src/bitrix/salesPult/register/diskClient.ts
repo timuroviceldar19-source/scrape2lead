@@ -1,12 +1,12 @@
-import type { BitrixTransport } from "../../reporting/readOnlyClient.js";
+import type { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 
-interface DiskChildItem {
+type DiskChildItem = {
   ID: string | number;
   NAME: string;
   TYPE: "file" | "folder";
   DOWNLOAD_URL?: string;
   UPDATE_TIME?: string;
-}
+};
 
 export function parseDateKeyFromFileName(fileName: string): string {
   const m = fileName.match(/(\d{1,2})[.\-_](\d{1,2})[.\-_](\d{2,4})/);
@@ -40,18 +40,15 @@ export function pickLatestRegisterFile(items: DiskChildItem[]): DiskChildItem | 
 }
 
 export async function fetchLatestRegisterFromDisk(
-  client: BitrixTransport,
+  client: Pick<ReadOnlyBitrixClient, "listAllBatched">,
   folderId: number | string
 ): Promise<{ buffer: Buffer; fileName: string; updateTime: string } | null> {
   if (!folderId || folderId === "0" || folderId === 0) {
     return null;
   }
 
-  const res = (await client.call("disk.folder.getchildren", { id: folderId })) as {
-    result?: DiskChildItem[];
-  };
-
-  const children = Array.isArray(res?.result) ? res.result : [];
+  // Bitrix отдаёт папку по 50 элементов, а в папке чата задачи реестров уже больше.
+  const children = await client.listAllBatched<DiskChildItem>("disk.folder.getchildren", { id: folderId });
   const latest = pickLatestRegisterFile(children);
   if (!latest || !latest.DOWNLOAD_URL) {
     return null;
