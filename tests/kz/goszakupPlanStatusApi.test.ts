@@ -39,9 +39,27 @@ describe("parsePlanStatusResponse", () => {
     expect(parsed.rowCount).toBe(1);
   });
 
-  it("throws on graphql errors and malformed payloads", () => {
+  it("returns empty map when Plans is null (no plan points matched in api)", () => {
+    const parsed = parsePlanStatusResponse({
+      data: { Plans: null },
+      extensions: { pageInfo: { totalCount: 0 } }
+    });
+    expect(parsed.statuses.size).toBe(0);
+    expect(parsed.rowCount).toBe(0);
+  });
+
+  it("throws on graphql errors", () => {
     expect(() => parsePlanStatusResponse({ errors: [{ message: "boom" }] })).toThrow("boom");
-    expect(() => parsePlanStatusResponse({ data: null })).toThrow("no data.Plans");
+  });
+
+  it("throws when response has no data or data is null", () => {
+    expect(() => parsePlanStatusResponse({})).toThrow("no data");
+    expect(() => parsePlanStatusResponse({ data: null })).toThrow("no data");
+    expect(() => parsePlanStatusResponse(null)).toThrow("no data");
+  });
+
+  it("throws when data.Plans is not an array", () => {
+    expect(() => parsePlanStatusResponse({ data: { Plans: "invalid" } })).toThrow("no data.Plans array");
   });
 });
 
@@ -81,6 +99,17 @@ describe("fetchPlanStatusBatch", () => {
     const [url, init] = fetchFn.mock.calls[0];
     expect(url).toBe("https://ows.goszakup.gov.kz/v3/graphql");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer secret");
+  });
+
+  it("returns empty map when goszakup responds with Plans: null", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      jsonResponse({
+        data: { Plans: null },
+        extensions: { pageInfo: { totalCount: 0 } }
+      })
+    );
+    const result = await fetchPlanStatusBatch(["99999999"], { token: "secret", fetchFn });
+    expect(result.size).toBe(0);
   });
 
   it("retries on 503 and then succeeds", async () => {

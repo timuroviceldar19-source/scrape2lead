@@ -45,7 +45,16 @@ export function parsePlanStatusResponse(payload: unknown): ParsedPlanStatuses {
   if (body?.errors?.length) {
     throw new Error(`goszakup graphql: ${body.errors.map((error) => error.message ?? "unknown error").join("; ")}`);
   }
-  const plans = body?.data?.Plans;
+  if (!body || body.data == null) {
+    throw new Error("goszakup graphql: response has no data");
+  }
+  const plans = body.data.Plans;
+  if (plans === null) {
+    return {
+      statuses: new Map(),
+      rowCount: 0
+    };
+  }
   if (!Array.isArray(plans)) throw new Error("goszakup graphql: response has no data.Plans array");
 
   const newest = new Map<string, { id: number; status: string }>();
