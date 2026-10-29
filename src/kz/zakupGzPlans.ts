@@ -153,6 +153,8 @@ export class GzPlanLookup {
 
   /** Маркер даёт только номер для поиска. Решение и связь с пунктом снова проверяет прежняя доменная логика. */
   contractsByNumbers(bin: string, years: number[], numbers: readonly string[]): Promise<GzOutcomeContract[]> {
+    numbers = [...new Set(numbers.map(number => number.trim()).filter(Boolean))];
+    if (!numbers.length) return Promise.resolve([]);
     const key = this.baseKey(bin, years) + '|recorded:' + [...new Set(numbers)].sort().join(',');
     let pending = this.contractsCache.get(key);
     if (!pending) {
