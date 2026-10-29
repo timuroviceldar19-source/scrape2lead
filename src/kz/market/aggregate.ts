@@ -48,17 +48,28 @@ function getPreviousMonthKey(monthKey: string): string {
 }
 
 function getOurBinsSet(cfg: MarketConfig): Set<string> {
-  const bins = cfg.ourBins || (cfg.bin ? [cfg.bin] : []);
+  const bins = (cfg.ourBins || (cfg.bin ? [cfg.bin] : [])).map((b) => (typeof b === "string" ? b : b.bin));
   return new Set(bins);
 }
 
-function getOurCompanyName(bin: string, rawName?: string): string {
+function getOurCompanyName(bin: string, cfg: MarketConfig, rawName?: string): string {
+  if (cfg.ourCompanyNames?.[bin]) {
+    return cfg.ourCompanyNames[bin];
+  }
   if (bin === "061140003942") return "F3";
   if (bin === "130540000688") return "Amanat Asia";
   if (rawName) {
     return rawName.replace(/^Товарищество с ограниченной ответственностью\s*/i, "ТОО ").replace(/"/g, "").trim();
   }
   return bin;
+}
+
+export function getPreviousWorkday(dateStr: string): string {
+  const d = new Date(Date.parse(`${dateStr}T12:00:00Z`));
+  do {
+    d.setUTCDate(d.getUTCDate() - 1);
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  return d.toISOString().slice(0, 10);
 }
 
 export function buildMarketGroupView(
@@ -98,14 +109,14 @@ export function buildMarketGroupView(
     const ourBySupplier = groupBy(ourUnits, (u) => u.supplier);
     const ourDetailsList = Object.entries(ourBySupplier)
       .map(([b, xs]) => {
-        const cName = getOurCompanyName(b, xs[0]?.supplierName);
+        const cName = getOurCompanyName(b, cfg, xs[0]?.supplierName);
         const cSum = sumBy(xs, (u) => u.sum);
         return `${cName}: ${(cSum / 1e6).toLocaleString("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} млн`;
       });
     const details = ourDetailsList.length > 0 ? ourDetailsList.join(" · ") : undefined;
 
     suppliers.push({
-      bin: cfg.ourBins?.[0] || cfg.bin || "our-group",
+      bin: [...ourBins][0] || "our-group",
       name: "Группа F3",
       details,
       sum: sumBy(ourUnits, (u) => u.sum),
@@ -251,7 +262,7 @@ export function buildMarketView(
   const months = [...new Set(units.map((u) => u.month))].sort();
   const ip = units.length > 0 ? buildMarketGroupView("ИП", units, asOfDate, cfg) : null;
   const kt = units.length > 0 ? buildMarketGroupView("КТ", units, asOfDate, cfg) : null;
-  const isStale = Boolean(updatedAt && updatedAt < asOfDate);
+  const isStale = Boolean(updatedAt && updatedAt < getPreviousWorkday(asOfDate));
   return {
     asOf: asOfDate,
     months,

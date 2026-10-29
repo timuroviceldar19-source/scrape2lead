@@ -12,21 +12,37 @@ export function loadMarketConfig(customPath?: string): MarketConfig {
   const cfg = JSON.parse(raw) as MarketConfig;
 
   if (!Array.isArray(cfg.ourBins) || cfg.ourBins.length === 0) {
-    if (typeof (cfg as any).bin === "string" && /^\d{12}$/.test((cfg as any).bin)) {
-      cfg.ourBins = [(cfg as any).bin];
+    if (typeof cfg.bin === "string" && /^\d{12}$/.test(cfg.bin)) {
+      cfg.ourBins = [cfg.bin];
     } else {
-      throw new Error(`Invalid market config at ${cfgPath}: ourBins must be a non-empty array of 12-digit BINs`);
+      throw new Error(`Invalid market config at ${cfgPath}: ourBins must be a non-empty array`);
     }
   }
 
-  for (const b of cfg.ourBins) {
-    if (typeof b !== "string" || !/^\d{12}$/.test(b)) {
-      throw new Error(`Invalid BIN "${b}" in ourBins: must be exactly 12 digits`);
+  const companyNames: Record<string, string> = { ...cfg.ourCompanyNames };
+
+  for (const item of cfg.ourBins) {
+    if (typeof item === "string") {
+      if (!/^\d{12}$/.test(item)) {
+        throw new Error(`Invalid BIN "${item}" in ourBins: must be exactly 12 digits`);
+      }
+    } else if (item && typeof item === "object" && typeof item.bin === "string") {
+      if (!/^\d{12}$/.test(item.bin)) {
+        throw new Error(`Invalid BIN "${item.bin}" in ourBins: must be exactly 12 digits`);
+      }
+      if (item.name) {
+        companyNames[item.bin] = item.name;
+      }
+    } else {
+      throw new Error(`Invalid entry in ourBins: must be 12-digit string or { bin, name } object`);
     }
   }
+
+  cfg.ourCompanyNames = companyNames;
 
   if (!cfg.bin && cfg.ourBins.length > 0) {
-    cfg.bin = cfg.ourBins[0];
+    const first = cfg.ourBins[0];
+    cfg.bin = typeof first === "string" ? first : first.bin;
   }
 
   if (!customPath) cachedConfig = cfg;

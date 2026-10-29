@@ -161,8 +161,8 @@ export function mergeMarketUnits(
 export function getMonthIntervals(
   fromDate: string,
   toDate: string
-): Array<{ from: string; to: string; month: string }> {
-  const intervals: Array<{ from: string; to: string; month: string }> = [];
+): Array<{ from: string; to: string; month: string; isFullMonth: boolean }> {
+  const intervals: Array<{ from: string; to: string; month: string; isFullMonth: boolean }> = [];
   const start = new Date(Date.parse(`${fromDate}T00:00:00Z`));
   const end = new Date(Date.parse(`${toDate}T23:59:59Z`));
 
@@ -173,11 +173,14 @@ export function getMonthIntervals(
     const monthStr = `${y}-${String(m + 1).padStart(2, "0")}`;
     const firstDay = new Date(Date.UTC(y, m, 1));
     const lastDay = new Date(Date.UTC(y, m + 1, 0));
+    const firstDayStr = firstDay.toISOString().slice(0, 10);
+    const lastDayStr = lastDay.toISOString().slice(0, 10);
 
     const from = (firstDay < start ? start : firstDay).toISOString().slice(0, 10);
     const to = (lastDay > end ? end : lastDay).toISOString().slice(0, 10);
+    const isFullMonth = from === firstDayStr && to === lastDayStr;
 
-    intervals.push({ from, to, month: monthStr });
+    intervals.push({ from, to, month: monthStr, isFullMonth });
     cur = new Date(Date.UTC(y, m + 1, 1));
   }
   return intervals;
@@ -247,7 +250,7 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
     });
 
     currentUnits = mergeMarketUnits(currentUnits, monthUnits, interval.from, interval.to);
-    if (!isCurrentMonth) {
+    if (!isCurrentMonth && interval.isFullMonth) {
       completeMonths.add(interval.month);
     }
     saveStoredMarketData(

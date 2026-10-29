@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildMarketGroupView, calculateQuantile } from "../../src/kz/market/aggregate.js";
+import { buildMarketGroupView, buildMarketView, calculateQuantile, getPreviousWorkday } from "../../src/kz/market/aggregate.js";
 import type { MarketUnit, MarketConfig } from "../../src/kz/market/types.js";
 import { loadMarketConfig } from "../../src/kz/market/config.js";
 
@@ -46,7 +46,7 @@ describe("buildMarketGroupView", () => {
         sum: 2000000,
         qty: 4,
         price: 500000,
-        supplier: cfg.bin || cfg.ourBins[0],
+        supplier: cfg.bin || (typeof cfg.ourBins[0] === "string" ? cfg.ourBins[0] : cfg.ourBins[0].bin),
         customer: "222222222222",
         supplierName: 'ТОО "F3.kz"',
         customerName: "Заказчик 2",
@@ -186,5 +186,28 @@ describe("buildMarketGroupView", () => {
     expect(view.lost).toHaveLength(1);
     expect(view.lost[0].id).toBe(103);
     expect(view.lost.some((l) => l.supplierBin === "061140003942" || l.supplierBin === "130540000688")).toBe(false);
+  });
+
+  it("calculates previous workday correctly across weekends", () => {
+    // Tuesday -> Monday
+    expect(getPreviousWorkday("2026-10-27")).toBe("2026-10-26");
+    // Monday -> Friday
+    expect(getPreviousWorkday("2026-10-26")).toBe("2026-10-23");
+    // Sunday -> Friday
+    expect(getPreviousWorkday("2026-10-25")).toBe("2026-10-23");
+  });
+
+  it("only marks market view as stale if data is older than previous workday", () => {
+    // Thursday with Wednesday data: NOT stale (yesterday's data during morning run)
+    const viewNormal = buildMarketView([], "2026-10-29", cfg, undefined, "2026-10-28");
+    expect(viewNormal.stale).toBe(false);
+
+    // Thursday with Tuesday data: STALE (missed Wednesday)
+    const viewStale = buildMarketView([], "2026-10-29", cfg, undefined, "2026-10-27");
+    expect(viewStale.stale).toBe(true);
+
+    // Monday with Friday data: NOT stale
+    const viewMonday = buildMarketView([], "2026-10-26", cfg, undefined, "2026-10-23");
+    expect(viewMonday.stale).toBe(false);
   });
 });

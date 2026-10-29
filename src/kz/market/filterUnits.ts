@@ -32,6 +32,14 @@ export function filterContractUnits(
   cfg: MarketConfig = loadMarketConfig()
 ): MarketUnit[] {
   const units: MarketUnit[] = [];
+  const ourBinsSet = new Set<string>();
+  if (cfg.ourBins && cfg.ourBins.length > 0) {
+    for (const b of cfg.ourBins) {
+      ourBinsSet.add(typeof b === "string" ? b : b.bin);
+    }
+  } else if (cfg.bin) {
+    ourBinsSet.add(cfg.bin);
+  }
 
   for (const c of contracts) {
     if (!c.signDate || !c.refContractStatusId) continue;
@@ -44,7 +52,7 @@ export function filterContractUnits(
     const supplierName = cleanEntityName(c.Supplier?.nameRu) || supplierBin;
     const customerName = cleanEntityName(c.Customer?.nameRu) || customerBin;
     const method = getMethodName(c.faktTradeMethodsId ?? 0, cfg);
-    const isUs = Boolean(cfg.ourBins ? cfg.ourBins.includes(supplierBin) : (cfg.bin && supplierBin === cfg.bin));
+    const isUs = ourBinsSet.has(supplierBin);
 
     const rawUnits = c.ContractUnits ?? [];
     for (const [unitIdx, u] of rawUnits.entries()) {

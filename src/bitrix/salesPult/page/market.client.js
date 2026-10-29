@@ -43,10 +43,14 @@
       ? `Мы первые: <b>${money(V.us.sum)}</b>, у второго места (${esc(short(second.name, 40))}) ${money(second.sum)}.`
       : `Мы на <b>${V.us.rank || "—"}-м месте</b> с ${money(V.us.sum)}. Лидер — ${esc(short(leader.name, 40))}: ${money(leader.sum)}, это ${pct1(V.total.sum ? leader.sum / V.total.sum : 0)} рынка.`;
 
-    const isStale = Boolean(MK?.stale || (MK?.updatedAt && MK?.asOf && MK.updatedAt < MK.asOf));
+    const isStale = Boolean(MK?.stale);
     const staleWarning = isStale
       ? `<div class="note-warn">Данные рынка не обновлены с ${ddmm(MK.updatedAt)}</div>`
       : "";
+
+    const roundedDelta = Math.round(delta * 100);
+    const deltaText = roundedDelta === 0 ? "0%" : `${roundedDelta > 0 ? "+" : "−"}${Math.abs(roundedDelta)}%`;
+    const deltaCls = roundedDelta === 0 ? "" : (roundedDelta > 0 ? "good" : "bad");
 
     let s = `${staleWarning}<section class="block reveal">${head("01", `Рынок ${title} · ${MONTHS[M - 1]}`, "госзакупки, все каналы · без НДС")}
     <div class="hero"><div>
@@ -56,7 +60,7 @@
       <div class="readout">
         <div><span class="label">Наша доля</span><div class="v">${pct1(V.us.share)}<small> · ${mln(V.us.sum)} млн</small></div></div>
         <div><span class="label">Наше место</span><div class="v">${V.us.rank || "—"}<small> из ${V.total.suppliers}</small></div></div>
-        <div><span class="label">К 1–${Number(V.prev.toDay)} ${MONTHS_S[M >= 2 ? M - 2 : 11]}</span><div class="v ${delta >= 0 ? "good" : "bad"}">${delta >= 0 ? "+" : "−"}${Math.abs(Math.round(delta * 100))}%<small> рынок</small></div></div>
+        <div><span class="label">К 1–${Number(V.prev.toDay)} ${MONTHS_S[M >= 2 ? M - 2 : 11]}</span><div class="v ${deltaCls}">${deltaText}<small> рынок</small></div></div>
       </div>
       <p class="verdict">${verdict}</p>
     </div><div><div class="share rows"><div class="r head"><span></span><span class="label">Поставщик</span><span class="label">Доля рынка</span><span class="label">Сумма</span><span class="label">Дог.</span></div>
@@ -76,7 +80,11 @@
       ? `<p class="note-src mobile-note" style="margin-top: 6px; font-size: 11px;">* Данные за текущий месяц по ${toDayNum}-е число.</p>`
       : "";
 
-    s += `<section class="block reveal">${head("02", "По месяцам", "весь рынок · наша часть тёмным")}
+    const metaUnits = isIp
+      ? "весь рынок · наша часть тёмным · млн ₸"
+      : `весь рынок · наша часть тёмным · <span class="desktop">млн ₸</span><span class="mobile">млрд ₸</span>`;
+
+    s += `<section class="block reveal">${head("02", "По месяцам", metaUnits)}
     <div class="months">${months.map((m) => {
       const desktopLab = fmt(m.sum / 1e6);
       const mobileLab = !isIp ? nf1.format(m.sum / 1e9) : desktopLab;

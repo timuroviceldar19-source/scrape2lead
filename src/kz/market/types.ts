@@ -9,9 +9,12 @@ export interface MarketGroupConfig {
   kinds: MarketKindConfig[];
 }
 
+export type OurBinConfig = string | { bin: string; name?: string };
+
 export interface MarketConfig {
-  ourBins: string[];
+  ourBins: OurBinConfig[];
   bin?: string;
+  ourCompanyNames?: Record<string, string>;
   minUnitPrice: number;
   excludedStatuses: number[];
   allowedStatuses: number[];

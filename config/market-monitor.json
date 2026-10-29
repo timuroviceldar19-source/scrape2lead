@@ -1,5 +1,8 @@
 {
-  "ourBins": ["061140003942", "130540000688"],
+  "ourBins": [
+    { "bin": "061140003942", "name": "F3" },
+    { "bin": "130540000688", "name": "Amanat Asia" }
+  ],
   "minUnitPrice": 10000,
   "excludedStatuses": [455, 350, 340],
   "allowedStatuses": [190, 390, 375, 450],
