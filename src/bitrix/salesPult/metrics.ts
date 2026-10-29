@@ -72,6 +72,8 @@ export interface RawTask {
   created?: string;
   planStatus?: string | null;
   planMonth?: string | null;
+  /** Deal creation time (DATE_CREATE); its year is the year of the plan month. */
+  dealCreated?: string | null;
   outcome?: string | null;
   hasContactAfterDeadline?: boolean;
   lastHumanCommentAt?: string | null;

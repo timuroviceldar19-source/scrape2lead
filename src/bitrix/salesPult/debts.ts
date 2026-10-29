@@ -198,7 +198,8 @@ export function isOutcomePassed(outcome: string | null | undefined): boolean {
 export function getPassedPlanMonthNote(
   planStatus: string | null | undefined,
   planMonth: string | null | undefined,
-  nowIso: string
+  nowIso: string,
+  dealCreated?: string | null
 ): string | null {
   const normStatus = normalize(planStatus).replace(/ё/g, "е");
   if (normStatus !== "утвержден") return null;
@@ -209,9 +210,13 @@ export function getPassedPlanMonthNote(
   const nowMs = Date.parse(nowIso);
   if (Number.isNaN(nowMs)) return null;
   const todayDay = toAlmatyDay(nowMs);
+  const currentYear = parseInt(todayDay.slice(0, 4), 10);
   const currentMonth = parseInt(todayDay.slice(5, 7), 10);
   if (!Number.isFinite(currentMonth) || currentMonth < 1 || currentMonth > 12) return null;
-  const isPassed = currentMonth === 1 ? entry.num === 12 : entry.num < currentMonth;
+  // The plan month belongs to the year the deal was created; unknown creation date -> current year.
+  const createdMs = dealCreated ? parseBitrixTime(dealCreated) : Number.NaN;
+  const planYear = Number.isNaN(createdMs) ? currentYear : parseInt(toAlmatyDay(createdMs).slice(0, 4), 10);
+  const isPassed = planYear * 12 + entry.num < currentYear * 12 + currentMonth;
   return isPassed ? `план на ${entry.label} прошёл` : null;
 }
 
@@ -395,7 +400,8 @@ export function rankDebtTopTasks(classified: readonly ClassifiedTodo[], context:
     const passedPlanMonthNote = getPassedPlanMonthNote(
       item.candidate.planStatus,
       item.candidate.planMonth,
-      context.nowIso
+      context.nowIso,
+      item.candidate.dealCreated
     );
     const contactedAfterDeadlineNote = getContactedAfterDeadlineNote(item);
     return [{ item, group, passedPlanMonthNote, contactedAfterDeadlineNote }];

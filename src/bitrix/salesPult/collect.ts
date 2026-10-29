@@ -573,6 +573,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         closed: deal?.closed,
         planStatus: deal?.planStatus ?? null,
         planMonth: deal?.planMonth ?? null,
+        dealCreated: deal?.dateCreate ?? null,
         outcome: deal?.outcome ?? null,
         subject: String(a.SUBJECT ?? "").trim(),
         created: String(a.CREATED ?? ""),
