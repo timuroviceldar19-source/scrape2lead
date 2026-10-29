@@ -1,4 +1,6 @@
 import type { ManagerRollups, TopTask, TargetsConfig } from "./metrics.js";
+import type { ManagerDebts } from "./debts.js";
+import { decodeHtmlEntities } from "./site.js";
 
 export function formatMoney(amount: number): string {
   if (!amount || Number.isNaN(amount)) return "0 ₸";
@@ -41,10 +43,11 @@ export function buildMorningReport(params: {
   date: string;
   targets: { calls: number; proposals: number; contracts: number };
   tasks: TopTask[];
+  debts?: ManagerDebts;
   pultUrl: string;
   taskError?: string | null;
 }): string {
-  const { managerId, managerName, date, targets, tasks, pultUrl, taskError } = params;
+  const { managerId, managerName, date, targets, tasks, debts, pultUrl, taskError } = params;
 
   const lines: string[] = [
     `#автоотчёт ${date} утро ${managerId}`,
@@ -57,6 +60,15 @@ export function buildMorningReport(params: {
     ""
   ];
 
+  const hasNewDeals = Boolean(debts && debts.newDeals > 0);
+  if (hasNewDeals && debts) {
+    const oldestStr = debts.newOldestAgeDays >= 1 ? ` (самой старой ${debts.newOldestAgeDays} дн.)` : "";
+    lines.push(`🆕 Новых сделок без звонка: ${debts.newDeals}${oldestStr}`);
+    if (tasks.length > 0 || taskError) {
+      lines.push("");
+    }
+  }
+
   if (taskError) {
     lines.push("🔥 Топ-5 задач: ⚠️ не удалось загрузить задачи (ошибка API)");
   } else if (tasks.length > 0) {
@@ -64,14 +76,17 @@ export function buildMorningReport(params: {
     tasks.forEach((t, i) => {
       const planTag = t.planNumber ? `[${t.planNumber}] ` : "";
       const moneyTag = t.amount > 0 ? ` — ${formatMoney(t.amount)}` : "";
-      const timeTag = t.deadline ? ` [до ${formatDeadline(t.deadline, date)}]` : "";
+      // A "new" activity has deadline == creation time: the time is noise and it is not an overdue debt.
+      const isNew = t.kind === "new";
+      const timeTag = t.deadline && !isNew ? ` [до ${formatDeadline(t.deadline, date)}]` : "";
       const overdueTag = t.isOverdue ? " ⚠️ (просрочено)" : "";
-      lines.push(`${i + 1}. ${planTag}${t.title}${moneyTag}${timeTag}${overdueTag}`);
+      const newTag = isNew ? ` 🆕 (новая, без звонка ${Math.max(1, Math.floor(t.ageDays ?? 0))} дн.)` : "";
+      lines.push(`${i + 1}. ${planTag}${t.title}${moneyTag}${timeTag}${overdueTag}${newTag}`);
       if (t.lastComment?.trim()) {
-        lines.push(`   💬 ${t.lastComment.trim()}`);
+        lines.push(`   💬 ${decodeHtmlEntities(t.lastComment.trim())}`);
       }
     });
-  } else {
+  } else if (!hasNewDeals) {
     lines.push("🔥 Топ-5 задач: нет открытых задач на сегодня");
   }
 

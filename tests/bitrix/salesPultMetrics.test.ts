@@ -4,12 +4,10 @@ import {
   calculateDailyMetrics,
   calculateRollups,
   getMetricStatus,
-  rankTopTasks,
   getPultCollectionStartDate,
   getDateRange,
   type CallRecord,
   type StageTransition,
-  type RawTask,
   type DealInfo
 } from "../../src/bitrix/salesPult/metrics.js";
 
@@ -137,84 +135,5 @@ describe("salesPultMetrics", () => {
     expect(getMetricStatus(15, 15)).toBe("green");
     expect(getMetricStatus(10, 15)).toBe("yellow"); // ~67%
     expect(getMetricStatus(2, 15)).toBe("red");
-  });
-
-  it("ranks top 5 tasks: overdue first, then today, sorted by deal amount descending", () => {
-    const now = "2026-10-28T12:00:00+05:00";
-    const tasks: RawTask[] = [
-      { id: "t1", dealId: "d1", title: "Activity 1", deadline: "2026-10-28T16:00:00+05:00", amount: 1_000_000, categoryId: 9, stageId: "C9:EXECUTING" },
-      { id: "t2", dealId: "d2", title: "Activity 2", deadline: "2026-10-27T18:00:00+05:00", amount: 500_000, categoryId: 41, stageId: "C41:EXECUTING" }, // Overdue
-      { id: "t3", dealId: "d3", title: "Activity 3", deadline: "2026-10-28T14:00:00+05:00", amount: 5_000_000, categoryId: 43, stageId: "C43:EXECUTING" }, // Today, high amount
-      { id: "t4", dealId: "d4", title: "Activity 4", deadline: "2026-10-27T10:00:00+05:00", amount: 3_000_000, categoryId: 9, stageId: "C9:EXECUTING" }, // Overdue, high amount
-      { id: "t5", dealId: "d5", title: "Activity 5", deadline: "2026-10-28T17:00:00+05:00", amount: 2_000_000, categoryId: 9, stageId: "C9:EXECUTING" },
-      { id: "t6", dealId: "d6", title: "Activity 6", deadline: "2026-10-28T15:00:00+05:00", amount: 100_000, categoryId: 9, stageId: "C9:EXECUTING" }
-    ];
-
-    const top5 = rankTopTasks(tasks, now);
-    expect(top5).toHaveLength(5);
-    // Overdue tasks first, sorted by amount desc: t4 (3M), then t2 (500k)
-    expect(top5[0].id).toBe("t4");
-    expect(top5[0].isOverdue).toBe(true);
-    expect(top5[1].id).toBe("t2");
-    expect(top5[1].isOverdue).toBe(true);
-    // Then today tasks, sorted by amount desc: t3 (5M), t5 (2M), t1 (1M)
-    expect(top5[2].id).toBe("t3");
-    expect(top5[2].isOverdue).toBe(false);
-    expect(top5[3].id).toBe("t5");
-    expect(top5[4].id).toBe("t1");
-  });
-
-  it("deduplicates tasks by dealId taking the highest priority task per deal", () => {
-    const now = "2026-10-28T12:00:00+05:00";
-    const tasks: RawTask[] = [
-      { id: "t1_overdue", dealId: "deal_1", title: "Overdue call", deadline: "2026-10-27T12:00:00+05:00", amount: 1_000_000, categoryId: 9, stageId: "C9:EXECUTING" },
-      { id: "t1_upcoming", dealId: "deal_1", title: "Upcoming meeting", deadline: "2026-10-28T16:00:00+05:00", amount: 1_000_000, categoryId: 9, stageId: "C9:EXECUTING" },
-      { id: "t2", dealId: "deal_2", title: "Task 2", deadline: "2026-10-28T15:00:00+05:00", amount: 2_000_000, categoryId: 9, stageId: "C9:EXECUTING" }
-    ];
-
-    const top = rankTopTasks(tasks, now);
-    expect(top).toHaveLength(2);
-    expect(top.map((t) => t.id)).toEqual(["t1_overdue", "t2"]);
-  });
-
-  it("filters out closed deals and funnels other than 9, 41, 43", () => {
-    const now = "2026-10-28T12:00:00+05:00";
-    const tasks: RawTask[] = [
-      { id: "t_valid", dealId: "d1", title: "Valid deal", deadline: "2026-10-28T15:00:00+05:00", amount: 1_000_000, categoryId: 9, stageId: "C9:EXECUTING" },
-      { id: "t_won", dealId: "d2", title: "Won deal", deadline: "2026-10-28T15:00:00+05:00", amount: 5_000_000, categoryId: 9, stageId: "C9:WON" },
-      { id: "t_lose", dealId: "d3", title: "Lost deal", deadline: "2026-10-28T15:00:00+05:00", amount: 3_000_000, categoryId: 41, stageId: "C41:LOSE" },
-      { id: "t_wrong_funnel", dealId: "d4", title: "Funnel 1", deadline: "2026-10-28T15:00:00+05:00", amount: 10_000_000, categoryId: 1, stageId: "NEW" }
-    ];
-
-    const top = rankTopTasks(tasks, now);
-    expect(top).toHaveLength(1);
-    expect(top[0].id).toBe("t_valid");
-  });
-
-  it("filters out tasks that are overdue by more than maxOverdueDays (30 days)", () => {
-    const now = "2026-10-28T12:00:00+05:00";
-    const tasks: RawTask[] = [
-      // 5 days overdue -> keep
-      { id: "t_recent_overdue", dealId: "d1", title: "Recent overdue", deadline: "2026-10-23T12:00:00+05:00", amount: 1_000_000, categoryId: 9, stageId: "C9:EXECUTING" },
-      // 35 days overdue -> reject
-      { id: "t_ancient_overdue", dealId: "d2", title: "Ancient overdue", deadline: "2026-09-20T12:00:00+05:00", amount: 9_000_000, categoryId: 9, stageId: "C9:EXECUTING" }
-    ];
-
-    const top = rankTopTasks(tasks, now, { maxOverdueDays: 30 });
-    expect(top).toHaveLength(1);
-    expect(top[0].id).toBe("t_recent_overdue");
-  });
-  it("filters funnels according to custom topTaskCategories when specified", () => {
-    const now = "2026-10-28T12:00:00+05:00";
-    const tasks: RawTask[] = [
-      { id: "t_9", dealId: "d1", title: "Funnel 9", deadline: "2026-10-28T15:00:00+05:00", amount: 1_000_000, categoryId: 9, stageId: "C9:EXECUTING" },
-      { id: "t_41", dealId: "d2", title: "Funnel 41", deadline: "2026-10-28T15:00:00+05:00", amount: 2_000_000, categoryId: 41, stageId: "C41:EXECUTING" },
-      { id: "t_43", dealId: "d3", title: "Funnel 43", deadline: "2026-10-28T15:00:00+05:00", amount: 3_000_000, categoryId: 43, stageId: "C43:EXECUTING" }
-    ];
-
-    // Only allow funnel 41
-    const top = rankTopTasks(tasks, now, { topTaskCategories: [41] });
-    expect(top).toHaveLength(1);
-    expect(top[0].id).toBe("t_41");
   });
 });

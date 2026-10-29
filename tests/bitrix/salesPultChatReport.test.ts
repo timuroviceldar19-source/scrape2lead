@@ -281,4 +281,98 @@ describe("salesPultChatReport", () => {
     expect(text).toContain("Қызғалдақ балабақшасымен хабарластым");
     expect(text).not.toContain("?");
   });
+
+  it("decodes HTML entities in task comments (decodeHtmlEntities)", () => {
+    const text = buildMorningReport({
+      managerId: "147",
+      managerName: "Бахтияр",
+      date: "2026-10-28",
+      targets: { calls: 15, proposals: 3, contracts: 1 },
+      tasks: [
+        {
+          id: "t1",
+          dealId: "101",
+          title: "Панель",
+          amount: 500_000,
+          deadline: "2026-10-28T10:00:00+05:00",
+          planNumber: "88399123",
+          lastComment: "&quot;Закупщик&quot; &amp; юрист &lt;просили перезвонить&gt; &#39;срочно&#39;",
+          isOverdue: false,
+          rank: 1
+        }
+      ],
+      pultUrl: "https://f3-pult.pages.dev"
+    });
+
+    expect(text).toContain('💬 "Закупщик" & юрист <просили перезвонить> \'срочно\'');
+    expect(text).not.toContain("&quot;");
+    expect(text).not.toContain("&amp;");
+    expect(text).not.toContain("&lt;");
+    expect(text).not.toContain("&#39;");
+  });
+
+  it("adds new deals line when debts.newDeals > 0", () => {
+    const debts = {
+      overdue: 10,
+      overdueOverMonth: 2,
+      overdueOngoing: 5,
+      newDeals: 25,
+      newStaleDeals: 15,
+      newOldestAgeDays: 5,
+      readyToCloseDealIds: []
+    };
+    const text = buildMorningReport({
+      managerId: "1751",
+      managerName: "Нурбол",
+      date: "2026-10-28",
+      targets: { calls: 15, proposals: 3, contracts: 1 },
+      tasks,
+      debts,
+      pultUrl: "https://f3-pult.pages.dev"
+    });
+
+    expect(text).toContain("🆕 Новых сделок без звонка: 25 (самой старой 5 дн.)");
+    expect(text).toContain("🔥 Топ-5 задач на сегодня:");
+  });
+
+  it("allows «нет открытых задач на сегодня» only when there are neither tasks nor new deals", () => {
+    const base = {
+      managerId: "1751",
+      managerName: "Нурбол",
+      date: "2026-10-28",
+      targets: { calls: 15, proposals: 3, contracts: 1 },
+      tasks: [],
+      pultUrl: "https://f3-pult.pages.dev"
+    };
+
+    const withNewDeals = buildMorningReport({
+      ...base,
+      debts: {
+        overdue: 0,
+        overdueOverMonth: 0,
+        overdueOngoing: 0,
+        newDeals: 25,
+        newStaleDeals: 10,
+        newOldestAgeDays: 5,
+        readyToCloseDealIds: []
+      }
+    });
+    expect(withNewDeals).toContain("🆕 Новых сделок без звонка: 25 (самой старой 5 дн.)");
+    expect(withNewDeals).not.toContain("нет открытых задач на сегодня");
+
+    const empty = buildMorningReport({
+      ...base,
+      debts: {
+        overdue: 0,
+        overdueOverMonth: 0,
+        overdueOngoing: 0,
+        newDeals: 0,
+        newStaleDeals: 0,
+        newOldestAgeDays: 0,
+        readyToCloseDealIds: []
+      }
+    });
+    expect(empty).toContain("🔥 Топ-5 задач: нет открытых задач на сегодня");
+    expect(empty).not.toContain("🆕 Новых сделок");
+  });
 });
