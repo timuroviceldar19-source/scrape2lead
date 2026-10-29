@@ -250,12 +250,12 @@ describe("salesPultSite", () => {
 
     // Gender neutral contract signals: "<b>Эльмира</b>: подписано 2 договора на 4,6 млн ₸"
     const elmira = signals.find((s) => s.text.includes("Эльмира"));
-    expect(elmira?.text).toContain("подписано 2 договора на 4,6 млн ₸");
+    expect(elmira?.text).toContain("подписано 2\u00A0договора на 4,6 млн ₸");
     expect(elmira?.text).not.toContain("подписал");
     expect(elmira?.text).not.toContain("подписала");
 
     const turar = signals.find((s) => s.text.includes("Турар"));
-    expect(turar?.text).toContain("подписано 4 договора на 2,4 млн ₸");
+    expect(turar?.text).toContain("подписано 4\u00A0договора на 2,4 млн ₸");
 
     // Gender neutral zero calls signal: "<b>Бекзат</b>: сегодня ни одного звонка через Битрикс"
     const bekzat = signals.find((s) => s.text.includes("Бекзат"));
@@ -406,5 +406,22 @@ describe("salesPultSite", () => {
     // No external JavaScript scripts
     const scriptSrcMatches = html.match(/<script[^>]+src=["'](https?:)?\/\/[^"']+/gi) ?? [];
     expect(scriptSrcMatches).toHaveLength(0);
+  });
+
+  it("assembled page does not contain __PAYLOAD__, 'demo' or holiday list", () => {
+    const html = renderPultHtml(basePayload);
+
+    // Placeholders are fully replaced
+    expect(html).not.toContain("__PAYLOAD__");
+    expect(html).not.toContain("__VIEW__");
+    expect(html).not.toContain("/*__CSS__*/");
+    expect(html).not.toContain("/*__CLIENT_JS__*/");
+
+    // No demo mode remnants
+    expect(html.toLowerCase()).not.toContain("demo");
+
+    // No holidays list in client script
+    expect(html).not.toContain("HOLIDAYS");
+    expect(html).not.toContain("2026-12-16");
   });
 });

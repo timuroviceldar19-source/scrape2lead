@@ -1,10 +1,8 @@
-import type { ManagerRollups, TopTask, TargetsConfig } from "./metrics.js";
-import type { ManagerDebts } from "./debts.js";
-import { generatePultTemplate } from "./template.js";
+import fs from "node:fs";
 import {
+  buildPultView,
   buildPultSignals,
-  type SignalItem,
-  type DebtLine,
+  safeJson,
   calculatePace,
   calculateMonthForecast,
   judgeMetricStatus,
@@ -14,6 +12,7 @@ import {
   pluralDeals,
   pluralDays,
   decodeHtmlEntities,
+  escapeHtml,
   cleanFirstName,
   cleanFullName,
   initials,
@@ -21,69 +20,51 @@ import {
   getTaskStatus,
   formatDebtLines,
   formatTaskLine,
-  formatUpdatedTime,
-  getAlmatyHour,
   formatTaskDeadline,
   formatOverdue,
+  formatUpdatedTime,
+  getAlmatyHour,
   isWorkDay,
   getMonthWorkDays,
-  DEFAULT_HOLIDAYS
+  DEFAULT_HOLIDAYS,
+  type SalesPultPayload,
+  type PultGroupView,
+  type PultManagerView,
+  type DayDynamic,
+  type SignalItem,
+  type DebtLine,
+  type PultView,
+  type PultPeriodView,
+  type PultMonthView,
+  type PultMetricStatusView,
+  type PultSalesManagerView,
+  type PultTenderManagerView
 } from "./pace.js";
 
-export interface PultManagerView {
-  id: string;
-  name: string;
-  active: boolean;
-  rollups: ManagerRollups;
-  topTasks: TopTask[];
-  /** Today's debts; independent of the selected period. */
-  debts?: ManagerDebts;
-}
-
-export interface PultGroupView {
-  id: string;
-  name: string;
-  managers: PultManagerView[];
-}
-
-export interface DayDynamic {
-  date: string;
-  calls: number;
-  proposals: number;
-  contracts: number;
-  amount: number;
-}
-
-export interface SalesPultPayload {
-  asOfDate: string;
-  generatedAt: string;
-  portal: string;
-  pultUrl: string;
-  targets: TargetsConfig;
-  callsAvailable: boolean;
-  callsError?: string;
-  groups: PultGroupView[];
-  dynamics: DayDynamic[];
-  proposalsTracked?: boolean;
-  holidays?: string[];
-}
-
-export function safeJson(value: unknown): string {
-  return JSON.stringify(value).replace(/<\//g, "<\\/");
-}
+const pultHtml = fs.readFileSync(new URL("./page/pult.html", import.meta.url), "utf8");
+const pultCss = fs.readFileSync(new URL("./page/pult.css", import.meta.url), "utf8");
+const pultClientJs = fs.readFileSync(new URL("./page/pult.client.js", import.meta.url), "utf8");
 
 export function buildSignals(payload: SalesPultPayload): SignalItem[] {
   return buildPultSignals(payload);
 }
 
 export function renderPultHtml(payload: SalesPultPayload): string {
-  const json = safeJson(payload);
-  const template = generatePultTemplate();
-  return template.replace("__PAYLOAD__", () => json);
+  const view = buildPultView(payload);
+  const jsonPayload = safeJson(payload);
+  const jsonView = safeJson(view);
+
+  return pultHtml
+    .replace("/*__CSS__*/", () => pultCss)
+    .replace("__PAYLOAD__", () => jsonPayload)
+    .replace("__VIEW__", () => jsonView)
+    .replace("/*__CLIENT_JS__*/", () => pultClientJs);
 }
 
 export {
+  buildPultView,
   buildPultSignals,
+  safeJson,
   calculatePace,
   calculateMonthForecast,
   judgeMetricStatus,
@@ -93,6 +74,7 @@ export {
   pluralDeals,
   pluralDays,
   decodeHtmlEntities,
+  escapeHtml,
   cleanFirstName,
   cleanFullName,
   initials,
@@ -100,13 +82,24 @@ export {
   getTaskStatus,
   formatDebtLines,
   formatTaskLine,
-  formatUpdatedTime,
-  getAlmatyHour,
   formatTaskDeadline,
   formatOverdue,
+  formatUpdatedTime,
+  getAlmatyHour,
   isWorkDay,
   getMonthWorkDays,
   DEFAULT_HOLIDAYS,
+  type SalesPultPayload,
+  type PultGroupView,
+  type PultManagerView,
+  type DayDynamic,
   type SignalItem,
-  type DebtLine
+  type DebtLine,
+  type PultView,
+  type PultPeriodView,
+  type PultMonthView,
+  type PultMetricStatusView,
+  type PultSalesManagerView,
+  type PultTenderManagerView
 };
+

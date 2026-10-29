@@ -96,15 +96,15 @@ describe("debt signals", () => {
       manager("1", "Турар", debts({ newStaleDeals: 25, readyToCloseDealIds: ["a", "b", "c"] })),
       manager("2", "Нурбол", debts({ overdueOngoing: 3, readyToCloseDealIds: ["c", "d"] }))
     ]));
-    expect(signals).toContainEqual({ color: "red", text: "<b>Турар</b>: 25 новых сделок без звонка больше суток" });
-    expect(signals).toContainEqual({ color: "red", text: "<b>Нурбол</b>: 3 дела по идущим закупкам просрочено" });
+    expect(signals).toContainEqual({ color: "red", text: "<b>Турар</b>: 25\u00A0новых сделок без звонка больше суток" });
+    expect(signals).toContainEqual({ color: "red", text: "<b>Нурбол</b>: 3\u00A0дела по идущим закупкам просрочено" });
     const gray = signals.filter((s) => s.color === "gray");
-    expect(gray).toEqual([{ color: "gray", text: "Пора закрыть 5 сделок: закупка уже прошла, а сделки ещё в работе" }]);
+    expect(gray).toEqual([{ color: "gray", text: "Пора закрыть 5\u00A0сделок: закупка уже прошла, а сделки ещё в работе" }]);
   });
 
   it("uses the singular verb form and no debt signals when there is nothing", () => {
     const one = buildSignals(payload([manager("1", "Нурбол", debts({ overdueOngoing: 1 }))]));
-    expect(one).toContainEqual({ color: "red", text: "<b>Нурбол</b>: 1 дело по идущим закупкам просрочено" });
+    expect(one).toContainEqual({ color: "red", text: "<b>Нурбол</b>: 1\u00A0дело по идущим закупкам просрочено" });
 
     const none = buildSignals(payload([manager("1", "Нурбол", debts({}))]));
     expect(none).toEqual([{ color: "green", text: "Сегодня без происшествий" }]);

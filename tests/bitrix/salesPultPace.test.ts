@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   calculatePace,
@@ -5,6 +8,7 @@ import {
   judgeMetricStatus,
   buildPultSignals,
   buildCallNotes,
+  buildPultView,
   decodeHtmlEntities,
   plural,
   formatMoney,
@@ -387,6 +391,78 @@ describe("salesPultPace", () => {
       expect(formatMoney(2400000)).toBe("2,4 млн ₸");
       expect(formatMoney(5000000)).toBe("5 млн ₸");
       expect(formatMoney(1200000000)).toBe("1,2 млрд ₸");
+    });
+
+    it("decodes unicode codepoint &#128512; and preserves invalid number &#99999999; without throwing", () => {
+      expect(decodeHtmlEntities("&#128512;")).toBe("😀");
+      expect(decodeHtmlEntities("&#99999999;")).toBe("&#99999999;");
+    });
+  });
+
+  describe("midday.json view model coverage", () => {
+    it("generates expected statuses and signals for midday.json", () => {
+      const __dirname = path.dirname(fileURLToPath(import.meta.url));
+      const middayRaw = fs.readFileSync(
+        path.join(__dirname, "../fixtures/sales-pult/midday.json"),
+        "utf8"
+      );
+      const middayPayload = JSON.parse(middayRaw) as SalesPultPayload;
+      const view = buildPultView(middayPayload);
+
+      // Verify signals
+      expect(view.signals.length).toBeGreaterThan(0);
+      expect(
+        view.signals.some(
+          (s) => s.text.includes("Михаил") && s.text.includes("сегодня ни одного звонка через Битрикс")
+        )
+      ).toBe(true);
+      expect(
+        view.signals.some(
+          (s) => s.text.includes("Алексей") && s.text.includes("1 новая сделка без звонка")
+        )
+      ).toBe(true);
+      expect(
+        view.signals.some(
+          (s) =>
+            s.text.includes("Иван") &&
+            s.text.includes("1 новая сделка без звонка") &&
+            s.text.includes("самой старой 3 дня")
+        )
+      ).toBe(true);
+      expect(
+        view.signals.some(
+          (s) =>
+            s.text.includes("Мало дозвонов к 15:10") &&
+            s.text.includes("Иван") &&
+            s.text.includes("при норме 15")
+        )
+      ).toBe(true);
+      expect(
+        view.signals.some((s) => s.text.includes("подписан договор"))
+      ).toBe(true);
+      expect(
+        view.signals.some((s) => s.text.includes("Пора закрыть 1 сделку"))
+      ).toBe(true);
+
+      // Verify manager statuses for day
+      const dayManagers = view.periods.day.sales.managers;
+      const byName = new Map(dayManagers.map((m) => [m.name, m]));
+
+      // «План выполнен»
+      expect(byName.get("Алексей Смирнов")?.calls.label).toBe("План выполнен");
+      expect(byName.get("Константин Фёдоров")?.calls.label).toBe("План выполнен");
+
+      // «Идём в темпе»
+      expect(byName.get("Дмитрий Ковалёв")?.calls.label).toBe("Идём в темпе");
+
+      // «Чуть отстаём, на 1»
+      expect(byName.get("Сергей Морозов")?.calls.label).toBe("Чуть отстаём, на 1");
+
+      // «Отстаём от темпа на 6»
+      expect(byName.get("Иван Васильев")?.calls.label).toBe("Отстаём от темпа на 6");
+
+      // один без звонков через Битрикс
+      expect(byName.get("Михаил Попов")?.calls.noCallsFlag).toBe(true);
     });
   });
 });
