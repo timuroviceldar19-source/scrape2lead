@@ -30,7 +30,7 @@ describe("fetchLotBidWindow", () => {
       const u = new URL(url);
       if (u.pathname.endsWith("/lots/") && u.pathname.includes("/announcements/")) return jsonResponse([{ lot_number: "100-ЗЦП1", system: { id: 1 } }]);
       if (u.pathname.endsWith("/announcements/")) return jsonResponse({ count: 2, results: [
-        { id: 50, external_id: 1000, offer_start_date: "2026-10-15T05:40:57Z", offer_end_date: "2026-10-19T05:40:57Z" },
+        { id: 50, external_id: 1000, system_id: 4, offer_start_date: "2026-10-15T05:40:57Z", offer_end_date: "2026-10-19T05:40:57Z" },
         { id: 51, external_id: 999, offer_start_date: "2026-12-01T00:00:00Z" }
       ] });
       return jsonResponse({ count: 0, results: [] });

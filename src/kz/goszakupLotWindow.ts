@@ -40,10 +40,11 @@ export async function fetchLotBidWindow(lotNumber: string, options: LotWindowOpt
     if (direct || !options.announcementId) return direct;
     // Поисковый индекс содержит не все лоты; карточка объявления может содержать их полный список.
     const announcements = await zakupListAll<{ id: number; external_id?: number; system_id?: number; offer_start_date?: string | null; offer_end_date?: string | null }>(
-      "/public/announcements/", { announcement_number: options.announcementId, system_id: 1 }, options);
+      "/public/announcements/", { announcement_number: options.announcementId }, options);
     const recovered: LotBidWindow[] = [];
     for (const announcement of announcements) {
-      if (Number(announcement.external_id) !== options.announcementId || (announcement.system_id != null && announcement.system_id !== 1)) continue;
+      // У некоторых объявлений system_id=4, хотя их дочерние лоты относятся к ЭГЗ (1).
+      if (Number(announcement.external_id) !== options.announcementId) continue;
       const body = await zakupGet<Array<{ lot_number?: string; system?: { id?: number }; is_externally_deleted?: boolean | number }> | { results: Array<{ lot_number?: string; system?: { id?: number }; is_externally_deleted?: boolean | number }>; next?: string | null }>(
         `/public/announcements/${announcement.id}/lots/`, {}, options);
       if (!Array.isArray(body) && (!Array.isArray(body?.results) || body.next)) throw new Error("zakup: неполный список лотов объявления");
