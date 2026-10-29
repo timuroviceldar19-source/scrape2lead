@@ -60,12 +60,12 @@ export class GzPlanLookup {
   private remember(bin: string, item: ZakupContractPlan): void {
     const refs = this.contractPlans.get(bin) ?? new Map<number, ZakupContractPlan>();
     const old = refs.get(item.id);
-    const rank = { enstru: 0, lots: 1, full: 2, ows: 3 };
+    const rank = { enstru: 0, lots: 1, recorded: 2, full: 3, ows: 4 };
     if (!old || rank[item.lookupPath ?? 'full'] < rank[old.lookupPath ?? 'full']) refs.set(item.id, item);
     this.contractPlans.set(bin, refs); this.options.onPlanItem?.(item);
   }
 
-  private raw(bin: string, years: number[], codes?: readonly string[], numbers?: readonly string[], ids?: ReadonlySet<number>): Promise<ZakupCustomerContractData[]> {
+  private raw(bin: string, years: number[], codes?: readonly string[], numbers?: readonly string[], ids?: ReadonlySet<number>, numberPath: "lots" | "recorded" = "lots"): Promise<ZakupCustomerContractData[]> {
     const base = this.baseKey(bin, years); const valid = fullEnstruCodes(codes).sort();
     if (valid.length && this.fullResults.has(base)) {
       const wanted = new Set(valid);
@@ -80,12 +80,12 @@ export class GzPlanLookup {
           fullEnstruCodes(subject.plan_item?.enstru?.code).some(code => wanted.has(code))
           || planIds.has(Number(subject.plan_item?.external_id)) || planIds.has(Number(subject.plan_item?.root?.external_id)))));
     }
-    const key = base + '|' + (numbers?.length ? 'lots:' + [...numbers].sort().join(',') : valid.length ? valid.join(',') : '*');
+    const key = base + '|' + (numbers?.length ? numberPath + ':' + [...numbers].sort().join(',') : valid.length ? valid.join(',') : '*');
     let pending = this.rawCache.get(key);
     if (!pending) {
       if (!valid.length && !numbers?.length) this.fullScanBins.add(bin);
       pending = loadZakupCustomerContracts(bin, years, { ...this.options, concurrency: 1, enstruCodes: valid,
-        contractNumbers: numbers, contractIds: ids, onPlanItem: item => this.remember(bin, item) });
+        contractNumbers: numbers, contractIds: ids, contractLookupPath: numberPath, onPlanItem: item => this.remember(bin, item) });
       if (!valid.length && !numbers?.length) pending = pending.then(rows => { this.fullResults.set(base, rows); return rows; });
       this.rawCache.set(key, pending);
     }
@@ -145,6 +145,24 @@ export class GzPlanLookup {
       }, async () => {
         const mapped = await fetchOwsCustomerContracts(bin, years, this.options);
         mapped.forEach(row => this.contractSources.set(row, 'ows')); return mapped;
+      }, this.options.token);
+      this.contractsCache.set(key, pending);
+    }
+    return pending;
+  }
+
+  /** Маркер даёт только номер для поиска. Решение и связь с пунктом снова проверяет прежняя доменная логика. */
+  contractsByNumbers(bin: string, years: number[], numbers: readonly string[]): Promise<GzOutcomeContract[]> {
+    const key = this.baseKey(bin, years) + '|recorded:' + [...new Set(numbers)].sort().join(',');
+    let pending = this.contractsCache.get(key);
+    if (!pending) {
+      pending = withGzSourceFallback(async () => {
+        const data = await this.raw(bin, years, undefined, numbers, undefined, "recorded");
+        const mapped = await mapZakupCustomerContracts(data, { ...this.options, concurrency: 1 });
+        mapped.forEach((row, i) => this.contractSources.set(row, data[i].lookupPath)); return mapped;
+      }, async () => {
+        const mapped = await fetchOwsCustomerContracts(bin, years, this.options);
+        mapped.forEach(row => this.contractSources.set(row, "ows")); return mapped;
       }, this.options.token);
       this.contractsCache.set(key, pending);
     }

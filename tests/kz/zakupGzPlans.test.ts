@@ -22,6 +22,15 @@ function registry(listed: unknown[], plan = detail, withContract = false) {
   return { fetchFn, calls };
 }
 describe('поиск версий через q и договоры', () => {
+  it('проверяет уже известный номер договора по публичным данным, не копируя прежний исход', async () => {
+    const {fetchFn,calls}=registry([],detail,true);
+    const lookup=new GzPlanLookup({...options,fetchFn});
+    const [contract]=await lookup.contractsByNumbers(context.bin,[2026],['990000000001/260001']);
+    expect(calls.find(u=>u.pathname.endsWith('/contracts/'))?.searchParams.get('contract_number')).toBe('990000000001/260001');
+    expect(contract.supplierBiin).toBe('990000000002');
+    expect(lookup.sourceForContract(contract)).toBe('recorded');
+    expect(lookup.fullScanBins.size).toBe(0);
+  });
   it('после восстановления кода из полного ответа не обогащает поставщиков чужих позиций', async () => {
     const {fetchFn:base}=registry([],detail,true);
     const fetchFn=(async(url:string,init?:RequestInit)=>{
