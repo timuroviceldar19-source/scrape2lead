@@ -22,6 +22,27 @@ function registry(listed: unknown[], plan = detail, withContract = false) {
   return { fetchFn, calls };
 }
 describe('поиск версий через q и договоры', () => {
+  it('после восстановления кода из полного ответа не обогащает поставщиков чужих позиций', async () => {
+    const {fetchFn:base}=registry([],detail,true);
+    const fetchFn=(async(url:string,init?:RequestInit)=>{
+      const u=new URL(url);
+      if(u.pathname.endsWith('/contracts/'))return json(page([
+        {id:7,status_id:6,supplier_organization_id:8,contract_number_sys:'990000000001/260001/00'},
+        {id:8,status_id:6,supplier_organization_id:999,contract_number_sys:'990000000001/260002/00'}
+      ]));
+      if(u.pathname.endsWith('/contracts/8/subjects/'))return json([{external_id:19,plan_item:{id:900,external_id:900,root:{external_id:900},enstru:{code:'111111.111.111111'}}}]);
+      return base(url,init);
+    }) as typeof fetch;
+    const lookup=new GzPlanLookup({...options,fetchFn});
+    await lookup.plans([100],'root',options.contexts);
+    const contracts=await lookup.contracts(context.bin,[2026]);
+    expect(contracts).toHaveLength(1);expect(contracts[0].contractNumberSys).toBe('990000000001/260001/00');
+  });
+  it('успешный полный резервный просмотр подтверждает отсутствие пункта при сбое необязательного поиска лотов',async()=>{
+    const {fetchFn:base}=registry([]);
+    const fetchFn=(async(url:string,init?:RequestInit)=>new URL(url).pathname.endsWith('/lots/')?new Response('down',{status:503}):base(url,init)) as typeof fetch;
+    expect(await fetchGzPlans([100],'root',{...options,fetchFn})).toEqual([]);
+  });
   it('дочитывает договор по номеру из объявления, если индекс договора не нашёл код', async () => {
     const {fetchFn:base}=registry([],detail,true);const queries:URL[]=[];
     const fetchFn=(async(url: string,init?: RequestInit)=>{

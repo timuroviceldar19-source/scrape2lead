@@ -67,7 +67,19 @@ export class GzPlanLookup {
 
   private raw(bin: string, years: number[], codes?: readonly string[], numbers?: readonly string[], ids?: ReadonlySet<number>): Promise<ZakupCustomerContractData[]> {
     const base = this.baseKey(bin, years); const valid = fullEnstruCodes(codes).sort();
-    if (valid.length && this.fullResults.has(base)) return Promise.resolve(this.fullResults.get(base)!);
+    if (valid.length && this.fullResults.has(base)) {
+      const wanted = new Set(valid);
+      const planIds = new Set<number>();
+      for (const [id, context] of this.options.contexts ?? []) {
+        if (context.bin === bin && this.codesForContext(context).some(code => wanted.has(code))) {
+          planIds.add(id); for (const point of context.pointIds ?? []) planIds.add(point);
+        }
+      }
+      return Promise.resolve(this.fullResults.get(base)!.filter(row =>
+        fullEnstruCodes(row.contract.enstru_code).some(code => wanted.has(code)) || row.subjects.some(subject =>
+          fullEnstruCodes(subject.plan_item?.enstru?.code).some(code => wanted.has(code))
+          || planIds.has(Number(subject.plan_item?.external_id)) || planIds.has(Number(subject.plan_item?.root?.external_id)))));
+    }
     const key = base + '|' + (numbers?.length ? 'lots:' + [...numbers].sort().join(',') : valid.length ? valid.join(',') : '*');
     let pending = this.rawCache.get(key);
     if (!pending) {
@@ -171,7 +183,7 @@ export class GzPlanLookup {
         if (codes.length) { try { await this.raw(context.bin, years, codes); } catch (error) { failure = error; } }
         const hasRoot = () => [...(this.contractPlans.get(context.bin)?.values() ?? [])].some(ref => Number(ref.root?.external_id) === requested);
         if (!hasRoot()) { try { await this.lots(context.bin, requested, context); } catch (error) { failure ??= error; } }
-        if (!hasRoot() && !codes.length) { this.fullScanPlans.add(requested); await this.raw(context.bin, years); }
+        if (!hasRoot() && !codes.length) { this.fullScanPlans.add(requested); await this.raw(context.bin, years); failure = undefined; }
         if (!hasRoot() && failure) throw failure;
         for (const ref of this.contractPlans.get(context.bin)?.values() ?? []) {
           if (Number(ref.root?.external_id) !== requested) continue;

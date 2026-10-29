@@ -37,6 +37,7 @@ export async function withGzSourceFallback<T>(primary: () => Promise<T>, backup:
 interface DictRow { id: number; name?: string; egz_code?: string | null; year?: number }
 interface Organization { id: number; iin_bin?: string | null }
 export interface ContractRow {
+  enstru_code?: string[] | null;
   id: number; external_id?: number; contract_number_sys?: string; sign_date?: string | null;
   status_id?: number; supplier_organization_id?: number; customer_organization_id?: number;
   supplier_organization_name?: string; is_externally_deleted?: boolean | number | null;
