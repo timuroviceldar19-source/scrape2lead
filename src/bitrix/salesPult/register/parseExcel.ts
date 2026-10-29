@@ -228,3 +228,13 @@ export function parseRegisterWorkbook(
 
   return { rows, plans, asOf, month };
 }
+
+export async function parseRegisterExcel(
+  buffer: Buffer,
+  managerAliases?: Record<string, string>
+): Promise<{ rows: RegisterRow[]; plans: Record<string, number>; asOf: string; month: string }> {
+  const ExcelJS = await import("exceljs");
+  const workbook = new ExcelJS.default.Workbook();
+  await workbook.xlsx.load(buffer as any);
+  return parseRegisterWorkbook(workbook, managerAliases);
+}
