@@ -172,4 +172,144 @@ describe("salesPultCollect", () => {
     );
     warnSpy.mockRestore();
   });
+
+  it("re-attributes tasks and debts to deal.assignedById when present in pult, adding note «дело на <имя>»", async () => {
+    const call = vi.fn(async (method: string, body: any) => {
+      if (method === "im.user.get") {
+        if (body.ID === 205) return { name: "Жанат Какимжанов", active: true };
+        if (body.ID === 2345) return { name: "Турар Кожанов", active: true };
+        return { name: `Менеджер ${body.ID}`, active: true };
+      }
+      if (method === "batch") {
+        const cmd = body?.cmd ?? {};
+        const firstCmd = Object.values(cmd)[0] as string;
+        if (firstCmd?.includes("crm.activity.list")) {
+          // If query for 205, return activity on deal 48517
+          if (firstCmd.includes("RESPONSIBLE_ID%5D=205") || firstCmd.includes("RESPONSIBLE_ID]=205")) {
+            return {
+              result: {
+                p0: [
+                  {
+                    ID: "150543",
+                    OWNER_ID: "48517",
+                    OWNER_TYPE_ID: 2,
+                    RESPONSIBLE_ID: 205,
+                    SUBJECT: "Связаться с клиентом",
+                    CREATED: "2026-10-27T10:00:00+05:00",
+                    DEADLINE: "2026-10-27T10:00:00+05:00",
+                    PROVIDER_ID: "CRM_TODO"
+                  }
+                ]
+              },
+              result_error: {}
+            };
+          }
+          // For 2345: no direct activities
+          return { result: { p0: [] }, result_error: {} };
+        }
+        return { result: {}, result_error: {} };
+      }
+      if (method === "crm.deal.list") {
+        return [
+          {
+            ID: "48517",
+            TITLE: "[GZ 88181747] Жасыл даму — Ноутбук",
+            OPPORTUNITY: "74250000",
+            ASSIGNED_BY_ID: "2345",
+            CATEGORY_ID: "9",
+            STAGE_ID: "C9:UC_KQEL1P",
+            CLOSED: "N",
+            STAGE_SEMANTIC_ID: "P",
+            UF_CRM_PLAN_STATUS: "Опубликован"
+          }
+        ];
+      }
+      return [];
+    });
+
+    const client = new ReadOnlyBitrixClient({ call });
+    const data = await collectPultData({
+      client,
+      fromDate: "2026-10-20",
+      toDate: "2026-10-29",
+      managerIds: ["205", "2345"],
+      proposalStages: [],
+      contractStages: [],
+      nowIso: "2026-10-29T12:00:00+05:00"
+    });
+
+    // 205 has NO tasks and NO debts for this deal
+    expect(data.tasksByManager.get("205")).toEqual([]);
+    expect(data.debtsByManager.get("205")?.newDeals).toBe(0);
+
+    // 2345 gets the task with note «дело на Жанате» and debts
+    const turarTasks = data.tasksByManager.get("2345") ?? [];
+    expect(turarTasks).toHaveLength(1);
+    expect(turarTasks[0].dealId).toBe("48517");
+    expect(turarTasks[0].responsibleNote).toBe("дело на Жанате");
+    expect(data.debtsByManager.get("2345")?.newDeals).toBe(1);
+  });
+
+  it("does not include closed deals (e.g. C9:9 with CLOSED=Y) in tasks or debts", async () => {
+    const call = vi.fn(async (method: string, body: any) => {
+      if (method === "im.user.get") {
+        return { name: `Менеджер ${body.ID}`, active: true };
+      }
+      if (method === "batch") {
+        const cmd = body?.cmd ?? {};
+        const firstCmd = Object.values(cmd)[0] as string;
+        if (firstCmd?.includes("crm.activity.list")) {
+          return {
+            result: {
+              p0: [
+                {
+                  ID: "150543",
+                  OWNER_ID: "48517",
+                  OWNER_TYPE_ID: 2,
+                  RESPONSIBLE_ID: 2345,
+                  SUBJECT: "Связаться с клиентом",
+                  CREATED: "2026-10-27T10:00:00+05:00",
+                  DEADLINE: "2026-10-27T10:00:00+05:00",
+                  PROVIDER_ID: "CRM_TODO"
+                }
+              ]
+            },
+            result_error: {}
+          };
+        }
+        return { result: {}, result_error: {} };
+      }
+      if (method === "crm.deal.list") {
+        return [
+          {
+            ID: "48517",
+            TITLE: "[GZ 88181747] Жасыл даму — Ноутбук",
+            OPPORTUNITY: "74250000",
+            ASSIGNED_BY_ID: "2345",
+            CATEGORY_ID: "9",
+            STAGE_ID: "C9:9",
+            CLOSED: "Y",
+            STAGE_SEMANTIC_ID: "F",
+            UF_CRM_PLAN_STATUS: "Закупка состоялась"
+          }
+        ];
+      }
+      return [];
+    });
+
+    const client = new ReadOnlyBitrixClient({ call });
+    const data = await collectPultData({
+      client,
+      fromDate: "2026-10-20",
+      toDate: "2026-10-29",
+      managerIds: ["2345"],
+      proposalStages: [],
+      contractStages: [],
+      nowIso: "2026-10-29T12:00:00+05:00"
+    });
+
+    expect(data.tasksByManager.get("2345")).toEqual([]);
+    expect(data.debtsByManager.get("2345")?.newDeals).toBe(0);
+    expect(data.debtsByManager.get("2345")?.overdue).toBe(0);
+  });
 });

@@ -4,6 +4,8 @@ import { collectPultData } from "../../src/bitrix/salesPult/collect.js";
 import {
   buildManagerDebts,
   classifyTodo,
+  formatResponsibleNote,
+  isOpenDebtDeal,
   workingAgeDays,
   type DebtCandidate
 } from "../../src/bitrix/salesPult/debts.js";
@@ -202,12 +204,52 @@ describe("buildManagerDebts", () => {
         todo({ id: "won", stageId: "C9:WON", deadline: "2026-10-27T10:00:00+05:00" }),
         todo({ id: "lose", categoryId: 41, stageId: "C41:LOSE", deadline: "2026-10-27T10:00:00+05:00" }),
         todo({ id: "other", categoryId: 1, stageId: "NEW", deadline: "2026-10-27T10:00:00+05:00" }),
+        todo({ id: "closed-flag", categoryId: 9, stageId: "C9:9", closed: "Y", deadline: "2026-10-27T10:00:00+05:00" }),
+        todo({ id: "closed-semantic", categoryId: 9, stageId: "C9:9", stageSemanticId: "F", deadline: "2026-10-27T10:00:00+05:00" }),
         todo({ id: "ok", categoryId: 43, stageId: "C43:EXECUTING", deadline: "2026-10-27T10:00:00+05:00" })
       ],
       context
     );
     expect(debts.overdue).toBe(1);
     expect(top.map((t) => t.id)).toEqual(["ok"]);
+  });
+});
+
+describe("isOpenDebtDeal", () => {
+  it("treats deals with CLOSED=Y, closed=true or CLOSED=1 as closed regardless of stageId", () => {
+    expect(isOpenDebtDeal({ categoryId: 9, stageId: "C9:9", closed: "Y" })).toBe(false);
+    expect(isOpenDebtDeal({ categoryId: 9, stageId: "C9:9", closed: true })).toBe(false);
+    expect(isOpenDebtDeal({ categoryId: 9, stageId: "C9:9", closed: "1" })).toBe(false);
+  });
+
+  it("treats deals with STAGE_SEMANTIC_ID=F (failed) or S (success) as closed", () => {
+    expect(isOpenDebtDeal({ categoryId: 9, stageId: "C9:9", stageSemanticId: "F" })).toBe(false);
+    expect(isOpenDebtDeal({ categoryId: 9, stageId: "C9:9", stageSemanticId: "S" })).toBe(false);
+  });
+
+  it("treats deals with STAGE_SEMANTIC_ID=P and CLOSED=N in allowed pipeline as open", () => {
+    expect(isOpenDebtDeal({ categoryId: 9, stageId: "C9:UC_KQEL1P", closed: "N", stageSemanticId: "P" })).toBe(true);
+  });
+
+  it("falls back to stageId pattern if closed and stageSemanticId are missing", () => {
+    expect(isOpenDebtDeal({ categoryId: 9, stageId: "C9:WON" })).toBe(false);
+    expect(isOpenDebtDeal({ categoryId: 9, stageId: "C9:LOSE" })).toBe(false);
+    expect(isOpenDebtDeal({ categoryId: 9, stageId: "C9:APOLOGY" })).toBe(false);
+  });
+});
+
+describe("formatResponsibleNote", () => {
+  it("declines manager names into prepositional case «дело на <имя>»", () => {
+    expect(formatResponsibleNote("Жанат")).toBe("дело на Жанате");
+    expect(formatResponsibleNote("Жанат Какимжанов")).toBe("дело на Жанате");
+    expect(formatResponsibleNote("Турар")).toBe("дело на Тураре");
+    expect(formatResponsibleNote("Бахтияр")).toBe("дело на Бахтияре");
+    expect(formatResponsibleNote("Бекзат")).toBe("дело на Бекзате");
+    expect(formatResponsibleNote("Нурбол")).toBe("дело на Нурболе");
+    expect(formatResponsibleNote("Кайыржан")).toBe("дело на Кайыржане");
+    expect(formatResponsibleNote("Нурдаулет")).toBe("дело на Нурдаулете");
+    expect(formatResponsibleNote("Эльмира")).toBe("дело на Эльмире");
+    expect(formatResponsibleNote("Динара")).toBe("дело на Динаре");
   });
 });
 

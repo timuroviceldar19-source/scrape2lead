@@ -81,7 +81,8 @@ export function buildMorningReport(params: {
       const timeTag = t.deadline && !isNew ? ` [до ${formatDeadline(t.deadline, date)}]` : "";
       const overdueTag = t.isOverdue ? " ⚠️ (просрочено)" : "";
       const newTag = isNew ? ` 🆕 (новая, без звонка ${Math.max(1, Math.floor(t.ageDays ?? 0))} дн.)` : "";
-      lines.push(`${i + 1}. ${planTag}${t.title}${moneyTag}${timeTag}${overdueTag}${newTag}`);
+      const respTag = t.responsibleNote ? ` [${t.responsibleNote}]` : "";
+      lines.push(`${i + 1}. ${planTag}${t.title}${moneyTag}${timeTag}${overdueTag}${newTag}${respTag}`);
       if (t.lastComment?.trim()) {
         lines.push(`   💬 ${decodeHtmlEntities(t.lastComment.trim())}`);
       }

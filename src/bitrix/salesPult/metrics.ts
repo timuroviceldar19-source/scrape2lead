@@ -21,6 +21,8 @@ export interface DealInfo {
   planNumber?: string | null;
   categoryId?: string | number | null;
   stageId?: string | null;
+  stageSemanticId?: string | null;
+  closed?: string | boolean | null;
   /** Real procurement status, taken from the deal field UF_CRM_PLAN_STATUS. */
   planStatus?: string | null;
 }
@@ -56,11 +58,14 @@ export interface RawTask {
   planNumber?: string | null;
   categoryId?: string | number | null;
   stageId?: string | null;
+  stageSemanticId?: string | null;
+  closed?: string | boolean | null;
   /** The essence of the activity ("Перезвонить", "Связаться с клиентом"). */
   subject?: string;
   /** Activity creation time as returned by Bitrix. */
   created?: string;
   planStatus?: string | null;
+  responsibleNote?: string | null;
 }
 
 export interface TopTask extends RawTask {
