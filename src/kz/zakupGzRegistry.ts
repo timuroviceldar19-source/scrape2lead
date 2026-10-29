@@ -9,10 +9,19 @@ export interface GzRegistryOptions extends ZakupApiOptions {
   token?: string | null;
   orgCachePath?: string;
   concurrency?: number;
+  enstruCodes?: readonly string[];
+  contractNumbers?: readonly string[];
+  contractIds?: ReadonlySet<number>;
   onPlanItem?: (item: ZakupContractPlan) => void;
 }
 
-export interface ZakupContractPlan { id: number; external_id: number; root?: { external_id?: number | null } | null }
+export type GzContractLookupPath = "enstru" | "lots" | "full" | "ows";
+export interface ZakupContractPlan { id: number; external_id: number; root?: { external_id?: number | null } | null; lookupPath?: GzContractLookupPath }
+
+/** Префиксы не подходят публичному фильтру: нужен полный код, включая обе точки. */
+export function fullEnstruCodes(...values: unknown[]): string[] {
+  return [...new Set(values.flat(Infinity).flatMap(value => String(value ?? "").match(/\b\d{6}\.\d{3}\.\d{6}\b/g) ?? []))];
+}
 
 /** Пустой успешный ответ не повод обращаться к резервному источнику. */
 export async function withGzSourceFallback<T>(primary: () => Promise<T>, backup: () => Promise<T>, token?: string | null): Promise<T> {
@@ -27,15 +36,15 @@ export async function withGzSourceFallback<T>(primary: () => Promise<T>, backup:
 
 interface DictRow { id: number; name?: string; egz_code?: string | null; year?: number }
 interface Organization { id: number; iin_bin?: string | null }
-interface ContractRow {
+export interface ContractRow {
   id: number; external_id?: number; contract_number_sys?: string; sign_date?: string | null;
   status_id?: number; supplier_organization_id?: number; customer_organization_id?: number;
   supplier_organization_name?: string; is_externally_deleted?: boolean | number | null;
 }
-interface SubjectRow {
+export interface SubjectRow {
   external_id?: number | string | null; timestamp?: number | null; contract_price_without_vat?: number | null;
   plan_item?: { id?: number; external_id?: number | null; root?: { external_id?: number | null } | null; name_ru?: string | null; enstru?: { code?: string | null } | null } | null;
-  contract?: { supplier_organization?: Organization | null } | null;
+  contract?: { id?: number; contract_number_sys?: string | null; supplier_organization?: Organization | null } | null;
 }
 
 /** Тот же файл id → БИН, что у рынка; обратный поиск выполняется по значениям. */
@@ -83,7 +92,7 @@ const CONTRACTS_QUERY = `query($bin:String,$year:Int,$after:Int){Contract(filter
 
 
 /** Полные позиции без обогащения поставщиков: для поиска версии пункта их БИН не нужен. */
-export interface ZakupCustomerContractData { contract: ContractRow; subjects: SubjectRow[] }
+export interface ZakupCustomerContractData { contract: ContractRow; subjects: SubjectRow[]; lookupPath: GzContractLookupPath }
 
 export async function loadZakupCustomerContracts(bin: string, years: number[], options: GzRegistryOptions = {}): Promise<ZakupCustomerContractData[]> {
   const orgs = new ZakupOrganizations(options);
@@ -91,19 +100,27 @@ export async function loadZakupCustomerContracts(bin: string, years: number[], o
   const yearDict = await zakupGet<DictRow[]>('/dicts/years/', {}, options);
   if (!Array.isArray(yearDict)) throw new Error('zakup: неверный справочник лет');
   const byId = new Map<number, ContractRow>();
+  const codes = fullEnstruCodes(options.enstruCodes);
+  const numbers = [...new Set(options.contractNumbers?.filter(Boolean) ?? [])];
+  const filters = numbers.length ? numbers.map(contract_number => ({ contract_number }))
+    : codes.length ? codes.map(enstru_code => ({ enstru_code })) : [{}];
+  const lookupPath: GzContractLookupPath = numbers.length ? "lots" : codes.length ? "enstru" : "full";
   for (const year of new Set(years)) {
     const yearId = yearDict.find(row => row.year === year)?.id;
     if (!yearId) throw new Error(`zakup: год ${year} не найден в справочнике`);
-    for (const row of await zakupListAll<ContractRow>('/public/contracts/', { customer_organization_id: customerId, year_id: yearId, system_id: 1 }, options)) byId.set(row.id, row);
+    for (const filter of filters) {
+      const rows = await zakupListAll<ContractRow>('/public/contracts/', { customer_organization_id: customerId, year_id: yearId, system_id: 1, sign_date__gte: `${year}-01-01`, ...filter }, options);
+      for (const row of rows) if (!options.contractIds || options.contractIds.has(row.id)) byId.set(row.id, row);
+    }
   }
   return mapWithConcurrency([...byId.values()], options.concurrency ?? 4, async contract => {
     const body = await zakupGet<SubjectRow[] | { results: SubjectRow[]; next?: string | null }>(`/public/contracts/${contract.id}/subjects/`, {}, options);
     if (!Array.isArray(body) && (!Array.isArray(body?.results) || body.next)) throw new Error('zakup: неполные позиции договора');
     const subjects = dedupeSubjects(Array.isArray(body) ? body : body.results);
     for (const s of subjects) {
-      if (s.plan_item?.id && s.plan_item.external_id) options.onPlanItem?.({ id: s.plan_item.id, external_id: s.plan_item.external_id, root: s.plan_item.root });
+      if (s.plan_item?.id && s.plan_item.external_id) options.onPlanItem?.({ id: s.plan_item.id, external_id: s.plan_item.external_id, root: s.plan_item.root, lookupPath });
     }
-    return { contract, subjects };
+    return { contract, subjects, lookupPath };
   });
 }
 

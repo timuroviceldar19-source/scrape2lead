@@ -10,6 +10,7 @@ function registry(listed: unknown[], plan = detail, withContract = false) {
   const fetchFn = (async (url: string) => {
     const u = new URL(url); calls.push(u);
     if (u.pathname.endsWith('/plan-items/')) return json(page(listed));
+    if (u.pathname.endsWith('/lots/')) return json(page([]));
     if (u.pathname.endsWith('/plan-items/500/')) return json(plan);
     if (u.pathname.endsWith('/organizations/')) return json(page([{id: 42, iin_bin: context.bin}]));
     if (u.pathname.endsWith('/years/')) return json([{id: 12, year: 2026}]);
@@ -21,6 +22,27 @@ function registry(listed: unknown[], plan = detail, withContract = false) {
   return { fetchFn, calls };
 }
 describe('поиск версий через q и договоры', () => {
+  it('итоги проверяют старый и действующий код товара, без полного перебора заказчика', async () => {
+    const {fetchFn,calls}=registry([{id:500,external_id:200}],detail,true);
+    const contexts=new Map([[100,{...context,codes:['262030.100.000043'] as readonly string[]}]]);
+    const lookup=new GzPlanLookup({...options,contexts,fetchFn});
+    await lookup.plans([100],'root',contexts); await lookup.contracts(context.bin,[2026]);
+    expect(new Set(calls.filter(u=>u.pathname.endsWith('/contracts/')).map(u=>u.searchParams.get('enstru_code')))).toEqual(new Set(['262030.100.000043','279020.100.000002']));
+  });
+  it('для пункта без кода пробует лот и договоры объявления перед полным перебором', async () => {
+    const {fetchFn:base}=registry([],detail,true);let full=0;
+    const fetchFn=(async(url: string,init?: RequestInit)=>{
+      const u=new URL(url);
+      if(u.pathname.endsWith('/lots/'))return json(page([{announcement_id:9}]));
+      if(u.pathname.endsWith('/announcements/9/contracts/'))return json([{plan_item:{id:500,external_id:200,root:{external_id:100}},contract:{id:7,contract_number_sys:'990000000001/260001/00'}}]);
+      if(u.pathname.endsWith('/contracts/')){full++;throw Error('full scan forbidden');}
+      return base(url,init);
+    }) as typeof fetch;
+    const contexts=new Map([[100,{...context,pointIds:[200]}]]);
+    const lookup=new GzPlanLookup({...options,contexts,fetchFn});
+    expect((await lookup.plans([100],'root',contexts))[0].id).toBe(200);expect(full).toBe(0);
+    expect(lookup.fullScanPlans.size).toBe(0);
+  });
   it('для статуса пункта не требует БИН поставщика постороннего договора', async () => {
     const {fetchFn: base}=registry([],detail,true);
     const fetchFn=(async(url: string,init?: RequestInit)=>{

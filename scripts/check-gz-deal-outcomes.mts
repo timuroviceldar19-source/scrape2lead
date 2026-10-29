@@ -3,6 +3,8 @@ import path from "node:path";
 import dotenv from "dotenv";
 import {
   buildGzDealOutcomeComment,
+  contractBaseNumber,
+  findPlanContracts,
   buildGzDealPlanRef,
   buildGzMissingPlanFields,
   dealBin,
@@ -27,7 +29,8 @@ import {
 } from "../src/bitrix/gzDealOutcome.js";
 import { callBitrixBatch, chunkBatchCommands } from "../src/bitrix/batch.js";
 import { describeOutcomeCoverage, type OutcomeCoverageInput } from "../src/bitrix/gzOutcomeCoverage.js";
-import { fetchGzPlans, GzPlanLookup, type GzPlanLookupOptions, type ApiPlan } from "../src/kz/zakupGzPlans.js";
+import { fetchGzPlans, GzPlanLookup, type GzPlanLookupOptions, type GzPlanContext, type ApiPlan } from "../src/kz/zakupGzPlans.js";
+import { fullEnstruCodes, type GzContractLookupPath } from "../src/kz/zakupGzRegistry.js";
 import { parseGoszakupPlanDetailHtml, parseGoszakupPlanSearchHtml } from "../src/kz/goszakupPlanHtmlParser.js";
 import type { GoszakupPlanListItem } from "../src/kz/goszakupPlanTypes.js";
 import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "../src/kz/goszakupOrigin.js";
@@ -64,6 +67,7 @@ interface OpenDeal extends GzOutcomeDealFields {
 }
 
 interface DealCheck {
+  contractSource: GzContractLookupPath | null;
   deal: OpenDeal;
   ref: GzDealPlanRef;
   bin: string | null;
@@ -168,8 +172,9 @@ async function main(): Promise<void> {
   if (!args.webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
   const config = loadOutcomeConfig(args.configPath);
   const bitrix = new BitrixClient(args.webhookUrl);
-  const contexts = new Map<number, { bin: string; year: number }>();
-  const gql: GzPlanLookupOptions = { token: args.token, contexts, lookup: new GzPlanLookup({ token: args.token }) };
+  const contexts = new Map<number, GzPlanContext>();
+  const lookup = new GzPlanLookup({ token: args.token, contexts });
+  const gql: GzPlanLookupOptions = { token: args.token, contexts, lookup };
   const currentYear = Number(new Date().toLocaleString("en-CA", { timeZone: "Asia/Almaty", year: "numeric" }));
 
   const allDeals = await bitrix.listOpenPlanDeals();
@@ -177,6 +182,7 @@ async function main(): Promise<void> {
   console.log(`gz deal outcomes: mode=${args.execute ? "execute" : "dry-run"} open_deals=${allDeals.length} checked=${deals.length}`);
 
   const checks: DealCheck[] = deals.map((deal) => ({
+    contractSource: null,
     deal,
     ref: buildGzDealPlanRef(deal),
     bin: dealBin(deal),
@@ -194,14 +200,13 @@ async function main(): Promise<void> {
   }));
 
   await fillCompanyBins(bitrix, checks);
-  for (const check of checks) {
-    const year = Number(check.deal.DATE_CREATE?.slice(0, 4));
-    if (check.bin && year) for (const id of [check.ref.planNumber, ...check.ref.pointIds]) {
-      if (id) contexts.set(id, { bin: check.bin, year });
-    }
-  }
+  const inputWithoutEnstru = checks.filter(check => !fullEnstruCodes(check.ref.enstruCode).length).length;
+  fillLookupContexts(checks, contexts);
   await fillApiPlanStatuses(checks, gql, config.itemFamilies);
   const planPages = args.skipHtml ? { pending: 0, failed: 0 } : await fillFromPlanPages(checks, args.htmlDelayMs);
+  fillLookupContexts(checks, contexts);
+  const withoutEnstru = checks.filter(check => !lookup.codesForContext(contexts.get(check.ref.planNumber ?? check.ref.pointIds[0])).length).length;
+  console.log(`contract lookup: input_without_enstru=${inputWithoutEnstru} without_enstru_after_plan_lookup=${withoutEnstru}`);
   const contractsByBin = await fetchContractsByBin(checks, currentYear, gql, args.concurrency);
   // A contract settles the deal, so the slow portal pages go only to the rest.
   // A "contract signed" status without a matched contract also goes there: the
@@ -234,6 +239,13 @@ async function main(): Promise<void> {
       ?? (check.registerRows
         ? decideMissingGzPlan(check.ref, dealPlanAmount(check.deal), check.registerRows, config.itemFamilies, dealsByPlan)
         : null);
+    if (check.outcome && "contractNumber" in check.outcome) {
+      const outcome = check.outcome;
+      const paths = findPlanContracts(check.ref, contractsByBin.get(check.bin ?? "") ?? [], config.itemFamilies)
+        .filter(contract => contractBaseNumber(String(contract.contractNumberSys ?? "")) === outcome.contractNumber)
+        .map(contract => lookup.sourceForContract(contract));
+      check.contractSource = (["enstru", "lots", "full", "ows"] as const).find(path => paths.includes(path)) ?? null;
+    }
     // Two deals of one customer must not move onto the same plan.
     if (check.outcome?.kind === "plan-renumbered" || check.outcome?.kind === "plan-moved") {
       dealsByPlan.set(check.outcome.plan.planNumber, check.deal.ID);
@@ -275,10 +287,30 @@ async function main(): Promise<void> {
   }
 
   const summary = summarize(checks, htmlFailed, contractsByBin.failedBins.size, coverage);
+  const lookupStats = {
+    input_without_enstru: inputWithoutEnstru, without_enstru_after_plan_lookup: withoutEnstru,
+    full_scan_deals_attempted: checks.filter(check => lookup.fullScanPlans.has(check.ref.planNumber ?? 0)).length,
+    full_scan_customers: lookup.fullScanBins.size,
+    ...Object.fromEntries((["enstru", "lots", "full", "ows"] as const).map(path => [`contract_${path}_found`, checks.filter(check => check.contractSource === path).length])),
+    ...Object.fromEntries((["q", "enstru", "lots", "full", "ows"] as const).map(path => [`plan_${path}_found`, checks.filter(check => lookup.planSources.get(check.ref.planNumber ?? 0) === path).length]))
+  };
+  console.log(`lookup_stats=${JSON.stringify(lookupStats)}`);
   console.log(summary.line);
   if (summary.warning) console.log(`::warning::${summary.warning}`);
-  writeReport(args.reportPath, args.execute, checks, summary.markdown);
+  writeReport(args.reportPath, args.execute, checks, summary.markdown, lookupStats);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary.markdown}\n`);
+}
+
+function fillLookupContexts(checks: DealCheck[], contexts: Map<number, GzPlanContext>): void {
+  for (const check of checks) {
+    const year = Number(check.deal.DATE_CREATE?.slice(0, 4));
+    if (!check.bin || !year) continue;
+    const existing = check.ref.planNumber ? contexts.get(check.ref.planNumber) : undefined;
+    const context = existing?.bin === check.bin ? existing : { bin: check.bin, year };
+    context.codes = fullEnstruCodes(context.codes, check.ref.enstruCode);
+    context.pointIds = [...new Set([...(context.pointIds ?? []), ...check.ref.pointIds])];
+    for (const id of [check.ref.planNumber, ...check.ref.pointIds]) if (id) contexts.set(id, context);
+  }
 }
 
 async function fillCompanyBins(bitrix: BitrixClient, checks: DealCheck[]): Promise<void> {
@@ -617,12 +649,13 @@ function describeContract(outcome: GzDealOutcome): string {
   return gzDealOutcomeKey(outcome);
 }
 
-function writeReport(reportPath: string, execute: boolean, checks: DealCheck[], markdown: string): void {
+function writeReport(reportPath: string, execute: boolean, checks: DealCheck[], markdown: string, lookupStats: Record<string, number>): void {
   fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   fs.writeFileSync(reportPath, JSON.stringify({
     mode: execute ? "execute" : "dry-run",
     generatedAt: new Date().toISOString(),
     summary: markdown,
+    lookup: lookupStats,
     deals: checks.map((check) => ({
       dealId: check.deal.ID,
       categoryId: check.deal.CATEGORY_ID ?? null,
@@ -633,6 +666,7 @@ function writeReport(reportPath: string, execute: boolean, checks: DealCheck[], 
       plan: check.plan,
       statusSource: check.statusSource,
       outcome: check.outcome,
+      contractSource: check.contractSource,
       key: check.key,
       previousKey: check.deal.UF_CRM_S2L_GZ_OUTCOME ?? null,
       isNew: check.isNew,
