@@ -11,6 +11,7 @@ import {
 import {
   EMPTY_DEBTS,
   buildManagerDebts,
+  formatResponsibleNote,
   isExcludedProvider,
   type ManagerDebts
 } from "./debts.js";
@@ -65,6 +66,8 @@ interface RawDealItem {
   OPPORTUNITY?: string | number | null;
   CATEGORY_ID?: string | number | null;
   STAGE_ID?: string | null;
+  STAGE_SEMANTIC_ID?: string | null;
+  CLOSED?: string | boolean | null;
   UF_CRM_PLAN_ID?: string | number | null;
   UF_CRM_1782386293000_IU_XLS?: string | number | null;
   UF_CRM_PLAN_STATUS?: string | null;
@@ -147,6 +150,8 @@ export async function fetchDealsBatched(
         "OPPORTUNITY",
         "CATEGORY_ID",
         "STAGE_ID",
+        "STAGE_SEMANTIC_ID",
+        "CLOSED",
         "UF_CRM_PLAN_ID",
         "UF_CRM_1782386293000_IU_XLS",
         "UF_CRM_PLAN_STATUS"
@@ -171,6 +176,8 @@ export async function fetchDealsBatched(
           planNumber,
           categoryId: r.CATEGORY_ID,
           stageId: r.STAGE_ID,
+          stageSemanticId: r.STAGE_SEMANTIC_ID,
+          closed: r.CLOSED,
           planStatus: String(r.UF_CRM_PLAN_STATUS ?? "").trim() || null
         });
       }
@@ -370,7 +377,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
             "<=DEADLINE": endOfDayDeadline
           },
           order: { DEADLINE: "ASC" },
-          select: ["ID", "OWNER_ID", "OWNER_TYPE_ID", "SUBJECT", "CREATED", "PROVIDER_ID", "DEADLINE", "COMPLETED"]
+          select: ["ID", "OWNER_ID", "OWNER_TYPE_ID", "RESPONSIBLE_ID", "SUBJECT", "CREATED", "PROVIDER_ID", "DEADLINE", "COMPLETED"]
         }
       );
 
@@ -396,25 +403,34 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
   }
 
   // 7. For each manager, build candidate tasks, rank top 5, then fetch comments ONLY for top 5
+  const managerIdSet = new Set(managerIds.map(String));
+  const rawTasksByManager = new Map<string, RawTask[]>();
   for (const mId of managerIds) {
-    if (taskErrorsByManager.has(mId)) {
-      tasksByManager.set(mId, []);
-      debtsByManager.set(mId, EMPTY_DEBTS);
-      continue;
+    rawTasksByManager.set(mId, []);
+  }
+
+  for (const { managerId: activityManagerId, item: a } of collectedActivities) {
+    if (isExcludedProvider(a.PROVIDER_ID) || !a.DEADLINE || !isDealActivity(a)) continue;
+    const dealId = String(a.OWNER_ID ?? "");
+    const deal = deals.get(dealId);
+    const title = deal ? deal.title : String(a.SUBJECT ?? "Задача");
+    const amount = deal ? deal.amount : 0;
+    const planNumber = deal?.planNumber ?? null;
+
+    const dealAssignedId = deal?.assignedById ? String(deal.assignedById) : "";
+    const targetManagerId = dealAssignedId && managerIdSet.has(dealAssignedId)
+      ? dealAssignedId
+      : activityManagerId;
+
+    let responsibleNote: string | null = null;
+    if (dealAssignedId && dealAssignedId !== activityManagerId && targetManagerId === dealAssignedId) {
+      const rawName = userProfiles.get(activityManagerId)?.name || activityManagerId;
+      responsibleNote = formatResponsibleNote(rawName);
     }
 
-    const managerActs = collectedActivities.filter((h) => h.managerId === mId);
-    const rawTasks: RawTask[] = [];
-
-    for (const { item: a } of managerActs) {
-      if (isExcludedProvider(a.PROVIDER_ID) || !a.DEADLINE || !isDealActivity(a)) continue;
-      const dealId = String(a.OWNER_ID ?? "");
-      const deal = deals.get(dealId);
-      const title = deal ? deal.title : String(a.SUBJECT ?? "Задача");
-      const amount = deal ? deal.amount : 0;
-      const planNumber = deal?.planNumber ?? null;
-
-      rawTasks.push({
+    const taskList = rawTasksByManager.get(targetManagerId);
+    if (taskList) {
+      taskList.push({
         id: String(a.ID),
         dealId,
         title,
@@ -423,14 +439,27 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         planNumber,
         categoryId: deal?.categoryId,
         stageId: deal?.stageId,
+        stageSemanticId: deal?.stageSemanticId,
+        closed: deal?.closed,
         planStatus: deal?.planStatus ?? null,
         subject: String(a.SUBJECT ?? "").trim(),
-        created: String(a.CREATED ?? "")
+        created: String(a.CREATED ?? ""),
+        responsibleNote
       });
     }
+  }
+
+  for (const mId of managerIds) {
+    if (taskErrorsByManager.has(mId)) {
+      tasksByManager.set(mId, []);
+      debtsByManager.set(mId, EMPTY_DEBTS);
+      continue;
+    }
+
+    const managerRawTasks = rawTasksByManager.get(mId) || [];
 
     // Step A: classify activities into debts and rank the top 5 (one per deal, see debts.ts)
-    const { debts, top: top5 } = buildManagerDebts(rawTasks, {
+    const { debts, top: top5 } = buildManagerDebts(managerRawTasks, {
       nowIso,
       holidays,
       maxOverdueDays,

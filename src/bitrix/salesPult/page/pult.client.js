@@ -364,7 +364,7 @@
     return `<article class="task s-${st.cls || "none"}">
       <span class="sev"></span>
       <div>
-        <div class="kick"><span class="label">${esc(t.subject || "Дело")}</span>${ct.plan ? `<span class="tag">план ${esc(ct.plan)}</span>` : ""}${t.planStatus ? `<span class="tag">${esc(t.planStatus)}</span>` : ""}</div>
+        <div class="kick"><span class="label">${esc(t.subject || "Дело")}</span>${ct.plan ? `<span class="tag">план ${esc(ct.plan)}</span>` : ""}${t.planStatus ? `<span class="tag">${esc(t.planStatus)}</span>` : ""}${t.responsibleNote ? `<span class="tag">${esc(t.responsibleNote)}</span>` : ""}</div>
         <h3 class="ttl"><a href="${url}" target="_blank" rel="noopener">${esc(ct.title)}</a></h3>
         ${t.lastComment ? `<div class="cm">${esc(decode(t.lastComment))}</div>` : ""}
       </div>

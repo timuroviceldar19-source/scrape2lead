@@ -188,7 +188,7 @@ Guard пропускает повтор **только для `event=schedule`**
 
 Поэтому расписание задаёт версионируемый Cloudflare Worker из
 `infra/cloudflare-github-dispatch`, а Actions только выполняет работу. Worker не имеет
-публичного HTTP endpoint и вызывается только через три Cron Trigger (на бесплатном
+публичного HTTP endpoint и вызывается через четыре Cron Trigger (на бесплатном
 тарифе Cloudflare их не больше пяти на аккаунт). Один cron может запускать сразу
 несколько workflow: что именно, определяет код Worker (`targetsForSchedule`).
 
@@ -198,6 +198,7 @@ Guard пропускает повтор **только для `event=schedule`**
 | `30 4-11 * * *` | 09:30, 10:30 … 16:30 | PK (`deal_outcomes=false`) + main одновременно |
 | `30 4-11 * * *`, только 06:30 UTC | 11:30 | дополнительно `gz-watchdog.yml` (утреннее окно) |
 | `15 10 * * *` | 15:15 | `gz-watchdog.yml`, окно `afternoon` |
+| `*/15 4-14 * * 1-5` | 09:00–19:00 каждые 15 мин (пн–пт) | `sales-pult.yml` (09:00: morning + site; 18:00: evening + site; остальные: site) |
 
 Проверка итогов сделок (`deal-outcomes` в `gz-daily-pk.yml`) идёт только в утреннем слоте
 08:40: Worker передаёт PK вход `deal_outcomes`. Ручной запуск выполняет её по умолчанию.

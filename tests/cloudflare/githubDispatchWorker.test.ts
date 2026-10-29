@@ -11,7 +11,7 @@ const TOKEN = "test-token-do-not-use";
 const CRON_MORNING = "40 3 * * *";
 const CRON_HOURLY = "30 4-11 * * *";
 const CRON_AFTERNOON_WATCHDOG = "15 10 * * *";
-const CRON_SALES_PULT = "0 4-14 * * 1-5";
+const CRON_SALES_PULT = "*/15 4-14 * * 1-5";
 
 function at(utcTime: string): number {
   return Date.parse(`2026-07-26T${utcTime}:00Z`);
@@ -87,9 +87,13 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     [CRON_HOURLY, "11:30", [PK_HOURLY, MAIN]],
     [CRON_AFTERNOON_WATCHDOG, "10:15", [WATCHDOG_AFTERNOON]],
     [CRON_SALES_PULT, "04:00", [SALES_PULT_MORNING, SALES_PULT_SITE]],
+    [CRON_SALES_PULT, "04:15", [SALES_PULT_SITE]],
+    [CRON_SALES_PULT, "04:30", [SALES_PULT_SITE]],
     [CRON_SALES_PULT, "09:00", [SALES_PULT_SITE]],
     [CRON_SALES_PULT, "13:00", [SALES_PULT_EVENING, SALES_PULT_SITE]],
+    [CRON_SALES_PULT, "13:45", [SALES_PULT_SITE]],
     [CRON_SALES_PULT, "14:00", [SALES_PULT_SITE]],
+    [CRON_SALES_PULT, "14:45", [SALES_PULT_SITE]],
   ])("maps %s at %s UTC to the expected authenticated dispatches", async (cron, utcTime, expected) => {
     const deps = dependencies(...accepted(expected.length));
 
@@ -359,7 +363,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     expect(JSON.stringify(deps.log.mock.calls)).not.toContain(TOKEN);
   });
 
-  it.each(["03:00", "15:00", "23:00"])(
+  it.each(["03:00", "04:07", "15:00", "23:00"])(
     "rejects an unexpected time %s UTC emitted for the sales pult cron",
     async (utcTime) => {
       const deps = dependencies(...accepted(1));

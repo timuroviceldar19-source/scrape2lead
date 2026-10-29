@@ -11,6 +11,7 @@
  */
 
 import type { RawTask, TopTask } from "./metrics.js";
+import { cleanFirstName } from "./format.js";
 
 export type TodoKind = "passed" | "new" | "overdue" | "today";
 export type TopTaskGroup = 1 | 2 | 3 | 4;
@@ -149,12 +150,41 @@ function normalize(value: string | null | undefined): string {
   return String(value ?? "").trim().toLocaleLowerCase("ru");
 }
 
+export function toPrepositional(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+  const first = cleanFirstName(trimmed);
+  if (/ия$/i.test(first)) {
+    return first.slice(0, -1) + "и";
+  }
+  if (/[ая]$/i.test(first)) {
+    return first.slice(0, -1) + "е";
+  }
+  if (/[йь]$/i.test(first)) {
+    return first.slice(0, -1) + "е";
+  }
+  if (/[бвгджзклмнпрстфхцчшщ]$/i.test(first)) {
+    return first + "е";
+  }
+  return first;
+}
+
+export function formatResponsibleNote(name: string): string {
+  const prep = toPrepositional(name);
+  return `дело на ${prep}`;
+}
+
 export function isExcludedProvider(providerId: string | null | undefined): boolean {
   return EXCLUDED_ACTIVITY_PROVIDERS.includes(String(providerId ?? "").trim().toUpperCase());
 }
 
 export function isOpenDebtDeal(
-  deal: { categoryId?: string | number | null; stageId?: string | null },
+  deal: {
+    categoryId?: string | number | null;
+    stageId?: string | null;
+    closed?: string | boolean | null;
+    stageSemanticId?: string | null;
+  },
   categories: readonly number[] = DEFAULT_DEBT_CATEGORIES
 ): boolean {
   const allowed = new Set(categories.map(Number));
@@ -164,9 +194,21 @@ export function isOpenDebtDeal(
     allowed.has(Number(deal.categoryId)) || (stageCategory !== null && allowed.has(Number(stageCategory[1])));
   if (!isAllowed) return false;
 
+  if (deal.closed === true || deal.closed === "Y" || deal.closed === "1") {
+    return false;
+  }
+  const semantic = String(deal.stageSemanticId ?? "").toUpperCase();
+  if (semantic === "S" || semantic === "F") {
+    return false;
+  }
+
   const upper = stage.toUpperCase();
-  const isClosed = upper.endsWith(":WON") || upper === "WON" || upper.endsWith(":LOSE") ||
-    upper === "LOSE" || upper.includes("APOLOGY");
+  const isClosed =
+    upper.endsWith(":WON") ||
+    upper === "WON" ||
+    upper.endsWith(":LOSE") ||
+    upper === "LOSE" ||
+    upper.includes("APOLOGY");
   return !isClosed;
 }
 

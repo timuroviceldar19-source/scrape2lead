@@ -22,10 +22,10 @@ const RETRY_DELAYS_MS = [5_000, 20_000] as const;
 // Сторож стоит в 11:30 (06:30 UTC) и 15:15: утренний слот проверяет сбор с начала суток,
 // дневной — с 13:00/13:30.
 //
-// Пульт продаж F3 обновляется почасово с 09:00 до 19:00 Алматы (04:00–14:00 UTC, пн–пт):
+// Пульт продаж F3 обновляется каждые 15 минут с 09:00 до 19:00 Алматы (04:00–14:00 UTC, пн–пт):
 // в 04:00 UTC — утренний отчёт (mode=morning) и сайт (mode=site);
 // в 13:00 UTC — вечерний отчёт (mode=evening) и сайт (mode=site);
-// в 05:00–12:00 и 14:00 UTC — только сайт (mode=site).
+// в остальные 15-минутные слоты — только сайт (mode=site).
 //
 // Cloudflare Free allows five cron triggers per account. Четыре выражения ниже покрывают
 // все слоты: расписание «какие workflow запускать» хранится в коде, а не в числе триггеров.
@@ -56,7 +56,7 @@ const MORNING_WATCHDOG_HOUR_UTC = 6;
 const CRON_MORNING = "40 3 * * *"; // 08:40 Алматы
 const CRON_HOURLY = "30 4-11 * * *"; // 09:30 ... 16:30 Алматы
 const CRON_AFTERNOON_WATCHDOG = "15 10 * * *"; // 15:15 Алматы
-const CRON_SALES_PULT = "0 4-14 * * 1-5"; // 09:00–19:00 Алматы, пн–пт (04:00–14:00 UTC)
+const CRON_SALES_PULT = "*/15 4-14 * * 1-5"; // 09:00–19:00 Алматы каждые 15 мин, пн–пт (04:00–14:00 UTC)
 
 export const SCHEDULED_CRONS = [
   CRON_MORNING,
@@ -112,23 +112,25 @@ function targetsForSchedule(cron: string, scheduledTime: number): DispatchTarget
     return targets;
   }
   if (cron === CRON_SALES_PULT) {
-    const scheduledHour = new Date(scheduledTime).getUTCHours();
-    if (scheduledHour === 4) {
+    const scheduledDate = new Date(scheduledTime);
+    const scheduledHour = scheduledDate.getUTCHours();
+    const scheduledMinute = scheduledDate.getUTCMinutes();
+    if (scheduledHour < 4 || scheduledHour > 14 || ![0, 15, 30, 45].includes(scheduledMinute)) {
+      throw new Error(`Unexpected scheduled time for cron ${cron}: ${scheduledTime}`);
+    }
+    if (scheduledHour === 4 && scheduledMinute === 0) {
       return [
         { workflow: SALES_PULT_WORKFLOW, inputs: { mode: "morning" } },
         { workflow: SALES_PULT_WORKFLOW, inputs: { mode: "site" } },
       ];
     }
-    if (scheduledHour === 13) {
+    if (scheduledHour === 13 && scheduledMinute === 0) {
       return [
         { workflow: SALES_PULT_WORKFLOW, inputs: { mode: "evening" } },
         { workflow: SALES_PULT_WORKFLOW, inputs: { mode: "site" } },
       ];
     }
-    if ((scheduledHour >= 5 && scheduledHour <= 12) || scheduledHour === 14) {
-      return [{ workflow: SALES_PULT_WORKFLOW, inputs: { mode: "site" } }];
-    }
-    throw new Error(`Unexpected scheduled time for cron ${cron}: ${scheduledTime}`);
+    return [{ workflow: SALES_PULT_WORKFLOW, inputs: { mode: "site" } }];
   }
   throw new Error(`Unknown cron trigger: ${cron}`);
 }
