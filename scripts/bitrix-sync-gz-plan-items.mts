@@ -16,6 +16,8 @@ import { BitrixClient } from "../src/bitrix/client.js";
 import { PLAN_ITEM_DEAL_SELECT, planItemSync, planRootsOf, type PlanItemDeal } from "../src/bitrix/gzPlanItemChange.js";
 import { fetchCurrentPlanItems } from "../src/kz/goszakupPlanItems.js";
 import { GzPlanLookup, type GzPlanContext } from "../src/kz/zakupGzPlans.js";
+import { fullEnstruCodes } from "../src/kz/zakupGzRegistry.js";
+import { buildGzDealPlanRef } from "../src/bitrix/gzDealOutcome.js";
 import fs from "node:fs";
 
 dotenv.config();
@@ -57,9 +59,14 @@ async function main(): Promise<void> {
   for (const deal of deals) {
     const bin = deal.UF_CRM_6627AEBD7C2D2 || /BIN:\s*(\d{12})/.exec(deal.COMMENTS ?? "")?.[1] || "";
     const year = Number(deal.DATE_CREATE?.slice(0, 4));
-    if (/^\d{12}$/.test(bin) && year) for (const root of planRootsOf(deal)) contexts.set(root, { bin, year });
+    if (/^\d{12}$/.test(bin) && year) {
+      const context = { bin, year, codes: fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612), pointIds: buildGzDealPlanRef(deal).pointIds };
+      for (const root of planRootsOf(deal)) contexts.set(root, context);
+    }
   }
-  const { items, failed } = await fetchCurrentPlanItems(roots, { token, contexts, lookup: new GzPlanLookup({ token }) });
+  const lookup = new GzPlanLookup({ token, contexts });
+  console.log(`lookup_input=${JSON.stringify({ deals: deals.length, without_enstru: deals.filter(deal => !fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612).length).length })}`);
+  const { items, failed } = await fetchCurrentPlanItems(roots, { token, contexts, lookup });
   const plan = planItemSync(deals, items, new Set(failed));
   if (args.reportPath) fs.writeFileSync(args.reportPath, JSON.stringify({ mode: args.execute ? "execute" : "dry-run", ...plan, failed }, null, 2));
   console.log(`план: ${JSON.stringify(plan.stats)}`);
@@ -94,6 +101,7 @@ async function main(): Promise<void> {
   }
   if (!args.execute && updates.length > SAMPLE_LINES) console.log(`[dry-run] … и ещё ${updates.length - SAMPLE_LINES}`);
   console.log(`done: ${args.execute ? `updated=${written} failed=${writeFailed}` : `would_update=${updates.length}`} lookup_failed=${failed.length}`);
+  console.log(`lookup_stats=${JSON.stringify({ full_scan_plans_attempted: lookup.fullScanPlans.size, full_scan_customers: lookup.fullScanBins.size, plan_sources: Object.fromEntries(["q", "enstru", "lots", "full", "ows"].map(path => [path, [...lookup.planSources.values()].filter(value => value === path).length])) })}`);
 }
 
 main().catch((error) => {

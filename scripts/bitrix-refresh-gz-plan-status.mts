@@ -5,6 +5,7 @@ import { BitrixClient } from "../src/bitrix/client.js";
 import { ReadOnlyBitrixClient } from "../src/bitrix/reporting/readOnlyClient.js";
 import { chunkPlanNumbers, fetchPlanStatusBatch } from "../src/kz/goszakupPlanStatusApi.js";
 import { GzPlanLookup, type GzPlanContext } from "../src/kz/zakupGzPlans.js";
+import { fullEnstruCodes } from "../src/kz/zakupGzRegistry.js";
 import {
   GZ_REFRESH_DEAL_SELECT,
   GZ_REFRESH_PIPELINE_IDS,
@@ -26,7 +27,7 @@ async function main(): Promise<void> {
   const token = process.env.GOSZAKUP_TOKEN?.trim();
   if (!webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
   const contexts = new Map<number, GzPlanContext>();
-  const lookup = new GzPlanLookup({ token });
+  const lookup = new GzPlanLookup({ token, contexts });
 
   const reader = new ReadOnlyBitrixClient(new BitrixClient(webhookUrl, { requestDelayMs: 550, maxRetries: 5 }));
   const updateDeals = createBatchDealUpdater(webhookUrl);
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
           const deals = await reader.listAllBatched<RefreshDeal & Record<string, unknown>>("crm.deal.list", {
             order: { ID: "ASC" },
             filter,
-            select: [...GZ_REFRESH_DEAL_SELECT, "DATE_CREATE", "UF_CRM_6627AEBD7C2D2", "COMPANY_ID"]
+            select: [...GZ_REFRESH_DEAL_SELECT, "DATE_CREATE", "UF_CRM_6627AEBD7C2D2", "COMPANY_ID", "UF_CRM_REF_ENSTRU_CODE", "UF_CRM_6A436D5A19612", "ORIGIN_ID", "UF_CRM_PLAN_LINK"]
           });
           console.error(`Fetched ${deals.length} deals in category ${categoryId}.`);
           allDeals.push(...deals);
@@ -67,6 +68,7 @@ async function main(): Promise<void> {
           const context = planStatusContextOf(deal, companyBins);
           if (context) contexts.set(Number(deal.UF_CRM_PLAN_ID), context);
         }
+        console.log(`lookup_input=${JSON.stringify({ deals: allDeals.length, without_enstru: allDeals.filter(deal => !fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612).length).length, without_verified_context: allDeals.filter(deal => !contexts.has(Number(deal.UF_CRM_PLAN_ID))).length })}`);
         return allDeals;
       },
       fetchStatuses: (planNumbers) => fetchPlanStatusBatch(planNumbers, { token, contexts, lookup }),
@@ -83,6 +85,7 @@ async function main(): Promise<void> {
 
   for (const line of formatReportLines(report)) console.log(line);
   console.log(`report=${reportPath}`);
+  console.log(`lookup_stats=${JSON.stringify({ full_scan_plans_attempted: lookup.fullScanPlans.size, full_scan_customers: lookup.fullScanBins.size, plan_sources: Object.fromEntries(["q", "enstru", "lots", "full", "ows"].map(path => [path, [...lookup.planSources.values()].filter(value => value === path).length])) })}`);
   if (report.errors.length > 0) process.exitCode = 1;
 }
 

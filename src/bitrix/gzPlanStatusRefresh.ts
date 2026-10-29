@@ -5,6 +5,8 @@ import {
 } from "./gzPublishedDealStatus.js";
 import { chunkPlanNumbers, type PlanStatusBatchResult } from "../kz/goszakupPlanStatusApi.js";
 import type { GzPlanContext } from "../kz/zakupGzPlans.js";
+import { fullEnstruCodes } from "../kz/zakupGzRegistry.js";
+import { buildGzDealPlanRef } from "./gzDealOutcome.js";
 
 export const GZ_REFRESH_PIPELINE_IDS = [9, 41, 29] as const;
 export const GZ_REFRESH_PLAN_NUMBER_FIELD = "UF_CRM_PLAN_ID";
@@ -84,13 +86,20 @@ export interface RefreshDeal extends PublishedDealSnapshot {
   COMPANY_ID?: string | number | null;
   DATE_CREATE?: string | null;
   UF_CRM_6627AEBD7C2D2?: string | null;
+  UF_CRM_REF_ENSTRU_CODE?: string | null;
+  UF_CRM_6A436D5A19612?: string | null;
+  ORIGIN_ID?: string | null;
+  UF_CRM_PLAN_LINK?: string | null;
 }
 
 export function planStatusContextOf(deal: RefreshDeal, companyBins: ReadonlyMap<string, string>): GzPlanContext | null {
   const own = String(deal.UF_CRM_6627AEBD7C2D2 ?? "").trim();
   const bin = /^\d{12}$/.test(own) ? own : companyBins.get(String(deal.COMPANY_ID)) ?? "";
   const year = Number(deal.DATE_CREATE?.slice(0, 4));
-  return /^\d{12}$/.test(bin) && Number.isInteger(year) && year >= 2000 ? { bin, year } : null;
+  if (!/^\d{12}$/.test(bin) || !Number.isInteger(year) || year < 2000) return null;
+  const codes = fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612);
+  const pointIds = buildGzDealPlanRef(deal).pointIds;
+  return { bin, year, ...(codes.length ? { codes } : {}), ...(pointIds.length ? { pointIds } : {}) };
 }
 
 export interface DealFieldUpdate {
