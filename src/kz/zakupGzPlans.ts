@@ -1,7 +1,7 @@
 import type { GzOutcomeContract } from "../bitrix/gzDealOutcome.js";
 import { goszakupGraphqlAll } from "./goszakupGraphql.js";
 import { mapWithConcurrency, zakupGet, zakupListAll } from "./zakupPublicApi.js";
-import { fetchGzCustomerContracts, withGzSourceFallback, type GzRegistryOptions, type ZakupContractPlan } from "./zakupGzRegistry.js";
+import { loadZakupCustomerContracts, mapZakupCustomerContracts, fetchOwsCustomerContracts, withGzSourceFallback, type GzRegistryOptions, type ZakupContractPlan, type ZakupCustomerContractData } from "./zakupGzRegistry.js";
 
 /** Формат прежнего GraphQL на границе источников. */
 export interface ApiPlan {
@@ -37,20 +37,33 @@ export interface GzPlanLookupOptions extends GzRegistryOptions {
 
 /** Один экземпляр на прогон: договоры заказчика и карточки пунктов не читаются повторно. */
 export class GzPlanLookup {
+  private readonly rawCache = new Map<string, Promise<ZakupCustomerContractData[]>>();
   private readonly contractsCache = new Map<string, Promise<GzOutcomeContract[]>>();
   private readonly contractPlans = new Map<string, Map<number, ZakupContractPlan>>();
   private readonly details = new Map<number, Promise<PlanDetail>>();
   constructor(private readonly options: GzRegistryOptions = {}) {}
 
+
+  private raw(bin: string, years: number[]): Promise<ZakupCustomerContractData[]> {
+    const key = bin + ':' + [...new Set(years)].sort().join(',');
+    let pending = this.rawCache.get(key);
+    if (!pending) {
+      const references = this.contractPlans.get(bin) ?? new Map<number, ZakupContractPlan>();
+      this.contractPlans.set(bin, references);
+      pending = loadZakupCustomerContracts(bin, years, { ...this.options, concurrency: 1, onPlanItem: item => {
+        references.set(item.id, item); this.options.onPlanItem?.(item);
+      }});
+      this.rawCache.set(key, pending);
+    }
+    return pending;
+  }
+
   contracts(bin: string, years: number[]): Promise<GzOutcomeContract[]> {
     const key = bin + ':' + [...new Set(years)].sort().join(',');
     let pending = this.contractsCache.get(key);
     if (!pending) {
-      const references = this.contractPlans.get(bin) ?? new Map<number, ZakupContractPlan>();
-      this.contractPlans.set(bin, references);
-      pending = fetchGzCustomerContracts(bin, years, { ...this.options, concurrency: 1, onPlanItem: item => {
-        references.set(item.id, item); this.options.onPlanItem?.(item);
-      }});
+      pending = withGzSourceFallback(async () => mapZakupCustomerContracts(await this.raw(bin, years), { ...this.options, concurrency: 1 }),
+        () => fetchOwsCustomerContracts(bin, years, this.options), this.options.token);
       this.contractsCache.set(key, pending);
     }
     return pending;
@@ -82,7 +95,7 @@ export class GzPlanLookup {
       }
       if (!candidates.length && by === 'root') {
         const currentYear = Number(new Date().toLocaleString('en-CA', { timeZone: 'Asia/Almaty', year: 'numeric' }));
-        await this.contracts(context.bin, context.year < currentYear ? [context.year, context.year + 1] : [context.year]);
+        await this.raw(context.bin, context.year < currentYear ? [context.year, context.year + 1] : [context.year]);
         for (const ref of this.contractPlans.get(context.bin)?.values() ?? []) {
           if (Number(ref.root?.external_id) !== requested) continue;
           const d = await this.detail(ref.id);

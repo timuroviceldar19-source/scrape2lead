@@ -21,6 +21,32 @@ function registry(listed: unknown[], plan = detail, withContract = false) {
   return { fetchFn, calls };
 }
 describe('поиск версий через q и договоры', () => {
+  it('для статуса пункта не требует БИН поставщика постороннего договора', async () => {
+    const {fetchFn: base}=registry([],detail,true);
+    const fetchFn=(async(url: string,init?: RequestInit)=>{
+      const p=new URL(url).pathname;
+      if(p.endsWith('/subjects/')) return json([{external_id:9,plan_item:{id:500,external_id:200,root:{external_id:100}}}]);
+      if(p.endsWith('/organizations/8/')||p.endsWith('/contracts/7/')) return new Response('not found',{status:404});
+      return base(url,init);
+    }) as typeof fetch;
+    expect((await fetchGzPlans([100],'root',{...options,fetchFn}))[0].id).toBe(200);
+  });
+  it('ошибка чтения позиций вызывает резерв Plans, даже если ows Contract вернул пустой список', async () => {
+    const {fetchFn: base}=registry([],detail,true);
+    const fields: string[]=[];
+    const fetchFn=(async(url: string,init?: RequestInit)=>{
+      const u=new URL(url);
+      if(u.hostname==='ows.goszakup.gov.kz') {
+        const query=JSON.parse(String(init?.body)).query;
+        const field=query.includes('Plans(filter:')?'Plans':'Contract';fields.push(field);
+        return json({data:{[field]:field==='Plans'?[{id:200,rootrecordId:100,RefPlnPointStatus:{nameRu:'Утвержден'}}]:null}});
+      }
+      if(u.pathname.endsWith('/contracts/'))return new Response('down',{status:503});
+      return base(url,init);
+    }) as typeof fetch;
+    const result=await fetchGzPlans([100],'root',{...options,fetchFn,token:'t'});
+    expect(result[0]?.id).toBe(200);expect(fields).toContain('Plans');
+  });
   it('q принимает только БИН заказчика и год не раньше сделки; даёт текущий товар и дату акта', async () => {
     const { fetchFn, calls } = registry([{ id: 500, external_id: '200' }]);
     const [plan] = await fetchGzPlans([100], 'root', { ...options, fetchFn });
