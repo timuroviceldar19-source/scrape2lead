@@ -27,7 +27,7 @@ on:
       BITRIX24_WEBHOOK_URL:
         required: true
       GOSZAKUP_TOKEN:
-        required: true
+        required: false
 
 # Раннеры эфемерные, поэтому runs/prepare.lock из конфига здесь ничего не
 # сериализует — файла на чистой машине никогда нет. Повторные прогоны ОДНОГО

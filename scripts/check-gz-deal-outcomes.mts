@@ -27,7 +27,7 @@ import {
 } from "../src/bitrix/gzDealOutcome.js";
 import { callBitrixBatch, chunkBatchCommands } from "../src/bitrix/batch.js";
 import { describeOutcomeCoverage, type OutcomeCoverageInput } from "../src/bitrix/gzOutcomeCoverage.js";
-import { goszakupGraphqlAll } from "../src/kz/goszakupGraphql.js";
+import { fetchGzPlans, GzPlanLookup, type GzPlanLookupOptions, type ApiPlan } from "../src/kz/zakupGzPlans.js";
 import { parseGoszakupPlanDetailHtml, parseGoszakupPlanSearchHtml } from "../src/kz/goszakupPlanHtmlParser.js";
 import type { GoszakupPlanListItem } from "../src/kz/goszakupPlanTypes.js";
 import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "../src/kz/goszakupOrigin.js";
@@ -63,17 +63,6 @@ interface OpenDeal extends GzOutcomeDealFields {
   UF_CRM_S2L_GZ_OUTCOME?: string | null;
 }
 
-interface ApiPlan {
-  id: number;
-  rootrecordId?: number | null;
-  subjectBiin?: string | null;
-  isActive?: number | null;
-  plnPointYear?: number | null;
-  refEnstruCode?: string | null;
-  nameRu?: string | null;
-  RefPlnPointStatus?: { nameRu?: string | null } | null;
-}
-
 interface DealCheck {
   deal: OpenDeal;
   ref: GzDealPlanRef;
@@ -105,7 +94,6 @@ const DEAL_SELECT = [
   "UF_CRM_6A436D5A19612", "UF_CRM_REF_ENSTRU_CODE", "UF_CRM_6627AEBD54B8D",
   "UF_CRM_1715597423325", "OPPORTUNITY", OUTCOME_FIELD
 ];
-const API_CHUNK = 50;
 const NO_PLAN_SIGNAL: GzPlanSignal = { status: null, repurposedTo: null };
 // A full results page is ~55 KB; the throttled one is ~2 KB.
 const THROTTLED_PAGE_MAX_LENGTH = 10_000;
@@ -117,12 +105,6 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const REGISTER_PAGE_SIZE = 500;
 // The largest customers (НАО «МУС») have ~3000 rows a year.
 const REGISTER_MAX_PAGES = 20;
-const PLAN_FIELDS = "id rootrecordId subjectBiin isActive plnPointYear refEnstruCode nameRu RefPlnPointStatus{nameRu}";
-const PLANS_BY_ROOT = `query($v:[Int],$after:Int){Plans(filter:{rootrecordId:$v},limit:200,after:$after){${PLAN_FIELDS}}}`;
-const PLANS_BY_ID = `query($v:[Int],$after:Int){Plans(filter:{id:$v},limit:200,after:$after){${PLAN_FIELDS}}}`;
-const CONTRACTS_BY_CUSTOMER = `query($bin:String,$year:Int,$after:Int){Contract(filter:{customerBin:$bin,finYear:$year},limit:200,after:$after){
-  contractNumberSys signDate supplierBiin deleted Supplier{nameRu} RefContractStatus{nameRu}
-  ContractUnits{plnPointId totalSum refEnstruCode Plans{rootrecordId nameRu}}}}`;
 
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
@@ -184,10 +166,10 @@ function loadOutcomeConfig(configPath: string): GzOutcomeConfig {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (!args.webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
-  if (!args.token) throw new Error("GOSZAKUP_TOKEN is required");
   const config = loadOutcomeConfig(args.configPath);
   const bitrix = new BitrixClient(args.webhookUrl);
-  const gql = { token: args.token };
+  const contexts = new Map<number, { bin: string; year: number }>();
+  const gql: GzPlanLookupOptions = { token: args.token, contexts, lookup: new GzPlanLookup({ token: args.token }) };
   const currentYear = Number(new Date().toLocaleString("en-CA", { timeZone: "Asia/Almaty", year: "numeric" }));
 
   const allDeals = await bitrix.listOpenPlanDeals();
@@ -212,6 +194,12 @@ async function main(): Promise<void> {
   }));
 
   await fillCompanyBins(bitrix, checks);
+  for (const check of checks) {
+    const year = Number(check.deal.DATE_CREATE?.slice(0, 4));
+    if (check.bin && year) for (const id of [check.ref.planNumber, ...check.ref.pointIds]) {
+      if (id) contexts.set(id, { bin: check.bin, year });
+    }
+  }
   await fillApiPlanStatuses(checks, gql, config.itemFamilies);
   const planPages = args.skipHtml ? { pending: 0, failed: 0 } : await fillFromPlanPages(checks, args.htmlDelayMs);
   const contractsByBin = await fetchContractsByBin(checks, currentYear, gql, args.concurrency);
@@ -304,14 +292,15 @@ async function fillCompanyBins(bitrix: BitrixClient, checks: DealCheck[]): Promi
 }
 
 /** The API index misses about half of the points; those fall through to the portal search. */
-async function fillApiPlanStatuses(checks: DealCheck[], gql: { token: string }, families: GzItemFamilies): Promise<void> {
-  const byRoot = await fetchPlans(PLANS_BY_ROOT, uniqueInts(checks.map((check) => check.ref.planNumber)), gql);
-  const byId = await fetchPlans(PLANS_BY_ID, uniqueInts(checks.flatMap((check) => check.ref.pointIds)), gql);
+async function fillApiPlanStatuses(checks: DealCheck[], gql: GzPlanLookupOptions, families: GzItemFamilies): Promise<void> {
+  const byRoot = await fetchPlans("root", uniqueInts(checks.map((check) => check.ref.planNumber)), gql);
+  const byId = await fetchPlans("id", uniqueInts(checks.flatMap((check) => check.ref.pointIds)).filter(id => !byRoot.some(plan => plan.id === id)), gql);
+  byId.push(...byRoot);
   const current = new Map<number, ApiPlan>();
   for (const plan of byRoot) {
     const root = plan.rootrecordId ?? plan.id;
     const known = current.get(root);
-    if (plan.isActive !== 0 && (!known || plan.id > known.id)) current.set(root, plan);
+    if (plan.isActive !== 0 && !plan.isDeleted && (!known || plan.id > known.id)) current.set(root, plan);
   }
   const points = new Map(byId.map((plan) => [plan.id, plan]));
   const revisions = new Map<number, number[]>();
@@ -326,7 +315,7 @@ async function fillApiPlanStatuses(checks: DealCheck[], gql: { token: string }, 
     const dealYear = Number(String(check.deal.DATE_CREATE ?? "").slice(0, 4)) || 0;
     // A point of an earlier year is a stale id, not the deal's plan.
     const ownPlan = check.ref.pointIds.map((id) => points.get(id))
-      .find((item) => item && (item.plnPointYear ?? dealYear) >= dealYear);
+      .find((item) => item && !item.isDeleted && item.subjectBiin === check.bin && (item.plnPointYear ?? 0) >= dealYear);
     const verified = check.ref.planNumberVerified
       || (root !== null && ownPlan?.rootrecordId === root)
       || rootRevisions.some((id) => check.ref.pointIds.includes(id));
@@ -335,7 +324,7 @@ async function fillApiPlanStatuses(checks: DealCheck[], gql: { token: string }, 
     const plan = verified
       ? (root ? current.get(root) : undefined) ?? ownPlan
       : ownPlan ?? (root ? current.get(root) : undefined);
-    if (!plan) continue;
+    if (!plan || plan.subjectBiin !== check.bin || (plan.plnPointYear ?? 0) < dealYear) continue;
     check.plan = readGzPlanSignal(check.ref, {
       status: plan.RefPlnPointStatus?.nameRu?.trim() || null,
       enstruCode: plan.refEnstruCode,
@@ -347,11 +336,12 @@ async function fillApiPlanStatuses(checks: DealCheck[], gql: { token: string }, 
   }
 }
 
-async function fetchPlans(query: string, ids: number[], gql: { token: string }): Promise<ApiPlan[]> {
+async function fetchPlans(by: "root" | "id", ids: number[], gql: GzPlanLookupOptions): Promise<ApiPlan[]> {
   const plans: ApiPlan[] = [];
-  for (let i = 0; i < ids.length; i += API_CHUNK) {
-    plans.push(...await goszakupGraphqlAll<ApiPlan>(query, { v: ids.slice(i, i + API_CHUNK) }, "Plans", gql));
-  }
+  await mapLimit(ids, 4, async (id) => {
+    try { plans.push(...await fetchGzPlans([id], by, gql)); }
+    catch (error) { console.warn(`[plans-${by}] ${id}: ${error instanceof Error ? error.message : String(error)}`); }
+  });
   return plans;
 }
 
@@ -551,7 +541,7 @@ function sleep(ms: number): Promise<void> {
 async function fetchContractsByBin(
   checks: DealCheck[],
   currentYear: number,
-  gql: { token: string },
+  gql: GzPlanLookupOptions,
   concurrency: number
 ): Promise<Map<string, GzOutcomeContract[]> & { failedBins: Set<string> }> {
   const result = Object.assign(new Map<string, GzOutcomeContract[]>(), { failedBins: new Set<string>() });
@@ -566,10 +556,7 @@ async function fetchContractsByBin(
   }
   await mapLimit([...years.entries()], concurrency, async ([bin, binYears]) => {
     try {
-      const contracts: GzOutcomeContract[] = [];
-      for (const year of binYears) {
-        contracts.push(...await goszakupGraphqlAll<GzOutcomeContract>(CONTRACTS_BY_CUSTOMER, { bin, year }, "Contract", gql));
-      }
+      const contracts = await gql.lookup!.contracts(bin, [...binYears]);
       result.set(bin, contracts);
     } catch (error) {
       result.failedBins.add(bin);
@@ -647,6 +634,7 @@ function writeReport(reportPath: string, execute: boolean, checks: DealCheck[], 
       statusSource: check.statusSource,
       outcome: check.outcome,
       key: check.key,
+      previousKey: check.deal.UF_CRM_S2L_GZ_OUTCOME ?? null,
       isNew: check.isNew,
       applied: check.applied,
       error: check.error,

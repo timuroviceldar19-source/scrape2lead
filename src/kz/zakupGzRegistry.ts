@@ -9,7 +9,10 @@ export interface GzRegistryOptions extends ZakupApiOptions {
   token?: string | null;
   orgCachePath?: string;
   concurrency?: number;
+  onPlanItem?: (item: ZakupContractPlan) => void;
 }
+
+export interface ZakupContractPlan { id: number; external_id: number; root?: { external_id?: number | null } | null }
 
 /** Пустой успешный ответ не повод обращаться к резервному источнику. */
 export async function withGzSourceFallback<T>(primary: () => Promise<T>, backup: () => Promise<T>, token?: string | null): Promise<T> {
@@ -31,7 +34,7 @@ interface ContractRow {
 }
 interface SubjectRow {
   external_id?: number | string | null; timestamp?: number | null; contract_price_without_vat?: number | null;
-  plan_item?: { external_id?: number | null; root?: { external_id?: number | null } | null; name_ru?: string | null; enstru?: { code?: string | null } | null } | null;
+  plan_item?: { id?: number; external_id?: number | null; root?: { external_id?: number | null } | null; name_ru?: string | null; enstru?: { code?: string | null } | null } | null;
   contract?: { supplier_organization?: Organization | null } | null;
 }
 
@@ -96,6 +99,9 @@ export async function fetchGzCustomerContracts(bin: string, years: number[], opt
       const body = await zakupGet<SubjectRow[] | { results: SubjectRow[]; next?: string | null }>(`/public/contracts/${row.id}/subjects/`, {}, options);
       if (!Array.isArray(body) && (!Array.isArray(body?.results) || body.next)) throw new Error("zakup: неполные позиции договора");
       const subjects = dedupeSubjects(Array.isArray(body) ? body : body.results);
+      for (const s of subjects) {
+        if (s.plan_item?.id && s.plan_item.external_id) options.onPlanItem?.({ id: s.plan_item.id, external_id: s.plan_item.external_id, root: s.plan_item.root });
+      }
       for (const subject of subjects) orgs.remember(subject.contract?.supplier_organization);
       if (!row.supplier_organization_id) throw new Error("zakup: договор без поставщика");
       const supplierBin = await orgs.binForId(row.supplier_organization_id);

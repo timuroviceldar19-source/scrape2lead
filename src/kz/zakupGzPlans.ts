@@ -1,8 +1,7 @@
+import type { GzOutcomeContract } from "../bitrix/gzDealOutcome.js";
 import { goszakupGraphqlAll } from "./goszakupGraphql.js";
-import { parseGoszakupPlanSearchHtml } from "./goszakupPlanHtmlParser.js";
-import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
 import { mapWithConcurrency, zakupGet, zakupListAll } from "./zakupPublicApi.js";
-import { withGzSourceFallback, type GzRegistryOptions } from "./zakupGzRegistry.js";
+import { fetchGzCustomerContracts, withGzSourceFallback, type GzRegistryOptions, type ZakupContractPlan } from "./zakupGzRegistry.js";
 
 /** Формат прежнего GraphQL на границе источников. */
 export interface ApiPlan {
@@ -29,45 +28,82 @@ interface PlanDetail {
   plan?: { act_date?: string | null } | null;
 }
 
-/**
- * Публичный поиск zakup не поддерживает rootrecordId. HTML-реестр определяет текущую версию,
- * а поля читаются из zakup. Отсутствующую там текущую версию нельзя заменять старой.
- */
-async function currentPoint(root: number, options: GzRegistryOptions): Promise<{ id: number; status: string | null } | null> {
-  const url = new URL(`${GZ_PORTAL_ORIGIN}/ru/registry/plan`);
-  url.searchParams.set("filter[number]", String(root)); url.searchParams.set("count_record", "50");
-  const response = await (options.fetchFn ?? fetch)(url.toString(), { signal: AbortSignal.timeout(options.timeoutMs ?? 30_000) });
-  if (!response.ok) throw new Error(`реестр планов: HTTP ${response.status}`);
-  const html = await response.text();
-  if (!/id=["']search-result["']/.test(html)) throw new Error("реестр планов: нет таблицы результатов (ограничение или технические работы)");
-  const rows = parseGoszakupPlanSearchHtml(html, "zakup-root").filter(row => row.plan_list_number === String(root));
-  const latest = rows.sort((a, b) => Number(b.plan_point_id) - Number(a.plan_point_id))[0];
-  return latest ? { id: Number(latest.plan_point_id), status: latest.status } : null;
+
+export interface GzPlanContext { bin: string; year: number }
+export interface GzPlanLookupOptions extends GzRegistryOptions {
+  contexts?: ReadonlyMap<number, GzPlanContext>;
+  lookup?: GzPlanLookup;
 }
 
-export async function fetchGzPlans(ids: readonly number[], by: "root" | "id", options: GzRegistryOptions = {}): Promise<ApiPlan[]> {
-  const unique = [...new Set(ids)];
-  if (unique.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error("Номер пункта должен быть положительным целым");
-  const results = await mapWithConcurrency(unique, options.concurrency ?? 4, async (requested): Promise<ApiPlan[]> => withGzSourceFallback(async () => {
-    const current = by === "root" ? await currentPoint(requested, options) : { id: requested, status: null };
-    if (!current) return [];
-    const listed = await zakupListAll<{ id: number; external_id: string | number }>("/public/plan-items/", { external_id: current.id, system_id: 1 }, options);
-    const rows = listed.filter(row => Number(row.external_id) === current.id);
-    if (!rows.length && by === "root") throw new Error(`zakup: текущая версия ${current.id} плана ${requested} отсутствует`);
-    return mapWithConcurrency(rows, 1, async (row): Promise<ApiPlan> => {
-      const detail = await zakupGet<PlanDetail>(`/public/plan-items/${row.id}/`, {}, options);
-      if (Number(detail.external_id) !== current.id || !detail.status?.egz_code || !detail.status.name) throw new Error(`zakup: неверная карточка пункта ${current.id}`);
-      if (current.status && current.status.trim() !== detail.status.name.trim()) throw new Error(`zakup: статус версии ${current.id} отстаёт от реестра (${detail.status.name} / ${current.status})`);
-      const actDate = detail.plan?.act_date;
-      return { id: Number(detail.external_id), rootrecordId: by === "root" ? requested : detail.root?.external_id ?? null,
-        subjectBiin: detail.organization?.iin_bin ?? null,
-        isActive: detail.is_externally_active === false || detail.is_externally_active === 0 ? 0 : 1,
-        isDeleted: detail.is_externally_deleted ? 1 : 0,
-        plnPointYear: detail.year?.year ?? null, refEnstruCode: detail.enstru?.code ?? null, nameRu: detail.name_ru ?? null,
-        // timestamp — не доказанная дата создания версии. Берём консервативную дату утверждения акта.
-        dateCreate: actDate && /^\d{4}-\d{2}-\d{2}$/.test(actDate) ? `${actDate} 00:00:00` : "",
-        RefPlnPointStatus: { nameRu: detail.status.name } };
-    });
-  }, async () => goszakupGraphqlAll<ApiPlan>(`query($v:[Int],$after:Int){Plans(filter:{${by === "root" ? "rootrecordId" : "id"}:$v},limit:200,after:$after){id rootrecordId subjectBiin isActive isDeleted plnPointYear refEnstruCode nameRu dateCreate RefPlnPointStatus{nameRu}}}`, { v: [requested] }, "Plans", { ...options, token: options.token! }), options.token));
-  return results.flat();
+/** Один экземпляр на прогон: договоры заказчика и карточки пунктов не читаются повторно. */
+export class GzPlanLookup {
+  private readonly contractsCache = new Map<string, Promise<GzOutcomeContract[]>>();
+  private readonly contractPlans = new Map<string, Map<number, ZakupContractPlan>>();
+  private readonly details = new Map<number, Promise<PlanDetail>>();
+  constructor(private readonly options: GzRegistryOptions = {}) {}
+
+  contracts(bin: string, years: number[]): Promise<GzOutcomeContract[]> {
+    const key = bin + ':' + [...new Set(years)].sort().join(',');
+    let pending = this.contractsCache.get(key);
+    if (!pending) {
+      const references = this.contractPlans.get(bin) ?? new Map<number, ZakupContractPlan>();
+      this.contractPlans.set(bin, references);
+      pending = fetchGzCustomerContracts(bin, years, { ...this.options, concurrency: 1, onPlanItem: item => {
+        references.set(item.id, item); this.options.onPlanItem?.(item);
+      }});
+      this.contractsCache.set(key, pending);
+    }
+    return pending;
+  }
+
+  private detail(id: number): Promise<PlanDetail> {
+    let pending = this.details.get(id);
+    if (!pending) {
+      pending = zakupGet<PlanDetail>(`/public/plan-items/${id}/`, {}, this.options);
+      this.details.set(id, pending);
+    }
+    return pending;
+  }
+
+  async plans(ids: readonly number[], by: 'root' | 'id', contexts: ReadonlyMap<number, GzPlanContext> = new Map()): Promise<ApiPlan[]> {
+    const unique = [...new Set(ids)];
+    if (unique.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('Номер пункта должен быть положительным целым');
+    const rows = await mapWithConcurrency(unique, this.options.concurrency ?? 4, async requested => withGzSourceFallback(async () => {
+      const context = contexts.get(requested);
+      if (!context || !/^\d{12}$/.test(context.bin) || !Number.isInteger(context.year) || context.year < 2000) throw new Error(`нет проверяемого БИН и года для пункта ${requested}`);
+      const listed = await zakupListAll<{id: number; external_id: string | number}>('/public/plan-items/', { [by === 'root' ? 'q' : 'external_id']: requested, system_id: 1 }, this.options);
+      const candidates: PlanDetail[] = [];
+      const accept = (d: PlanDetail) => d.organization?.iin_bin === context.bin && Number(d.year?.year) >= context.year
+        && d.is_externally_deleted !== true && d.is_externally_deleted !== 1 && d.is_externally_active !== false && d.is_externally_active !== 0;
+      for (const row of listed) {
+        if (by === 'id' && Number(row.external_id) !== requested) continue;
+        const d = await this.detail(row.id);
+        if (accept(d)) candidates.push(d);
+      }
+      if (!candidates.length && by === 'root') {
+        const currentYear = Number(new Date().toLocaleString('en-CA', { timeZone: 'Asia/Almaty', year: 'numeric' }));
+        await this.contracts(context.bin, context.year < currentYear ? [context.year, context.year + 1] : [context.year]);
+        for (const ref of this.contractPlans.get(context.bin)?.values() ?? []) {
+          if (Number(ref.root?.external_id) !== requested) continue;
+          const d = await this.detail(ref.id);
+          if (Number(d.external_id) === Number(ref.external_id) && accept(d)) candidates.push(d);
+        }
+      }
+      const latest = candidates.sort((a,b) => Number(b.external_id) - Number(a.external_id))[0];
+      if (!latest) return [];
+      if (!latest.status?.egz_code || !latest.status.name) throw new Error(`zakup: неизвестный статус пункта ${requested}`);
+      const actDate = latest.plan?.act_date;
+      return [{ id: Number(latest.external_id), rootrecordId: by === 'root' ? requested : latest.root?.external_id ?? null,
+        subjectBiin: latest.organization?.iin_bin ?? null, isActive: 1, isDeleted: 0,
+        plnPointYear: latest.year?.year ?? null, refEnstruCode: latest.enstru?.code ?? null, nameRu: latest.name_ru ?? null,
+        // timestamp не считаем датой версии. Дата акта — консервативная нижняя граница.
+        dateCreate: actDate && /^\d{4}-\d{2}-\d{2}$/.test(actDate) ? actDate + ' 00:00:00' : '',
+        RefPlnPointStatus: { nameRu: latest.status.name } }];
+    }, async () => goszakupGraphqlAll<ApiPlan>(`query($v:[Int],$after:Int){Plans(filter:{${by === 'root' ? 'rootrecordId' : 'id'}:$v},limit:200,after:$after){id rootrecordId subjectBiin isActive isDeleted plnPointYear refEnstruCode nameRu dateCreate RefPlnPointStatus{nameRu}}}`, { v: [requested] }, 'Plans', { ...this.options, token: this.options.token! }), this.options.token));
+    return rows.flat();
+  }
+}
+
+export function fetchGzPlans(ids: readonly number[], by: 'root' | 'id', options: GzPlanLookupOptions = {}): Promise<ApiPlan[]> {
+  return (options.lookup ?? new GzPlanLookup(options)).plans(ids, by, options.contexts);
 }
