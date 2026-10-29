@@ -598,4 +598,75 @@ describe("salesPultPace", () => {
       expect(byName.get("Михаил Попов")?.calls.noCallsFlag).toBe(true);
     });
   });
+
+  describe("portal won debts and mismatches signals", () => {
+    it("triggers red signals for wonOnPortalNotClosed debts and outcomeMismatches", () => {
+      const payload: SalesPultPayload = {
+        asOfDate: "2026-10-29",
+        generatedAt: "2026-10-29 15:00 (UTC+5)",
+        portal: "https://ft3.bitrix24.kz",
+        targets: {
+          daily: { calls: 15, proposals: 3, contracts: 1 },
+          weekly: { calls: 75, proposals: 15, contracts: 5 },
+          monthly: { calls: 300, proposals: 60, contracts: 20 }
+        },
+        callsAvailable: true,
+        groups: [
+          {
+            id: "sales",
+            name: "Отдел продаж",
+            managers: [
+              {
+                id: "1",
+                name: "Бекзат",
+                active: true,
+                rollups: {
+                  managerId: "1",
+                  asOfDate: "2026-10-29",
+                  day: { calls: { successful: 15, totalAttempts: 20, durationSeconds: 600, durationMinutes: 10, status: "green" }, proposals: { uniqueDealsCount: 3, dealIds: [], status: "green" }, contracts: { uniqueDealsCount: 1, totalAmount: 1000000, dealIds: [], status: "green" } },
+                  week: { calls: { successful: 75, totalAttempts: 100, durationSeconds: 3000, durationMinutes: 50, status: "green" }, proposals: { uniqueDealsCount: 15, dealIds: [], status: "green" }, contracts: { uniqueDealsCount: 5, totalAmount: 5000000, dealIds: [], status: "green" } },
+                  month: { calls: { successful: 300, totalAttempts: 400, durationSeconds: 12000, durationMinutes: 200, status: "green" }, proposals: { uniqueDealsCount: 60, dealIds: [], status: "green" }, contracts: { uniqueDealsCount: 20, totalAmount: 20000000, dealIds: [], status: "green" } },
+                  signals: { zeroBitrixCallsToday: false, zeroKpThreeDays: false }
+                },
+                debts: {
+                  overdue: 0,
+                  overdueOverMonth: 0,
+                  overdueOngoing: 0,
+                  newDeals: 0,
+                  newStaleDeals: 0,
+                  newOldestAgeDays: 0,
+                  readyToCloseDealIds: [],
+                  wonOnPortalNotClosed: 2
+                }
+              }
+            ]
+          }
+        ],
+        outcomeMismatches: [
+          {
+            id: "45477",
+            title: "Deal 45477",
+            amount: 4280000,
+            managerId: "1",
+            managerName: "Бекзат",
+            outcome: "won:991140002353/260055",
+            portalSignDate: "2026-09-29"
+          }
+        ],
+        dynamics: []
+      };
+
+      const signals = buildPultSignals(payload);
+      const wonDebtSignal = signals.find((s) => s.text.includes("выиграно на портале, не закрыто в CRM"));
+      expect(wonDebtSignal).toBeDefined();
+      expect(wonDebtSignal?.color).toBe("red");
+      expect(wonDebtSignal?.text).toBe("<b>Бекзат</b>: выиграно на портале, не закрыто в CRM — 2\u00A0сделки");
+
+      const mismatchSignal = signals.find((s) => s.text.includes("Ошибка в CRM"));
+      expect(mismatchSignal).toBeDefined();
+      expect(mismatchSignal?.color).toBe("red");
+      expect(mismatchSignal?.text).toBe("<b>Ошибка в CRM:</b> 1\u00A0сделка выиграна на портале, но закрыта как проигрыш");
+    });
+  });
+
 });

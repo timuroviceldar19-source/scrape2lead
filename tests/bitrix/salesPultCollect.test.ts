@@ -1,3 +1,4 @@
+import { parsePortalSignDate } from "../../src/bitrix/salesPult/collect.js";
 import { describe, expect, it, vi } from "vitest";
 import { ReadOnlyBitrixClient } from "../../src/bitrix/reporting/readOnlyClient.js";
 import {
@@ -311,5 +312,152 @@ describe("salesPultCollect", () => {
     expect(data.tasksByManager.get("2345")).toEqual([]);
     expect(data.debtsByManager.get("2345")?.newDeals).toBe(0);
     expect(data.debtsByManager.get("2345")?.overdue).toBe(0);
+  });
+});
+
+describe("parsePortalSignDate", () => {
+  it("extracts sign date DD.MM.YYYY from outcome comments into YYYY-MM-DD", () => {
+    const commentWon = "Итог закупки: договор подписан с нами — договор №991140002353/260055 от 29.09.2026, 4 280 000 ₸.\nОтметьте победу в сделке.";
+    expect(parsePortalSignDate(commentWon)).toBe("2026-09-29");
+
+    const commentPartner = 'Итог закупки: выиграл наш партнёр ТОО "Amanat Asia" (БИН 130540000688) — договор №123/45 от 14.10.2026, 120 000 000 ₸.';
+    expect(parsePortalSignDate(commentPartner)).toBe("2026-10-14");
+
+    const commentOther = "Обычный комментарий менеджера";
+    expect(parsePortalSignDate(commentOther)).toBeNull();
+  });
+});
+
+describe("collectPultData portal won contracts and mismatches", () => {
+  it("fetches won/partner deals, extracts sign date, computes wonOnPortalNotClosed and outcomeMismatches", async () => {
+    const call = vi.fn(async (method: string, body: any) => {
+      if (method === "batch") {
+        const cmd = body?.cmd ?? {};
+        const first = Object.values(cmd)[0] as string;
+        if (first?.startsWith("crm.deal.list")) {
+          if (first.includes("won%3A") || first.includes("won:")) {
+            return {
+              result: {
+                p0: [
+                  {
+                    ID: "501",
+                    TITLE: "[GZ 1001] Школа 1 - Ноутбуки",
+                    OPPORTUNITY: "10000000",
+                    ASSIGNED_BY_ID: "147",
+                    CATEGORY_ID: "9",
+                    STAGE_ID: "C9:NEW",
+                    STAGE_SEMANTIC_ID: "P",
+                    UF_CRM_S2L_GZ_OUTCOME: "won:123/456"
+                  },
+                  {
+                    ID: "502",
+                    TITLE: "[GZ 1002] Школа 2 - Компьютеры",
+                    OPPORTUNITY: "5000000",
+                    ASSIGNED_BY_ID: "147",
+                    CATEGORY_ID: "9",
+                    STAGE_ID: "C9:LOSE",
+                    STAGE_SEMANTIC_ID: "F",
+                    UF_CRM_S2L_GZ_OUTCOME: "won:789/012"
+                  },
+                  {
+                    ID: "504",
+                    TITLE: "[GZ 1004] Школа 3 - Компьютеры (дубликат)",
+                    OPPORTUNITY: "3000000",
+                    ASSIGNED_BY_ID: "147",
+                    CATEGORY_ID: "41",
+                    STAGE_ID: "C41:DUPLICATE",
+                    STAGE_SEMANTIC_ID: "F",
+                    UF_CRM_S2L_GZ_OUTCOME: "won:555/666"
+                  }
+                ]
+              },
+              result_error: {}
+            };
+          }
+          if (first.includes("partner%3A") || first.includes("partner:")) {
+            return {
+              result: {
+                p0: [
+                  {
+                    ID: "503",
+                    TITLE: "[GZ 1003] Колледж 1 - Панели",
+                    OPPORTUNITY: "8000000",
+                    ASSIGNED_BY_ID: "147",
+                    CATEGORY_ID: "9",
+                    STAGE_ID: "C9:WON",
+                    STAGE_SEMANTIC_ID: "S",
+                    UF_CRM_S2L_GZ_OUTCOME: "partner:999/888"
+                  }
+                ]
+              },
+              result_error: {}
+            };
+          }
+        }
+        if (first?.startsWith("crm.timeline.comment.list")) {
+          return {
+            result: {
+              c501: [
+                {
+                  ID: "c1",
+                  COMMENT: "Итог закупки: договор подписан с нами — договор №101 от 14.10.2026, 10 000 000 ₸.\nОтметьте победу в сделке.",
+                  CREATED: "2026-10-14T12:00:00+05:00"
+                }
+              ],
+              c502: [
+                {
+                  ID: "c2",
+                  COMMENT: "Итог закупки: договор подписан с нами — договор №102 от 28.09.2026, 5 000 000 ₸.\nОтметьте победу в сделке.",
+                  CREATED: "2026-09-28T12:00:00+05:00"
+                }
+              ],
+              c503: [
+                {
+                  ID: "c3",
+                  COMMENT: 'Итог закупки: выиграл наш партнёр ТОО "Amanat Asia" — договор №103 от 15.10.2026, 8 000 000 ₸.',
+                  CREATED: "2026-10-15T12:00:00+05:00"
+                }
+              ]
+            },
+            result_error: {}
+          };
+        }
+        return { result: {}, result_error: {} };
+      }
+      if (method === "crm.deal.list") {
+        return [];
+      }
+      return [];
+    });
+
+    const client = new ReadOnlyBitrixClient({ call });
+    const data = await collectPultData({
+      client,
+      fromDate: "2026-10-01",
+      toDate: "2026-10-29",
+      managerIds: ["147"],
+      proposalStages: [],
+      contractStages: [],
+      nowIso: "2026-10-29T12:00:00+05:00"
+    });
+
+    const d501 = data.deals.get("501");
+    expect(d501).toBeDefined();
+    expect(d501?.portalSignDate).toBe("2026-10-14");
+    expect(d501?.outcome).toBe("won:123/456");
+
+    const d503 = data.deals.get("503");
+    expect(d503).toBeDefined();
+    expect(d503?.portalSignDate).toBe("2026-10-15");
+
+    const debts = data.debtsByManager.get("147");
+    expect(debts?.wonOnPortalNotClosed).toBe(1);
+
+    expect(data.outcomeMismatches).toHaveLength(1);
+    expect(data.outcomeMismatches[0]).toMatchObject({
+      id: "502",
+      outcome: "won:789/012",
+      portalSignDate: "2026-09-28"
+    });
   });
 });

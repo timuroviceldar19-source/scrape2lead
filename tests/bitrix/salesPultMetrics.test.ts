@@ -136,4 +136,98 @@ describe("salesPultMetrics", () => {
     expect(getMetricStatus(10, 15)).toBe("yellow"); // ~67%
     expect(getMetricStatus(2, 15)).toBe("red");
   });
+  it("counts portal won and partner deals as contracts on their portal sign date", () => {
+    const deals = new Map<string, DealInfo>([
+      [
+        "w1",
+        {
+          id: "w1",
+          title: "Deal W1 (won on portal)",
+          amount: 5_000_000,
+          assignedById: "147",
+          outcome: "won:123/456",
+          portalSignDate: "2026-10-14",
+          stageSemanticId: "P"
+        }
+      ],
+      [
+        "w2",
+        {
+          id: "w2",
+          title: "Deal W2 (partner won on portal)",
+          amount: 3_000_000,
+          assignedById: "147",
+          outcome: "partner:789/101",
+          portalSignDate: "2026-10-14",
+          stageSemanticId: "S"
+        }
+      ],
+      [
+        "w3",
+        {
+          id: "w3",
+          title: "Deal W3 (won on portal, closed as lost in CRM - error)",
+          amount: 4_000_000,
+          assignedById: "147",
+          outcome: "won:111/222",
+          portalSignDate: "2026-10-14",
+          stageSemanticId: "F"
+        }
+      ],
+      [
+        "w4",
+        {
+          id: "w4",
+          title: "Deal W4 (signed on portal 2026-10-14, but moved to won in CRM on 2026-10-20)",
+          amount: 2_000_000,
+          assignedById: "147",
+          outcome: "won:333/444",
+          portalSignDate: "2026-10-14",
+          stageSemanticId: "S"
+        }
+      ],
+      [
+        "c1",
+        {
+          id: "c1",
+          title: "Deal C1 (regular CRM won deal, no portal outcome)",
+          amount: 1_500_000,
+          assignedById: "147",
+          stageSemanticId: "S"
+        }
+      ]
+    ]);
+
+    const transitions: StageTransition[] = [
+      { id: "t1", dealId: "w4", stageId: "C9:WON", createdTime: "2026-10-20T10:00:00+05:00" },
+      { id: "t2", dealId: "c1", stageId: "C9:WON", createdTime: "2026-10-20T11:00:00+05:00" }
+    ];
+
+    const metricsOct14 = calculateDailyMetrics({
+      managerId: "147",
+      date: "2026-10-14",
+      calls: [],
+      kpTransitions: [],
+      contractTransitions: transitions,
+      deals
+    });
+
+    expect(metricsOct14.contracts.uniqueDealsCount).toBe(3);
+    expect(metricsOct14.contracts.totalAmount).toBe(10_000_000);
+    expect(metricsOct14.contracts.dealIds.sort()).toEqual(["w1", "w2", "w4"].sort());
+
+    const metricsOct20 = calculateDailyMetrics({
+      managerId: "147",
+      date: "2026-10-20",
+      calls: [],
+      kpTransitions: [],
+      contractTransitions: transitions,
+      deals
+    });
+
+    expect(metricsOct20.contracts.uniqueDealsCount).toBe(1);
+    expect(metricsOct20.contracts.totalAmount).toBe(1_500_000);
+    expect(metricsOct20.contracts.dealIds).toEqual(["c1"]);
+  });
+
 });

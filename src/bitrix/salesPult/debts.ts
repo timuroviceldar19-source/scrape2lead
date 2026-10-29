@@ -69,6 +69,8 @@ export interface ManagerDebts {
   newOldestAgeDays: number;
   /** Deals whose procurement has passed but still have open activities. */
   readyToCloseDealIds: string[];
+  /** Deals won on portal (won: or partner:) but not closed in CRM. */
+  wonOnPortalNotClosed?: number;
 }
 
 export interface DebtTopTask extends TopTask {
@@ -92,7 +94,8 @@ export const EMPTY_DEBTS: ManagerDebts = {
   newDeals: 0,
   newStaleDeals: 0,
   newOldestAgeDays: 0,
-  readyToCloseDealIds: []
+  readyToCloseDealIds: [],
+  wonOnPortalNotClosed: 0
 };
 
 /** Bitrix dates without an offset are in portal time (UTC+3). */
@@ -247,7 +250,8 @@ export function summarizeDebts(classified: readonly ClassifiedTodo[], context: D
     newDeals: dealIds(newTodos).length,
     newStaleDeals: dealIds(newTodos.filter((item) => item.ageDays > NEW_TODO_PROBLEM_AGE_DAYS)).length,
     newOldestAgeDays: Math.floor(Math.max(0, ...newTodos.map((item) => item.ageDays))),
-    readyToCloseDealIds: dealIds(classified.filter((item) => item.kind === "passed"))
+    readyToCloseDealIds: dealIds(classified.filter((item) => item.kind === "passed")),
+    wonOnPortalNotClosed: 0
   };
 }
 

@@ -8,6 +8,9 @@ import type {
   MarketKindItem,
   MarketLostItem,
   MarketCustomerItem,
+  MarketCompanyItem,
+  MarketYtdCompanyItem,
+  MarketYtdView,
   MarketConfig
 } from "./types.js";
 import { loadMarketConfig } from "./config.js";
@@ -56,12 +59,23 @@ function getOurCompanyName(bin: string, cfg: MarketConfig, rawName?: string): st
   if (cfg.ourCompanyNames?.[bin]) {
     return cfg.ourCompanyNames[bin];
   }
+  const match = cfg.ourBins?.find((b) => (typeof b === "string" ? b === bin : b.bin === bin));
+  if (match && typeof match !== "string" && match.name) return match.name;
   if (bin === "061140003942") return "F3";
   if (bin === "130540000688") return "Amanat Asia";
   if (rawName) {
     return rawName.replace(/^Товарищество с ограниченной ответственностью\s*/i, "ТОО ").replace(/"/g, "").trim();
   }
   return bin;
+}
+
+function getOurCompaniesList(cfg: MarketConfig): MarketCompanyItem[] {
+  const bins = cfg.ourBins || (cfg.bin ? [cfg.bin] : []);
+  return bins.map((b) => {
+    const bin = typeof b === "string" ? b : b.bin;
+    const name = getOurCompanyName(bin, cfg);
+    return { bin, name };
+  });
 }
 
 export function getPreviousWorkday(dateStr: string): string {
@@ -79,6 +93,7 @@ export function buildMarketGroupView(
   cfg: MarketConfig = loadMarketConfig()
 ): MarketGroupView {
   const ourBins = getOurBinsSet(cfg);
+  const ourCompaniesList = getOurCompaniesList(cfg);
   const isOurUnit = (u: MarketUnit) => ourBins.has(u.supplier);
 
   const curMonth = asOfDate.slice(0, 7);
@@ -149,13 +164,60 @@ export function buildMarketGroupView(
   // Months
   const byMonth = groupBy(groupUnits, (u) => u.month);
   const months: MarketMonthItem[] = Object.entries(byMonth)
-    .map(([m, xs]) => ({
-      m,
-      sum: sumBy(xs, (u) => u.sum),
-      us: sumBy(xs.filter(isOurUnit), (u) => u.sum),
-      contracts: countContracts(xs)
-    }))
+    .map(([m, xs]) => {
+      const monthOurCompanies = ourCompaniesList.map((comp) => ({
+        bin: comp.bin,
+        name: comp.name,
+        sum: sumBy(xs.filter((u) => u.supplier === comp.bin), (u) => u.sum)
+      }));
+      return {
+        m,
+        sum: sumBy(xs, (u) => u.sum),
+        us: sumBy(xs.filter(isOurUnit), (u) => u.sum),
+        contracts: countContracts(xs),
+        ourCompanies: monthOurCompanies
+      };
+    })
     .sort((a, b) => a.m.localeCompare(b.m));
+
+  // Year-to-date (ytd) summary
+  const currentYear = displayMonth.slice(0, 4);
+  const ytdUnits = groupUnits.filter((u) => u.month.slice(0, 4) === currentYear && u.month <= displayMonth);
+  const ytdTotalSum = sumBy(ytdUnits, (u) => u.sum);
+  const ytdOurUnits = ytdUnits.filter(isOurUnit);
+  const ytdOurSum = sumBy(ytdOurUnits, (u) => u.sum);
+  const ytdShare = ytdTotalSum > 0 ? ytdOurSum / ytdTotalSum : 0;
+
+  const ytdByCompetitor = groupBy(ytdUnits.filter((u) => !isOurUnit(u)), (u) => u.supplier);
+  const ytdCompetitorSums = Object.values(ytdByCompetitor).map((xs) => sumBy(xs, (u) => u.sum));
+  const allYtdSums = [...ytdCompetitorSums];
+  if (ytdOurUnits.length > 0) {
+    allYtdSums.push(ytdOurSum);
+  }
+  allYtdSums.sort((a, b) => b - a);
+  const ytdRank = ytdOurUnits.length > 0 ? allYtdSums.indexOf(ytdOurSum) + 1 : 0;
+  const ytdTotalSuppliers = allYtdSums.length;
+
+  const ytdCompanies: MarketYtdCompanyItem[] = ourCompaniesList.map((comp) => {
+    const compUnits = ytdUnits.filter((u) => u.supplier === comp.bin);
+    const compSum = sumBy(compUnits, (u) => u.sum);
+    const compShare = ytdTotalSum > 0 ? compSum / ytdTotalSum : 0;
+    return {
+      bin: comp.bin,
+      name: comp.name,
+      sum: compSum,
+      share: compShare
+    };
+  });
+
+  const ytd: MarketYtdView = {
+    totalSum: ytdTotalSum,
+    sum: ytdOurSum,
+    share: ytdShare,
+    rank: ytdRank,
+    totalSuppliers: ytdTotalSuppliers,
+    companies: ytdCompanies
+  };
 
   // Methods
   const byMethod = groupBy(cur, (u) => u.method);
@@ -248,7 +310,9 @@ export function buildMarketGroupView(
     methods,
     kinds,
     lost,
-    customers
+    customers,
+    ourCompanies: ourCompaniesList,
+    ytd
   };
 }
 

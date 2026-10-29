@@ -54,11 +54,35 @@ export interface MarketSupplierItem {
   us: boolean;
 }
 
+export interface MarketCompanyItem {
+  bin: string;
+  name: string;
+}
+
+export interface MarketMonthCompanyItem extends MarketCompanyItem {
+  sum: number;
+}
+
+export interface MarketYtdCompanyItem extends MarketCompanyItem {
+  sum: number;
+  share: number;
+}
+
+export interface MarketYtdView {
+  totalSum: number;
+  sum: number;
+  share: number;
+  rank: number;
+  totalSuppliers: number;
+  companies: MarketYtdCompanyItem[];
+}
+
 export interface MarketMonthItem {
   m: string;
   sum: number;
   us: number;
   contracts: number;
+  ourCompanies?: MarketMonthCompanyItem[];
 }
 
 export interface MarketMethodItem {
@@ -131,6 +155,8 @@ export interface MarketGroupView {
   kinds: MarketKindItem[];
   lost: MarketLostItem[];
   customers: MarketCustomerItem[];
+  ourCompanies?: MarketCompanyItem[];
+  ytd?: MarketYtdView;
 }
 
 export interface MarketView {

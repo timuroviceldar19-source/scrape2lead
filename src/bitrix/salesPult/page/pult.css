@@ -89,6 +89,17 @@ section.block { border-top: 1px solid var(--rule-3); margin-top: 56px; padding-t
 .sig b { font-weight: 500; }
 .sig .num { font-size: 14px; }
 
+/* ---------- mismatches box (won on portal, lost in CRM) ---------- */
+.mismatches-box { margin-top: 24px; padding: 18px 20px; border-radius: 8px; border: 1px solid rgba(224, 82, 82, 0.4); background: rgba(224, 82, 82, 0.04); }
+.mismatches-box .box-title { font-weight: 600; font-size: 14px; color: var(--bad, #e05252); margin-bottom: 8px; }
+.mismatches-box .box-desc { font-size: 13px; color: var(--ink-2); margin-bottom: 12px; line-height: 1.4; }
+.mismatches-list { display: flex; flex-direction: column; gap: 8px; }
+.mismatch-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; background: var(--paper, #fff); border: 1px solid var(--rule-2, #ddd); border-radius: 6px; font-size: 13px; }
+.mismatch-row .info { min-width: 0; flex: 1 1 auto; }
+.mismatch-row .deal-link { font-weight: 600; color: var(--ink); text-decoration: underline; word-break: break-word; }
+.mismatch-row .mgr { color: var(--ink-3); margin-left: 8px; }
+.mismatch-row .meta { white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--ink-2); flex-shrink: 0; }
+
 /* ---------- hero ---------- */
 .hero { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 48px; align-items: start; }
 .hero-num { display: flex; align-items: baseline; gap: 10px; margin: 10px 0 2px; }
@@ -116,6 +127,11 @@ section.block { border-top: 1px solid var(--rule-3); margin-top: 56px; padding-t
 .legend i.dash { border-top: 1.5px dashed var(--ink-3); }
 .legend i.dot { border-top: 2px dotted var(--ink); }
 .legend i.band { height: 10px; border: 0; background: rgba(20,20,20,.05); }
+.legend i.sq { width: 12px; height: 12px; border: 0; display: inline-block; border-radius: 2px; }
+.legend i.sq.our-0 { background: var(--ink); }
+.legend i.sq.our-1 { background: #55534e; }
+.legend i.sq.our-2 { background: #8c8981; }
+.legend i.sq.other { background: rgba(20,20,20,.13); }
 .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--paper); padding: 9px 11px; font: 400 12px/1.45 var(--mono); white-space: nowrap; opacity: 0; transform: translate(-50%, -100%) translateY(-10px); transition: opacity .15s; z-index: 5; }
 .tip.on { opacity: 1; }
 .tip b { font-weight: 500; }
@@ -287,6 +303,9 @@ body.tv .tv-cycle { display: block; }
   .task { grid-template-columns: 3px minmax(0, 1fr); }
   .task .side { grid-column: 2; text-align: left; align-items: flex-start; flex-direction: row; flex-wrap: wrap; gap: 10px; }
   .split-row { grid-template-columns: 90px 1fr auto; }
+  .mismatches-box { padding: 14px; }
+  .mismatch-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .mismatch-row .meta { white-space: normal; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -373,6 +392,9 @@ body.tv .sections, body.tv #periodsNav { display: none !important; }
 .months .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; position: relative; }
 .months .col .tot { background: rgba(20,20,20,.13); position: relative; transition: height 1.2s var(--ease); height: 0; }
 .months .col .our { position: absolute; left: 0; right: 0; bottom: 0; background: var(--ink); transition: height 1.2s var(--ease); height: 0; }
+.months .col .our.our-0, .months .col .our:not([class*="our-"]) { background: var(--ink); }
+.months .col .our.our-1 { background: #55534e; }
+.months .col .our.our-2 { background: #8c8981; }
 .months .col .lab { position: absolute; top: -20px; left: 50%; transform: translateX(-50%); font: 400 11px var(--mono); color: var(--ink-2); white-space: nowrap; }
 .mlabels { display: flex; gap: 10px; margin-top: 8px; }
 .mlabels span { flex: 1; text-align: center; font: 400 11px var(--mono); color: var(--ink-3); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; }
@@ -426,4 +448,12 @@ body.tv .sections, body.tv #periodsNav { display: none !important; }
 }
 @media (max-width: 375px) {
   .months .col .lab { font-size: 9px; }
+}
+
+
+.block-head .meta .mobile { display: none; }
+.block-head .meta .desktop { display: inline; }
+@media (max-width: 480px) {
+  .block-head .meta .mobile { display: inline; }
+  .block-head .meta .desktop { display: none; }
 }

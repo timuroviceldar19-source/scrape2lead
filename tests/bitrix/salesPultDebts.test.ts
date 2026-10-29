@@ -1,3 +1,5 @@
+import { formatDebtLines } from "../../src/bitrix/salesPult/format.js";
+import { EMPTY_DEBTS } from "../../src/bitrix/salesPult/debts.js";
 import { describe, expect, it, vi } from "vitest";
 import { ReadOnlyBitrixClient } from "../../src/bitrix/reporting/readOnlyClient.js";
 import { collectPultData } from "../../src/bitrix/salesPult/collect.js";
@@ -292,5 +294,22 @@ describe("collectPultData debts", () => {
     const top = data.tasksByManager.get("147") ?? [];
     expect(top.map((t) => t.dealId)).toEqual(["10"]);
     expect(top[0]).toMatchObject({ subject: "Перезвонить", planStatus: "Опубликован", group: 1 });
+  });
+});
+
+describe("formatDebtLines wonOnPortalNotClosed", () => {
+  it("formats wonOnPortalNotClosed with proper Russian declensions in red", () => {
+    expect(formatDebtLines({ ...EMPTY_DEBTS, wonOnPortalNotClosed: 1 })).toContainEqual({
+      color: "red",
+      text: "выиграно на портале, не закрыто в CRM: 1 сделка"
+    });
+    expect(formatDebtLines({ ...EMPTY_DEBTS, wonOnPortalNotClosed: 3 })).toContainEqual({
+      color: "red",
+      text: "выиграно на портале, не закрыто в CRM: 3 сделки"
+    });
+    expect(formatDebtLines({ ...EMPTY_DEBTS, wonOnPortalNotClosed: 5 })).toContainEqual({
+      color: "red",
+      text: "выиграно на портале, не закрыто в CRM: 5 сделок"
+    });
   });
 });

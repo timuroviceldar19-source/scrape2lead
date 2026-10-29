@@ -188,6 +188,147 @@ describe("buildMarketGroupView", () => {
     expect(view.lost.some((l) => l.supplierBin === "061140003942" || l.supplierBin === "130540000688")).toBe(false);
   });
 
+  it("calculates ourCompanies breakdown by month and year-to-date (ytd) summary", () => {
+    const testCfg: MarketConfig = {
+      ...cfg,
+      ourBins: [
+        { bin: "061140003942", name: "F3" },
+        { bin: "130540000688", name: "Amanat Asia" }
+      ]
+    };
+
+    const units: MarketUnit[] = [
+      // January: only Amanat Asia sold (e.g. in KT before July)
+      {
+        id: 1,
+        month: "2026-01",
+        date: "2026-01-15",
+        group: "КТ",
+        code: "262011.100.000001",
+        kind: "Ноутбуки",
+        sum: 60000000,
+        qty: 100,
+        price: 600000,
+        supplier: "130540000688",
+        customer: "111111111111",
+        supplierName: 'ТОО "Amanat Asia"',
+        customerName: "Колледж 1",
+        method: "Электронный магазин",
+        us: true
+      },
+      // January: competitor sold 40m
+      {
+        id: 2,
+        month: "2026-01",
+        date: "2026-01-20",
+        group: "КТ",
+        code: "262011.100.000001",
+        kind: "Ноутбуки",
+        sum: 40000000,
+        qty: 80,
+        price: 500000,
+        supplier: "999999999999",
+        customer: "222222222222",
+        supplierName: "Конкурент КТ",
+        customerName: "Колледж 2",
+        method: "Открытый конкурс",
+        us: false
+      },
+      // October: F3 sold 150m
+      {
+        id: 3,
+        month: "2026-10",
+        date: "2026-10-10",
+        group: "КТ",
+        code: "262011.100.000001",
+        kind: "Ноутбуки",
+        sum: 150000000,
+        qty: 250,
+        price: 600000,
+        supplier: "061140003942",
+        customer: "333333333333",
+        supplierName: 'ТОО "F3.kz"',
+        customerName: "Колледж 3",
+        method: "Открытый конкурс",
+        us: true
+      },
+      // October: Amanat Asia sold 10m
+      {
+        id: 4,
+        month: "2026-10",
+        date: "2026-10-12",
+        group: "КТ",
+        code: "262011.100.000001",
+        kind: "Ноутбуки",
+        sum: 10000000,
+        qty: 15,
+        price: 666666,
+        supplier: "130540000688",
+        customer: "444444444444",
+        supplierName: 'ТОО "Amanat Asia"',
+        customerName: "Колледж 4",
+        method: "Электронный магазин",
+        us: true
+      },
+      // October: competitor sold 140m
+      {
+        id: 5,
+        month: "2026-10",
+        date: "2026-10-14",
+        group: "КТ",
+        code: "262011.100.000001",
+        kind: "Ноутбуки",
+        sum: 140000000,
+        qty: 200,
+        price: 700000,
+        supplier: "888888888888",
+        customer: "555555555555",
+        supplierName: "Конкурент 2",
+        customerName: "Колледж 5",
+        method: "Открытый конкурс",
+        us: false
+      }
+    ];
+
+    const view = buildMarketGroupView("КТ", units, "2026-10-25", testCfg);
+
+    // 1. ourCompanies on view
+    expect(view.ourCompanies).toEqual([
+      { bin: "061140003942", name: "F3" },
+      { bin: "130540000688", name: "Amanat Asia" }
+    ]);
+
+    // 2. Months breakdown
+    expect(view.months).toHaveLength(2);
+    const jan = view.months[0];
+    expect(jan.m).toBe("2026-01");
+    expect(jan.sum).toBe(100000000);
+    expect(jan.us).toBe(60000000);
+    expect(jan.ourCompanies).toBeDefined();
+    expect(jan.ourCompanies![0]).toEqual({ bin: "061140003942", name: "F3", sum: 0 });
+    expect(jan.ourCompanies![1]).toEqual({ bin: "130540000688", name: "Amanat Asia", sum: 60000000 });
+
+    const oct = view.months[1];
+    expect(oct.m).toBe("2026-10");
+    expect(oct.sum).toBe(300000000);
+    expect(oct.us).toBe(160000000);
+    expect(oct.ourCompanies![0]).toEqual({ bin: "061140003942", name: "F3", sum: 150000000 });
+    expect(oct.ourCompanies![1]).toEqual({ bin: "130540000688", name: "Amanat Asia", sum: 10000000 });
+
+    // 3. Year-to-date (ytd) summary
+    expect(view.ytd).toBeDefined();
+    const ytd = view.ytd!;
+    expect(ytd.totalSum).toBe(400000000); // 100m in Jan + 300m in Oct
+    expect(ytd.sum).toBe(220000000); // 60m + 160m
+    expect(ytd.share).toBeCloseTo(220000000 / 400000000); // 55%
+    expect(ytd.rank).toBe(1); // 220m > 140m > 40m
+    expect(ytd.totalSuppliers).toBe(3); // Группа F3, Конкурент 2 (140m), Конкурент КТ (40m)
+    expect(ytd.companies).toEqual([
+      { bin: "061140003942", name: "F3", sum: 150000000, share: 150000000 / 400000000 },
+      { bin: "130540000688", name: "Amanat Asia", sum: 70000000, share: 70000000 / 400000000 }
+    ]);
+  });
+
   it("calculates previous workday correctly across weekends", () => {
     // Tuesday -> Monday
     expect(getPreviousWorkday("2026-10-27")).toBe("2026-10-26");

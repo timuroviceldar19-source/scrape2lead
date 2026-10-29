@@ -641,7 +641,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
       groups: groupsView,
       dynamics,
       holidays: config.holidays,
-      market: marketView
+      market: marketView,
+      outcomeMismatches: collected.outcomeMismatches
     };
 
     const outDir = path.resolve("exports/sales-pult");

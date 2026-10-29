@@ -30,15 +30,49 @@
   const initials = (name) => String(name).trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
   const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
   const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+  const ddmm = (iso) => { if (!iso) return "—"; const parts = String(iso).slice(0, 10).split("-"); return parts.length === 3 ? `${parts[2]}.${parts[1]}` : iso; };
 
   /* ================= signals ================= */
   function renderSignals() {
     const s = V.signals;
     const urgent = V.signalsUrgent;
     const body = s.length ? s.map((sig) => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("") : `<div class="sig s-good"><span>Сегодня без происшествий</span></div>`;
+
+    let mismatchesHtml = "";
+    if (P.outcomeMismatches && P.outcomeMismatches.length > 0) {
+      const dealUrl = (id) => {
+        const base = String(P.portal || "").replace(/\/+$/, "");
+        return (base ? base : "") + "/crm/deal/details/" + encodeURIComponent(id) + "/";
+      };
+      mismatchesHtml = `
+        <div class="mismatches-box">
+          <div class="box-title">
+            ⚠️ Ошибка в CRM: сделки выиграны на портале, но закрыты как проигрыш (${P.outcomeMismatches.length})
+          </div>
+          <div class="box-desc">
+            По этим сделкам проверка портала зафиксировала действующий договор группы, но в CRM они закрыты со статусом проигрыша. Проверьте и исправьте стадию:
+          </div>
+          <div class="mismatches-list">
+            ${P.outcomeMismatches.map((m) => `
+              <div class="mismatch-row">
+                <div class="info">
+                  <a href="${dealUrl(m.id)}" target="_blank" rel="noopener" class="deal-link">${esc(m.title)}</a>
+                  <span class="mgr">· Менеджер: ${esc(m.managerName)}</span>
+                </div>
+                <div class="meta">
+                  <b>${money(m.amount)}</b> · ${m.portalSignDate ? `от ${ddmm(m.portalSignDate)}` : esc(m.outcome)}
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
+    }
+
     document.getElementById("signals").innerHTML = `
       <div class="block-head"><h2><span class="idx">02</span>Требует внимания</h2><span class="meta">${urgent ? plural(urgent, ["срочный пункт", "срочных пункта", "срочных пунктов"]) : "срочного нет"}</span></div>
-      <div class="signals">${body}</div>`;
+      <div class="signals">${body}</div>
+      ${mismatchesHtml}`;
   }
 
   /* ================= month hero ================= */
@@ -180,6 +214,7 @@
   function debtsCell(d) {
     if (!d) return `<div class="cell debts" data-l="Долги"><span class="clean">нет данных</span></div>`;
     const out = [];
+    if (d.wonOnPortalNotClosed) out.push(`<span class="bad">выиграно на портале: ${d.wonOnPortalNotClosed}</span>`);
     if (d.overdue) out.push(`<span class="bad">${plural(d.overdue, ["дело просрочено", "дела просрочены", "дел просрочено"])}</span>`);
     if (d.newDeals) out.push(`<span class="warn">${plural(d.newDeals, ["новая", "новые", "новых"])} без звонка</span>`);
     if (d.readyToCloseDealIds && d.readyToCloseDealIds.length) out.push(`<span class="muted">${fmt(d.readyToCloseDealIds.length)} пора закрыть</span>`);
@@ -207,6 +242,7 @@
     const tasks = (m.topTasks || []).map((t) => taskRow(t, m, true)).join("");
     return `<div class="detail-in">
       <div class="dstats">
+        ${d.wonOnPortalNotClosed ? `<div style="grid-column:1/-1"><span class="label">Выиграно на портале, не закрыто в CRM</span><span class="num bad">${fmt(d.wonOnPortalNotClosed)}</span></div>` : ""}
         <div><span class="label">Просрочено</span><span class="num ${d.overdue ? "bad" : ""}">${fmt(d.overdue)}</span></div>
         <div><span class="label">30+ дней</span><span class="num">${fmt(d.overdueOverMonth)}</span></div>
         <div><span class="label">Без звонка</span><span class="num ${d.newDeals ? "warn" : ""}">${fmt(d.newDeals)}</span></div>
