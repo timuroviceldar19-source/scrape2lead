@@ -45,6 +45,21 @@ jobs:
           restore-keys: |
             gz-market-v1-
 
+      # Кэша рынка ещё нет: берём файл, скачанный локально (API госзакупок днём не всегда отвечает GitHub).
+      # Когда кэш появится, шаг пропускается, а утренний прогон дальше обновляет последние 45 дней.
+      - name: Seed market data
+        if: hashFiles('data/market/units-2026.json') == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p data/market
+          if gh release download market-seed --pattern units-2026.json --dir data/market; then
+            echo "Рынок: кэша нет, взят файл из релиза market-seed"
+          else
+            echo "::warning::Рынок: кэша нет и файла market-seed нет, вкладки рынка будут пустыми"
+          fi
+
       - name: Run Sales Pult
         env:
           BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
