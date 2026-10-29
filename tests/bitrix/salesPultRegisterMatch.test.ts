@@ -148,3 +148,59 @@ describe("matchRegisterWithCrm", () => {
     expect(res.extra[0].id).toBe("102");
   });
 });
+
+
+describe("Mukhametzhan and managerAliases matching (Req 6)", () => {
+  it("matches Cyrillic vs Kazakh spelling when configured in managerAliases", () => {
+    const contracts = groupRegisterContracts([
+      {
+        date: "2026-10-12",
+        type: "зцп",
+        customer: "НАО Тестовый университет",
+        qty: 10,
+        product: "моноблок",
+        cost: 10000000,
+        extras: 0,
+        sale: 12000000,
+        portal: 12000000,
+        val: 2000000,
+        bonusMop: 60000,
+        bonusRop: 10000,
+        manager: "Мухаметжан",
+        note: null,
+        group: "КТ",
+        kind: "Моноблоки",
+        channel: "Запрос ценовых предложений"
+      }
+    ]);
+
+    const deals: CrmWonDeal[] = [
+      {
+        id: "9001",
+        title: "НАО Тестовый университет — Моноблоки",
+        amount: 13440000,
+        company: "НАО Тестовый университет",
+        manager: "Мұхаметжан Тестов"
+      }
+    ];
+
+    const withoutAlias = matchRegisterWithCrm(contracts, deals);
+    expect(withoutAlias.matched).toHaveLength(0);
+    expect(withoutAlias.missing).toHaveLength(1);
+
+    const withAlias = matchRegisterWithCrm(contracts, deals, {
+      managerAliases: { Мухаметжан: "Мұхаметжан" }
+    });
+    expect(withAlias.matched).toHaveLength(1);
+    expect(withAlias.missing).toHaveLength(0);
+  });
+});
+
+  it("config/sales-pult.json includes Mukhametzhan (id 43) in sales and maps alias in register.managerAliases", async () => {
+    const fs = await import("node:fs");
+    const cfg = JSON.parse(fs.readFileSync("config/sales-pult.json", "utf8"));
+    const sales = cfg.groups.find((g: any) => g.id === "sales");
+    expect(sales?.managers).toContainEqual({ id: "43", name: "Мухаметжан" });
+    expect(cfg.stages.contracts).toEqual(["C9:WON", "C41:WON", "C43:WON"]);
+    expect(cfg.register?.managerAliases?.["Мухаметжан"]).toBe("Мұхаметжан");
+  });

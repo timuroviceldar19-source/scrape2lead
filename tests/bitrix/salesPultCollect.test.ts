@@ -461,3 +461,127 @@ describe("collectPultData portal won contracts and mismatches", () => {
     });
   });
 });
+
+
+describe("collectPultData outcomes, planMonth, and contactedAfterDeadline via batch (Req 1, 2, 5)", () => {
+  it("passes outcome and planMonth to debts, and marks overdue tasks contacted after deadline via batch (comment or VOXIMPLANT_CALL)", async () => {
+    const activities = [
+      { ID: "a1", OWNER_ID: "901", OWNER_TYPE_ID: "2", SUBJECT: "Перезвонить", CREATED: "2026-10-20T09:00:00+05:00", DEADLINE: "2026-10-25T10:00:00+05:00", PROVIDER_ID: "CRM_TODO" },
+      { ID: "a2", OWNER_ID: "902", OWNER_TYPE_ID: "2", SUBJECT: "Перезвонить", CREATED: "2026-10-20T09:00:00+05:00", DEADLINE: "2026-10-25T10:00:00+05:00", PROVIDER_ID: "CRM_TODO" },
+      { ID: "a3", OWNER_ID: "903", OWNER_TYPE_ID: "2", SUBJECT: "Перезвонить", CREATED: "2026-10-20T09:00:00+05:00", DEADLINE: "2026-10-25T10:00:00+05:00", PROVIDER_ID: "CRM_TODO" },
+      { ID: "a4", OWNER_ID: "904", OWNER_TYPE_ID: "2", SUBJECT: "Перезвонить", CREATED: "2026-10-20T09:00:00+05:00", DEADLINE: "2026-10-25T10:00:00+05:00", PROVIDER_ID: "CRM_TODO" }
+    ];
+
+    const deals = [
+      {
+        ID: "901",
+        TITLE: "Тест проигрыш на портале",
+        OPPORTUNITY: "5000000",
+        ASSIGNED_BY_ID: "147",
+        CATEGORY_ID: "9",
+        STAGE_ID: "C9:UC_KQEL1P",
+        UF_CRM_PLAN_STATUS: "Опубликован",
+        UF_CRM_S2L_GZ_OUTCOME: "lost:111/222"
+      },
+      {
+        ID: "902",
+        TITLE: "Тест план на апрель и коммент после срока",
+        OPPORTUNITY: "4000000",
+        ASSIGNED_BY_ID: "147",
+        CATEGORY_ID: "9",
+        STAGE_ID: "C9:UC_KQEL1P",
+        UF_CRM_PLAN_STATUS: "Утвержден",
+        UF_CRM_1715597726664: "Апрель"
+      },
+      {
+        ID: "903",
+        TITLE: "Тест звонок после срока",
+        OPPORTUNITY: "3000000",
+        ASSIGNED_BY_ID: "147",
+        CATEGORY_ID: "9",
+        STAGE_ID: "C9:UC_KQEL1P",
+        UF_CRM_PLAN_STATUS: "Опубликован"
+      },
+      {
+        ID: "904",
+        TITLE: "Тест только коммент робота после срока",
+        OPPORTUNITY: "2000000",
+        ASSIGNED_BY_ID: "147",
+        CATEGORY_ID: "9",
+        STAGE_ID: "C9:UC_KQEL1P",
+        UF_CRM_PLAN_STATUS: "Опубликован"
+      }
+    ];
+
+    const call = vi.fn(async (method: string, body: any) => {
+      if (method === "batch") {
+        const cmd = body?.cmd ?? {};
+        const entries = Object.entries(cmd) as Array<[string, string]>;
+        const result: Record<string, unknown> = {};
+        for (const [k, v] of entries) {
+          if (v.startsWith("crm.activity.list") && k === "p0") {
+            result[k] = activities;
+          } else if (v.startsWith("crm.timeline.comment.list")) {
+            if (v.includes("ENTITY_ID%5D=902") || v.includes("ENTITY_ID]=902")) {
+              result[k] = [
+                { ID: "c1", COMMENT: "Созвонились, ждём публикацию", AUTHOR_ID: "147", CREATED: "2026-10-26T12:00:00+05:00" }
+              ];
+            } else if (v.includes("ENTITY_ID%5D=904") || v.includes("ENTITY_ID]=904")) {
+              result[k] = [
+                { ID: "c2", COMMENT: "Автоматический комментарий робота", AUTHOR_ID: "7777", CREATED: "2026-10-26T12:00:00+05:00" },
+                { ID: "c3", COMMENT: "Старый коммент до дедлайна", AUTHOR_ID: "147", CREATED: "2026-10-21T12:00:00+05:00" }
+              ];
+            } else {
+              result[k] = [];
+            }
+          } else if (v.startsWith("crm.activity.list") && v.includes("VOXIMPLANT_CALL")) {
+            if (v.includes("OWNER_ID%5D=903") || v.includes("OWNER_ID]=903")) {
+              result[k] = [
+                { ID: "v1", OWNER_ID: "903", PROVIDER_ID: "VOXIMPLANT_CALL", CREATED: "2026-10-26T15:00:00+05:00", START_TIME: "2026-10-26T15:00:00+05:00" }
+              ];
+            } else {
+              result[k] = [];
+            }
+          } else {
+            result[k] = [];
+          }
+        }
+        return { result, result_error: {} };
+      }
+      if (method === "crm.deal.list") {
+        return deals.filter((d) => (body.filter.ID as string[]).includes(d.ID));
+      }
+      return [];
+    });
+
+    const data = await collectPultData({
+      client: new ReadOnlyBitrixClient({ call }),
+      fromDate: "2026-10-01",
+      toDate: "2026-10-28",
+      managerIds: ["147"],
+      proposalStages: [],
+      contractStages: [],
+      nowIso: "2026-10-28T15:00:00+05:00",
+      webhookUserId: "7777"
+    });
+
+    const debts = data.debtsByManager.get("147");
+    expect(debts?.readyToCloseDealIds).toEqual(["901"]);
+    expect(debts?.overdue).toBe(3);
+
+    const top = data.tasksByManager.get("147") ?? [];
+    expect(top.map((t) => t.dealId)).toEqual(["903", "904", "902"]);
+
+    const t902 = top.find((t) => t.dealId === "902");
+    expect(t902?.passedPlanMonthNote).toBe("план на апрель прошёл");
+    expect(t902?.contactedAfterDeadlineNote).toBe("связался — закрыть дело / поставить следующий шаг");
+    expect(t902?.lastComment).toBe("Созвонились, ждём публикацию");
+
+    const t903 = top.find((t) => t.dealId === "903");
+    expect(t903?.contactedAfterDeadlineNote).toBe("связался — закрыть дело / поставить следующий шаг");
+
+    const t904 = top.find((t) => t.dealId === "904");
+    expect(t904?.contactedAfterDeadlineNote).toBeNull();
+    expect(t904?.lastComment).toBe("Старый коммент до дедлайна");
+  });
+});

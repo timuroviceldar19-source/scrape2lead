@@ -10,10 +10,12 @@ import {
   type TopTask
 } from "./metrics.js";
 import {
+  CONTACTED_AFTER_DEADLINE_NOTE,
   EMPTY_DEBTS,
   buildManagerDebts,
   formatResponsibleNote,
   isExcludedProvider,
+  parseBitrixTime,
   type ManagerDebts
 } from "./debts.js";
 
@@ -73,6 +75,7 @@ interface RawDealItem extends Record<string, unknown> {
   UF_CRM_PLAN_ID?: string | number | null;
   UF_CRM_1782386293000_IU_XLS?: string | number | null;
   UF_CRM_PLAN_STATUS?: string | null;
+  UF_CRM_1715597726664?: string | null;
   UF_CRM_S2L_GZ_OUTCOME?: string | null;
   CLOSEDATE?: string | null;
   DATE_CREATE?: string | null;
@@ -163,6 +166,7 @@ const DEAL_SELECT_FIELDS = [
   "UF_CRM_PLAN_ID",
   "UF_CRM_1782386293000_IU_XLS",
   "UF_CRM_PLAN_STATUS",
+  "UF_CRM_1715597726664",
   "UF_CRM_S2L_GZ_OUTCOME",
   "CLOSEDATE",
   "DATE_CREATE"
@@ -204,6 +208,7 @@ export async function fetchDealsBatched(
           stageSemanticId: r.STAGE_SEMANTIC_ID,
           closed: r.CLOSED,
           planStatus: String(r.UF_CRM_PLAN_STATUS ?? "").trim() || null,
+          planMonth: String(r.UF_CRM_1715597726664 ?? "").trim() || null,
           outcome: r.UF_CRM_S2L_GZ_OUTCOME ? String(r.UF_CRM_S2L_GZ_OUTCOME).trim() : null,
           closeDate: r.CLOSEDATE ? String(r.CLOSEDATE) : null,
           dateCreate: r.DATE_CREATE ? String(r.DATE_CREATE) : null
@@ -372,11 +377,13 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         stageSemanticId: r.STAGE_SEMANTIC_ID,
         closed: r.CLOSED,
         planStatus: String(r.UF_CRM_PLAN_STATUS ?? "").trim() || null,
+        planMonth: String(r.UF_CRM_1715597726664 ?? "").trim() || null,
         outcome: r.UF_CRM_S2L_GZ_OUTCOME ? String(r.UF_CRM_S2L_GZ_OUTCOME).trim() : null,
         closeDate: r.CLOSEDATE ? String(r.CLOSEDATE) : null,
         dateCreate: r.DATE_CREATE ? String(r.DATE_CREATE) : null
       });
     } else {
+      existing.planMonth = String(r.UF_CRM_1715597726664 ?? "").trim() || existing.planMonth || null;
       existing.outcome = r.UF_CRM_S2L_GZ_OUTCOME ? String(r.UF_CRM_S2L_GZ_OUTCOME).trim() : existing.outcome;
       existing.closeDate = r.CLOSEDATE ? String(r.CLOSEDATE) : existing.closeDate;
       existing.dateCreate = r.DATE_CREATE ? String(r.DATE_CREATE) : existing.dateCreate;
@@ -565,12 +572,16 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         stageSemanticId: deal?.stageSemanticId,
         closed: deal?.closed,
         planStatus: deal?.planStatus ?? null,
+        planMonth: deal?.planMonth ?? null,
+        outcome: deal?.outcome ?? null,
         subject: String(a.SUBJECT ?? "").trim(),
         created: String(a.CREATED ?? ""),
         responsibleNote
       });
     }
   }
+
+  const allTopTasks: TopTask[] = [];
 
   for (const mId of managerIds) {
     if (taskErrorsByManager.has(mId)) {
@@ -589,15 +600,123 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
       categories: topTaskCategories
     });
     debtsByManager.set(mId, debts);
+    tasksByManager.set(mId, top5);
+    allTopTasks.push(...top5);
+  }
 
-    // Step B: Load timeline comments ONLY for the final top-5 deals
-    for (const task of top5) {
-      if (task.dealId) {
-        task.lastComment = await fetchLatestComment(client, task.dealId, webhookUserId);
+  // Step B: Batch-load timeline comments and VOXIMPLANT_CALL activities for the final top-5 deals
+  const topDealIds = [...new Set(allTopTasks.map((t) => t.dealId).filter(Boolean))];
+  const overdueTopDealIds = [
+    ...new Set(allTopTasks.filter((t) => t.isOverdue && t.dealId).map((t) => t.dealId))
+  ];
+
+  const commentsByDealId = new Map<
+    string,
+    Array<{ ID?: string | number; COMMENT?: string; AUTHOR_ID?: string | number; CREATED?: string }>
+  >();
+  const callsByDealId = new Map<
+    string,
+    Array<{ ID?: string | number; CREATED?: string; START_TIME?: string }>
+  >();
+
+  const batchChunkSize = 50;
+  for (let i = 0; i < topDealIds.length; i += batchChunkSize) {
+    const chunk = topDealIds.slice(i, i + batchChunkSize);
+    const cmd: Record<string, string> = {};
+    for (const dId of chunk) {
+      cmd[`tc_${dId}`] = `crm.timeline.comment.list?${flattenBitrixParams({
+        filter: { ENTITY_ID: Number(dId), ENTITY_TYPE: "deal" },
+        order: { ID: "DESC" },
+        select: ["ID", "COMMENT", "AUTHOR_ID", "CREATED"]
+      })}`;
+    }
+    try {
+      const batchRes = (await client.call("batch", { halt: 0, cmd })) as {
+        result?: Record<
+          string,
+          Array<{ ID?: string | number; COMMENT?: string; AUTHOR_ID?: string | number; CREATED?: string }>
+        >;
+      };
+      const results = batchRes?.result || {};
+      for (const dId of chunk) {
+        const list = results[`tc_${dId}`];
+        if (Array.isArray(list)) {
+          commentsByDealId.set(dId, list);
+        }
+      }
+    } catch (err) {
+      console.warn("[collectPultData] Failed to batch load comments for top tasks:", err);
+    }
+  }
+
+  for (let i = 0; i < overdueTopDealIds.length; i += batchChunkSize) {
+    const chunk = overdueTopDealIds.slice(i, i + batchChunkSize);
+    const cmd: Record<string, string> = {};
+    for (const dId of chunk) {
+      cmd[`vc_${dId}`] = `crm.activity.list?${flattenBitrixParams({
+        filter: { OWNER_TYPE_ID: 2, OWNER_ID: Number(dId), PROVIDER_ID: "VOXIMPLANT_CALL" },
+        order: { ID: "DESC" },
+        select: ["ID", "OWNER_ID", "PROVIDER_ID", "CREATED", "START_TIME"]
+      })}`;
+    }
+    try {
+      const batchRes = (await client.call("batch", { halt: 0, cmd })) as {
+        result?: Record<string, Array<{ ID?: string | number; CREATED?: string; START_TIME?: string }>>;
+      };
+      const results = batchRes?.result || {};
+      for (const dId of chunk) {
+        const list = results[`vc_${dId}`];
+        if (Array.isArray(list)) {
+          callsByDealId.set(dId, list);
+        }
+      }
+    } catch (err) {
+      console.warn("[collectPultData] Failed to batch load calls for overdue top tasks:", err);
+    }
+  }
+
+  for (const task of allTopTasks) {
+    if (!task.dealId) continue;
+    const dealComments = commentsByDealId.get(task.dealId) || [];
+    let latestHumanComment: string | null = null;
+    let hasHumanCommentAfterDeadline = false;
+    const deadlineMs = parseBitrixTime(task.deadline);
+
+    for (const c of dealComments) {
+      const text = String(c.COMMENT ?? "").trim();
+      if (!text) continue;
+      if (isServiceComment(text, c.AUTHOR_ID ? String(c.AUTHOR_ID) : undefined, webhookUserId)) {
+        continue;
+      }
+      if (latestHumanComment === null) {
+        latestHumanComment = text;
+      }
+      if (task.isOverdue && !Number.isNaN(deadlineMs)) {
+        const createdMs = parseBitrixTime(c.CREATED);
+        if (!Number.isNaN(createdMs) && createdMs > deadlineMs) {
+          hasHumanCommentAfterDeadline = true;
+        }
       }
     }
 
-    tasksByManager.set(mId, top5);
+    task.lastComment = latestHumanComment;
+
+    if (task.isOverdue) {
+      let hasCallAfterDeadline = false;
+      if (!Number.isNaN(deadlineMs)) {
+        const dealCalls = callsByDealId.get(task.dealId) || [];
+        for (const callItem of dealCalls) {
+          const callMs = parseBitrixTime(callItem.START_TIME || callItem.CREATED);
+          if (!Number.isNaN(callMs) && callMs > deadlineMs) {
+            hasCallAfterDeadline = true;
+            break;
+          }
+        }
+      }
+      if (hasHumanCommentAfterDeadline || hasCallAfterDeadline) {
+        task.contactedAfterDeadlineNote = CONTACTED_AFTER_DEADLINE_NOTE;
+      }
+    }
   }
 
   // 8. Identify outcome mismatches (won on portal, but stage is lost in CRM; duplicates are excluded)

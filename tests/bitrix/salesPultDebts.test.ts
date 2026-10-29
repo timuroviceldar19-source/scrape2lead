@@ -313,3 +313,141 @@ describe("formatDebtLines wonOnPortalNotClosed", () => {
     });
   });
 });
+
+
+describe("procurement outcomes in debts (Req 1)", () => {
+  it("classifies terminal outcomes (lost, failed, cancelled, repurposed, terminated) as passed", () => {
+    for (const outcome of [
+      "lost:100/200",
+      "failed:закупка не состоялась",
+      "cancelled:отменено",
+      "repurposed:плинтус",
+      "terminated:100/200"
+    ]) {
+      const res = classifyTodo(
+        todo({ id: `term-${outcome}`, outcome, planStatus: "Опубликован", deadline: "2026-10-20T10:00:00+05:00" }),
+        context
+      );
+      expect(res?.kind).toBe("passed");
+    }
+  });
+
+  it("keeps ongoing and winning outcomes (won, partner, published, contract-draft, plan-renumbered, plan-moved) unchanged", () => {
+    for (const outcome of [
+      "won:100/200",
+      "partner:100/200",
+      "published:опубликован",
+      "contract-draft:проект договора",
+      "plan-renumbered:999",
+      "plan-moved:888"
+    ]) {
+      const res = classifyTodo(
+        todo({ id: `keep-${outcome}`, outcome, planStatus: "Опубликован", deadline: "2026-10-20T10:00:00+05:00" }),
+        context
+      );
+      expect(res?.kind).toBe("overdue");
+    }
+  });
+
+  it("moves terminal-outcome deals to readyToCloseDealIds and excludes them from overdue, newDeals, and top", () => {
+    const { debts, top } = buildManagerDebts(
+      [
+        todo({ id: "t-lost", dealId: "D-LOST", outcome: "lost:111/222", planStatus: "Опубликован", deadline: "2026-10-25T10:00:00+05:00", amount: 10_000_000 }),
+        todo({ id: "t-canc", dealId: "D-CANC", outcome: "cancelled:отказ", planStatus: "Утвержден", created: "2026-10-28T10:00:00+05:00", deadline: "2026-10-28T10:00:00+05:00" }),
+        todo({ id: "t-repurp", dealId: "D-REP", outcome: "repurposed:бумага", planStatus: "Утвержден", deadline: "2026-10-25T10:00:00+05:00", amount: 20_000_000 }),
+        todo({ id: "t-pub", dealId: "D-PUB", outcome: "published:опубликован", planStatus: "Опубликован", deadline: "2026-10-25T10:00:00+05:00", amount: 2_000_000 })
+      ],
+      context
+    );
+    expect(debts.readyToCloseDealIds.sort()).toEqual(["D-CANC", "D-LOST", "D-REP"]);
+    expect(debts.overdue).toBe(1);
+    expect(debts.newDeals).toBe(0);
+    expect(top.map((t) => t.id)).toEqual(["t-pub"]);
+  });
+});
+
+describe("passed plan month for Утвержден (Req 2)", () => {
+  it("attaches «план на <месяц> прошёл» for Утвержден with a past month and sorts after current/future months within group", () => {
+    const { top } = buildManagerDebts(
+      [
+        todo({ id: "apr-big", planStatus: "Утвержден", planMonth: "Апрель", amount: 50_000_000, deadline: "2026-10-25T10:00:00+05:00" }),
+        todo({ id: "oct-small", planStatus: "Утвержден", planMonth: "Октябрь", amount: 1_000_000, deadline: "2026-10-25T10:00:00+05:00" }),
+        todo({ id: "nov-mid", planStatus: "Утвержден", planMonth: "Ноябрь", amount: 3_000_000, deadline: "2026-10-25T10:00:00+05:00" }),
+        todo({ id: "sep-mid", planStatus: "Утвержден", planMonth: "Сентябрь", amount: 10_000_000, deadline: "2026-10-25T10:00:00+05:00" })
+      ],
+      context
+    );
+    expect(top.map((t) => t.id)).toEqual(["nov-mid", "oct-small", "apr-big", "sep-mid"]);
+    expect(top[0].passedPlanMonthNote).toBeNull();
+    expect(top[1].passedPlanMonthNote).toBeNull();
+    expect(top[2].passedPlanMonthNote).toBe("план на апрель прошёл");
+    expect(top[3].passedPlanMonthNote).toBe("план на сентябрь прошёл");
+  });
+
+  it("ignores empty or unrecognized planMonth and non-Утвержден statuses", () => {
+    const { top } = buildManagerDebts(
+      [
+        todo({ id: "empty", planStatus: "Утвержден", planMonth: "", deadline: "2026-10-25T10:00:00+05:00" }),
+        todo({ id: "unknown", planStatus: "Утвержден", planMonth: "3 квартал", deadline: "2026-10-25T10:00:00+05:00" }),
+        todo({ id: "pub-apr", planStatus: "Опубликован", planMonth: "Апрель", deadline: "2026-10-25T10:00:00+05:00" })
+      ],
+      context
+    );
+    expect(top.every((t) => !t.passedPlanMonthNote)).toBe(true);
+  });
+
+  it("handles year rollover: in January, planMonth «Декабрь» is treated as passed while «Январь» and «Февраль» are not", () => {
+    const janContext = { nowIso: "2027-01-15T12:00:00+05:00", holidays: [] };
+    const { top } = buildManagerDebts(
+      [
+        todo({ id: "dec-plan", planStatus: "Утвержден", planMonth: "Декабрь", amount: 20_000_000, created: "2026-12-20T09:00:00+05:00", deadline: "2027-01-10T10:00:00+05:00" }),
+        todo({ id: "jan-plan", planStatus: "Утвержден", planMonth: "Январь", amount: 2_000_000, created: "2027-01-05T09:00:00+05:00", deadline: "2027-01-10T10:00:00+05:00" }),
+        todo({ id: "feb-plan", planStatus: "Утвержден", planMonth: "Февраль", amount: 1_000_000, created: "2027-01-05T09:00:00+05:00", deadline: "2027-01-10T10:00:00+05:00" })
+      ],
+      janContext
+    );
+    expect(top.map((t) => t.id)).toEqual(["jan-plan", "feb-plan", "dec-plan"]);
+    expect(top[0].passedPlanMonthNote).toBeNull();
+    expect(top[1].passedPlanMonthNote).toBeNull();
+    expect(top[2].passedPlanMonthNote).toBe("план на декабрь прошёл");
+  });
+});
+
+describe("overdue over 30 days list and contacted after deadline note (Req 4 & 5)", () => {
+  it("populates overdueOverMonthTasks sorted by amount desc for tasks older than 30 days, separate from top", () => {
+    const { debts, top } = buildManagerDebts(
+      [
+        todo({ id: "old-1", dealId: "D-OLD-1", title: "Старая сделка 1", deadline: "2026-09-10T10:00:00+05:00", amount: 2_000_000 }),
+        todo({ id: "old-2", dealId: "D-OLD-2", title: "Старая сделка 2", deadline: "2026-09-01T10:00:00+05:00", amount: 8_000_000 }),
+        todo({ id: "fresh-1", dealId: "D-FRESH", title: "Свежая сделка", deadline: "2026-10-25T10:00:00+05:00", amount: 1_500_000 })
+      ],
+      context
+    );
+    expect(debts.overdueOverMonth).toBe(2);
+    expect(debts.overdueOverMonthTasks?.map((t) => t.id)).toEqual(["old-2", "old-1"]);
+    expect(debts.overdueOverMonthTasks?.[0]).toMatchObject({
+      dealId: "D-OLD-2",
+      title: "Старая сделка 2",
+      amount: 8_000_000,
+      overdueDays: 57
+    });
+    expect(top.map((t) => t.id)).toEqual(["fresh-1"]);
+  });
+
+  it("attaches «связался — закрыть дело / поставить следующий шаг» to overdue tasks with contact after deadline", () => {
+    const { top } = buildManagerDebts(
+      [
+        todo({ id: "contacted", deadline: "2026-10-25T10:00:00+05:00", hasContactAfterDeadline: true }),
+        todo({ id: "not-contacted", deadline: "2026-10-25T10:00:00+05:00", hasContactAfterDeadline: false }),
+        todo({ id: "today-contacted", deadline: "2026-10-28T21:00:00+05:00", hasContactAfterDeadline: true })
+      ],
+      context
+    );
+    const byId = new Map(top.map((t) => [t.id, t]));
+    expect(byId.get("contacted")?.contactedAfterDeadlineNote).toBe(
+      "связался — закрыть дело / поставить следующий шаг"
+    );
+    expect(byId.get("not-contacted")?.contactedAfterDeadlineNote).toBeNull();
+    expect(byId.get("today-contacted")?.contactedAfterDeadlineNote).toBeNull();
+  });
+});
