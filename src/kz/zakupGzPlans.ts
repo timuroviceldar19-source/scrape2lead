@@ -193,7 +193,11 @@ export class GzPlanLookup {
         // timestamp не считаем датой версии. Дата акта — консервативная нижняя граница.
         dateCreate: actDate && /^\d{4}-\d{2}-\d{2}$/.test(actDate) ? actDate + ' 00:00:00' : '',
         RefPlnPointStatus: { nameRu: latest.status.name } }];
-    }, async () => goszakupGraphqlAll<ApiPlan>(`query($v:[Int],$after:Int){Plans(filter:{${by === 'root' ? 'rootrecordId' : 'id'}:$v},limit:200,after:$after){id rootrecordId subjectBiin isActive isDeleted plnPointYear refEnstruCode nameRu dateCreate RefPlnPointStatus{nameRu}}}`, { v: [requested] }, 'Plans', { ...this.options, token: this.options.token! }), this.options.token));
+    }, async () => {
+      const plans = await goszakupGraphqlAll<ApiPlan>(`query($v:[Int],$after:Int){Plans(filter:{${by === 'root' ? 'rootrecordId' : 'id'}:$v},limit:200,after:$after){id rootrecordId subjectBiin isActive isDeleted plnPointYear refEnstruCode nameRu dateCreate RefPlnPointStatus{nameRu}}}`, { v: [requested] }, 'Plans', { ...this.options, token: this.options.token! });
+      if (by === 'root' && plans.length) this.planSources.set(requested, 'ows');
+      return plans;
+    }, this.options.token));
     return rows.flat();
   }
 }

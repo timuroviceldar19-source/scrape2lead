@@ -22,6 +22,25 @@ function registry(listed: unknown[], plan = detail, withContract = false) {
   return { fetchFn, calls };
 }
 describe('поиск версий через q и договоры', () => {
+  it('дочитывает договор по номеру из объявления, если индекс договора не нашёл код', async () => {
+    const {fetchFn:base}=registry([],detail,true);const queries:URL[]=[];
+    const fetchFn=(async(url: string,init?: RequestInit)=>{
+      const u=new URL(url);queries.push(u);
+      if(u.pathname.endsWith('/lots/'))return json(page([{announcement_id:9,customers:[{bin:context.bin}]}]));
+      if(u.pathname.endsWith('/announcements/9/contracts/'))return json([{plan_item:{id:500,external_id:200,root:{external_id:100}},contract:{id:7,contract_number_sys:'990000000001/260001/00'}}]);
+      if(u.pathname.endsWith('/contracts/')&&!u.searchParams.has('contract_number')) {
+        expect(u.searchParams.has('enstru_code')).toBe(true);return json(page([]));
+      }
+      return base(url,init);
+    }) as typeof fetch;
+    const contexts=new Map([[100,{...context,codes:['262030.100.000043'],pointIds:[200]}]]);
+    const lookup=new GzPlanLookup({...options,contexts,fetchFn});
+    await lookup.plans([100],'root',contexts);
+    const [contract]=await lookup.contracts(context.bin,[2026]);
+    expect(contract.contractNumberSys).toBe('990000000001/260001/00');
+    expect(lookup.sourceForContract(contract)).toBe('lots');expect(lookup.fullScanBins.size).toBe(0);
+    expect(queries.some(u=>u.searchParams.get('contract_number')==='990000000001/260001/00')).toBe(true);
+  });
   it('итоги проверяют старый и действующий код товара, без полного перебора заказчика', async () => {
     const {fetchFn,calls}=registry([{id:500,external_id:200}],detail,true);
     const contexts=new Map([[100,{...context,codes:['262030.100.000043'] as readonly string[]}]]);
@@ -66,8 +85,10 @@ describe('поиск версий через q и договоры', () => {
       if(u.pathname.endsWith('/contracts/'))return new Response('down',{status:503});
       return base(url,init);
     }) as typeof fetch;
-    const result=await fetchGzPlans([100],'root',{...options,fetchFn,token:'t'});
+    const lookup=new GzPlanLookup({...options,fetchFn,token:'t'});
+    const result=await lookup.plans([100],'root',options.contexts);
     expect(result[0]?.id).toBe(200);expect(fields).toContain('Plans');
+    expect(lookup.planSources.get(100)).toBe('ows');
   });
   it('q принимает только БИН заказчика и год не раньше сделки; даёт текущий товар и дату акта', async () => {
     const { fetchFn, calls } = registry([{ id: 500, external_id: '200' }]);
