@@ -17,6 +17,9 @@ export interface GzRegistryOptions extends ZakupApiOptions {
 }
 
 export type GzContractLookupPath = "enstru" | "lots" | "recorded" | "full" | "ows";
+export class FullScanLimitError extends Error {
+  constructor() { super('full_scan_limit: потолок полных обходов договоров за прогон'); }
+}
 export interface ZakupContractPlan { id: number; external_id: number; root?: { external_id?: number | null } | null; lookupPath?: GzContractLookupPath }
 
 /** Префиксы не подходят публичному фильтру: нужен полный код, включая обе точки. */
@@ -28,6 +31,8 @@ export function fullEnstruCodes(...values: unknown[]): string[] {
 export async function withGzSourceFallback<T>(primary: () => Promise<T>, backup: () => Promise<T>, token?: string | null): Promise<T> {
   try { return await primary(); }
   catch (primaryError) {
+    // Локальный предел нагрузки не является сбоем источника: резерв не обходит его.
+    if (primaryError instanceof FullScanLimitError) throw primaryError;
     const message = primaryError instanceof Error ? primaryError.message : String(primaryError);
     if (!token?.trim()) throw new Error(`zakup: ${message}; ows: токен не задан`);
     try { return await backup(); }

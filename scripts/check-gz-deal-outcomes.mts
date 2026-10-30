@@ -29,9 +29,11 @@ import {
 } from "../src/bitrix/gzDealOutcome.js";
 import { callBitrixBatch, chunkBatchCommands } from "../src/bitrix/batch.js";
 import { describeOutcomeCoverage, type OutcomeCoverageInput } from "../src/bitrix/gzOutcomeCoverage.js";
+import { verifyGzPlanOutcome } from '../src/bitrix/gzOutcomePortal.js';
 import { fetchGzPlans, GzPlanLookup, type GzPlanLookupOptions, type GzPlanContext, type ApiPlan } from "../src/kz/zakupGzPlans.js";
 import { fullEnstruCodes, type GzContractLookupPath } from "../src/kz/zakupGzRegistry.js";
-import { parseGoszakupPlanDetailHtml, parseGoszakupPlanSearchHtml } from "../src/kz/goszakupPlanHtmlParser.js";
+import { parseGoszakupPlanDetailHtml } from "../src/kz/goszakupPlanHtmlParser.js";
+import { PortalPlanVerifier, PortalThrottledError, fetchRegisterRows, fetchPortalPage, type PortalVerification } from "../src/kz/goszakupPlanRegistry.js";
 import type { GoszakupPlanListItem } from "../src/kz/goszakupPlanTypes.js";
 import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "../src/kz/goszakupOrigin.js";
 
@@ -55,6 +57,7 @@ interface CliArgs {
   htmlLimit: number;
   htmlBudgetMs: number;
   skipHtml: boolean;
+  maxFullScans: number;
 }
 
 interface OpenDeal extends GzOutcomeDealFields {
@@ -67,6 +70,8 @@ interface OpenDeal extends GzOutcomeDealFields {
 }
 
 interface DealCheck {
+  planVersion: number | null;
+  verification: PortalVerification | null;
   contractSource: GzContractLookupPath | null;
   deal: OpenDeal;
   ref: GzDealPlanRef;
@@ -99,9 +104,6 @@ const DEAL_SELECT = [
   "UF_CRM_1715597423325", "OPPORTUNITY", OUTCOME_FIELD
 ];
 const NO_PLAN_SIGNAL: GzPlanSignal = { status: null, repurposedTo: null };
-// A full results page is ~55 KB; the throttled one is ~2 KB.
-const THROTTLED_PAGE_MAX_LENGTH = 10_000;
-const THROTTLE_BACKOFF_MS = 30_000;
 // Runs come at 08:40 and 13:00; an hourly slot gives each of them its own slice.
 const HTML_ROTATION_MS = 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -122,7 +124,8 @@ function parseArgs(argv: string[]): CliArgs {
     htmlDelayMs: 1500,
     htmlLimit: 500,
     htmlBudgetMs: 20 * 60 * 1000,
-    skipHtml: false
+    skipHtml: false,
+    maxFullScans: 2
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -135,6 +138,11 @@ function parseArgs(argv: string[]): CliArgs {
     else if (arg === "--html-limit") args.htmlLimit = Math.max(0, Number(argv[++i]) || 0);
     else if (arg === "--html-budget-min") args.htmlBudgetMs = Math.max(0, Number(argv[++i]) || 0) * 60 * 1000;
     else if (arg === "--skip-html") args.skipHtml = true;
+    else if (arg === "--max-full-scans") {
+      const value = argv[++i] ?? '';
+      if (!/^\d+$/.test(value)) throw new Error('--max-full-scans requires a nonnegative integer');
+      args.maxFullScans = Number(value);
+    }
   }
   return args;
 }
@@ -173,7 +181,7 @@ async function main(): Promise<void> {
   const config = loadOutcomeConfig(args.configPath);
   const bitrix = new BitrixClient(args.webhookUrl);
   const contexts = new Map<number, GzPlanContext>();
-  const lookup = new GzPlanLookup({ token: args.token, contexts });
+  const lookup = new GzPlanLookup({ token: args.token, contexts, maxFullScans: args.maxFullScans });
   const gql: GzPlanLookupOptions = { token: args.token, contexts, lookup };
   const currentYear = Number(new Date().toLocaleString("en-CA", { timeZone: "Asia/Almaty", year: "numeric" }));
 
@@ -182,6 +190,8 @@ async function main(): Promise<void> {
   console.log(`gz deal outcomes: mode=${args.execute ? "execute" : "dry-run"} open_deals=${allDeals.length} checked=${deals.length}`);
 
   const checks: DealCheck[] = deals.map((deal) => ({
+    planVersion: null,
+    verification: null,
     contractSource: null,
     deal,
     ref: buildGzDealPlanRef(deal),
@@ -215,9 +225,11 @@ async function main(): Promise<void> {
     && (!check.plan.status || isSignedGzPlanStatus(check.plan.status))
     && !decideGzDealOutcome(check.ref, contractsByBin.get(check.bin ?? "") ?? [], NO_PLAN_SIGNAL, config));
   const emptyStatus = { pending: 0, attempted: 0, failed: 0, budgetReached: false };
+  const htmlDeadline = Date.now() + args.htmlBudgetMs;
+  const portal = new PortalPlanVerifier({ delayMs: args.htmlDelayMs, deadline: args.skipHtml ? 0 : htmlDeadline });
   const htmlStatus = args.skipHtml
     ? emptyStatus
-    : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, args.htmlBudgetMs, config.itemFamilies);
+    : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, args.htmlBudgetMs, config.itemFamilies, portal);
   const registersFailed = args.skipHtml
     ? 0
     : await fillCustomerRegisters(checks.filter((check) => check.planMissing && check.bin), args.htmlDelayMs);
@@ -231,6 +243,7 @@ async function main(): Promise<void> {
     : [])));
 
   for (const check of checks) {
+    if (lookup.fullScanSkippedPlans.has(check.ref.planNumber ?? 0) || lookup.fullScanSkippedBins.has(check.bin ?? '')) check.skipped = 'full_scan_limit';
     if (check.skipped) continue;
     // Without this customer's contracts the plan status would pass for news.
     if (check.bin && contractsByBin.failedBins.has(check.bin)) {
@@ -254,6 +267,14 @@ async function main(): Promise<void> {
     }
     check.key = check.outcome ? gzDealOutcomeKey(check.outcome) : null;
     check.isNew = check.key !== null && shouldReplaceGzOutcomeKey(check.deal.UF_CRM_S2L_GZ_OUTCOME, check.key);
+    if (check.isNew && check.outcome) {
+      check.verification = await verifyGzPlanOutcome(portal, check.ref, check.planVersion, check.outcome, config);
+      if (check.verification && check.verification.reason !== 'confirmed') {
+        check.isNew = false;
+        check.skipped = check.verification.reason;
+        console.log(`[${check.skipped}] plan ${check.ref.planNumber}`);
+      }
+    }
   }
 
   if (args.execute && checks.some((check) => check.isNew)) await bitrix.ensureOutcomeField();
@@ -289,11 +310,18 @@ async function main(): Promise<void> {
   }
 
   const summary = summarize(checks, htmlFailed, contractsByBin.failedBins.size, coverage);
+  const confirmationLine = `portal_verification=${JSON.stringify(portal.stats)}`;
+  summary.markdown += `\n\n\`${confirmationLine}\``;
+  console.log(confirmationLine);
   const lookupStats = {
     input_without_enstru: inputWithoutEnstru, without_enstru_after_plan_lookup: withoutEnstru,
     recorded_contract_deals_checked: recorded.deals, recorded_contract_numbers_checked: recorded.numbers, recorded_contract_lookup_failed: recorded.failed,
     full_scan_deals_attempted: checks.filter(check => lookup.fullScanPlans.has(check.ref.planNumber ?? 0)).length,
     full_scan_customers: lookup.fullScanBins.size,
+    full_scan_limit: args.maxFullScans,
+    full_scan_skipped_plans: lookup.fullScanSkippedPlans.size,
+    full_scan_skipped_customers: lookup.fullScanSkippedBins.size,
+    ...Object.fromEntries(Object.entries(portal.stats).map(([key, value]) => [`portal_${key}`, value])),
     ...Object.fromEntries((["enstru", "lots", "recorded", "full", "ows"] as const).map(path => [`contract_${path}_found`, checks.filter(check => check.contractSource === path).length])),
     ...Object.fromEntries((["q", "enstru", "lots", "full", "ows"] as const).map(path => [`plan_${path}_found`, checks.filter(check => lookup.planSources.get(check.ref.planNumber ?? 0) === path).length]))
   };
@@ -407,6 +435,7 @@ async function fillApiPlanStatuses(checks: DealCheck[], gql: GzPlanLookupOptions
       exactPoint: check.ref.pointIds.includes(plan.id)
     }, families);
     check.statusSource = "api";
+    check.planVersion = plan.id;
     check.bin ??= /^\d{12}$/.test(plan.subjectBiin ?? "") ? plan.subjectBiin! : null;
   }
 }
@@ -430,7 +459,8 @@ async function fillHtmlPlanStatuses(
   delayMs: number,
   limit: number,
   budgetMs: number,
-  families: GzItemFamilies
+  families: GzItemFamilies,
+  portal: PortalPlanVerifier
 ): Promise<OutcomeCoverageInput["status"]> {
   const ordered = [...pending].sort((a, b) => Number(a.deal.ID) - Number(b.deal.ID));
   const runSlot = Math.floor(Date.now() / HTML_ROTATION_MS);
@@ -450,7 +480,7 @@ async function fillHtmlPlanStatuses(
     }
     attempted += 1;
     try {
-      const rows = await searchPlanRows(check);
+      const rows = await portal.search(check.ref.planNumber!);
       // A plan the API still knows is not gone, whatever the search returned.
       check.planMissing = check.statusSource !== "api" && !rows.some((item) => item.plan_list_number === String(check.ref.planNumber));
       check.ref = withRevisions(check.ref, rows.map((item) => Number(item.plan_point_id)));
@@ -462,6 +492,8 @@ async function fillHtmlPlanStatuses(
           exactPoint: check.ref.pointIds.includes(Number(row.plan_point_id))
         }, families);
         check.statusSource = "html";
+        // Без версии zakup нельзя подтвердить изменение статуса из zakup.
+        check.planVersion ??= Number(row.plan_point_id);
       }
     } catch (error) {
       failed += 1;
@@ -472,16 +504,9 @@ async function fillHtmlPlanStatuses(
         break;
       }
     }
-    if (delayMs > 0) await sleep(delayMs);
+    // Пауза между запросами реестра общая с подтверждением новых итогов.
   }
   return { pending: pending.length, attempted, failed, budgetReached };
-}
-
-async function searchPlanRows(check: DealCheck): Promise<GoszakupPlanListItem[]> {
-  // Rows are the revisions of the plan number; the newest one is live. The
-  // number filter matches substrings, which is harmless while every plan
-  // number has the same 8 digits.
-  return fetchRegisterRows(`${GZ_PORTAL_ORIGIN}/ru/registry/plan?filter%5Bnumber%5D=${check.ref.planNumber}&count_record=50`);
 }
 
 /**
@@ -540,11 +565,6 @@ function toRegisterRow(item: GoszakupPlanListItem): GzRegisterPlanRow[] {
   }];
 }
 
-async function fetchRegisterRows(url: string): Promise<GoszakupPlanListItem[]> {
-  return parseGoszakupPlanSearchHtml(await fetchPortalPage(url), "outcome-check")
-    .filter((row) => Number.isInteger(Number(row.plan_point_id)) && Number(row.plan_point_id) > 0);
-}
-
 /**
  * The deal's own plan page names the customer BIN and the item code that old
  * cards lack. Without the BIN the customer's contracts stay unknown; without
@@ -572,37 +592,9 @@ async function fillFromPlanPages(checks: DealCheck[], delayMs: number): Promise<
   return { pending: pending.length, failed };
 }
 
-/** The portal answers a burst with a stripped page and HTTP 200; one backoff, then give up. */
-async function fetchPortalPage(url: string, retried = false): Promise<string> {
-  const response = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-  }).catch((error: unknown) => {
-    // Node's «fetch failed» hides the reason (TLS, DNS, reset) in error.cause.
-    const cause = error instanceof Error ? (error.cause as { code?: string; message?: string } | undefined) : undefined;
-    const detail = cause ? ` (${cause.code ?? cause.message ?? "unknown cause"})` : "";
-    throw new Error(`${error instanceof Error ? error.message : String(error)}${detail}`);
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const html = await response.text();
-  if (html.length < THROTTLED_PAGE_MAX_LENGTH) {
-    if (retried) throw new PortalThrottledError();
-    await sleep(THROTTLE_BACKOFF_MS);
-    return fetchPortalPage(url, true);
-  }
-  return html;
-}
-
 function withRevisions(ref: GzDealPlanRef, ids: number[]): GzDealPlanRef {
   const fresh = ids.filter((id) => !ref.pointIds.includes(id) && !ref.revisionIds.includes(id));
   return fresh.length === 0 ? ref : { ...ref, revisionIds: [...ref.revisionIds, ...fresh] };
-}
-
-class PortalThrottledError extends Error {
-  constructor() {
-    super("portal returned a stripped page twice");
-    this.name = "PortalThrottledError";
-  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -719,7 +711,9 @@ function writeReport(reportPath: string, execute: boolean, checks: DealCheck[], 
       isNew: check.isNew,
       applied: check.applied,
       error: check.error,
-      skipped: check.skipped
+      skipped: check.skipped,
+      verification: check.verification,
+      planVersion: check.planVersion
     }))
   }, null, 2), "utf8");
 }
