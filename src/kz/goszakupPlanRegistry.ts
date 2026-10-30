@@ -5,7 +5,7 @@ import type { GoszakupPlanDetail, GoszakupPlanListItem } from './goszakupPlanTyp
 export class PortalThrottledError extends Error {
   constructor() { super('portal returned a stripped page twice'); this.name = 'PortalThrottledError'; }
 }
-class HtmlBudgetError extends Error {}
+export class HtmlBudgetError extends Error {}
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 interface PortalOptions {
   fetchFn?: typeof fetch;
