@@ -140,7 +140,7 @@ async function main(): Promise<void> {
           continue;
         }
 
-        const bidWindow = await lookupBidWindow(row.lotNumber, goszakupToken);
+        const bidWindow = await lookupBidWindow(row.lotNumber, goszakupToken, row.announceUrl);
 
         if (!args.execute) {
           console.log(`[dry-run] create ${dealOriginId}${customer ? ` bin=${customer.bin}` : ""} | ${bidWindowComment(bidWindow) ?? "срок приёма заявок не найден"} | ${buildTitle(row)}`);
@@ -401,10 +401,10 @@ function buildCompanyFields(customer: AnnounceCustomer, companyOriginId: string,
  * ставит `BEGINDATE` = день создания и `CLOSEDATE` = +7 дней, и менеджеры принимают это за срок закупки.
  * Реестр не ответил — сделку всё равно создаём, сроки подставит следующая правка.
  */
-async function lookupBidWindow(lotNumber: string, token: string | null): Promise<LotBidWindow | null> {
-  if (!token) return null;
+async function lookupBidWindow(lotNumber: string, token: string | null, announceUrl: string): Promise<LotBidWindow | null> {
   try {
-    return await fetchLotBidWindow(lotNumber, { token });
+    const announcementId = Number(/\/announce\/(?:index|view)\/(\d+)/.exec(announceUrl)?.[1]) || null;
+    return await fetchLotBidWindow(lotNumber, { token, announcementId });
   } catch (error) {
     console.warn(`[dates-missing] gz-lot:${lotNumber}: ${error instanceof Error ? error.message : String(error)}`);
     return null;

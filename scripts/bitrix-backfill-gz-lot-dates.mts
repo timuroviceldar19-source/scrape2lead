@@ -9,7 +9,7 @@
  *   npx tsx scripts/bitrix-backfill-gz-lot-dates.mts --execute --limit 5  записать первые 5 (пробный прогон)
  *   npx tsx scripts/bitrix-backfill-gz-lot-dates.mts --execute          записать все
  *
- * Нужны BITRIX24_WEBHOOK_URL (или --webhook-url) и GOSZAKUP_TOKEN.
+ * Нужен BITRIX24_WEBHOOK_URL (или --webhook-url); GOSZAKUP_TOKEN — только для резерва.
  */
 
 import dotenv from "dotenv";
@@ -19,7 +19,7 @@ import { fetchLotBidWindows } from "../src/kz/goszakupLotWindow.js";
 
 dotenv.config();
 
-const DEAL_SELECT = ["ID", "ORIGIN_ID", "DATE_CREATE", "BEGINDATE", "CLOSEDATE"];
+const DEAL_SELECT = ["ID", "ORIGIN_ID", "DATE_CREATE", "BEGINDATE", "CLOSEDATE", "COMMENTS"];
 const SAMPLE_LINES = 15;
 
 interface CliArgs {
@@ -43,16 +43,20 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (!args.webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
   const token = process.env.GOSZAKUP_TOKEN?.trim();
-  if (!token) throw new Error("GOSZAKUP_TOKEN is required");
 
   const client = new BitrixClient(args.webhookUrl);
   console.log(`gz lot dates backfill: mode=${args.execute ? "execute" : "dry-run"}${args.limit ? ` limit=${args.limit}` : ""}`);
 
-  const deals = (await client.listAll("deal", { "%ORIGIN_ID": "gz-lot:", STAGE_SEMANTIC_ID: "P" }, DEAL_SELECT)) as unknown as LotDateDeal[];
+  const deals = (await client.listAll("deal", { "%ORIGIN_ID": "gz-lot:", STAGE_SEMANTIC_ID: "P" }, DEAL_SELECT)) as unknown as Array<LotDateDeal & { COMMENTS?: string }>;
   console.log(`открытых сделок по лотам: ${deals.length}`);
 
   const lotNumbers = deals.map((deal) => String(deal.ORIGIN_ID ?? "").replace(/^gz-lot:/, "")).filter(Boolean);
-  const { windows, failed } = await fetchLotBidWindows(lotNumbers, { token });
+  const announcementIds = new Map<string, number>();
+  for (const deal of deals) {
+    const id = Number(/\/announce\/(?:index|view)\/(\d+)/.exec(deal.COMMENTS ?? "")?.[1]);
+    if (id) announcementIds.set(String(deal.ORIGIN_ID).replace(/^gz-lot:/, ""), id);
+  }
+  const { windows, failed } = await fetchLotBidWindows(lotNumbers, { token, announcementIds });
   const plan = planLotDateBackfill(deals, windows, new Set(failed));
   console.log(`план: ${JSON.stringify(plan.stats)}`);
 
