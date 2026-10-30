@@ -7,10 +7,11 @@ import type {
   RegisterMixItem,
   RegisterChannelItem,
   RegisterGroupItem,
-  RegisterTotal
+  RegisterTotal,
+  RegisterHistoryPayload
 } from "./types.js";
 
-function sumBy<T>(items: T[], fn: (item: T) => number): number {
+function sumBy<T>(items: T[], fn: (item: T) => number | null | undefined): number {
   return items.reduce((s, x) => s + (fn(x) || 0), 0);
 }
 
@@ -38,7 +39,8 @@ function buildDailyPoints(rows: RegisterRow[]): RegisterDailyPoint[] {
 function buildManagersSummary(
   rows: RegisterRow[],
   plans: Record<string, number>,
-  missing: RegisterContract[]
+  missing: RegisterContract[],
+  hasVal: boolean
 ): RegisterManagerSummary[] {
   const missingByManager = new Map<string, RegisterContract[]>();
   for (const m of missing) {
@@ -57,14 +59,14 @@ function buildManagersSummary(
   for (const name of allNames) {
     const ownRows = rows.filter((r) => r.manager === name);
     const sale = sumBy(ownRows, (r) => r.sale);
-    const val = sumBy(ownRows, (r) => r.val);
+    const val = hasVal ? sumBy(ownRows, (r) => r.val) : null;
     const bonus = sumBy(ownRows, (r) => r.bonusMop);
     const plan = plans[name] ?? 0;
     const contracts = countUniqueContracts(ownRows);
     const ownMiss = missingByManager.get(name) ?? [];
     const missCount = ownMiss.length;
     const missSum = sumBy(ownMiss, (m) => m.sale);
-    const margin = sale > 0 ? val / sale : 0;
+    const margin = (hasVal && sale > 0 && val !== null) ? val / sale : null;
 
     summaries.push({
       name,
@@ -83,7 +85,7 @@ function buildManagersSummary(
   return summaries.sort((a, b) => b.sale - a.sale);
 }
 
-function buildMixItems(rows: RegisterRow[]): RegisterMixItem[] {
+function buildMixItems(rows: RegisterRow[], hasVal: boolean): RegisterMixItem[] {
   const byKind = new Map<string, RegisterRow[]>();
   for (const r of rows) {
     const arr = byKind.get(r.kind) ?? [];
@@ -97,7 +99,7 @@ function buildMixItems(rows: RegisterRow[]): RegisterMixItem[] {
       kind,
       group: kindRows[0]?.group ?? "Прочее",
       sale: sumBy(kindRows, (r) => r.sale),
-      val: sumBy(kindRows, (r) => r.val),
+      val: hasVal ? sumBy(kindRows, (r) => r.val) : null,
       qty: sumBy(kindRows, (r) => r.qty),
       contracts: countUniqueContracts(kindRows)
     });
@@ -106,7 +108,7 @@ function buildMixItems(rows: RegisterRow[]): RegisterMixItem[] {
   return items.sort((a, b) => b.sale - a.sale);
 }
 
-function buildChannelItems(rows: RegisterRow[]): RegisterChannelItem[] {
+function buildChannelItems(rows: RegisterRow[], hasVal: boolean): RegisterChannelItem[] {
   const byChannel = new Map<string, RegisterRow[]>();
   for (const r of rows) {
     const arr = byChannel.get(r.channel) ?? [];
@@ -119,7 +121,7 @@ function buildChannelItems(rows: RegisterRow[]): RegisterChannelItem[] {
     items.push({
       name,
       sale: sumBy(chRows, (r) => r.sale),
-      val: sumBy(chRows, (r) => r.val),
+      val: hasVal ? sumBy(chRows, (r) => r.val) : null,
       contracts: countUniqueContracts(chRows)
     });
   }
@@ -135,12 +137,16 @@ export function buildRegisterView(params: {
   fileName: string;
   asOf: string;
   month: string;
+  hasValColumn?: boolean;
+  history?: RegisterHistoryPayload;
+  historyError?: string;
   error?: string;
 }): RegisterView {
-  const { rows, plans, missing, extraDealsCount, fileName, asOf, month, error } = params;
+  const { rows, plans, missing, extraDealsCount, fileName, asOf, month, hasValColumn, history, historyError, error } = params;
+  const hasVal = hasValColumn ?? (rows.length === 0 || rows.some((r) => r.val !== null));
 
   const totalSale = sumBy(rows, (r) => r.sale);
-  const totalVal = sumBy(rows, (r) => r.val);
+  const totalVal = hasVal ? sumBy(rows, (r) => r.val) : null;
   const totalBonusMop = sumBy(rows, (r) => r.bonusMop);
   const totalBonusRop = sumBy(rows, (r) => r.bonusRop);
   const totalContracts = countUniqueContracts(rows);
@@ -154,6 +160,8 @@ export function buildRegisterView(params: {
   const total: RegisterTotal = {
     sale: totalSale,
     val: totalVal,
+    hasVal,
+    margin: (hasVal && totalSale > 0 && totalVal !== null) ? totalVal / totalSale : null,
     bonusMop: totalBonusMop,
     bonusRop: totalBonusRop,
     contracts: totalContracts,
@@ -167,7 +175,7 @@ export function buildRegisterView(params: {
     return {
       g,
       sale: sumBy(gRows, (r) => r.sale),
-      val: sumBy(gRows, (r) => r.val)
+      val: hasVal ? sumBy(gRows, (r) => r.val) : null
     };
   });
 
@@ -188,13 +196,15 @@ export function buildRegisterView(params: {
     month,
     total,
     daily: buildDailyPoints(rows),
-    managers: buildManagersSummary(rows, plans, missing),
-    mix: buildMixItems(rows),
-    channels: buildChannelItems(rows),
+    managers: buildManagersSummary(rows, plans, missing, hasVal),
+    mix: buildMixItems(rows, hasVal),
+    channels: buildChannelItems(rows, hasVal),
     groups,
     missing: sortedMissing,
     crmExtra: extraDealsCount,
     rows: [...rows].sort((a, b) => b.date.localeCompare(a.date) || b.sale - a.sale),
+    history,
+    historyError,
     error
   };
 }

@@ -185,6 +185,9 @@ export async function runSalesPult(args: string[]): Promise<void> {
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
   const registerFileIdx = args.indexOf("--register-file");
   const registerFilePath = registerFileIdx !== -1 && args[registerFileIdx + 1] ? args[registerFileIdx + 1] : undefined;
+  const refreshHistory = args.includes("--refresh-history");
+  const historyCacheIdx = args.indexOf("--history-cache");
+  const historyCachePath = historyCacheIdx !== -1 && args[historyCacheIdx + 1] ? args[historyCacheIdx + 1] : undefined;
   const backfillIdx = args.indexOf("--market-backfill-from");
   const backfillFromDate = backfillIdx !== -1 && args[backfillIdx + 1] ? args[backfillIdx + 1] : undefined;
   const marketUpdate = args.includes("--market-update");
@@ -616,7 +619,11 @@ export async function runSalesPult(args: string[]): Promise<void> {
       registerFilePath,
       todayAlmaty,
       contractTransitions: collected.contractTransitions,
-      userProfiles: collected.userProfiles
+      userProfiles: collected.userProfiles,
+      contractStages: config.stages.contracts,
+      refreshHistory,
+      historyCachePath,
+      holidays: config.holidays
     });
 
     // Market

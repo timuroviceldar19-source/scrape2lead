@@ -87,6 +87,7 @@ export interface ParsedRegisterResult {
   plans: Record<string, number>;
   asOf: string;
   month: string;
+  hasValColumn: boolean;
 }
 
 export function parseRegisterWorkbook(
@@ -115,7 +116,7 @@ export function parseRegisterWorkbook(
     const row = ws.getRow(r);
     for (let c = 1; c <= row.cellCount; c++) {
       const val = String(getCellValue(row.getCell(c)) ?? "").trim().toLowerCase();
-      if (val.includes("дата подписания договора")) {
+      if (val.includes("дата подписания договора") || val === "дата договора" || val.includes("дата договора")) {
         headerRowNum = r;
         break;
       }
@@ -130,7 +131,7 @@ export function parseRegisterWorkbook(
   }
 
   if (headerRowNum === -1) {
-    throw new Error("Не найдена строка заголовков с «Дата подписания договора»");
+    throw new Error("Не найдена строка заголовков с «Дата подписания договора» или «Дата договора»");
   }
 
   const findCol = (...names: string[]): number | undefined => {
@@ -143,7 +144,7 @@ export function parseRegisterWorkbook(
     return undefined;
   };
 
-  const colDate = findCol("дата подписания договора");
+  const colDate = findCol("дата подписания договора", "дата договора");
   const colType = findCol("тип продажи");
   const colCustomer = findCol("контрагент");
   const colQty = findCol("кол-во", "количество");
@@ -156,6 +157,7 @@ export function parseRegisterWorkbook(
   const colBonusRop = findCol("бонус роп");
   const colManager = findCol("менеджер");
 
+  const hasValColumn = colVal !== undefined;
   const rows: RegisterRow[] = [];
 
   for (let r = headerRowNum + 1; r <= ws.rowCount; r++) {
@@ -173,7 +175,7 @@ export function parseRegisterWorkbook(
     const cost = Number(colCost ? getCellValue(row.getCell(colCost)) : 0) || 0;
     const sale = Number(colSale ? getCellValue(row.getCell(colSale)) : 0) || 0;
     const portal = Number(colPortal ? getCellValue(row.getCell(colPortal)) : 0) || sale;
-    const val = Number(colVal ? getCellValue(row.getCell(colVal)) : 0) || 0;
+    const val = hasValColumn ? (Number(colVal ? getCellValue(row.getCell(colVal)) : 0) || 0) : null;
     const bonusMop = Number(colBonusMop ? getCellValue(row.getCell(colBonusMop)) : 0) || 0;
     const bonusRop = Number(colBonusRop ? getCellValue(row.getCell(colBonusRop)) : 0) || 0;
 
@@ -237,7 +239,7 @@ export function parseRegisterWorkbook(
     }
   }
 
-  return { rows, plans, asOf, month };
+  return { rows, plans, asOf, month, hasValColumn };
 }
 
 export async function parseRegisterExcel(

@@ -74,7 +74,7 @@
   setTimeout(moveInd, 0);
 
   document.addEventListener("click", (e) => {
-    const row = e.target.closest(".mgr .r.body");
+    const row = e.target.closest(".r.body[role='button']");
     if (row) {
       const open = row.getAttribute("aria-expanded") !== "true";
       row.setAttribute("aria-expanded", String(open));
@@ -83,7 +83,7 @@
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && e.target.matches(".mgr .r.body")) {
+    if (e.key === "Enter" && e.target.matches(".r.body[role='button']")) {
       e.target.click();
     }
   });

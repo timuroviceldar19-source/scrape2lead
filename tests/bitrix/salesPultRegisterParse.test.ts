@@ -101,6 +101,7 @@ describe("parseRegisterWorkbook", () => {
     expect(parsed.rows).toHaveLength(2);
     expect(parsed.asOf).toBe("2026-10-28");
     expect(parsed.month).toBe("2026-10");
+    expect(parsed.hasValColumn).toBe(true);
 
     const row1 = parsed.rows[0];
     expect(row1.date).toBe("2026-10-01");
@@ -167,6 +168,7 @@ describe("parseRegisterWorkbook", () => {
     expect(parsed.rows[0].group).toBe("КТ");
     expect(parsed.rows[0].kind).toBe("Ноутбуки");
     expect(parsed.rows[0].channel).toBe("Открытый конкурс");
+    expect(parsed.hasValColumn).toBe(true);
   });
 
   it("throws clear error when header is missing", async () => {
@@ -178,9 +180,88 @@ describe("parseRegisterWorkbook", () => {
       /Не найдена строка заголовков/
     );
   });
+
+  it("handles header 'Дата договора' (format 01.10–09.10)", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Лист1");
+
+    ws.getRow(1).values = [
+      null,
+      "Дата договора",
+      "Тип продажи",
+      "Контрагент",
+      "Кол-во",
+      "Товар",
+      "Сумма без НДС",
+      "Сумма продажи без НДС",
+      "ИТОГО вал",
+      "Менеджер"
+    ];
+
+    ws.getRow(2).values = [
+      null,
+      "2026-10-02",
+      "ом",
+      "ТОО Синтетик Тест",
+      1,
+      "моноблок",
+      100000,
+      150000,
+      50000,
+      "Менеджер А"
+    ];
+
+    const parsed = parseRegisterWorkbook(wb, "ОП 02.10.26.xlsx");
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0].date).toBe("2026-10-02");
+    expect(parsed.rows[0].sale).toBe(150000);
+    expect(parsed.rows[0].val).toBe(50000);
+    expect(parsed.hasValColumn).toBe(true);
+  });
+
+  it("handles workbook without 'ИТОГО вал' column: hasValColumn is false and val is null without computing sale - cost", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Лист1");
+
+    ws.getRow(1).values = [
+      null,
+      "Дата подписания договора",
+      "Тип продажи",
+      "Контрагент",
+      "Кол-во",
+      "Товар",
+      "Сумма без НДС",
+      "Сумма продажи без НДС",
+      "Менеджер"
+    ];
+
+    ws.getRow(2).values = [
+      null,
+      "2026-09-15",
+      "зцп",
+      "ТОО Пример Без Вала",
+      2,
+      "панель",
+      200000,
+      300000,
+      "Менеджер Б"
+    ];
+
+    const parsed = parseRegisterWorkbook(wb, "ОП 30.09.26.xlsx");
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0].sale).toBe(300000);
+    expect(parsed.rows[0].cost).toBe(200000);
+    expect(parsed.hasValColumn).toBe(false);
+    expect(parsed.rows[0].val).toBeNull();
+  });
 });
 
-import { fetchLatestRegisterFromDisk, pickLatestRegisterFile, parseDateKeyFromFileName } from "../../src/bitrix/salesPult/register/diskClient.js";
+import {
+  fetchLatestRegisterFromDisk,
+  pickLatestRegisterFile,
+  pickMonthlyFinalRegisterFiles,
+  parseDateKeyFromFileName
+} from "../../src/bitrix/salesPult/register/diskClient.js";
 import { ReadOnlyBitrixClient } from "../../src/bitrix/reporting/readOnlyClient.js";
 
 describe("pickLatestRegisterFile", () => {
@@ -197,6 +278,27 @@ describe("pickLatestRegisterFile", () => {
 
     const latest = pickLatestRegisterFile(items);
     expect(latest?.ID).toBe(3);
+  });
+});
+
+describe("pickMonthlyFinalRegisterFiles", () => {
+  it("picks the final file of each month, prioritizing later dateKey and later UPDATE_TIME on same date", () => {
+    const items = [
+      { ID: 10, NAME: "ОП 30.07.26.xlsx", TYPE: "file" as const, UPDATE_TIME: "2026-07-30T10:00:00" },
+      { ID: 11, NAME: "ОП 31.07.26.xlsx", TYPE: "file" as const, UPDATE_TIME: "2026-07-31T16:11:40" },
+      { ID: 12, NAME: "ОП 31.07.26 (1).xlsx", TYPE: "file" as const, UPDATE_TIME: "2026-08-03T08:58:36" },
+      { ID: 20, NAME: "ОП 25.08.26.xlsx", TYPE: "file" as const, UPDATE_TIME: "2026-08-25T10:00:00" },
+      { ID: 21, NAME: "ОП 31.08.26.xlsx", TYPE: "file" as const, UPDATE_TIME: "2026-08-31T18:00:00" },
+      { ID: 30, NAME: "image.png", TYPE: "file" as const, UPDATE_TIME: "2026-08-31T18:00:00" },
+      { ID: 40, NAME: "ОП 28.10.26.xlsx", TYPE: "file" as const, UPDATE_TIME: "2026-10-28T17:00:00" }
+    ];
+
+    const monthly = pickMonthlyFinalRegisterFiles(items);
+    expect(monthly.get("2026-07")?.ID).toBe(12);
+    expect(monthly.get("2026-07")?.NAME).toBe("ОП 31.07.26 (1).xlsx");
+    expect(monthly.get("2026-08")?.ID).toBe(21);
+    expect(monthly.get("2026-10")?.ID).toBe(40);
+    expect(monthly.has("2026-09")).toBe(false);
   });
 });
 

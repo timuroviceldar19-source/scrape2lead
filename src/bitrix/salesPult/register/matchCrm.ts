@@ -32,6 +32,38 @@ export function calculateNameSimilarity(a: string, b: string): number {
   return matchCount / Math.min(setA.size, setB.size);
 }
 
+export function extractEntityNumbers(s: string): Set<string> {
+  const nums = new Set<string>();
+  if (!s) return nums;
+  const str = String(s);
+
+  // 1. Standalone symbol indicators: №, #, or isolated uppercase N before digits
+  // Boundaries: (?<![\p{L}\d]) before indicator, (?![\p{L}\d]) after digits
+  const m1 = str.matchAll(/(?<![\p{L}\d])(?:[№#]|N)\s*(\d+)(?![\p{L}\d])/gu);
+  for (const m of m1) {
+    nums.add(m[1]);
+  }
+
+  // 2. Named entities with or without symbol: "школа 5", "ясли-сад 14", "лицей 20", "школа №5"
+  const m2 = str.matchAll(
+    /(?<![\p{L}\d])(?:школа|ясли-сад|сад|гимназия|лицей|колледж|поликлиника|больница|комплекс)\s+(?:[№#]|N\s*)?(\d+)(?![\p{L}\d])/giu
+  );
+  for (const m of m2) {
+    nums.add(m[1]);
+  }
+  return nums;
+}
+
+export function hasConflictingEntityNumbers(customerA: string, textB: string): boolean {
+  const numsA = extractEntityNumbers(customerA);
+  const numsB = extractEntityNumbers(textB);
+  if (numsA.size === 0 || numsB.size === 0) return false;
+  for (const n of numsA) {
+    if (numsB.has(n)) return false;
+  }
+  return true;
+}
+
 export function groupRegisterContracts(rows: RegisterRow[]): RegisterContract[] {
   const map = new Map<string, RegisterContract>();
 
@@ -57,7 +89,11 @@ export function groupRegisterContracts(rows: RegisterRow[]): RegisterContract[] 
       });
     } else {
       existing.sale += r.sale;
-      existing.val += r.val;
+      if (existing.val !== null && r.val !== null) {
+        existing.val += r.val;
+      } else if (existing.val === null && r.val !== null) {
+        existing.val = r.val;
+      }
       existing.bonusMop += r.bonusMop;
       existing.bonusRop += r.bonusRop;
       existing.lines += 1;
@@ -76,8 +112,8 @@ function managerMatches(
   crmManager: string,
   aliases?: Record<string, string>
 ): boolean {
-  const rNorm = (aliases?.[regManager] ?? regManager).toLowerCase().trim();
-  const cNorm = crmManager.toLowerCase().trim();
+  const rNorm = String(aliases?.[regManager] ?? regManager ?? "").toLowerCase().trim();
+  const cNorm = String(crmManager ?? "").toLowerCase().trim();
   if (rNorm === cNorm) return true;
   const rFirst = rNorm.split(/\s+/)[0] ?? "";
   const cFirst = cNorm.split(/\s+/)[0] ?? "";
@@ -118,6 +154,9 @@ export function matchRegisterWithCrm(
     for (const d of deals) {
       if (usedDealIds.has(d.id)) continue;
       if (!managerMatches(c.manager, d.manager, options?.managerAliases)) continue;
+
+      const dealText = [d.company, d.title].filter(Boolean).join(" ");
+      if (hasConflictingEntityNumbers(c.customer, dealText)) continue;
 
       const simTitle = calculateNameSimilarity(c.customer, d.title);
       const simComp = calculateNameSimilarity(c.customer, d.company);

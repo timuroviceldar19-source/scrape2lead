@@ -396,6 +396,33 @@ body.tv .sections, body.tv #periodsNav { display: none !important; }
 .chips button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .all .r { grid-template-columns: 56px 100px minmax(0, 3fr) minmax(0, 1fr) 46px minmax(0, 1fr) minmax(0, .8fr) 56px 110px; font-size: 13px; padding: 10px 0; }
 
+/* реестр: история по месяцам */
+.hist .r { grid-template-columns: minmax(130px, 1.2fr) minmax(130px, 1.3fr) 100px 100px 70px 50px 100px 70px 24px; cursor: pointer; }
+.hist .r.head { cursor: default; }
+.hist .r.body:hover { background: rgba(255,255,255,.55); }
+.hist .r.body[aria-expanded="true"] { background: var(--sheet); }
+
+/* реестр: сверка с порталом */
+.portal-miss .r { grid-template-columns: 55px 95px minmax(0, 2.5fr) 115px minmax(0, 1.2fr) minmax(140px, auto); font-size: 13px; }
+.portal-miss.collapsed .r:nth-child(n+12) { display: none; }
+.retro-list.collapsed .r:nth-child(n+27) { display: none; }
+.btn-toggle-portal {
+  background: var(--sheet);
+  border: 1px solid var(--rule-2);
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-toggle-portal:hover {
+  background: var(--rule-t);
+  border-color: var(--rule-3);
+}
+
 /* рынок */
 .share .r { grid-template-columns: 28px minmax(0, 2fr) minmax(0, 2.4fr) 100px 64px; }
 .share .r .rk { font: 500 12px var(--mono); color: var(--ink-3); }
@@ -436,8 +463,9 @@ body.tv .sections, body.tv #periodsNav { display: none !important; }
   /* responsive for register and market tables */
   .mgr .r, .share .r, .meth .r, .price .r, .mix .r, .cust .r { grid-template-columns: 1fr 1fr; gap: 6px 14px; }
   .mgr .r > :first-child, .share .r > :nth-child(2), .price .r > :first-child { grid-column: 1 / -1; }
-  .mgr .r.head, .share .r.head, .meth .r.head, .price .r.head, .mix .r.head, .cust .r.head, .lost .r.head, .miss .r.head, .all .r.head { display: none; }
-  .lost .r, .miss .r, .all .r, .deals .r { grid-template-columns: 1fr auto; gap: 4px 12px; }
+  .mgr .r.head, .share .r.head, .meth .r.head, .price .r.head, .mix .r.head, .cust .r.head, .lost .r.head, .miss .r.head, .all .r.head, .hist .r.head, .portal-miss .r.head { display: none; }
+  .lost .r, .miss .r, .all .r, .deals .r, .hist .r, .portal-miss .r { grid-template-columns: 1fr auto; gap: 4px 12px; }
+  .hist .r > :first-child { grid-column: 1 / -1; }
   .lost .r > :nth-child(2), .miss .r > :nth-child(3), .all .r > :nth-child(3), .deals .r > :nth-child(2) { grid-column: 1 / -1; order: -1; }
   .deals { padding-left: 0; }
   .share .r .rk, .chev { display: none; }

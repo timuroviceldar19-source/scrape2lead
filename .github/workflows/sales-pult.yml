@@ -37,6 +37,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cache register history
+        uses: actions/cache@v4
+        with:
+          path: data/register
+          key: gz-register-v1-${{ github.run_id }}
+          restore-keys: |
+            gz-register-v1-
+
       - name: Cache market data
         uses: actions/cache@v4
         with:
@@ -64,6 +72,7 @@ jobs:
         env:
           BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
           GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
+          REGISTER_HISTORY_KEY: ${{ secrets.REGISTER_HISTORY_KEY }}
           MODE: ${{ github.event.inputs.mode || 'site' }}
           MARKET_BACKFILL: ${{ github.event.inputs.market_backfill_from || '' }}
           PULT_CHAT_ENABLED: ${{ vars.PULT_CHAT_ENABLED }}
