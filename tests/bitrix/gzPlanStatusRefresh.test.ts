@@ -16,6 +16,24 @@ import { buildDealUpdateCommands, createBatchDealUpdater } from "../../src/bitri
 const NOW = new Date("2026-10-28T10:00:00.000Z");
 
 describe("частичная недоступность открытого API", () => {
+  it('считает no_bin пропуском по воронкам, без ошибки и без notFound', async () => {
+    const statuses = Object.assign(new Map<string, string>(), { skipped: new Map([['100', 'no_bin'], ['101', 'no_bin']]) });
+    const report = await runPlanStatusRefresh(makeDeps([deal(1, '100', '', { CATEGORY_ID: '29' }), deal(2, '101', '', { CATEGORY_ID: '9' })], {}, { fetchStatuses: async () => statuses }), { execute: false });
+    expect(report.errors).toEqual([]); expect(report.notFound).toBe(0); expect(report.skipped).toBe(2);
+    expect(report.skippedByReason).toEqual({ no_bin: { '29': 1, '9': 1 } });
+  });
+  it.each(['source_conflict', 'portal_unavailable'] as const)('проверка портала %s запрещает запись и учитывается отдельно', async reason => {
+    const deps = makeDeps([deal(1, '100')], { '100': 'Опубликован' }, { verifyUpdate: async () => ({ reason }) });
+    const report = await runPlanStatusRefresh(deps, { execute: true });
+    expect(report.toUpdate).toBe(0); expect(report.skipped).toBe(1); expect(report.errors).toEqual([]);
+    expect(deps.writeUpdates).not.toHaveBeenCalled();
+    expect(report.skippedReasons[0].reason).toBe(reason);
+  });
+  it('подтверждённая порталом правка проходит', async () => {
+    const deps = makeDeps([deal(1, '100')], { '100': 'Опубликован' }, { verifyUpdate: async () => ({ reason: 'confirmed' }) });
+    const report = await runPlanStatusRefresh(deps, { execute: true });
+    expect(report.updated).toBe(1); expect(report.portalVerification.confirmed).toBe(1);
+  });
   it("проверяет БИН самой сделки или её компании и год создания", () => {
     const companyBins = new Map([["10", "990000000001"], ["11", "bad"]]);
     expect(planStatusContextOf({ ID: 1, COMPANY_ID: "10", DATE_CREATE: "2026-10-01" }, companyBins)).toEqual({ bin: "990000000001", year: 2026 });
