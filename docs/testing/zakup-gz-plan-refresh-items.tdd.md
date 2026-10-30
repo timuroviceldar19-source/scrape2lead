@@ -67,3 +67,12 @@ Dry-run товара: 1028 сделок, из прежних 7 кандидат�
 ## Обработка отсутствующей записи zakup
 
 RED: `npx vitest run tests/kz/goszakupPlanStatusApi.test.ts` — 1 ошибка из 20: 404 конкретной записи не считался пропуском. GREEN: та же команда — 20 тестов пройдены; 503 остаётся ошибкой. `npm run lint` — успешно. Проверка полного сценария и dry-run ещё не выполнена.
+
+## Дополнительные проверки товара, 404 и Summary
+
+- RED: `npx vitest run tests/kz/goszakupPlanItems.test.ts` — 1 ошибка из 7: отсутствовали `skipped` и причина сбоя. GREEN: 7 тестов прошли.
+- RED: `npx vitest run tests/kz/zakupGzRegistry.test.ts` — 1 ошибка из 21: неполный индекс публиковался до завершения загрузки договоров. GREEN: 21 тест прошёл.
+- RED: `npx vitest run tests/kz/zakupGzPlans.test.ts` — 1 ошибка из 21: найденный лот скрывал 404 договора. GREEN: 21 тест прошёл.
+- RED: `npx vitest run tests/bitrix/gzPlanStatusRefresh.test.ts` — 1 ошибка из 49: БИН из комментария уступал БИН компании. GREEN: 49 тестов прошли; дополнительные тесты проверяют пропуск по воронке и ошибку источника.
+- RED: `npx vitest run tests/bitrix/gzOutcomeSummary.test.ts` — отсутствовала функция вывода Summary. GREEN: 1 тест прошёл.
+- `npx vitest run tests/bitrix/gzDealBin.test.ts` — 1 тест прошёл: БИН компании позволяет проверить товар, при отсутствии БИН возвращается пропуск.
