@@ -16,6 +16,13 @@ import { buildDealUpdateCommands, createBatchDealUpdater } from "../../src/bitri
 const NOW = new Date("2026-10-28T10:00:00.000Z");
 
 describe("частичная недоступность открытого API", () => {
+  it('не использует контекст другой сделки с тем же номером плана', async () => {
+    const deps = makeDeps([deal(1, '100'), deal(2, '100', '', { CATEGORY_ID: '29' })], { '100': 'Опубликован' }, {
+      skipReason: entry => entry.ID === 2 ? 'no_bin' : null
+    });
+    const report = await runPlanStatusRefresh(deps, { execute: false });
+    expect(report.toUpdate).toBe(1); expect(report.skippedByReason.no_bin).toEqual({ '29': 1 });
+  });
   it('считает no_bin пропуском по воронкам, без ошибки и без notFound', async () => {
     const statuses = Object.assign(new Map<string, string>(), { skipped: new Map([['100', 'no_bin'], ['101', 'no_bin']]) });
     const report = await runPlanStatusRefresh(makeDeps([deal(1, '100', '', { CATEGORY_ID: '29' }), deal(2, '101', '', { CATEGORY_ID: '9' })], {}, { fetchStatuses: async () => statuses }), { execute: false });
