@@ -62,6 +62,9 @@ export interface GzCaseDeal {
 
 export interface GzCaseBucket { deals: number; amount: number }
 
+/** Сколько сделок источника имеют итог с портала и сколько закрыто в Bitrix: без этого ноль выигранных ничего не значит. */
+export interface GzCaseCoverage { deals: number; withOutcome: number; closed: number }
+
 export interface GzCaseSummary {
   deals: number;
   amount: number;
@@ -86,8 +89,9 @@ export interface GzCaseSummary {
   portalWon: GzCaseBucket;
   /** Выиграно по этапу Bitrix или по порталу, каждая сделка один раз. */
   wonAny: GzCaseBucket;
-  /** Те же выигранные по источнику: выигрыш из пункта плана — закупка, которую робот нашёл до объявления. */
+  /** Те же выигранные по источнику. Читать вместе с `coverageBySource`: где итоги не отслеживаются, ноль — это «нет данных». */
   wonBySource: Record<GzCaseSource, GzCaseBucket>;
+  coverageBySource: Record<GzCaseSource, GzCaseCoverage>;
   minutesPerDeal: number;
   hoursSaved: number;
 }
@@ -147,6 +151,10 @@ export function summarizeGzCase(deals: GzCaseDeal[], options: GzCaseOptions): Gz
   const wonBySource: Record<GzCaseSource, GzCaseBucket> = {
     plans: emptyBucket(), lots: emptyBucket(), procurement: emptyBucket(), excel: emptyBucket()
   };
+  const emptyCoverage = (): GzCaseCoverage => ({ deals: 0, withOutcome: 0, closed: 0 });
+  const coverageBySource: Record<GzCaseSource, GzCaseCoverage> = {
+    plans: emptyCoverage(), lots: emptyCoverage(), procurement: emptyCoverage(), excel: emptyCoverage()
+  };
   const months = new Map<string, GzCaseBucket>();
   const outcomes: Record<string, number> = {};
   let total = 0;
@@ -195,6 +203,10 @@ export function summarizeGzCase(deals: GzCaseDeal[], options: GzCaseOptions): Gz
       add(wonAny, sum);
       add(wonBySource[deal.source], sum);
     }
+    const coverage = coverageBySource[deal.source];
+    coverage.deals += 1;
+    if (outcome !== "none") coverage.withOutcome += 1;
+    if (stage !== "open") coverage.closed += 1;
   }
 
   const closed = stages.won.deals + stages.lost.deals + stages.rejected.deals;
@@ -216,6 +228,7 @@ export function summarizeGzCase(deals: GzCaseDeal[], options: GzCaseOptions): Gz
     portalWon,
     wonAny,
     wonBySource,
+    coverageBySource,
     minutesPerDeal: options.minutesPerDeal,
     hoursSaved: Math.round(total * options.minutesPerDeal / 60 * 10) / 10
   };
@@ -236,6 +249,21 @@ function outcomeLines(summary: GzCaseSummary): string[] {
     if (!known.has(kind) && kind !== "none") lines.push(`- Другой итог (${kind}): ${fmtNumber(count)}`);
   }
   lines.push(`- Итог ещё не определён: ${fmtNumber(summary.outcomes.none ?? 0)}`);
+  return lines;
+}
+
+function wonBySourceLines(summary: GzCaseSummary): string[] {
+  const sources = (Object.keys(SOURCE_LABELS) as GzCaseSource[]).filter((source) => summary.coverageBySource[source].deals > 0);
+  const lines = sources.map((source) => {
+    const coverage = summary.coverageBySource[source];
+    return `  - ${SOURCE_LABELS[source]}: ${bucketText(summary.wonBySource[source])}`
+      + ` (итог с портала у ${fmtNumber(coverage.withOutcome)} из ${fmtNumber(coverage.deals)}, закрыто в Bitrix ${fmtNumber(coverage.closed)})`;
+  });
+  const untracked = sources.filter((source) => summary.coverageBySource[source].withOutcome === 0);
+  if (untracked.length) {
+    lines.push(`Для ${untracked.map((source) => `«${SOURCE_LABELS[source]}»`).join(", ")} итог с портала не проверяется: `
+      + "ноль выигранных там значит «нет данных», а не «не выиграно».");
+  }
   return lines;
 }
 
@@ -260,10 +288,7 @@ export function formatGzCaseReport(summary: GzCaseSummary, asOfDate: string): st
     ...outcomeLines(summary),
     "",
     `Выиграно всего (этап Bitrix или портал): ${bucketText(summary.wonAny)}`,
-    ...(Object.keys(SOURCE_LABELS) as GzCaseSource[])
-      .filter((source) => summary.wonBySource[source].deals > 0)
-      .map((source) => `  - ${SOURCE_LABELS[source]}: ${bucketText(summary.wonBySource[source])}`
-        + (source === "plans" ? " (робот нашёл закупку до объявления)" : "")),
+    ...wonBySourceLines(summary),
     "",
     "## Источники",
     ...(Object.keys(SOURCE_LABELS) as GzCaseSource[])

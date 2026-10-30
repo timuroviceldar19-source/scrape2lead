@@ -68,14 +68,25 @@ describe("summarizeGzCase: уточнения для кейса", () => {
     expect(summary.wonAny).toEqual({ deals: 2, amount: 900_000 });
   });
 
-  it("делит выигранные по источнику: выигрыш из пункта плана робот нашёл до объявления", () => {
+  it("делит выигранные по источнику и показывает, отслеживаются ли там итоги", () => {
     expect(summary.wonBySource.plans).toEqual({ deals: 1, amount: 500_000 });
     expect(summary.wonBySource.lots).toEqual({ deals: 1, amount: 400_000 });
-    expect(summary.wonBySource.procurement).toEqual({ deals: 0, amount: 0 });
+    expect(summary.coverageBySource.plans).toEqual({ deals: 2, withOutcome: 1, closed: 1 });
+    expect(summary.coverageBySource.lots).toEqual({ deals: 2, withOutcome: 2, closed: 2 });
     const text = formatGzCaseReport(summary, "2026-10-30");
-    expect(text).toContain("  - Пункты планов goszakup: 1 на 500 000 ₸ (робот нашёл закупку до объявления)");
-    expect(text).toContain("  - Лоты goszakup: 1 на 400 000 ₸");
-    expect(text).not.toContain("  - Другие площадки");
+    expect(text).toContain("  - Пункты планов goszakup: 1 на 500 000 ₸ (итог с портала у 1 из 2, закрыто в Bitrix 1)");
+    expect(text).toContain("  - Лоты goszakup: 1 на 400 000 ₸ (итог с портала у 2 из 2, закрыто в Bitrix 2)");
+    expect(text).not.toContain("до объявления");
+    expect(text).not.toContain("не проверяется");
+  });
+
+  it("не выдаёт ноль выигранных за результат, если у источника итоги не отслеживаются", () => {
+    const text = formatGzCaseReport(summarizeGzCase([
+      deal({ ID: "1", STAGE_SEMANTIC_ID: "S", OPPORTUNITY: "100" }),
+      deal({ ID: "2", ORIGINATOR_ID: "scrape2lead-procurement", TITLE: "Закупка", OPPORTUNITY: "50" })
+    ], { minutesPerDeal: 10 }), "2026-10-30");
+    expect(text).toContain("  - Другие площадки: 0 на 0 ₸ (итог с портала у 0 из 1, закрыто в Bitrix 0)");
+    expect(text).toContain("Для «Пункты планов goszakup», «Другие площадки» итог с портала не проверяется");
   });
 
   it("показывает в отчёте все итоги портала и новые строки", () => {
