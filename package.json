@@ -39,6 +39,7 @@
     "bitrix:delete-gz-leads-by-assignee": "tsx scripts/bitrix-delete-gz-leads-by-assignee.mts",
     "bitrix:import": "tsx scripts/bitrix-import.mts",
     "bitrix:report": "tsx scripts/bitrix-report.mts",
+    "bitrix:gz-case-stats": "tsx scripts/bitrix-gz-case-stats.mts",
     "bitrix:refresh-gz-plan-status": "tsx scripts/bitrix-refresh-gz-plan-status.mts",
     "bitrix:sales-pult": "tsx scripts/sales-pult.mts",
     "bitrix:sync-gz-plan-items": "tsx scripts/bitrix-sync-gz-plan-items.mts",
