@@ -73,7 +73,8 @@ async function main(): Promise<void> {
           if (context) contexts.set(Number(deal.UF_CRM_PLAN_ID), context);
           else missingContextDeals.add(String(deal.ID));
         }
-        console.log(`lookup_input=${JSON.stringify({ deals: allDeals.length, without_enstru: allDeals.filter(deal => !fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612).length).length, without_verified_context: allDeals.filter(deal => !contexts.has(Number(deal.UF_CRM_PLAN_ID))).length })}`);
+        console.log(`lookup_input=${JSON.stringify({ deals: allDeals.length, without_enstru: allDeals.filter(deal => !fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612).length).length,
+          without_verified_context: missingContextDeals.size })}`);
         return allDeals;
       },
       fetchStatuses: async (planNumbers) => {
