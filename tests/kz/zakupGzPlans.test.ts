@@ -22,6 +22,22 @@ function registry(listed: unknown[], plan = detail, withContract = false) {
   return { fetchFn, calls };
 }
 describe('поиск версий через q и договоры', () => {
+  it('потолок полных обходов действует на планы и договоры, повторный кэш не расходует слот', async () => {
+    const { fetchFn: base } = registry([]);
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      const u = new URL(url);
+      if (u.pathname.endsWith('/organizations/')) return json(page([{ id: 42, iin_bin: u.searchParams.get('q') }]));
+      return base(url, init);
+    }) as typeof fetch;
+    const lookup = new GzPlanLookup({ ...options, fetchFn, maxFullScans: 1 });
+    await lookup.plans([100], 'root', options.contexts);
+    await lookup.plans([100], 'root', options.contexts);
+    const contexts = new Map([[101, { bin: '990000000003', year: 2026 }]]);
+    await expect(lookup.plans([101], 'root', contexts)).rejects.toThrow(/full_scan_limit/);
+    await expect(lookup.contracts('990000000003', [2026])).rejects.toThrow(/full_scan_limit/);
+    expect(lookup.fullScanBins.size).toBe(1);
+    expect(lookup.fullScanSkippedPlans.has(101)).toBe(true);
+  });
   it('пустой список известных номеров не запускает полный перебор',async()=>{
     let calls=0;const fetchFn=(async()=>{calls++;throw Error('unexpected');}) as typeof fetch;
     const lookup=new GzPlanLookup({...options,fetchFn});
