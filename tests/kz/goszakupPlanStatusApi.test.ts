@@ -165,3 +165,17 @@ describe("fetchPlanStatusBatch", () => {
     expect(result.get("2")).toBe("Заявка");
   });
 });
+
+it.each([404, 503])('ошибка HTTP %s конкретной записи учитывается по типу', async status => {
+  const fetchFn = (async (url: string) => new URL(url).pathname.endsWith('/plan-items/')
+    ? jsonResponse({ count: 1, results: [{ id: 500, external_id: 200 }] })
+    : new Response('missing', { status })) as typeof fetch;
+  const result = await fetchPlanStatusBatch(['100'], { fetchFn, pauseMs: 0, maxRetries: 0, contexts: new Map([[100, { bin: '990000000001', year: 2026 }]]) });
+  if (status === 404) {
+    expect(result.skipped?.get('100')).toBe('zakup_not_found');
+    expect(result.failed?.size).toBe(0);
+  } else {
+    expect(result.failed?.get('100')).toContain('503');
+    expect(result.skipped?.size).toBe(0);
+  }
+});
