@@ -11,7 +11,22 @@ const TOKEN = "test-token-do-not-use";
 const CRON_MORNING = "40 3 * * *";
 const CRON_HOURLY = "30 4-11 * * *";
 const CRON_AFTERNOON_WATCHDOG = "15 10 * * *";
-const CRON_SALES_PULT = "*/15 4-14 * * 1-5";
+const CRON_SALES_PULT = "*/15 4-14 * * mon-fri";
+
+// Cloudflare Cron Triggers number weekdays 1 = Sunday ... 7 = Saturday, unlike Unix cron.
+const CLOUDFLARE_WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+function cloudflareWeekdays(field: string): string[] {
+  if (field === "*") return [...CLOUDFLARE_WEEKDAYS];
+  const index = (token: string): number => {
+    const byName = CLOUDFLARE_WEEKDAYS.indexOf(token.toLowerCase());
+    return byName !== -1 ? byName : Number(token) - 1;
+  };
+  return field.split(",").flatMap((part) => {
+    const [from, to = from] = part.split("-");
+    return CLOUDFLARE_WEEKDAYS.slice(index(from), index(to) + 1);
+  });
+}
 
 function at(utcTime: string): number {
   return Date.parse(`2026-07-26T${utcTime}:00Z`);
@@ -410,6 +425,12 @@ describe("Cloudflare cron wiring", () => {
 
   it("stays within the Cloudflare Free limit of five cron triggers", () => {
     expect(wranglerCrons.length).toBeLessThanOrEqual(5);
+  });
+
+  it("runs the sales pult Monday to Friday in Cloudflare weekday numbering (1 = Sunday)", () => {
+    const salesPultCron = wranglerCrons.find((cron) => cron.startsWith("*/15 "));
+    expect(salesPultCron).toBeDefined();
+    expect(cloudflareWeekdays(salesPultCron!.split(" ")[4])).toEqual(["mon", "tue", "wed", "thu", "fri"]);
   });
 
   it("dispatches PK and main together in every slot from 08:40 to 16:30 Almaty", async () => {
