@@ -68,6 +68,16 @@ describe("summarizeGzCase: уточнения для кейса", () => {
     expect(summary.wonAny).toEqual({ deals: 2, amount: 900_000 });
   });
 
+  it("делит выигранные по источнику: выигрыш из пункта плана робот нашёл до объявления", () => {
+    expect(summary.wonBySource.plans).toEqual({ deals: 1, amount: 500_000 });
+    expect(summary.wonBySource.lots).toEqual({ deals: 1, amount: 400_000 });
+    expect(summary.wonBySource.procurement).toEqual({ deals: 0, amount: 0 });
+    const text = formatGzCaseReport(summary, "2026-10-30");
+    expect(text).toContain("  - Пункты планов goszakup: 1 на 500 000 ₸ (робот нашёл закупку до объявления)");
+    expect(text).toContain("  - Лоты goszakup: 1 на 400 000 ₸");
+    expect(text).not.toContain("  - Другие площадки");
+  });
+
   it("показывает в отчёте все итоги портала и новые строки", () => {
     const text = formatGzCaseReport(summary, "2026-10-30");
     expect(text).toContain("Создано сделок: 4");

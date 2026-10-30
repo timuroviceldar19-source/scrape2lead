@@ -86,6 +86,8 @@ export interface GzCaseSummary {
   portalWon: GzCaseBucket;
   /** Выиграно по этапу Bitrix или по порталу, каждая сделка один раз. */
   wonAny: GzCaseBucket;
+  /** Те же выигранные по источнику: выигрыш из пункта плана — закупка, которую робот нашёл до объявления. */
+  wonBySource: Record<GzCaseSource, GzCaseBucket>;
   minutesPerDeal: number;
   hoursSaved: number;
 }
@@ -142,6 +144,9 @@ export function summarizeGzCase(deals: GzCaseDeal[], options: GzCaseOptions): Gz
   const lotsRepeatingPlans = emptyBucket();
   const portalWon = emptyBucket();
   const wonAny = emptyBucket();
+  const wonBySource: Record<GzCaseSource, GzCaseBucket> = {
+    plans: emptyBucket(), lots: emptyBucket(), procurement: emptyBucket(), excel: emptyBucket()
+  };
   const months = new Map<string, GzCaseBucket>();
   const outcomes: Record<string, number> = {};
   let total = 0;
@@ -186,7 +191,10 @@ export function summarizeGzCase(deals: GzCaseDeal[], options: GzCaseOptions): Gz
     const outcome = /^([a-z-]+):/.exec(String(deal.UF_CRM_S2L_GZ_OUTCOME ?? "").trim())?.[1] ?? "none";
     outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
     if (outcome === "won") add(portalWon, sum);
-    if (outcome === "won" || stage === "won") add(wonAny, sum);
+    if (outcome === "won" || stage === "won") {
+      add(wonAny, sum);
+      add(wonBySource[deal.source], sum);
+    }
   }
 
   const closed = stages.won.deals + stages.lost.deals + stages.rejected.deals;
@@ -207,6 +215,7 @@ export function summarizeGzCase(deals: GzCaseDeal[], options: GzCaseOptions): Gz
     outcomes,
     portalWon,
     wonAny,
+    wonBySource,
     minutesPerDeal: options.minutesPerDeal,
     hoursSaved: Math.round(total * options.minutesPerDeal / 60 * 10) / 10
   };
@@ -251,6 +260,10 @@ export function formatGzCaseReport(summary: GzCaseSummary, asOfDate: string): st
     ...outcomeLines(summary),
     "",
     `Выиграно всего (этап Bitrix или портал): ${bucketText(summary.wonAny)}`,
+    ...(Object.keys(SOURCE_LABELS) as GzCaseSource[])
+      .filter((source) => summary.wonBySource[source].deals > 0)
+      .map((source) => `  - ${SOURCE_LABELS[source]}: ${bucketText(summary.wonBySource[source])}`
+        + (source === "plans" ? " (робот нашёл закупку до объявления)" : "")),
     "",
     "## Источники",
     ...(Object.keys(SOURCE_LABELS) as GzCaseSource[])
