@@ -1,7 +1,7 @@
 import type { GzOutcomeContract } from "../bitrix/gzDealOutcome.js";
 import { FullScanLimitError } from './zakupGzRegistry.js';
 import { goszakupGraphqlAll } from "./goszakupGraphql.js";
-import { mapWithConcurrency, zakupGet, zakupListAll } from "./zakupPublicApi.js";
+import { mapWithConcurrency, zakupGet, zakupListAll, ZakupRecordNotFoundError } from "./zakupPublicApi.js";
 import { loadZakupCustomerContracts, mapZakupCustomerContracts, fetchOwsCustomerContracts, withGzSourceFallback, type GzRegistryOptions, type ZakupContractPlan, type ZakupCustomerContractData, type SubjectRow, type GzContractLookupPath, fullEnstruCodes } from "./zakupGzRegistry.js";
 
 /** Формат прежнего GraphQL на границе источников. */
@@ -215,7 +215,7 @@ export class GzPlanLookup {
         const years = context.year < currentYear ? [context.year, context.year + 1] : [context.year];
         const codes = this.codesForContext(context);
         let failure: unknown;
-        if (codes.length) { try { await this.raw(context.bin, years, codes); } catch (error) { failure = error; } }
+        if (codes.length) { try { await this.raw(context.bin, years, codes); } catch (error) { if (error instanceof ZakupRecordNotFoundError) throw error; failure = error; } }
         const hasRoot = () => [...(this.contractPlans.get(context.bin)?.values() ?? [])].some(ref => Number(ref.root?.external_id) === requested);
         if (!hasRoot()) { try { await this.lots(context.bin, requested, context); } catch (error) { failure ??= error; } }
         if (!hasRoot() && !codes.length) {
