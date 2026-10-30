@@ -470,3 +470,9 @@ describe("buildReportFilename", () => {
     expect(buildReportFilename("2026-10-29", { dealId: null, limit: null })).toBe("2026-10-29.json");
   });
 });
+
+it('берёт БИН из комментария или компании для контекста сделки', () => {
+  const companies = new Map([['10', '990000000001']]);
+  expect(planStatusContextOf({ ID: 1, COMPANY_ID: '10', DATE_CREATE: '2026-01-01' }, companies)?.bin).toBe('990000000001');
+  expect(planStatusContextOf({ ID: 2, COMMENTS: 'BIN: 990000000002', COMPANY_ID: '10', DATE_CREATE: '2026-01-01' }, companies)?.bin).toBe('990000000002');
+});
