@@ -12,7 +12,7 @@ describe("GZ GitHub workflow credentials", () => {
   it("passes the Goszakup token into the reusable automation", () => {
     const reusable = readWorkflow("gz-automation.yml");
 
-    expect(reusable).toMatch(/secrets:\s+[\s\S]*GOSZAKUP_TOKEN:\s+required: true/);
+    expect(reusable).toMatch(/secrets:\s+[\s\S]*GOSZAKUP_TOKEN:\s+required: false/);
     expect(reusable).toContain("GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}");
   });
 
