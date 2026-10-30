@@ -76,3 +76,7 @@ RED: `npx vitest run tests/kz/goszakupPlanStatusApi.test.ts` — 1 ошибка 
 - RED: `npx vitest run tests/bitrix/gzPlanStatusRefresh.test.ts` — 1 ошибка из 49: БИН из комментария уступал БИН компании. GREEN: 49 тестов прошли; дополнительные тесты проверяют пропуск по воронке и ошибку источника.
 - RED: `npx vitest run tests/bitrix/gzOutcomeSummary.test.ts` — отсутствовала функция вывода Summary. GREEN: 1 тест прошёл.
 - `npx vitest run tests/bitrix/gzDealBin.test.ts` — 1 тест прошёл: БИН компании позволяет проверить товар, при отсутствии БИН возвращается пропуск.
+
+Проверки ветки товара и статуса: `runs/zakup-verification-20261030/status-final-checks.log` — lint и build exit 0; полный набор при параллельном запуске упёрся в тайм-аут закрытия Chromium. Последовательный повтор `runs/zakup-verification-20261030/status-retest.log` — 1540 passed, 9 skipped, exit 0. Ветка лотов: `runs/zakup-verification-20261030/lot-checks.log` — lint, build и тесты exit 0, 1517 passed, 9 skipped. Объединённое состояние: `runs/zakup-verification-20261030/combined-retest.log` — lint, build и тесты exit 0, 1563 passed, 9 skipped.
+
+Dry-run товара: `tmp/zakup-review-20261030/items-final-followup.log`, отчёт `items-final-followup.json`, метрики `items-final-followup-metrics.json`: 1029 сделок, БИН компании получен для 0, без БИН 50 сделок, ошибок поиска 19 пунктов (16 без даты, 3 HTTP 404); подтверждены 6 прежних предложений, 1 отклонено конфликтом, новых предложений нет. 4388 запросов, 3 failed, 0 blocked, 267,515 с, exit 0. Прежний и новый отчёты сравнили по спискам правок.
