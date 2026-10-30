@@ -29,7 +29,7 @@ import {
 } from "../src/bitrix/gzDealOutcome.js";
 import { callBitrixBatch, chunkBatchCommands } from "../src/bitrix/batch.js";
 import { describeOutcomeCoverage, type OutcomeCoverageInput } from "../src/bitrix/gzOutcomeCoverage.js";
-import { verifyGzPlanOutcome } from '../src/bitrix/gzOutcomePortal.js';
+import { prefetchGzPlanOutcomeProofs, verifyGzPlanOutcome } from '../src/bitrix/gzOutcomePortal.js';
 import { fetchGzPlans, GzPlanLookup, type GzPlanLookupOptions, type GzPlanContext, type ApiPlan } from "../src/kz/zakupGzPlans.js";
 import { fullEnstruCodes, type GzContractLookupPath } from "../src/kz/zakupGzRegistry.js";
 import { parseGoszakupPlanDetailHtml } from "../src/kz/goszakupPlanHtmlParser.js";
@@ -227,6 +227,10 @@ async function main(): Promise<void> {
   const emptyStatus = { pending: 0, attempted: 0, failed: 0, budgetReached: false };
   const htmlDeadline = Date.now() + args.htmlBudgetMs;
   const portal = new PortalPlanVerifier({ delayMs: args.htmlDelayMs, deadline: args.skipHtml ? 0 : htmlDeadline });
+  const priorityProofs = await prefetchGzPlanOutcomeProofs(portal, checks.map(check => ({ ref: check.ref,
+    candidate: decideGzDealOutcome(check.ref, contractsByBin.get(check.bin ?? '') ?? [], check.plan, config),
+    previousKey: check.deal.UF_CRM_S2L_GZ_OUTCOME })));
+  console.log(`html outcome proofs: priority_candidates=${priorityProofs}`);
   const htmlStatus = args.skipHtml
     ? emptyStatus
     : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, args.htmlBudgetMs, config.itemFamilies, portal);
