@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupRegisterContracts, matchRegisterWithCrm } from "../../src/bitrix/salesPult/register/matchCrm.js";
+import { groupRegisterContracts, matchRegisterWithCrm, extractEntityNumbers, hasConflictingEntityNumbers } from "../../src/bitrix/salesPult/register/matchCrm.js";
 import type { RegisterRow, CrmWonDeal } from "../../src/bitrix/salesPult/register/types.js";
 
 describe("groupRegisterContracts", () => {
@@ -147,6 +147,45 @@ describe("matchRegisterWithCrm", () => {
     expect(res.extra).toHaveLength(1);
     expect(res.extra[0].id).toBe("102");
   });
+
+  it("does not match when both customer and deal have institution numbers that do not match (e.g. Ясли-сад №5 vs Ясли-сад №14)", () => {
+    const contracts = groupRegisterContracts([
+      {
+        date: "2026-10-07",
+        type: "ГЗ",
+        customer: "Коммунальное государственное казенное предприятие Ясли-сад №5 Астана",
+        qty: 1,
+        product: "Бумага",
+        cost: 400000,
+        extras: 0,
+        sale: 600000,
+        portal: 600000,
+        val: 200000,
+        bonusMop: 6000,
+        bonusRop: 1000,
+        manager: "Алихан",
+        note: null,
+        group: "ИП" as const,
+        kind: "Конкурсные закупки",
+        channel: "Закупки методом конкурса"
+      }
+    ]);
+
+    const deals = [
+      {
+        id: "77777",
+        title: "Поставка товаров для Ясли-сад №14 Астана",
+        company: "КГКП Ясли-сад №14 Астана",
+        amount: 600000,
+        manager: "Алихан"
+      }
+    ];
+
+    const res = matchRegisterWithCrm(contracts, deals);
+    expect(res.matched).toHaveLength(0);
+    expect(res.missing).toHaveLength(1);
+    expect(res.extra).toHaveLength(1);
+  });
 });
 
 
@@ -193,5 +232,41 @@ describe("managerAliases matching", () => {
     });
     expect(withAlias.matched).toHaveLength(1);
     expect(withAlias.missing).toHaveLength(0);
+  });
+});
+
+describe("extractEntityNumbers and entity conflict checks", () => {
+  it("extracts institution number from named entity without № symbol (e.g. школа 5)", () => {
+    const nums = extractEntityNumbers("КГУ Средняя общеобразовательная школа 5 города Павлодара");
+    expect(Array.from(nums)).toContain("5");
+  });
+
+  it("extracts institution number with №, N, or # symbol", () => {
+    expect(Array.from(extractEntityNumbers("Ясли-сад №14"))).toContain("14");
+    expect(Array.from(extractEntityNumbers("Ясли-сад N 14"))).toContain("14");
+    expect(Array.from(extractEntityNumbers("Ясли-сад N14"))).toContain("14");
+    expect(Array.from(extractEntityNumbers("Школа #5"))).toContain("5");
+  });
+
+  it("does not treat latin lowercase n in words or 'n 2026' as entity number", () => {
+    expect(Array.from(extractEntityNumbers("договор n 2026 поставка"))).not.toContain("2026");
+    expect(Array.from(extractEntityNumbers("plan 2026 test"))).not.toContain("2026");
+    expect(Array.from(extractEntityNumbers("main 123"))).not.toContain("123");
+  });
+
+  it("detects entity number conflicts correctly (школа 5 vs школа 14 without №)", () => {
+    expect(
+      hasConflictingEntityNumbers(
+        "КГУ Средняя школа 5 города Павлодара",
+        "Поставка панелей для Школа 14"
+      )
+    ).toBe(true);
+
+    expect(
+      hasConflictingEntityNumbers(
+        "КГУ Средняя школа 5 города Павлодара",
+        "Поставка панелей для Школа 5"
+      )
+    ).toBe(false);
   });
 });
