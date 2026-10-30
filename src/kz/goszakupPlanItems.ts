@@ -30,6 +30,7 @@ interface PlanRow {
 }
 
 const BATCH = 100;
+interface ItemResult { items: Map<number, CurrentPlanItem>; failed: number[]; skipped: Map<number, string>; failureReasons: Map<number, string> }
 const PLANS_BY_ROOT = `query($v: [Int], $after: Int) {
   Plans(filter: { rootrecordId: $v }, limit: 200, after: $after) {
     id rootrecordId subjectBiin isActive isDeleted plnPointYear dateCreate refEnstruCode nameRu
@@ -48,33 +49,37 @@ function text(value: unknown): string {
 export async function fetchCurrentPlanItems(
   roots: number[],
   options: GzPlanLookupOptions
-): Promise<{ items: Map<number, CurrentPlanItem>; failed: number[] }> {
+): Promise<ItemResult> {
   // Сохраняем пакетный резерв для старых потребителей, ещё не передающих контекст сделки.
   if (!options.contexts && !options.lookup && options.token) return fetchCurrentPlanItemsOws(roots, { ...options, token: options.token });
   const lookup = options.lookup ?? new GzPlanLookup(options);
   const items = new Map<number, CurrentPlanItem>();
   const failed: number[] = [];
+  const skipped = new Map<number, string>();
+  const failureReasons = new Map<number, string>();
   await mapWithConcurrency([...new Set(roots.filter(root => Number.isSafeInteger(root) && root > 0))], options.concurrency ?? 4, async root => {
+    if (options.contexts && !options.contexts.has(root)) { skipped.set(root, 'no_bin'); return; }
     try {
       const rows = await fetchGzPlans([root], "root", { ...options, lookup });
       for (const row of rows) {
         if (row.isActive === 0 || row.isDeleted) continue;
         // Дату синхронизации нельзя выдавать за дату версии и разрешать по ней правку старого товара.
-        if (!row.dateCreate) { failed.push(root); continue; }
+        if (!row.dateCreate) { failed.push(root); failureReasons.set(root, 'missing_date'); continue; }
         items.set(root, { id: row.id, rootId: root, code: text(row.refEnstruCode), name: text(row.nameRu),
           bin: row.subjectBiin ?? null, year: row.plnPointYear ?? null, createdAt: row.dateCreate });
       }
-    } catch { failed.push(root); }
+    } catch (error) { failed.push(root); failureReasons.set(root, error instanceof Error ? error.message : String(error)); }
   });
-  return { items, failed };
+  return { items, failed, skipped, failureReasons };
 }
 
 async function fetchCurrentPlanItemsOws(
   roots: number[],
   options: GoszakupGraphqlOptions
-): Promise<{ items: Map<number, CurrentPlanItem>; failed: number[] }> {
+): Promise<ItemResult> {
   const items = new Map<number, CurrentPlanItem>();
   const failed: number[] = [];
+  const failureReasons = new Map<number, string>();
   const unique = [...new Set(roots.filter((root) => Number.isInteger(root) && root > 0))];
 
   for (let start = 0; start < unique.length; start += BATCH) {
@@ -82,8 +87,9 @@ async function fetchCurrentPlanItemsOws(
     let rows: PlanRow[];
     try {
       rows = await goszakupGraphqlAll<PlanRow>(PLANS_BY_ROOT, { v: batch }, "Plans", options);
-    } catch {
+    } catch (error) {
       failed.push(...batch);
+      for (const root of batch) failureReasons.set(root, error instanceof Error ? error.message : String(error));
       continue;
     }
     for (const row of rows) {
@@ -103,5 +109,5 @@ async function fetchCurrentPlanItemsOws(
       });
     }
   }
-  return { items, failed };
+  return { items, failed, skipped: new Map(), failureReasons };
 }
