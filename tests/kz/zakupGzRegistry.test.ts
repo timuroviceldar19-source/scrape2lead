@@ -138,3 +138,19 @@ describe("справочники, неполные данные и общий к
     }
   });
 });
+
+it('не публикует частичный индекс заказчика при 404 позиции договора', async () => {
+  const { loadZakupCustomerContracts } = await import('../../src/kz/zakupGzRegistry.js');
+  const seen: unknown[] = [];
+  const fetchFn = (async (url: string) => {
+    const p = new URL(url).pathname;
+    if (p.endsWith('/organizations/')) return json(page([{ id: 42, iin_bin: '990000000001' }]));
+    if (p.endsWith('/years/')) return json([{ id: 12, year: 2026 }]);
+    if (p.endsWith('/contracts/')) return json(page([{ id: 7 }, { id: 8 }]));
+    if (p.endsWith('/7/subjects/')) return json([{ plan_item: { id: 10, external_id: 100 } }]);
+    if (p.endsWith('/8/subjects/')) return new Response('', { status: 404 });
+    throw Error(p);
+  }) as typeof fetch;
+  await expect(loadZakupCustomerContracts('990000000001', [2026], { ...opts, fetchFn, concurrency: 1, onPlanItem: x => seen.push(x) })).rejects.toThrow('404');
+  expect(seen).toEqual([]);
+});
