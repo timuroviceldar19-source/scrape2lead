@@ -33,7 +33,7 @@ import { prefetchGzPlanOutcomeProofs, verifyGzPlanOutcome } from '../src/bitrix/
 import { fetchGzPlans, GzPlanLookup, type GzPlanLookupOptions, type GzPlanContext, type ApiPlan } from "../src/kz/zakupGzPlans.js";
 import { fullEnstruCodes, type GzContractLookupPath } from "../src/kz/zakupGzRegistry.js";
 import { parseGoszakupPlanDetailHtml } from "../src/kz/goszakupPlanHtmlParser.js";
-import { PortalPlanVerifier, PortalThrottledError, fetchRegisterRows, fetchPortalPage, type PortalVerification } from "../src/kz/goszakupPlanRegistry.js";
+import { PortalPlanVerifier, PortalThrottledError, HtmlBudgetError, fetchRegisterRows, fetchPortalPage, type PortalVerification } from "../src/kz/goszakupPlanRegistry.js";
 import type { GoszakupPlanListItem } from "../src/kz/goszakupPlanTypes.js";
 import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "../src/kz/goszakupOrigin.js";
 
@@ -233,7 +233,7 @@ async function main(): Promise<void> {
   console.log(`html outcome proofs: priority_candidates=${priorityProofs}`);
   const htmlStatus = args.skipHtml
     ? emptyStatus
-    : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, args.htmlBudgetMs, config.itemFamilies, portal);
+    : await fillHtmlPlanStatuses(htmlPending, args.htmlDelayMs, args.htmlLimit, Math.max(0, htmlDeadline - Date.now()), config.itemFamilies, portal);
   const registersFailed = args.skipHtml
     ? 0
     : await fillCustomerRegisters(checks.filter((check) => check.planMissing && check.bin), args.htmlDelayMs);
@@ -500,6 +500,7 @@ async function fillHtmlPlanStatuses(
         check.planVersion ??= Number(row.plan_point_id);
       }
     } catch (error) {
+      if (error instanceof HtmlBudgetError) { budgetReached = true; break; }
       failed += 1;
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[html-status] plan ${check.ref.planNumber}: ${message}`);
