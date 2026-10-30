@@ -1,7 +1,7 @@
 import { GoszakupAuthError } from "./goszakupClient.js";
 import { fetchGzPlans, type GzPlanLookupOptions } from "./zakupGzPlans.js";
 import { withGzSourceFallback } from "./zakupGzRegistry.js";
-import { mapWithConcurrency } from "./zakupPublicApi.js";
+import { mapWithConcurrency, ZakupRecordNotFoundError } from "./zakupPublicApi.js";
 
 export const GZ_GRAPHQL_URL = "https://ows.goszakup.gov.kz/v3/graphql";
 export const PLAN_STATUS_BATCH_SIZE = 50;
@@ -109,7 +109,8 @@ export async function fetchPlanStatusBatch(
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (message.includes('full_scan_limit')) result.skipped!.set(number, 'full_scan_limit');
+        if (error instanceof ZakupRecordNotFoundError) result.skipped!.set(number, 'zakup_not_found');
+        else if (message.includes('full_scan_limit')) result.skipped!.set(number, 'full_scan_limit');
         else result.failed!.set(number, message);
       }
     });

@@ -6,6 +6,8 @@ export const ZAKUP_API_URL = "https://zakup.gov.kz/api/core/api";
 /** Больше 100 записей на страницу API не отдаёт, даже если попросить. */
 export const ZAKUP_PAGE_SIZE = 100;
 
+export class ZakupRecordNotFoundError extends Error {}
+
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PAUSE_MS = 100;
@@ -66,6 +68,9 @@ export async function zakupGet<T>(path: string, params: ZakupParams = {}, option
     }
     const text = await response.text();
     // 400 приходит, например, на незнакомый параметр: повтор не поможет.
+    if (response.status === 404 && /^\/public\/(?:plan-items\/\d+\/|contracts\/\d+\/subjects\/)$/.test(path)) {
+      throw new ZakupRecordNotFoundError(`zakup ${path}: HTTP 404`);
+    }
     if (!response.ok) throw new Error(`zakup ${path}: HTTP ${response.status} ${text.slice(0, 120)}`);
     try {
       return JSON.parse(text) as T;
