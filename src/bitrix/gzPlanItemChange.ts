@@ -3,6 +3,7 @@
 // Здесь сравнивается товар сделки с действующей версией пункта и готовится правка полей и комментарий.
 
 import type { CurrentPlanItem } from "../kz/goszakupPlanItems.js";
+import { gzDealBin } from "./gzDealBin.js";
 
 export type { CurrentPlanItem };
 
@@ -17,6 +18,7 @@ const TITLE_MAX = 250;
 /** Поля сделки, нужные для сверки (все приходят из crm.deal.list строками). */
 export interface PlanItemDeal {
   ID: string | number;
+  COMPANY_ID?: string | number | null;
   ORIGIN_ID?: string | null;
   TITLE?: string | null;
   COMMENTS?: string | null;
@@ -33,6 +35,7 @@ export interface PlanItemDeal {
 
 export const PLAN_ITEM_DEAL_SELECT = [
   "ID",
+  "COMPANY_ID",
   "ORIGIN_ID",
   "TITLE",
   "COMMENTS",
@@ -47,7 +50,7 @@ export const PLAN_ITEM_DEAL_SELECT = [
 export interface PlanItemChange {
   dealId: string;
   previous: { code: string; name: string };
-  current: { code: string; name: string };
+  current: { code: string; name: string; rootId: number; id: number };
   fields: Record<string, string>;
   comment: string;
 }
@@ -103,9 +106,7 @@ function isPlanDeal(deal: PlanItemDeal): boolean {
 }
 
 function dealBin(deal: PlanItemDeal): string | null {
-  const own = text(deal[BIN_FIELD]);
-  if (/^\d{12}$/.test(own)) return own;
-  return /BIN:\s*(\d{12})/.exec(text(deal.COMMENTS))?.[1] ?? null;
+  return gzDealBin(deal);
 }
 
 const day = (value: string): string => value.slice(0, 10);
@@ -154,7 +155,7 @@ export function planItemChange(deal: PlanItemDeal, current: CurrentPlanItem): Pl
   return {
     dealId: String(deal.ID),
     previous: { code: previousCode, name: previousName },
-    current: { code: current.code, name: current.name },
+    current: { code: current.code, name: current.name, rootId: current.rootId, id: current.id },
     fields,
     comment
   };

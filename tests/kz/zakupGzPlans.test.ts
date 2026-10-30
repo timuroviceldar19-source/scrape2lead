@@ -183,3 +183,16 @@ describe('поиск версий через q и договоры', () => {
     await expect(fetchGzPlans([100],'root',{...options,contexts:new Map(),fetchFn})).rejects.toThrow(/БИН и года/);
   });
 });
+
+it('не принимает найденный лот при 404 в неполном поиске договоров', async () => {
+  const { fetchFn: base } = registry([], detail, true);
+  const fetchFn = (async (url: string, init?: RequestInit) => {
+    const p = new URL(url).pathname;
+    if (p.endsWith('/contracts/7/subjects/')) return new Response('', { status: 404 });
+    if (p.endsWith('/lots/')) return json(page([{ announcement_id: 9 }]));
+    if (p.endsWith('/announcements/9/contracts/')) return json([{ plan_item: { id: 500, external_id: 200, root: { external_id: 100 } } }]);
+    return base(url, init);
+  }) as typeof fetch;
+  const contexts = new Map([[100, { ...context, codes: ['279020.100.000002'] }]]);
+  await expect(fetchGzPlans([100], 'root', { ...options, contexts, fetchFn })).rejects.toThrow('404');
+});

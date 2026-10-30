@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { contractBaseNumber, type GzOutcomeContract } from "../bitrix/gzDealOutcome.js";
 import { dedupeSubjects, DEFAULT_ORG_CACHE_PATH } from "./market/fetchZakupMarket.js";
-import { mapWithConcurrency, zakupGet, zakupListAll, type ZakupApiOptions } from "./zakupPublicApi.js";
+import { mapWithConcurrency, zakupGet, zakupListAll, ZakupRecordNotFoundError, type ZakupApiOptions } from "./zakupPublicApi.js";
 import { goszakupGraphqlAll } from "./goszakupGraphql.js";
 
 export interface GzRegistryOptions extends ZakupApiOptions {
@@ -32,7 +32,7 @@ export async function withGzSourceFallback<T>(primary: () => Promise<T>, backup:
   try { return await primary(); }
   catch (primaryError) {
     // Локальный предел нагрузки не является сбоем источника: резерв не обходит его.
-    if (primaryError instanceof FullScanLimitError) throw primaryError;
+    if (primaryError instanceof FullScanLimitError || primaryError instanceof ZakupRecordNotFoundError) throw primaryError;
     const message = primaryError instanceof Error ? primaryError.message : String(primaryError);
     if (!token?.trim()) throw new Error(`zakup: ${message}; ows: токен не задан`);
     try { return await backup(); }
@@ -123,15 +123,16 @@ export async function loadZakupCustomerContracts(bin: string, years: number[], o
       }
     }
   }
-  return mapWithConcurrency([...byId.values()], options.concurrency ?? 4, async contract => {
+  const rows = await mapWithConcurrency([...byId.values()], options.concurrency ?? 4, async contract => {
     const body = await zakupGet<SubjectRow[] | { results: SubjectRow[]; next?: string | null }>(`/public/contracts/${contract.id}/subjects/`, {}, options);
     if (!Array.isArray(body) && (!Array.isArray(body?.results) || body.next)) throw new Error('zakup: неполные позиции договора');
     const subjects = dedupeSubjects(Array.isArray(body) ? body : body.results);
-    for (const s of subjects) {
-      if (s.plan_item?.id && s.plan_item.external_id) options.onPlanItem?.({ id: s.plan_item.id, external_id: s.plan_item.external_id, root: s.plan_item.root, lookupPath });
-    }
     return { contract, subjects, lookupPath };
   });
+  for (const row of rows) for (const s of row.subjects) {
+    if (s.plan_item?.id && s.plan_item.external_id) options.onPlanItem?.({ id: s.plan_item.id, external_id: s.plan_item.external_id, root: s.plan_item.root, lookupPath });
+  }
+  return rows;
 }
 
 export async function mapZakupCustomerContracts(data: ZakupCustomerContractData[], options: GzRegistryOptions = {}): Promise<GzOutcomeContract[]> {

@@ -6,6 +6,7 @@ import {
   formatReportLines,
   getStatusRank,
   parseCliArgs,
+  planStatusContextOf,
   runPlanStatusRefresh,
   type PlanStatusRefreshDeps,
   type RefreshDeal
@@ -13,6 +14,50 @@ import {
 import { buildDealUpdateCommands, createBatchDealUpdater } from "../../src/bitrix/gzPlanStatusWriter.js";
 
 const NOW = new Date("2026-10-28T10:00:00.000Z");
+
+describe("частичная недоступность открытого API", () => {
+  it('не использует контекст другой сделки с тем же номером плана', async () => {
+    const deps = makeDeps([deal(1, '100'), deal(2, '100', '', { CATEGORY_ID: '29' })], { '100': 'Опубликован' }, {
+      skipReason: entry => entry.ID === 2 ? 'no_bin' : null
+    });
+    const report = await runPlanStatusRefresh(deps, { execute: false });
+    expect(report.toUpdate).toBe(1); expect(report.skippedByReason.no_bin).toEqual({ '29': 1 });
+  });
+  it('считает no_bin пропуском по воронкам, без ошибки и без notFound', async () => {
+    const statuses = Object.assign(new Map<string, string>(), { skipped: new Map([['100', 'no_bin'], ['101', 'no_bin']]) });
+    const report = await runPlanStatusRefresh(makeDeps([deal(1, '100', '', { CATEGORY_ID: '29' }), deal(2, '101', '', { CATEGORY_ID: '9' })], {}, { fetchStatuses: async () => statuses }), { execute: false });
+    expect(report.errors).toEqual([]); expect(report.notFound).toBe(0); expect(report.skipped).toBe(2);
+    expect(report.skippedByReason).toEqual({ no_bin: { '29': 1, '9': 1 } });
+  });
+  it.each(['source_conflict', 'portal_unavailable'] as const)('проверка портала %s запрещает запись и учитывается отдельно', async reason => {
+    const deps = makeDeps([deal(1, '100')], { '100': 'Опубликован' }, { verifyUpdate: async () => ({ reason }) });
+    const report = await runPlanStatusRefresh(deps, { execute: true });
+    expect(report.toUpdate).toBe(0); expect(report.skipped).toBe(1); expect(report.errors).toEqual([]);
+    expect(deps.writeUpdates).not.toHaveBeenCalled();
+    expect(report.skippedReasons[0].reason).toBe(reason);
+  });
+  it('подтверждённая порталом правка проходит', async () => {
+    const deps = makeDeps([deal(1, '100')], { '100': 'Опубликован' }, { verifyUpdate: async () => ({ reason: 'confirmed' }) });
+    const report = await runPlanStatusRefresh(deps, { execute: true });
+    expect(report.updated).toBe(1); expect(report.portalVerification.confirmed).toBe(1);
+  });
+  it("проверяет БИН самой сделки или её компании и год создания", () => {
+    const companyBins = new Map([["10", "990000000001"], ["11", "bad"]]);
+    expect(planStatusContextOf({ ID: 1, COMPANY_ID: "10", DATE_CREATE: "2026-10-01" }, companyBins)).toEqual({ bin: "990000000001", year: 2026 });
+    expect(planStatusContextOf({ ID: 1, COMPANY_ID: "10", DATE_CREATE: "2026-10-01", UF_CRM_6627AEBD7C2D2: "990000000002" }, companyBins)).toEqual({ bin: "990000000002", year: 2026 });
+    expect(planStatusContextOf({ ID: 2, COMPANY_ID: "11", DATE_CREATE: "2026-10-01" }, companyBins)).toBeNull();
+    expect(planStatusContextOf({ ID: 3, COMPANY_ID: "10" }, companyBins)).toBeNull();
+  });
+  it("учитывает ошибку отдельного пункта, сохраняя успешные изменения пачки", async () => {
+    const statuses = Object.assign(new Map([["100", "Опубликован"]]), { failed: new Map([["101", "zakup: HTTP 404"]]) });
+    const deps = makeDeps([deal(1, "100"), deal(2, "101")], {}, { fetchStatuses: async () => statuses });
+    const report = await runPlanStatusRefresh(deps, { execute: false });
+    expect(report.foundInApi).toBe(1);
+    expect(report.toUpdate).toBe(1);
+    expect(report.notFound).toBe(0);
+    expect(report.errors).toEqual([{ dealId: null, planNumber: "101", message: "zakup: HTTP 404" }]);
+  });
+});
 
 function deal(id: number, planNumber: string, status = "Утвержден", extra: Partial<RefreshDeal> = {}): RefreshDeal {
   return {
@@ -424,4 +469,19 @@ describe("buildReportFilename", () => {
     expect(buildReportFilename("2026-10-29", {})).toBe("2026-10-29.json");
     expect(buildReportFilename("2026-10-29", { dealId: null, limit: null })).toBe("2026-10-29.json");
   });
+});
+
+it('берёт БИН из комментария или компании для контекста сделки', () => {
+  const companies = new Map([['10', '990000000001']]);
+  expect(planStatusContextOf({ ID: 1, COMPANY_ID: '10', DATE_CREATE: '2026-01-01' }, companies)?.bin).toBe('990000000001');
+  expect(planStatusContextOf({ ID: 2, COMMENTS: 'BIN: 990000000002', COMPANY_ID: '10', DATE_CREATE: '2026-01-01' }, companies)?.bin).toBe('990000000002');
+});
+
+it.each([['zakup_not_found', false], ['HTTP 503', true]])('учитывает %s при обновлении статуса по воронке', async (reason, failed) => {
+  const result = Object.assign(new Map<string, string>(), failed
+    ? { failed: new Map([['100', reason]]) }
+    : { skipped: new Map([['100', reason]]) });
+  const report = await runPlanStatusRefresh(makeDeps([deal(1, '100', '', { CATEGORY_ID: '29' })], {}, { fetchStatuses: async () => result }), { execute: false });
+  expect(report.errors.length).toBe(failed ? 1 : 0);
+  if (!failed) expect(report.skippedByReason.zakup_not_found).toEqual({ '29': 1 });
 });

@@ -1,4 +1,7 @@
 import { GoszakupAuthError } from "./goszakupClient.js";
+import { fetchGzPlans, type GzPlanLookupOptions } from "./zakupGzPlans.js";
+import { withGzSourceFallback } from "./zakupGzRegistry.js";
+import { mapWithConcurrency, ZakupRecordNotFoundError } from "./zakupPublicApi.js";
 
 export const GZ_GRAPHQL_URL = "https://ows.goszakup.gov.kz/v3/graphql";
 export const PLAN_STATUS_BATCH_SIZE = 50;
@@ -7,12 +10,15 @@ export const PLAN_STATUS_QUERY_LIMIT = 200;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const DEFAULT_MAX_RETRIES = 3;
 
-export interface PlanStatusApiOptions {
-  token: string;
-  fetchFn?: typeof fetch;
-  maxRetries?: number;
+export interface PlanStatusApiOptions extends GzPlanLookupOptions {
   sleepFn?: (ms: number) => Promise<void>;
 }
+
+export type PlanStatusBatchResult = Map<string, string> & {
+  failed?: Map<string, string>;
+  skipped?: Map<string, string>;
+  versions?: Map<string, number>;
+};
 
 interface PlanRow {
   id?: unknown;
@@ -79,11 +85,42 @@ export function parsePlanStatusResponse(payload: unknown): ParsedPlanStatuses {
 export async function fetchPlanStatusBatch(
   planNumbers: readonly string[],
   options: PlanStatusApiOptions
-): Promise<Map<string, string>> {
+): Promise<PlanStatusBatchResult> {
   if (planNumbers.length > PLAN_STATUS_BATCH_SIZE) {
     throw new Error(`batch supports at most ${PLAN_STATUS_BATCH_SIZE} plan numbers, got ${planNumbers.length}`);
   }
-  return fetchChunk([...planNumbers], options);
+  buildPlanStatusQuery(planNumbers);
+  if (options.contexts || options.lookup) {
+    const result: PlanStatusBatchResult = Object.assign(new Map<string, string>(), {
+      failed: new Map<string, string>(), skipped: new Map<string, string>(), versions: new Map<string, number>()
+    });
+    await mapWithConcurrency(planNumbers, options.concurrency ?? 4, async number => {
+      const context = options.contexts?.get(Number(number));
+      if (options.contexts && (!context || !/^\d{12}$/.test(context.bin) || !Number.isInteger(context.year) || context.year < 2000)) {
+        result.skipped!.set(number, 'no_bin');
+        return;
+      }
+      try {
+        for (const plan of await fetchGzPlans([Number(number)], "root", options)) {
+          const status = plan.RefPlnPointStatus?.nameRu;
+          if (status && !plan.isDeleted && plan.isActive !== 0 && plan.id > (result.versions!.get(number) ?? 0)) {
+            result.set(number, status); result.versions!.set(number, plan.id);
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (error instanceof ZakupRecordNotFoundError) result.skipped!.set(number, 'zakup_not_found');
+        else if (message.includes('full_scan_limit')) result.skipped!.set(number, 'full_scan_limit');
+        else result.failed!.set(number, message);
+      }
+    });
+    return result;
+  }
+  return withGzSourceFallback(async () => {
+    const plans = await fetchGzPlans(planNumbers.map(Number), "root", { ...options, token: null });
+    return new Map(plans.filter(plan => plan.RefPlnPointStatus?.nameRu && !plan.isDeleted && plan.isActive !== 0)
+      .map(plan => [String(plan.rootrecordId), plan.RefPlnPointStatus!.nameRu!]));
+  }, () => fetchChunk([...planNumbers], options), options.token);
 }
 
 async function fetchChunk(chunk: string[], options: PlanStatusApiOptions): Promise<Map<string, string>> {

@@ -29,6 +29,7 @@ import {
 } from "../src/bitrix/gzDealOutcome.js";
 import { callBitrixBatch, chunkBatchCommands } from "../src/bitrix/batch.js";
 import { describeOutcomeCoverage, type OutcomeCoverageInput } from "../src/bitrix/gzOutcomeCoverage.js";
+import { formatPortalConflicts } from "../src/bitrix/gzOutcomeSummary.js";
 import { prefetchGzPlanOutcomeProofs, verifyGzPlanOutcome } from '../src/bitrix/gzOutcomePortal.js';
 import { fetchGzPlans, GzPlanLookup, type GzPlanLookupOptions, type GzPlanContext, type ApiPlan } from "../src/kz/zakupGzPlans.js";
 import { fullEnstruCodes, type GzContractLookupPath } from "../src/kz/zakupGzRegistry.js";
@@ -316,6 +317,8 @@ async function main(): Promise<void> {
   const summary = summarize(checks, htmlFailed, contractsByBin.failedBins.size, coverage);
   const confirmationLine = `portal_verification=${JSON.stringify(portal.stats)}`;
   summary.markdown += `\n\n\`${confirmationLine}\``;
+  const conflicts = formatPortalConflicts(checks.map(check => ({ planNumber: check.ref.planNumber, zakupStatus: check.statusSource === 'api' ? check.plan.status : null, verification: check.verification })));
+  if (conflicts) summary.markdown += `\n\n${conflicts}`;
   console.log(confirmationLine);
   const lookupStats = {
     input_without_enstru: inputWithoutEnstru, without_enstru_after_plan_lookup: withoutEnstru,

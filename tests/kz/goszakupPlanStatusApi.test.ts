@@ -11,6 +11,13 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+it('без проверяемого контекста отдаёт no_bin без сетевых ошибок', async () => {
+  const fetchFn = vi.fn(async () => { throw Error('network forbidden'); });
+  const result = await fetchPlanStatusBatch(['100'], { contexts: new Map(), fetchFn });
+  expect(result.skipped?.get('100')).toBe('no_bin'); expect(result.failed?.size).toBe(0);
+  expect(fetchFn).not.toHaveBeenCalled();
+});
+
 describe("parsePlanStatusResponse", () => {
   it("maps rootrecordId to status name", () => {
     const parsed = parsePlanStatusResponse({
@@ -88,6 +95,27 @@ describe("batching", () => {
 });
 
 describe("fetchPlanStatusBatch", () => {
+  it("сохраняет успешные статусы пачки при недоступности одного пункта", async () => {
+    const fetchFn = (async (url: string) => {
+      const u = new URL(url);
+      if (u.searchParams.get("q") === "101") return new Response("bad", { status: 404 });
+      return jsonResponse(u.pathname.endsWith("/plan-items/") ? { count: 1, results: [{ id: 500, external_id: 200 }] }
+        : { id: 500, external_id: 200, organization: { iin_bin: "990000000001" }, year: { year: 2026 }, status: { name: "Утвержден", egz_code: "2" } });
+    }) as typeof fetch;
+    const result = await fetchPlanStatusBatch(["100", "101"], { fetchFn, pauseMs: 0, maxRetries: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }], [101, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.get("100")).toBe("Утвержден");
+    expect(result.failed?.get("101")).toContain("404");
+  });
+  it("читает zakup без токена, проверяя БИН и год сделки", async () => {
+    const fetchFn = (async (url: string) => {
+      expect(new URL(url).hostname).toBe("zakup.gov.kz");
+      return jsonResponse(new URL(url).pathname.endsWith("/plan-items/")
+        ? { count: 1, results: [{ id: 500, external_id: 200 }] }
+        : { id: 500, external_id: 200, organization: { iin_bin: "990000000001" }, year: { year: 2026 }, status: { name: "Проект договора", egz_code: "310" } });
+    }) as typeof fetch;
+    const result = await fetchPlanStatusBatch(["100"], { fetchFn, pauseMs: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.get("100")).toBe("Проект договора");
+  });
   it("posts to v3 graphql with the bearer token", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
       jsonResponse({ data: { Plans: [{ id: 1, rootrecordId: 7, RefPlnPointStatus: { nameRu: "Заявка" } }] } })
@@ -136,4 +164,18 @@ describe("fetchPlanStatusBatch", () => {
     expect(result.get("1")).toBe("Опубликован");
     expect(result.get("2")).toBe("Заявка");
   });
+});
+
+it.each([404, 503])('ошибка HTTP %s конкретной записи учитывается по типу', async status => {
+  const fetchFn = (async (url: string) => new URL(url).pathname.endsWith('/plan-items/')
+    ? jsonResponse({ count: 1, results: [{ id: 500, external_id: 200 }] })
+    : new Response('missing', { status })) as typeof fetch;
+  const result = await fetchPlanStatusBatch(['100'], { fetchFn, pauseMs: 0, maxRetries: 0, contexts: new Map([[100, { bin: '990000000001', year: 2026 }]]) });
+  if (status === 404) {
+    expect(result.skipped?.get('100')).toBe('zakup_not_found');
+    expect(result.failed?.size).toBe(0);
+  } else {
+    expect(result.failed?.get('100')).toContain('503');
+    expect(result.skipped?.size).toBe(0);
+  }
 });

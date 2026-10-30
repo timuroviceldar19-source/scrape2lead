@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { BitrixClient } from "../src/bitrix/client.js";
 import { ReadOnlyBitrixClient } from "../src/bitrix/reporting/readOnlyClient.js";
 import { fetchPlanStatusBatch } from "../src/kz/goszakupPlanStatusApi.js";
+import { loadCompanyBins } from "../src/bitrix/gzDealBin.js";
+import { GzPlanLookup, type GzPlanContext } from "../src/kz/zakupGzPlans.js";
+import { PortalPlanVerifier } from '../src/kz/goszakupPlanRegistry.js';
+import { fullEnstruCodes } from "../src/kz/zakupGzRegistry.js";
 import {
   GZ_REFRESH_DEAL_SELECT,
   GZ_REFRESH_PIPELINE_IDS,
@@ -11,6 +15,7 @@ import {
   buildReportFilename,
   formatReportLines,
   parseCliArgs,
+  planStatusContextOf,
   runPlanStatusRefresh,
   type RefreshDeal
 } from "../src/bitrix/gzPlanStatusRefresh.js";
@@ -23,7 +28,11 @@ async function main(): Promise<void> {
   const webhookUrl = process.env.BITRIX24_WEBHOOK_URL?.trim();
   const token = process.env.GOSZAKUP_TOKEN?.trim();
   if (!webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
-  if (!token) throw new Error("GOSZAKUP_TOKEN is required");
+  const contexts = new Map<number, GzPlanContext>();
+  const lookup = new GzPlanLookup({ token, contexts, maxFullScans: cli.maxFullScans });
+  const versions = new Map<string, number>();
+  const portal = new PortalPlanVerifier();
+  const missingContextDeals = new Set<string>();
 
   const reader = new ReadOnlyBitrixClient(new BitrixClient(webhookUrl, { requestDelayMs: 550, maxRetries: 5 }));
   const updateDeals = createBatchDealUpdater(webhookUrl);
@@ -43,15 +52,30 @@ async function main(): Promise<void> {
           const deals = await reader.listAllBatched<RefreshDeal & Record<string, unknown>>("crm.deal.list", {
             order: { ID: "ASC" },
             filter,
-            select: [...GZ_REFRESH_DEAL_SELECT]
+            select: [...GZ_REFRESH_DEAL_SELECT, "COMMENTS", "DATE_CREATE", "UF_CRM_6627AEBD7C2D2", "COMPANY_ID", "UF_CRM_REF_ENSTRU_CODE", "UF_CRM_6A436D5A19612", "ORIGIN_ID", "UF_CRM_PLAN_LINK"]
           });
           console.error(`Fetched ${deals.length} deals in category ${categoryId}.`);
           allDeals.push(...deals);
           if (cli.dealId && allDeals.length > 0) break;
         }
+        const companyBins = await loadCompanyBins(allDeals, ids => reader.call("crm.company.list", { filter: { ID: ids }, select: ["ID", "UF_CRM_666171B20E9E3"], start: -1 }));
+        for (const deal of allDeals) {
+          const context = planStatusContextOf(deal, companyBins);
+          if (context) contexts.set(Number(deal.UF_CRM_PLAN_ID), context);
+          else missingContextDeals.add(String(deal.ID));
+        }
+        console.log(`lookup_input=${JSON.stringify({ deals: allDeals.length, without_enstru: allDeals.filter(deal => !fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612).length).length,
+          without_verified_context: missingContextDeals.size })}`);
         return allDeals;
       },
-      fetchStatuses: (planNumbers) => fetchPlanStatusBatch(planNumbers, { token }),
+      fetchStatuses: async (planNumbers) => {
+        const result = await fetchPlanStatusBatch(planNumbers, { token, contexts, lookup });
+        for (const [number, version] of result.versions ?? []) versions.set(number, version);
+        return result;
+      },
+      verifyUpdate: update => portal.verify(Number(update.planNumber), versions.get(update.planNumber) ?? null,
+        row => row.status?.trim().toLocaleLowerCase('ru') === update.to.trim().toLocaleLowerCase('ru')),
+      skipReason: deal => missingContextDeals.has(String(deal.ID)) ? 'no_bin' : null,
       writeUpdates: updateDeals,
       now: () => new Date()
     },
@@ -65,6 +89,9 @@ async function main(): Promise<void> {
 
   for (const line of formatReportLines(report)) console.log(line);
   console.log(`report=${reportPath}`);
+  console.log(`lookup_stats=${JSON.stringify({ full_scan_limit: cli.maxFullScans ?? 2, full_scan_skipped_plans: lookup.fullScanSkippedPlans.size,
+    full_scan_skipped_customers: lookup.fullScanSkippedBins.size, full_scan_plans_attempted: lookup.fullScanPlans.size,
+    full_scan_customers: lookup.fullScanBins.size, plan_sources: Object.fromEntries(["q", "enstru", "lots", "full", "ows"].map(path => [path, [...lookup.planSources.values()].filter(value => value === path).length])) })}`);
   if (report.errors.length > 0) process.exitCode = 1;
 }
 

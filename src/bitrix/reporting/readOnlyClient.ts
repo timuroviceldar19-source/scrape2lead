@@ -54,7 +54,7 @@ export class ReadOnlyBitrixClient {
         const key = `p${page}`;
         cmd[key] = `${method}?${flattenBitrixParams({ ...params, start: (batchIndex * 50 + page) * pageSize })}`;
       }
-      const raw = await this.call("batch", { halt: 0, cmd }) as { result?: Record<string, unknown>; result_error?: Record<string, unknown> };
+      const raw = await this.call("batch", { halt: 0, cmd }) as { result?: Record<string, unknown>; result_error?: Record<string, unknown>; result_total?: Record<string, number> };
       const errors = raw.result_error ?? {};
       if (Object.keys(errors).length) throw new Error(`${method}: batch returned ${JSON.stringify(errors)}`);
       const result = raw.result ?? {};
@@ -66,6 +66,10 @@ export class ReadOnlyBitrixClient {
         const pageRows = Array.isArray(items) ? items as T[] : [];
         rows.push(...pageRows);
         if (pageRows.length < pageSize) return rows;
+        // Offset за концом некоторых списков Bitrix возвращает первую страницу снова.
+        // Если последняя страница полная, длина страницы сама по себе не завершит обход.
+        const total = raw.result_total?.[`p${page}`];
+        if (typeof total === "number" && Number.isSafeInteger(total) && total >= 0 && rows.length >= total) return rows;
       }
     }
     throw new Error(`${method}: exceeded ${maxBatches * 50 * pageSize} records`);

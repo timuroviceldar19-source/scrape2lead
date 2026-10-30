@@ -21,6 +21,31 @@ function fakeRegistry(rows: Array<Record<string, unknown>>, failFor: number[] = 
 }
 
 describe("fetchCurrentPlanItems", () => {
+  it("не разрешает менять товар по timestamp, если нет даты акта", async () => {
+    const fetchFn = (async (url: string) => new Response(JSON.stringify(new URL(url).pathname.endsWith("/plan-items/")
+      ? { count: 1, results: [{ id: 500, external_id: 200 }] }
+      : { id: 500, external_id: 200, organization: { iin_bin: "990000000001" }, year: { year: 2026 }, status: { name: "Утвержден", egz_code: "2" }, timestamp: 1792042214 }))) as typeof fetch;
+    const result = await fetchCurrentPlanItems([100], { fetchFn, pauseMs: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.items.size).toBe(0);
+    expect(result.failed).toEqual([100]);
+  });
+
+  it("отмечает ошибку одного пункта и продолжает остальные", async () => {
+    const fetchFn = (async (url: string) => {
+      if (new URL(url).searchParams.get("q") === "100") return new Response("down", { status: 404 });
+      return new Response(JSON.stringify({ count: 0, results: [] }));
+    }) as typeof fetch;
+    const result = await fetchCurrentPlanItems([100], { fetchFn, maxRetries: 0, pauseMs: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.failed).toEqual([100]);
+  });
+  it("читает товар из zakup без токена, сохраняя проверки заказчика и даты", async () => {
+    const fetchFn = (async (url: string) => new Response(JSON.stringify(new URL(url).pathname.endsWith("/plan-items/")
+      ? { count: 1, results: [{ id: 500, external_id: 200 }] }
+      : { id: 500, external_id: 200, organization: { iin_bin: "990000000001" }, year: { year: 2026 }, status: { name: "Утвержден", egz_code: "2" }, enstru: { code: "279020.100.000002" }, name_ru: "Экран", plan: { act_date: "2026-10-15" } }))) as typeof fetch;
+    const result = await fetchCurrentPlanItems([100], { fetchFn, pauseMs: 0, contexts: new Map([[100, { bin: "990000000001", year: 2026 }]]) });
+    expect(result.failed).toEqual([]);
+    expect(result.items.get(100)).toMatchObject({ id: 200, bin: "990000000001", code: "279020.100.000002", createdAt: "2026-10-15 00:00:00" });
+  });
   it("returns the current version of each point by the number the portal shows: the newest active one, not the deleted or old ones", async () => {
     const { fn } = fakeRegistry([
       plan({ id: 88137237, isActive: 0, nameRu: "Доска специальная", refEnstruCode: "262030.100.000043", dateCreate: "2026-10-05 09:00:00" }),
@@ -54,4 +79,12 @@ describe("fetchCurrentPlanItems", () => {
     expect(result.failed).toHaveLength(50);
     expect(result.failed).toContain(2120);
   });
+});
+
+it('отделяет отсутствие БИН от ошибки источника и сохраняет причину', async () => {
+  const fetchFn = (async () => new Response('down', { status: 503 })) as typeof fetch;
+  const result = await fetchCurrentPlanItems([100, 101], { fetchFn, maxRetries: 0, pauseMs: 0, contexts: new Map([[100, { bin: '990000000001', year: 2026 }]]) });
+  expect(result.skipped.get(101)).toBe('no_bin');
+  expect(result.failed).toEqual([100]);
+  expect(result.failureReasons.get(100)).toContain('503');
 });
