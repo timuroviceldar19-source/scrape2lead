@@ -97,7 +97,9 @@ async function main(): Promise<void> {
 
   for (const line of formatReportLines(report)) console.log(line);
   console.log(`report=${reportPath}`);
-  console.log(`lookup_stats=${JSON.stringify({ full_scan_plans_attempted: lookup.fullScanPlans.size, full_scan_customers: lookup.fullScanBins.size, plan_sources: Object.fromEntries(["q", "enstru", "lots", "full", "ows"].map(path => [path, [...lookup.planSources.values()].filter(value => value === path).length])) })}`);
+  console.log(`lookup_stats=${JSON.stringify({ full_scan_limit: cli.maxFullScans ?? 2, full_scan_skipped_plans: lookup.fullScanSkippedPlans.size,
+    full_scan_skipped_customers: lookup.fullScanSkippedBins.size, full_scan_plans_attempted: lookup.fullScanPlans.size,
+    full_scan_customers: lookup.fullScanBins.size, plan_sources: Object.fromEntries(["q", "enstru", "lots", "full", "ows"].map(path => [path, [...lookup.planSources.values()].filter(value => value === path).length])) })}`);
   if (report.errors.length > 0) process.exitCode = 1;
 }
 

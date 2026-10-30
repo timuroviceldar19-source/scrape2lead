@@ -122,7 +122,10 @@ async function main(): Promise<void> {
   }
   if (!args.execute && updates.length > SAMPLE_LINES) console.log(`[dry-run] … и ещё ${updates.length - SAMPLE_LINES}`);
   console.log(`done: ${args.execute ? `updated=${written} failed=${writeFailed}` : `would_update=${updates.length}`} lookup_failed=${failed.length}`);
-  console.log(`lookup_stats=${JSON.stringify({ full_scan_plans_attempted: lookup.fullScanPlans.size, full_scan_customers: lookup.fullScanBins.size, plan_sources: Object.fromEntries(["q", "enstru", "lots", "full", "ows"].map(path => [path, [...lookup.planSources.values()].filter(value => value === path).length])) })}`);
+  for (const root of lookup.fullScanSkippedPlans) console.log(`[full_scan_limit] plan ${root}`);
+  console.log(`lookup_stats=${JSON.stringify({ full_scan_limit: args.maxFullScans, full_scan_skipped_plans: lookup.fullScanSkippedPlans.size,
+    full_scan_skipped_customers: lookup.fullScanSkippedBins.size, full_scan_plans_attempted: lookup.fullScanPlans.size,
+    full_scan_customers: lookup.fullScanBins.size, plan_sources: Object.fromEntries(["q", "enstru", "lots", "full", "ows"].map(path => [path, [...lookup.planSources.values()].filter(value => value === path).length])) })}`);
 }
 
 main().catch((error) => {
