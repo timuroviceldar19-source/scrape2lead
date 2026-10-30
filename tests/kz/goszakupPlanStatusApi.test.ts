@@ -11,6 +11,13 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+it('без проверяемого контекста отдаёт no_bin без сетевых ошибок', async () => {
+  const fetchFn = vi.fn(async () => { throw Error('network forbidden'); });
+  const result = await fetchPlanStatusBatch(['100'], { contexts: new Map(), fetchFn });
+  expect(result.skipped?.get('100')).toBe('no_bin'); expect(result.failed?.size).toBe(0);
+  expect(fetchFn).not.toHaveBeenCalled();
+});
+
 describe("parsePlanStatusResponse", () => {
   it("maps rootrecordId to status name", () => {
     const parsed = parsePlanStatusResponse({
