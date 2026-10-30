@@ -1,5 +1,15 @@
 # Итоги сделок: открытый API zakup
 
+## Правки перед слиянием, 30.10.2026
+
+- Новый ключ `published`/`failed`/`cancelled`/`contract-draft`/`repurposed` разрешён только при совпадении самой новой версии портала с версией источника и при том же ключе, вычисленном из строки портала. Исходы договоров не требуют этой проверки.
+- `src/kz/goszakupPlanRegistry.ts` — общее чтение реестра, точный отбор номера, защита от коротких страниц, пауза, кэш и общий deadline HTML. `source_conflict`, `portal_unavailable`, `html_budget` сохраняются в частном JSON и счётчиках; запись по ним запрещена, прогон продолжается.
+- Полные обходы заказчик/годы ограничены `--max-full-scans` (по умолчанию 2). Кэш не расходует слот повторно; предел действует и при чтении договоров, резерв ows его не обходит. Пропуски учитываются отдельно.
+- RED: новый модуль отсутствовал, тест потолка получил успешный пустой результат вместо отказа. Команды: `npm test -- tests/kz/goszakupPlanRegistry.test.ts tests/kz/zakupGzPlans.test.ts`, `npm test -- tests/bitrix/gzOutcomePortal.test.ts`.
+- GREEN: `npm test -- tests/kz/goszakupPlanRegistry.test.ts tests/kz/zakupGzPlans.test.ts tests/kz/zakupGzRegistry.test.ts tests/bitrix/gzOutcomePortal.test.ts` (см. локальный `tmp/zakup-review-20261030/outcomes-green.txt`); `npm run lint` успешен (`outcomes-lint.txt`).
+- Покрытие новой проверки: 97,27% строк, 80,26% ветвей (`portal-coverage.txt`, `npm run test:coverage -- tests/kz/goszakupPlanRegistry.test.ts tests/bitrix/gzOutcomePortal.test.ts --coverage.include=src/kz/goszakupPlanRegistry.ts --coverage.include=src/bitrix/gzOutcomePortal.ts`).
+- Повторный живой dry-run запускается с пустым токеном ows и обёрткой, запрещающей любые методы записи. Результаты будут отражены после завершения команд; предварительные цифры не выдаются за итоговые.
+
 Задача: итоги и статусы без обязательного GOSZAKUP_TOKEN. Секреты и данные CRM в репозиторий не включаются.
 
 ## Решения

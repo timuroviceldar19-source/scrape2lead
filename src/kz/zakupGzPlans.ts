@@ -1,4 +1,5 @@
 import type { GzOutcomeContract } from "../bitrix/gzDealOutcome.js";
+import { FullScanLimitError } from './zakupGzRegistry.js';
 import { goszakupGraphqlAll } from "./goszakupGraphql.js";
 import { mapWithConcurrency, zakupGet, zakupListAll } from "./zakupPublicApi.js";
 import { loadZakupCustomerContracts, mapZakupCustomerContracts, fetchOwsCustomerContracts, withGzSourceFallback, type GzRegistryOptions, type ZakupContractPlan, type ZakupCustomerContractData, type SubjectRow, type GzContractLookupPath, fullEnstruCodes } from "./zakupGzRegistry.js";
@@ -31,6 +32,8 @@ interface PlanDetail {
 
 export interface GzPlanContext { bin: string; year: number; codes?: readonly string[]; pointIds?: readonly number[] }
 export interface GzPlanLookupOptions extends GzRegistryOptions {
+  /** Максимум полных обходов заказчик/годы за один экземпляр (прогон). */
+  maxFullScans?: number;
   contexts?: ReadonlyMap<number, GzPlanContext>;
   lookup?: GzPlanLookup;
 }
@@ -49,8 +52,13 @@ export class GzPlanLookup {
   private readonly contractSources = new WeakMap<GzOutcomeContract, GzContractLookupPath>();
   readonly fullScanPlans = new Set<number>();
   readonly fullScanBins = new Set<string>();
+  readonly fullScanSkippedPlans = new Set<number>();
+  readonly fullScanSkippedBins = new Set<string>();
+  private fullScans = 0;
   readonly planSources = new Map<number, 'q' | GzContractLookupPath>();
-  constructor(private readonly options: GzPlanLookupOptions = {}) {}
+  constructor(private readonly options: GzPlanLookupOptions = {}) {
+    if (!Number.isSafeInteger(options.maxFullScans ?? 2) || (options.maxFullScans ?? 2) < 0) throw new Error('maxFullScans must be a nonnegative integer');
+  }
 
   codesForContext(context: GzPlanContext | undefined): string[] {
     return context ? fullEnstruCodes(context.codes, [...(this.currentCodes.get(context) ?? [])]) : [];
@@ -83,7 +91,14 @@ export class GzPlanLookup {
     const key = base + '|' + (numbers?.length ? numberPath + ':' + [...numbers].sort().join(',') : valid.length ? valid.join(',') : '*');
     let pending = this.rawCache.get(key);
     if (!pending) {
-      if (!valid.length && !numbers?.length) this.fullScanBins.add(bin);
+      if (!valid.length && !numbers?.length) {
+        if (this.fullScans >= (this.options.maxFullScans ?? 2)) {
+          this.fullScanSkippedBins.add(bin);
+          throw new FullScanLimitError();
+        }
+        this.fullScans++;
+        this.fullScanBins.add(bin);
+      }
       pending = loadZakupCustomerContracts(bin, years, { ...this.options, concurrency: 1, enstruCodes: valid,
         contractNumbers: numbers, contractIds: ids, contractLookupPath: numberPath, onPlanItem: item => this.remember(bin, item) });
       if (!valid.length && !numbers?.length) pending = pending.then(rows => { this.fullResults.set(base, rows); return rows; });
@@ -203,7 +218,13 @@ export class GzPlanLookup {
         if (codes.length) { try { await this.raw(context.bin, years, codes); } catch (error) { failure = error; } }
         const hasRoot = () => [...(this.contractPlans.get(context.bin)?.values() ?? [])].some(ref => Number(ref.root?.external_id) === requested);
         if (!hasRoot()) { try { await this.lots(context.bin, requested, context); } catch (error) { failure ??= error; } }
-        if (!hasRoot() && !codes.length) { this.fullScanPlans.add(requested); await this.raw(context.bin, years); failure = undefined; }
+        if (!hasRoot() && !codes.length) {
+          try { await this.raw(context.bin, years); this.fullScanPlans.add(requested); failure = undefined; }
+          catch (error) {
+            if (error instanceof Error && error.message.startsWith('full_scan_limit')) this.fullScanSkippedPlans.add(requested);
+            throw error;
+          }
+        }
         if (!hasRoot() && failure) throw failure;
         for (const ref of this.contractPlans.get(context.bin)?.values() ?? []) {
           if (Number(ref.root?.external_id) !== requested) continue;

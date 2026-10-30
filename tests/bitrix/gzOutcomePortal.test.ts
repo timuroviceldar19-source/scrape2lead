@@ -8,15 +8,15 @@ const ref: GzDealPlanRef = { planNumber: 100, pointIds: [200], revisionIds: [], 
 const config: GzOutcomeConfig = { ourBins: [], partnerBins: [], itemFamilies: { groups: [], wildcards: [] } };
 it.each(['Проект договора', 'Отменен'])('ключ published блокируется при статусе портала %s', async status => {
   const portal = new PortalPlanVerifier({ delayMs: 0, searchFn: async () => [{ plan_list_number: '100', plan_point_id: '200', status }] as GoszakupPlanListItem[] });
-  expect((await verifyGzPlanOutcome(portal, ref, 200, { kind: 'published' }, config))?.reason).toBe('source_conflict');
+  expect((await verifyGzPlanOutcome(portal, ref, 200, { kind: 'published', planStatus: 'Опубликован' }, config))?.reason).toBe('source_conflict');
 });
 it('published подтверждается совпавшей версией и ключом портала', async () => {
   const portal = new PortalPlanVerifier({ delayMs: 0, searchFn: async () => [{ plan_list_number: '100', plan_point_id: '200', status: 'Опубликован' }] as GoszakupPlanListItem[] });
-  expect((await verifyGzPlanOutcome(portal, ref, 200, { kind: 'published' }, config))?.reason).toBe('confirmed');
+  expect((await verifyGzPlanOutcome(portal, ref, 200, { kind: 'published', planStatus: 'Опубликован' }, config))?.reason).toBe('confirmed');
 });
 it('недоступный портал не подтверждает новый ключ', async () => {
   const portal = new PortalPlanVerifier({ delayMs: 0, searchFn: async () => { throw Error('offline'); } });
-  expect((await verifyGzPlanOutcome(portal, ref, 200, { kind: 'published' }, config))?.reason).toBe('portal_unavailable');
+  expect((await verifyGzPlanOutcome(portal, ref, 200, { kind: 'published', planStatus: 'Опубликован' }, config))?.reason).toBe('portal_unavailable');
 });
 it.each(['won', 'lost', 'partner', 'terminated'] as const)('договорный исход %s не требует проверки плана', async kind => {
   const searchFn = vi.fn(async () => []);

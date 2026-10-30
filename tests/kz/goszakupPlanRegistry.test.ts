@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PortalPlanVerifier, searchPlanRows } from '../../src/kz/goszakupPlanRegistry.js';
+import { PortalPlanVerifier, searchPlanRows, fetchPortalPage, PortalThrottledError } from '../../src/kz/goszakupPlanRegistry.js';
 import type { GoszakupPlanListItem } from '../../src/kz/goszakupPlanTypes.js';
 
 const row = (version = 200, status = 'Опубликован', root = '100') => ({
@@ -31,6 +31,28 @@ describe('подтверждение источника реестром пор�
     expect((await reader([row(201)]).verifyItem(100, 200, '279020.100.000002')).reason).toBe('source_conflict');
     expect((await reader([row()]).verifyItem(100, 200, '279020.100.000002')).reason).toBe('confirmed');
     expect((await reader([row()]).verifyItem(100, 200, '262030.100.000043')).reason).toBe('source_conflict');
+  });
+  it('недоступная карточка и карточка без кода не разрешают правку товара', async () => {
+    for (const detailFn of [async () => null, async () => { throw Error('offline'); }]) {
+      const verifier = new PortalPlanVerifier({ delayMs: 0, searchFn: async () => [row()], detailFn });
+      expect((await verifier.verifyItem(100, 200, '279020.100.000002')).reason).toBe('portal_unavailable');
+    }
+  });
+  it('пауза не выходит за общий бюджет', async () => {
+    const verifier = new PortalPlanVerifier({ deadline: 100, now: () => 0, delayMs: 1500, searchFn: async () => [row()] });
+    await verifier.verify(100, 200, () => true);
+    expect((await verifier.verify(101, 200, () => true)).reason).toBe('html_budget');
+  });
+  it('повторяет короткую страницу один раз и учитывает бюджет повторения', async () => {
+    const fetchFn = vi.fn(async () => new Response('short')) as unknown as typeof fetch;
+    const sleepFn = vi.fn(async () => {});
+    await expect(fetchPortalPage('https://procurement.gov.kz', { fetchFn, sleepFn })).rejects.toBeInstanceOf(PortalThrottledError);
+    expect(sleepFn).toHaveBeenCalledWith(30_000);
+    await expect(fetchPortalPage('https://procurement.gov.kz', { fetchFn, deadline: 100, now: () => 0 })).rejects.toThrow();
+  });
+  it('не принимает ошибку HTTP и сохраняет причину сетевого сбоя', async () => {
+    await expect(fetchPortalPage('https://procurement.gov.kz', { fetchFn: (async () => new Response('', { status: 503 })) as typeof fetch })).rejects.toThrow('503');
+    await expect(fetchPortalPage('https://procurement.gov.kz', { fetchFn: (async () => { throw new Error('fetch failed', { cause: { code: 'ECONNRESET' } }); }) as typeof fetch })).rejects.toThrow('ECONNRESET');
   });
   it('не делает запросы после общего бюджета HTML', async () => {
     const searchFn = vi.fn(async () => [row()]);
