@@ -80,3 +80,11 @@ describe("fetchCurrentPlanItems", () => {
     expect(result.failed).toContain(2120);
   });
 });
+
+it('отделяет отсутствие БИН от ошибки источника и сохраняет причину', async () => {
+  const fetchFn = (async () => new Response('down', { status: 503 })) as typeof fetch;
+  const result = await fetchCurrentPlanItems([100, 101], { fetchFn, maxRetries: 0, pauseMs: 0, contexts: new Map([[100, { bin: '990000000001', year: 2026 }]]) });
+  expect(result.skipped.get(101)).toBe('no_bin');
+  expect(result.failed).toEqual([100]);
+  expect(result.failureReasons.get(100)).toContain('503');
+});
