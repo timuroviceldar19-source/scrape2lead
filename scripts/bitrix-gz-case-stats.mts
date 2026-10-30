@@ -36,6 +36,21 @@ async function listDeals(reader: ReadOnlyBitrixClient, filter: Record<string, un
   }
 }
 
+/** Семантика этапов воронок, где лежат сделки: отличает «проиграно» (`failure`) от «отсеяно менеджером» (`apology`). */
+async function stageSemantics(reader: ReadOnlyBitrixClient, deals: GzCaseDeal[]): Promise<Record<string, string>> {
+  const semantics: Record<string, string> = {};
+  const categories = new Set(deals.map((deal) => String(deal.CATEGORY_ID ?? "0")));
+  for (const category of categories) {
+    const entityId = category === "0" ? "DEAL_STAGE" : `DEAL_STAGE_${category}`;
+    const rows = await reader.call("crm.status.list", { filter: { ENTITY_ID: entityId } }) as
+      Array<{ STATUS_ID?: string; EXTRA?: { SEMANTICS?: string } }>;
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (row.STATUS_ID && row.EXTRA?.SEMANTICS) semantics[row.STATUS_ID] = row.EXTRA.SEMANTICS;
+    }
+  }
+  return semantics;
+}
+
 async function main(): Promise<void> {
   const asOfDate = arg("--as-of") ?? new Date().toISOString().slice(0, 10);
   const minutesPerDeal = Number(arg("--minutes-per-deal") ?? 10);
@@ -50,7 +65,7 @@ async function main(): Promise<void> {
   }
   deals.push(...await listDeals(reader, { "%TITLE": GZ_CASE_TITLE_MARK }));
 
-  const summary = summarizeGzCase(deals, { minutesPerDeal });
+  const summary = summarizeGzCase(deals, { minutesPerDeal, stageSemantics: await stageSemantics(reader, deals) });
   const report = formatGzCaseReport(summary, asOfDate);
   await mkdir(REPORT_DIR, { recursive: true });
   await writeFile(join(REPORT_DIR, `${asOfDate}.json`), JSON.stringify(summary, null, 2));
