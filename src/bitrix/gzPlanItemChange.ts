@@ -47,7 +47,7 @@ export const PLAN_ITEM_DEAL_SELECT = [
 export interface PlanItemChange {
   dealId: string;
   previous: { code: string; name: string };
-  current: { code: string; name: string };
+  current: { code: string; name: string; rootId: number; id: number };
   fields: Record<string, string>;
   comment: string;
 }
@@ -154,7 +154,7 @@ export function planItemChange(deal: PlanItemDeal, current: CurrentPlanItem): Pl
   return {
     dealId: String(deal.ID),
     previous: { code: previousCode, name: previousName },
-    current: { code: current.code, name: current.name },
+    current: { code: current.code, name: current.name, rootId: current.rootId, id: current.id },
     fields,
     comment
   };

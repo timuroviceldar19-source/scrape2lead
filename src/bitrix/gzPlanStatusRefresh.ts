@@ -7,6 +7,7 @@ import { chunkPlanNumbers, type PlanStatusBatchResult } from "../kz/goszakupPlan
 import type { GzPlanContext } from "../kz/zakupGzPlans.js";
 import { fullEnstruCodes } from "../kz/zakupGzRegistry.js";
 import { buildGzDealPlanRef } from "./gzDealOutcome.js";
+import type { PortalVerification } from '../kz/goszakupPlanRegistry.js';
 
 export const GZ_REFRESH_PIPELINE_IDS = [9, 41, 29] as const;
 export const GZ_REFRESH_PLAN_NUMBER_FIELD = "UF_CRM_PLAN_ID";
@@ -80,6 +81,7 @@ export function isReProcurementApiStatus(status: string): boolean {
 }
 
 export interface RefreshDeal extends PublishedDealSnapshot {
+  CATEGORY_ID?: string | number | null;
   ID?: string | number | null;
   TITLE?: string | null;
   UF_CRM_PLAN_ID?: string | number | null;
@@ -120,6 +122,8 @@ export interface PlanStatusRefreshDeps {
   writeUpdates: (updates: DealFieldUpdate[]) => Promise<DealUpdateResult[]>;
   now: () => Date;
   sleep?: (ms: number) => Promise<void>;
+  verifyUpdate?: (update: PlannedUpdate) => Promise<PortalVerification>;
+  skipReason?: (deal: RefreshDeal) => string | null;
 }
 
 export type RefreshDecision =
@@ -176,6 +180,9 @@ export interface RefreshError {
 }
 
 export interface PlanStatusRefreshReport {
+  skippedReasons: Array<{ dealId: string; planNumber: string; categoryId: string; reason: string; verification?: PortalVerification }>;
+  skippedByReason: Record<string, Record<string, number>>;
+  portalVerification: Record<string, number>;
   mode: "dry-run" | "execute";
   limit: number | null;
   dealId: string | null;
@@ -211,6 +218,7 @@ export interface ParsedCliArgs {
   execute: boolean;
   dealId: string | null;
   limit: number | null;
+  maxFullScans?: number;
 }
 
 export const BATCH_RETRY_DELAY_MS = 2000;
@@ -219,6 +227,7 @@ export function parseCliArgs(argv: readonly string[]): ParsedCliArgs {
   let execute = false;
   let dealId: string | null = null;
   let limit: number | null = null;
+  let maxFullScans: number | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -257,12 +266,16 @@ export function parseCliArgs(argv: readonly string[]): ParsedCliArgs {
         throw new Error(`--limit must be a positive integer, got "${val}"`);
       }
       limit = parseInt(val, 10);
+    } else if (arg === '--max-full-scans') {
+      const value = argv[++i] ?? '';
+      if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error('--max-full-scans requires a nonnegative integer');
+      maxFullScans = Number(value);
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
 
-  return { execute, dealId, limit };
+  return { execute, dealId, limit, ...(maxFullScans === undefined ? {} : { maxFullScans }) };
 }
 
 export function buildReportFilename(
@@ -309,15 +322,24 @@ export async function runPlanStatusRefresh(
     : allDeals;
 
   const prepared: PreparedDeal[] = [];
+  const contextSkipped: PlanStatusRefreshReport['skippedReasons'] = [];
   const invalid: PlanStatusRefreshReport["skippedInvalidPlanNumber"] = [];
   for (const deal of deals) {
     const entry = describeDeal(deal);
+    const reason = deps.skipReason?.(deal);
+    if (reason) {
+      contextSkipped.push({ dealId: entry.dealId, planNumber: entry.planNumber, categoryId: String(deal.CATEGORY_ID ?? 'unknown'), reason });
+      continue;
+    }
     if (/^\d+$/.test(entry.planNumber)) prepared.push(entry);
     else if (entry.planNumber) invalid.push({ dealId: entry.dealId, title: entry.title, planNumber: entry.planNumber });
   }
 
   const errors: RefreshError[] = [];
   const statuses = new Map<string, string>();
+  const skipReasons = new Map<string, string>();
+  const skippedReasons: PlanStatusRefreshReport['skippedReasons'] = [...contextSkipped];
+  const portalVerification: Record<string, number> = { confirmed: 0, source_conflict: 0, portal_unavailable: 0, html_budget: 0 };
   const failedNumbers = new Set<string>();
   const uniquePlanNumbers = [...new Set(prepared.map((entry) => entry.planNumber))];
   const planBatches = chunkPlanNumbers(uniquePlanNumbers);
@@ -325,6 +347,7 @@ export async function runPlanStatusRefresh(
   for (const batch of planBatches) {
     try {
       const batchStatuses = await fetchBatchWithRetry(batch, deps.fetchStatuses, sleep);
+      for (const [number, reason] of batchStatuses.skipped ?? []) skipReasons.set(number, reason);
       for (const [root, status] of batchStatuses) statuses.set(root, status);
       for (const [number, message] of batchStatuses.failed ?? []) {
         failedNumbers.add(number);
@@ -340,6 +363,7 @@ export async function runPlanStatusRefresh(
         for (const half of halves) {
           try {
             const halfStatuses = await fetchBatchWithRetry(half, deps.fetchStatuses, sleep);
+            for (const [number, reason] of halfStatuses.skipped ?? []) skipReasons.set(number, reason);
             for (const [root, status] of halfStatuses) statuses.set(root, status);
             for (const [number, message] of halfStatuses.failed ?? []) {
               failedNumbers.add(number);
@@ -366,6 +390,10 @@ export async function runPlanStatusRefresh(
   let notFound = 0;
 
   for (const entry of prepared) {
+    const skip = (reason: string, verification?: PortalVerification) => skippedReasons.push({ dealId: entry.dealId,
+      planNumber: entry.planNumber, categoryId: String(entry.deal.CATEGORY_ID ?? 'unknown'), reason, ...(verification ? { verification } : {}) });
+    const reason = skipReasons.get(entry.planNumber);
+    if (reason) { skip(reason); continue; }
     if (failedNumbers.has(entry.planNumber)) continue;
     const apiStatus = statuses.get(entry.planNumber);
     if (!apiStatus) {
@@ -376,7 +404,7 @@ export async function runPlanStatusRefresh(
     const decision = decideRefresh(entry.deal, apiStatus, detectedAt);
     if (decision.kind === "unchanged") unchanged += 1;
     else if (decision.kind === "update") {
-      updates.push({
+      const update: PlannedUpdate = {
         dealId: entry.dealId,
         title: entry.title,
         planNumber: entry.planNumber,
@@ -384,7 +412,13 @@ export async function runPlanStatusRefresh(
         to: decision.to,
         isSync: decision.isSync,
         fields: decision.fields
-      });
+      };
+      if (deps.verifyUpdate) {
+        const verification = await deps.verifyUpdate(update);
+        portalVerification[verification.reason]++;
+        if (verification.reason !== 'confirmed') { skip(verification.reason, verification); continue; }
+      }
+      updates.push(update);
     } else {
       const skipped = {
         dealId: entry.dealId,
@@ -408,7 +442,15 @@ export async function runPlanStatusRefresh(
   const transitions = updates.filter((u) => !u.isSync);
   const syncs = updates.filter((u) => u.isSync);
 
+  const skippedByReason: Record<string, Record<string, number>> = {};
+  for (const item of skippedReasons) {
+    const categories = skippedByReason[item.reason] ??= {};
+    categories[item.categoryId] = (categories[item.categoryId] ?? 0) + 1;
+  }
   return {
+    skippedReasons,
+    skippedByReason,
+    portalVerification,
     mode: options.execute ? "execute" : "dry-run",
     limit: options.limit ?? null,
     dealId: normalizedDealId,
@@ -427,7 +469,7 @@ export async function runPlanStatusRefresh(
     updates,
     updated: written.size,
     notFound,
-    skipped: downgrades.length + unknownStatuses.length + invalid.length,
+    skipped: downgrades.length + unknownStatuses.length + invalid.length + skippedReasons.length,
     skippedDowngrade: downgrades,
     skippedUnknownStatus: unknownStatuses,
     skippedInvalidPlanNumber: invalid,
@@ -511,6 +553,9 @@ export function formatReportLines(report: PlanStatusRefreshReport): string[] {
   }
 
   lines.push(
+    `portal_verification=${JSON.stringify(report.portalVerification)}`,
+    `skipped_by_reason=${JSON.stringify(report.skippedByReason)}`,
+    ...report.skippedReasons.filter(item => item.reason !== 'no_bin').map(item => `[${item.reason}] plan ${item.planNumber}`),
     `не найдено в API: ${report.notFound}`,
     `пропущено: ${report.skipped}`,
     ...report.skippedDowngrade.map(

@@ -14,7 +14,11 @@ export interface PlanStatusApiOptions extends GzPlanLookupOptions {
   sleepFn?: (ms: number) => Promise<void>;
 }
 
-export type PlanStatusBatchResult = Map<string, string> & { failed?: Map<string, string> };
+export type PlanStatusBatchResult = Map<string, string> & {
+  failed?: Map<string, string>;
+  skipped?: Map<string, string>;
+  versions?: Map<string, number>;
+};
 
 interface PlanRow {
   id?: unknown;
@@ -87,14 +91,27 @@ export async function fetchPlanStatusBatch(
   }
   buildPlanStatusQuery(planNumbers);
   if (options.contexts || options.lookup) {
-    const result: PlanStatusBatchResult = Object.assign(new Map<string, string>(), { failed: new Map<string, string>() });
+    const result: PlanStatusBatchResult = Object.assign(new Map<string, string>(), {
+      failed: new Map<string, string>(), skipped: new Map<string, string>(), versions: new Map<string, number>()
+    });
     await mapWithConcurrency(planNumbers, options.concurrency ?? 4, async number => {
+      const context = options.contexts?.get(Number(number));
+      if (options.contexts && (!context || !/^\d{12}$/.test(context.bin) || !Number.isInteger(context.year) || context.year < 2000)) {
+        result.skipped!.set(number, 'no_bin');
+        return;
+      }
       try {
         for (const plan of await fetchGzPlans([Number(number)], "root", options)) {
           const status = plan.RefPlnPointStatus?.nameRu;
-          if (status && !plan.isDeleted && plan.isActive !== 0) result.set(number, status);
+          if (status && !plan.isDeleted && plan.isActive !== 0 && plan.id > (result.versions!.get(number) ?? 0)) {
+            result.set(number, status); result.versions!.set(number, plan.id);
+          }
         }
-      } catch (error) { result.failed!.set(number, error instanceof Error ? error.message : String(error)); }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('full_scan_limit')) result.skipped!.set(number, 'full_scan_limit');
+        else result.failed!.set(number, message);
+      }
     });
     return result;
   }

@@ -5,6 +5,7 @@ import { BitrixClient } from "../src/bitrix/client.js";
 import { ReadOnlyBitrixClient } from "../src/bitrix/reporting/readOnlyClient.js";
 import { chunkPlanNumbers, fetchPlanStatusBatch } from "../src/kz/goszakupPlanStatusApi.js";
 import { GzPlanLookup, type GzPlanContext } from "../src/kz/zakupGzPlans.js";
+import { PortalPlanVerifier } from '../src/kz/goszakupPlanRegistry.js';
 import { fullEnstruCodes } from "../src/kz/zakupGzRegistry.js";
 import {
   GZ_REFRESH_DEAL_SELECT,
@@ -27,7 +28,10 @@ async function main(): Promise<void> {
   const token = process.env.GOSZAKUP_TOKEN?.trim();
   if (!webhookUrl) throw new Error("BITRIX24_WEBHOOK_URL is required");
   const contexts = new Map<number, GzPlanContext>();
-  const lookup = new GzPlanLookup({ token, contexts });
+  const lookup = new GzPlanLookup({ token, contexts, maxFullScans: cli.maxFullScans });
+  const versions = new Map<string, number>();
+  const portal = new PortalPlanVerifier();
+  const missingContextDeals = new Set<string>();
 
   const reader = new ReadOnlyBitrixClient(new BitrixClient(webhookUrl, { requestDelayMs: 550, maxRetries: 5 }));
   const updateDeals = createBatchDealUpdater(webhookUrl);
@@ -67,11 +71,19 @@ async function main(): Promise<void> {
         for (const deal of allDeals) {
           const context = planStatusContextOf(deal, companyBins);
           if (context) contexts.set(Number(deal.UF_CRM_PLAN_ID), context);
+          else missingContextDeals.add(String(deal.ID));
         }
         console.log(`lookup_input=${JSON.stringify({ deals: allDeals.length, without_enstru: allDeals.filter(deal => !fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612).length).length, without_verified_context: allDeals.filter(deal => !contexts.has(Number(deal.UF_CRM_PLAN_ID))).length })}`);
         return allDeals;
       },
-      fetchStatuses: (planNumbers) => fetchPlanStatusBatch(planNumbers, { token, contexts, lookup }),
+      fetchStatuses: async (planNumbers) => {
+        const result = await fetchPlanStatusBatch(planNumbers, { token, contexts, lookup });
+        for (const [number, version] of result.versions ?? []) versions.set(number, version);
+        return result;
+      },
+      verifyUpdate: update => portal.verify(Number(update.planNumber), versions.get(update.planNumber) ?? null,
+        row => row.status?.trim().toLocaleLowerCase('ru') === update.to.trim().toLocaleLowerCase('ru')),
+      skipReason: deal => missingContextDeals.has(String(deal.ID)) ? 'no_bin' : null,
       writeUpdates: updateDeals,
       now: () => new Date()
     },

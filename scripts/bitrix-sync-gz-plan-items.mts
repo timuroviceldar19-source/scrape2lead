@@ -19,6 +19,9 @@ import { GzPlanLookup, type GzPlanContext } from "../src/kz/zakupGzPlans.js";
 import { fullEnstruCodes } from "../src/kz/zakupGzRegistry.js";
 import { buildGzDealPlanRef } from "../src/bitrix/gzDealOutcome.js";
 import fs from "node:fs";
+import path from 'node:path';
+import { PortalPlanVerifier } from '../src/kz/goszakupPlanRegistry.js';
+import { filterVerifiedPlanItemUpdates } from '../src/bitrix/gzPlanItemPortal.js';
 
 dotenv.config();
 
@@ -29,15 +32,21 @@ interface CliArgs {
   limit: number | null;
   webhookUrl: string | null;
   reportPath: string | null;
+  maxFullScans: number;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { execute: false, limit: null, webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null, reportPath: null };
+  const args: CliArgs = { execute: false, limit: null, webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null, reportPath: null, maxFullScans: 2 };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--execute") args.execute = true;
     else if (argv[i] === "--limit") args.limit = Number(argv[++i]) || null;
     else if (argv[i] === "--webhook-url") args.webhookUrl = argv[++i]?.trim() || null;
     else if (argv[i] === "--report") args.reportPath = argv[++i] ?? null;
+    else if (argv[i] === '--max-full-scans') {
+      const value = argv[++i] ?? '';
+      if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error('--max-full-scans requires a nonnegative integer');
+      args.maxFullScans = Number(value);
+    }
     else throw new Error(`Неизвестный параметр: ${argv[i]}`);
   }
   return args;
@@ -64,11 +73,23 @@ async function main(): Promise<void> {
       for (const root of planRootsOf(deal)) contexts.set(root, context);
     }
   }
-  const lookup = new GzPlanLookup({ token, contexts });
+  const lookup = new GzPlanLookup({ token, contexts, maxFullScans: args.maxFullScans });
   console.log(`lookup_input=${JSON.stringify({ deals: deals.length, without_enstru: deals.filter(deal => !fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612).length).length })}`);
   const { items, failed } = await fetchCurrentPlanItems(roots, { token, contexts, lookup });
   const plan = planItemSync(deals, items, new Set(failed));
-  if (args.reportPath) fs.writeFileSync(args.reportPath, JSON.stringify({ mode: args.execute ? "execute" : "dry-run", ...plan, failed }, null, 2));
+  const portal = new PortalPlanVerifier();
+  const verified = await filterVerifiedPlanItemUpdates(plan.updates, portal);
+  const candidates = plan.updates;
+  plan.updates = verified.updates;
+  plan.stats.willUpdate = plan.updates.length;
+  plan.stats.skipped += verified.skipped.length;
+  for (const item of verified.skipped) console.log(`[${item.reason}] plan ${item.planNumber}: ${item.message}`);
+  console.log(`portal_verification=${JSON.stringify(portal.stats)}`);
+  if (args.reportPath) {
+    fs.mkdirSync(path.dirname(args.reportPath), { recursive: true });
+    fs.writeFileSync(args.reportPath, JSON.stringify({ mode: args.execute ? "execute" : "dry-run", ...plan, failed,
+      candidates, sourceSkipped: verified.skipped, portalVerification: portal.stats }, null, 2));
+  }
   console.log(`план: ${JSON.stringify(plan.stats)}`);
 
   const updates = args.limit ? plan.updates.slice(0, args.limit) : plan.updates;
