@@ -476,3 +476,12 @@ it('берёт БИН из комментария или компании для
   expect(planStatusContextOf({ ID: 1, COMPANY_ID: '10', DATE_CREATE: '2026-01-01' }, companies)?.bin).toBe('990000000001');
   expect(planStatusContextOf({ ID: 2, COMMENTS: 'BIN: 990000000002', COMPANY_ID: '10', DATE_CREATE: '2026-01-01' }, companies)?.bin).toBe('990000000002');
 });
+
+it.each([['zakup_not_found', false], ['HTTP 503', true]])('учитывает %s при обновлении статуса по воронке', async (reason, failed) => {
+  const result = Object.assign(new Map<string, string>(), failed
+    ? { failed: new Map([['100', reason]]) }
+    : { skipped: new Map([['100', reason]]) });
+  const report = await runPlanStatusRefresh(makeDeps([deal(1, '100', '', { CATEGORY_ID: '29' })], {}, { fetchStatuses: async () => result }), { execute: false });
+  expect(report.errors.length).toBe(failed ? 1 : 0);
+  if (!failed) expect(report.skippedByReason.zakup_not_found).toEqual({ '29': 1 });
+});
