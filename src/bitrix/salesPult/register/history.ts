@@ -762,15 +762,17 @@ export async function searchOrganizationByBin(
   bin: string,
   options?: ZakupApiOptions
 ): Promise<number | null> {
+  type ZakupOrganization = { id: number; iin_bin?: string | null };
   try {
-    const page = await zakupGet<ZakupPage<{ id: number; bin?: string; name_ru?: string }>>(
+    // The live endpoint answers with a plain array; accept a page too in case it starts paginating.
+    const response = await zakupGet<ZakupOrganization[] | ZakupPage<ZakupOrganization>>(
       "/public/organizations/",
       { q: bin },
       options
     );
-    const results = page?.results;
+    const results = Array.isArray(response) ? response : response?.results;
     if (Array.isArray(results)) {
-      const exact = results.find((o) => String(o.bin || "").trim() === bin);
+      const exact = results.find((o) => String(o.iin_bin || "").trim() === bin);
       if (exact && exact.id) return exact.id;
     }
     return null;
