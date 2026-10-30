@@ -56,7 +56,7 @@ const MORNING_WATCHDOG_HOUR_UTC = 6;
 const CRON_MORNING = "40 3 * * *"; // 08:40 Алматы
 const CRON_HOURLY = "30 4-11 * * *"; // 09:30 ... 16:30 Алматы
 const CRON_AFTERNOON_WATCHDOG = "15 10 * * *"; // 15:15 Алматы
-const CRON_SALES_PULT = "*/15 4-14 * * 1-5"; // 09:00–19:00 Алматы каждые 15 мин, пн–пт (04:00–14:00 UTC)
+const CRON_SALES_PULT = "*/15 4-14 * * mon-fri"; // 09:00–19:00 Алматы каждые 15 мин, пн–пт (04:00–14:00 UTC); у Cloudflare 1 = воскресенье, поэтому дни словами
 
 export const SCHEDULED_CRONS = [
   CRON_MORNING,

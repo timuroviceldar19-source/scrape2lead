@@ -57,3 +57,9 @@
 - `npm run cloudflare:check` — dry-run прошёл чисто.
 - `npm test` — все 126 тестовых файлов (1380 тестов) успешно пройдены.
 - Все файлы укладываются в лимит 800 строк.
+
+## Исправление 30.10.2026: дни недели в cron Cloudflare
+- В пятницу 30.10 Worker не запустил `sales-pult.yml` ни разу, хотя в четверг 29.10 прогоны шли каждые 15 минут.
+- Причина: в Cron Triggers Cloudflare дни недели считаются от 1 = воскресенье до 7 = суббота, а не как в Unix cron. Поэтому `*/15 4-14 * * 1-5` означало воскресенье–четверг.
+- RED: в `tests/cloudflare/githubDispatchWorker.test.ts` добавлен тест `runs the sales pult Monday to Friday in Cloudflare weekday numbering (1 = Sunday)`. Он раскрывает поле дня недели по правилам Cloudflare и падает на `1-5`: получается `sun..thu` вместо `mon..fri`.
+- GREEN: `CRON_SALES_PULT` = `*/15 4-14 * * mon-fri` в `index.ts`, `wrangler.jsonc`, тесте и таблице `README.md`. Дни записаны словами, чтобы нумерация не путалась.
