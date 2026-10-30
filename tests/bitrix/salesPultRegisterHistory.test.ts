@@ -1390,8 +1390,8 @@ describe("Error handling & reliability (Block 07, 08, 09, load.ts, diskClient)",
   it("searchOrganizationByBin matches exact BIN only, returns null on inexact match without taking results[0]", async () => {
     const data = {
       results: [
-        { id: 99999, bin: "999999999999", name_ru: "Чужая Организация" },
-        { id: 12345, bin: "061140003942", name_ru: "Точная Организация" }
+        { id: 99999, iin_bin: "999999999999", name_ru: "Чужая Организация" },
+        { id: 12345, iin_bin: "061140003942", name_ru: "Точная Организация" }
       ]
     };
     const mockFetch = vi.fn().mockResolvedValue({
@@ -1408,6 +1408,23 @@ describe("Error handling & reliability (Block 07, 08, 09, load.ts, diskClient)",
     // When requested BIN is not in results, never take results[0]!
     const inexactId = await searchOrganizationByBin("111111111111", { fetchFn: mockFetch as any });
     expect(inexactId).toBeNull();
+  });
+
+  it("searchOrganizationByBin reads the live response shape: a plain array with the BIN in iin_bin", async () => {
+    // /public/organizations/?q=<BIN> answers with an array, not a page, and names the field iin_bin.
+    const data = [
+      { id: 99999, iin_bin: "999999999999", name: "ТОО \"Чужая организация\"" },
+      { id: 12345, iin_bin: "061140003942", name: "ТОО \"Тестовый поставщик\"" }
+    ];
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(data),
+      json: async () => data
+    } as unknown as Response);
+
+    expect(await searchOrganizationByBin("061140003942", { fetchFn: mockFetch as any })).toBe(12345);
+    expect(await searchOrganizationByBin("111111111111", { fetchFn: mockFetch as any })).toBeNull();
   });
 
   it("fetchPortalContractsForMonths throws an exception when contract statuses dictionary fails to load", async () => {
