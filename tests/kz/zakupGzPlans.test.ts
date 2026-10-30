@@ -22,6 +22,13 @@ function registry(listed: unknown[], plan = detail, withContract = false) {
   return { fetchFn, calls };
 }
 describe('поиск версий через q и договоры', () => {
+  it('нулевой потолок не позволяет резерву ows обойти ограничение', async () => {
+    const { fetchFn, calls } = registry([]);
+    const lookup = new GzPlanLookup({ ...options, fetchFn, maxFullScans: 0, token: 'unused-test-token' });
+    await expect(lookup.plans([100], 'root', options.contexts)).rejects.toThrow(/full_scan_limit/);
+    expect(lookup.fullScanBins.size).toBe(0); expect(lookup.fullScanSkippedPlans.has(100)).toBe(true);
+    expect(calls.every(url => url.hostname !== 'ows.goszakup.gov.kz')).toBe(true);
+  });
   it('потолок полных обходов действует на планы и договоры, повторный кэш не расходует слот', async () => {
     const { fetchFn: base } = registry([]);
     const fetchFn = (async (url: string, init?: RequestInit) => {
