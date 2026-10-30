@@ -22,6 +22,7 @@ import fs from "node:fs";
 import path from 'node:path';
 import { PortalPlanVerifier } from '../src/kz/goszakupPlanRegistry.js';
 import { filterVerifiedPlanItemUpdates } from '../src/bitrix/gzPlanItemPortal.js';
+import { gzDealBin, loadCompanyBins } from '../src/bitrix/gzDealBin.js';
 
 dotenv.config();
 
@@ -63,10 +64,15 @@ async function main(): Promise<void> {
   const deals = (await client.listAll("deal", { "%ORIGIN_ID": "gz-plan:", STAGE_SEMANTIC_ID: "P" }, PLAN_ITEM_DEAL_SELECT)) as unknown as PlanItemDeal[];
   console.log(`открытых сделок по плану: ${deals.length}`);
 
-  const roots = deals.flatMap((deal) => planRootsOf(deal));
+  const companyBins = await loadCompanyBins(deals, ids => client.call('crm.company.list', { filter: { ID: ids }, select: ['ID', 'UF_CRM_666171B20E9E3'], start: -1 }));
+  const enriched = deals.map(deal => ({ ...deal, UF_CRM_6627AEBD7C2D2: gzDealBin(deal, companyBins) }));
+  const eligible = enriched.filter(deal => deal.UF_CRM_6627AEBD7C2D2);
+  const noBin = enriched.length - eligible.length;
+  const companyBinDeals = deals.filter(deal => !gzDealBin(deal) && gzDealBin(deal, companyBins)).length;
+  const roots = eligible.flatMap((deal) => planRootsOf(deal));
   const contexts = new Map<number, GzPlanContext>();
-  for (const deal of deals) {
-    const bin = deal.UF_CRM_6627AEBD7C2D2 || /BIN:\s*(\d{12})/.exec(deal.COMMENTS ?? "")?.[1] || "";
+  for (const deal of eligible) {
+    const bin = deal.UF_CRM_6627AEBD7C2D2 ?? "";
     const year = Number(deal.DATE_CREATE?.slice(0, 4));
     if (/^\d{12}$/.test(bin) && year) {
       const context = { bin, year, codes: fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612), pointIds: buildGzDealPlanRef(deal).pointIds };
@@ -75,8 +81,14 @@ async function main(): Promise<void> {
   }
   const lookup = new GzPlanLookup({ token, contexts, maxFullScans: args.maxFullScans });
   console.log(`lookup_input=${JSON.stringify({ deals: deals.length, without_enstru: deals.filter(deal => !fullEnstruCodes(deal.UF_CRM_REF_ENSTRU_CODE, deal.UF_CRM_6A436D5A19612).length).length })}`);
-  const { items, failed } = await fetchCurrentPlanItems(roots, { token, contexts, lookup });
-  const plan = planItemSync(deals, items, new Set(failed));
+  const { items, failed, skipped, failureReasons } = await fetchCurrentPlanItems(roots, { token, contexts, lookup });
+  const plan = planItemSync(eligible, items, new Set(failed));
+  const reasonCounts: Record<string, number> = {};
+  for (const reason of failureReasons.values()) {
+    const key = /HTTP \d{3}/.exec(reason)?.[0] ?? (reason === 'missing_date' ? reason : 'other');
+    reasonCounts[key] = (reasonCounts[key] ?? 0) + 1;
+  }
+  console.log(`item_lookup=${JSON.stringify({ company_bin_deals: companyBinDeals, no_bin: noBin, skipped_roots: skipped.size, failure_reasons: reasonCounts })}`);
   const portal = new PortalPlanVerifier();
   const verified = await filterVerifiedPlanItemUpdates(plan.updates, portal);
   const candidates = plan.updates;
@@ -87,7 +99,7 @@ async function main(): Promise<void> {
   console.log(`portal_verification=${JSON.stringify(portal.stats)}`);
   if (args.reportPath) {
     fs.mkdirSync(path.dirname(args.reportPath), { recursive: true });
-    fs.writeFileSync(args.reportPath, JSON.stringify({ mode: args.execute ? "execute" : "dry-run", ...plan, failed,
+    fs.writeFileSync(args.reportPath, JSON.stringify({ mode: args.execute ? "execute" : "dry-run", ...plan, failed, noBin, companyBinDeals, skipped: Object.fromEntries(skipped), failureReasons: Object.fromEntries(failureReasons),
       candidates, sourceSkipped: verified.skipped, portalVerification: portal.stats }, null, 2));
   }
   console.log(`план: ${JSON.stringify(plan.stats)}`);

@@ -3,7 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BitrixClient } from "../src/bitrix/client.js";
 import { ReadOnlyBitrixClient } from "../src/bitrix/reporting/readOnlyClient.js";
-import { chunkPlanNumbers, fetchPlanStatusBatch } from "../src/kz/goszakupPlanStatusApi.js";
+import { fetchPlanStatusBatch } from "../src/kz/goszakupPlanStatusApi.js";
+import { loadCompanyBins } from "../src/bitrix/gzDealBin.js";
 import { GzPlanLookup, type GzPlanContext } from "../src/kz/zakupGzPlans.js";
 import { PortalPlanVerifier } from '../src/kz/goszakupPlanRegistry.js';
 import { fullEnstruCodes } from "../src/kz/zakupGzRegistry.js";
@@ -51,23 +52,13 @@ async function main(): Promise<void> {
           const deals = await reader.listAllBatched<RefreshDeal & Record<string, unknown>>("crm.deal.list", {
             order: { ID: "ASC" },
             filter,
-            select: [...GZ_REFRESH_DEAL_SELECT, "DATE_CREATE", "UF_CRM_6627AEBD7C2D2", "COMPANY_ID", "UF_CRM_REF_ENSTRU_CODE", "UF_CRM_6A436D5A19612", "ORIGIN_ID", "UF_CRM_PLAN_LINK"]
+            select: [...GZ_REFRESH_DEAL_SELECT, "COMMENTS", "DATE_CREATE", "UF_CRM_6627AEBD7C2D2", "COMPANY_ID", "UF_CRM_REF_ENSTRU_CODE", "UF_CRM_6A436D5A19612", "ORIGIN_ID", "UF_CRM_PLAN_LINK"]
           });
           console.error(`Fetched ${deals.length} deals in category ${categoryId}.`);
           allDeals.push(...deals);
           if (cli.dealId && allDeals.length > 0) break;
         }
-        const companyBins = new Map<string, string>();
-        const companyIds = [...new Set(allDeals.filter(deal => !/^\d{12}$/.test(String(deal.UF_CRM_6627AEBD7C2D2 ?? "")))
-          .map(deal => String(deal.COMPANY_ID ?? "")).filter(id => /^[1-9]\d*$/.test(id)))];
-        for (const ids of chunkPlanNumbers(companyIds)) {
-          const companies = await reader.call("crm.company.list", { filter: { ID: ids }, select: ["ID", "UF_CRM_666171B20E9E3"], start: -1 });
-          if (!Array.isArray(companies)) throw new Error("crm.company.list: expected an array");
-          for (const company of companies) {
-            const bin = String(company.UF_CRM_666171B20E9E3 ?? "").replace(/\D/g, "");
-            if (ids.includes(String(company.ID)) && /^\d{12}$/.test(bin)) companyBins.set(String(company.ID), bin);
-          }
-        }
+        const companyBins = await loadCompanyBins(allDeals, ids => reader.call("crm.company.list", { filter: { ID: ids }, select: ["ID", "UF_CRM_666171B20E9E3"], start: -1 }));
         for (const deal of allDeals) {
           const context = planStatusContextOf(deal, companyBins);
           if (context) contexts.set(Number(deal.UF_CRM_PLAN_ID), context);
