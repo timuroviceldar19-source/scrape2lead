@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PortalPlanVerifier, searchPlanRows, fetchPortalPage, PortalThrottledError } from '../../src/kz/goszakupPlanRegistry.js';
+import { PortalPlanVerifier, searchPlanRows, fetchPortalPage, PortalThrottledError, HtmlBudgetError } from '../../src/kz/goszakupPlanRegistry.js';
 import type { GoszakupPlanListItem } from '../../src/kz/goszakupPlanTypes.js';
 
 const row = (version = 200, status = 'Опубликован', root = '100') => ({
@@ -11,6 +11,9 @@ const reader = (rows: GoszakupPlanListItem[]) => new PortalPlanVerifier({
 });
 
 describe('подтверждение источника реестром портала', () => {
+  it('исчерпание бюджета отличимо от недоступности портала для общего обхода', async () => {
+    await expect(fetchPortalPage('https://procurement.gov.kz', { deadline: 0 })).rejects.toBeInstanceOf(HtmlBudgetError);
+  });
   it('не принимает опубликованный пункт, если портал показывает проект договора', async () => {
     expect((await reader([row(200, 'Проект договора')]).verify(100, 200, r => r.status === 'Опубликован')).reason).toBe('source_conflict');
   });
