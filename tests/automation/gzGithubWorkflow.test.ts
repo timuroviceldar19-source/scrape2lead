@@ -41,6 +41,16 @@ describe("GZ deal outcome check", () => {
     expect(job).toContain("BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}");
     expect(job).toContain("GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}");
   });
+
+  it("leaves time for the zakup outcome check and the item sync in one job", () => {
+    const pk = readWorkflow("gz-daily-pk.yml");
+    const job = pk.slice(pk.indexOf("  deal-outcomes:"));
+    const limit = Number(job.match(/timeout-minutes:\s*(\d+)/)?.[1]);
+
+    // On 01.11.2026 the outcome check took 37 min and the item sync 8 min on GitHub runners;
+    // with 40 min the job was cut on 31.10 before any outcome was written.
+    expect(limit).toBeGreaterThanOrEqual(60);
+  });
 });
 
 describe("GZ deal outcome dispatch input", () => {

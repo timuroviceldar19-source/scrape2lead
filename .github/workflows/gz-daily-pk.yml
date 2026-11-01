@@ -97,12 +97,14 @@ jobs:
   deal-outcomes:
     needs: [guard, pk-plans]
     # Для event=workflow_dispatch решает вход deal_outcomes: Worker включает его только
-    # в утреннем слоте, иначе при почасовых сборах проверка (15-18 мин) шла бы 9 раз в
+    # в утреннем слоте, иначе при почасовых сборах проверка (35-40 мин) шла бы 9 раз в
     # день. Ручной запуск по умолчанию выполняет её. Backstop (event=schedule) тоже.
     if: always() && needs.guard.outputs.should-run == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deal_outcomes)
     continue-on-error: true
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # На zakup проверка итогов идёт ~37 мин, правка товара ~8 мин (01.11.2026). При 40 мин
+    # job обрывался до записи итогов: итоги пишутся в Bitrix только после проверки всех сделок.
+    timeout-minutes: 60
     concurrency:
       group: gz-deal-outcomes
       cancel-in-progress: false
