@@ -1,8 +1,10 @@
 (function () {
   "use strict";
 
-  const P = PAYLOAD;
-  const V = VIEW;
+  let P = PAYLOAD;
+  let V = VIEW;
+  const currentMonth = PAYLOAD.asOfDate.slice(0, 7);
+  let selectedMonth = currentMonth;
 
   /* ================= format ================= */
   const NF = new Intl.NumberFormat("ru-RU");
@@ -87,7 +89,7 @@
           <span class="label">Подписано с 1 ${MONTHS_GEN[M - 1]}</span>
           <div class="hero-num"><span class="big" data-count="${m.fact}">0</span><span class="of">/ ${fmt(m.plan)}</span></div>
           <div class="hero-amt">${money(m.amount) || "0 ₸"} <span class="muted">· ${m.pct}% плана</span></div>
-          <div class="readout">
+          <div class="readout" ${P.closedMonth ? "hidden" : ""}>
             <div><span class="label">Темп</span><div class="v">${m.hasForecast ? `${fmt1(m.pacePerDay)}<small> в день</small>` : "—"}</div></div>
             <div><span class="label">Прогноз</span><div class="v">${m.hasForecast ? `≈ ${fmt(m.forecast)}<small> к ${m.daysInMonth}.${String(M).padStart(2, "0")}</small>` : `—<small> с 3-го дня</small>`}</div></div>
             <div><span class="label">До плана</span><div class="v">${fmt(m.left)}<small>${m.daysLeft <= 0 ? " не добрали" : ` за ${plural(Math.ceil(m.daysLeft), ["день", "дня", "дней"])}`}</small></div></div>
@@ -97,7 +99,7 @@
         </div>
         <div>
           <div class="chart-wrap" id="burnWrap">${burnup()}<div class="tip" id="burnTip"></div></div>
-          <div class="legend"><span><i></i>подписано</span><span><i class="dash"></i>темп плана</span><span><i class="dot"></i>прогноз</span><span><i class="band"></i>выходные</span></div>
+          <div class="legend"><span><i></i>подписано</span><span><i class="dash"></i>${P.closedMonth ? "план" : "темп плана"}</span>${P.closedMonth ? "" : `<span><i class="dot"></i>прогноз</span>`}<span><i class="band"></i>выходные</span></div>
         </div>
       </div>`;
     wireBurnTip();
@@ -129,7 +131,7 @@
     if (m.hasForecast) s += `<path d="M${x(lastDay)},${y(fact)} L${x(daysInMonth)},${y(forecast)}" fill="none" stroke="#141414" stroke-width="2" stroke-dasharray="1.5 5" stroke-linecap="round" class="burn-fc"/>`;
     s += `<line x1="${nowX}" x2="${nowX}" y1="${T - 6}" y2="${T + ih}" stroke="#141414" stroke-width="1"/>`;
     for (let i = 1; i <= 4; i++) { const v = (plan / 4) * i; s += `<text x="${L + 4}" y="${y(v) - 6}" class="burn-axis" font-family="JetBrains Mono" font-size="11" fill="#8c8981" style="paint-order:stroke;stroke:var(--paper,#f1efe9);stroke-width:3px;stroke-linejoin:round">${fmt(v)}</text>`; }
-    s += `<text x="${nowX}" y="${T - 10}" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#141414">сегодня</text>`;
+    s += `<text x="${nowX}" y="${T - 10}" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#141414">${P.closedMonth ? "итог" : "сегодня"}</text>`;
     s += `<circle cx="${x(lastDay)}" cy="${y(fact)}" r="4.5" fill="#faf9f5" stroke="#141414" stroke-width="2"/>`;
     let yp = y(plan);
     if (m.hasForecast) {
@@ -171,7 +173,7 @@
     const w = tgt ? Math.min(100, (fact / tgt) * 100) : 0;
     const pp = tgt ? Math.min(100, (j.expected / tgt) * 100) : 0;
     const edge = pp > 82 ? "edge-r" : pp < 12 ? "edge-l" : "";
-    const pace = j.expected >= 0.5 && fact < tgt ? `<span class="pace ${edge}" style="left:${pp}%"><span>${period === "day" ? "к " + V.genLabel + " нужно" : "по темпу нужно"} ${fmt(j.expected)}${unit || ""}</span></span>` : "";
+    const pace = !P.closedMonth && j.expected >= 0.5 && fact < tgt ? `<span class="pace ${edge}" style="left:${pp}%"><span>${period === "day" ? "к " + V.genLabel + " нужно" : "по темпу нужно"} ${fmt(j.expected)}${unit || ""}</span></span>` : "";
     return `<div class="gauge"><span class="fill ${j.cls}" data-w="${w}"></span>${pace}</div>`;
   }
 
@@ -442,7 +444,7 @@
     requestAnimationFrame(() => { document.getElementById("monthFill").style.width = V.monthFillPct + "%"; });
     const live = document.getElementById("live"), liveText = document.getElementById("liveText");
     function tick() {
-      const m = /(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(P.generatedAt);
+      const m = /(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(PAYLOAD.generatedAt);
       let ago = "";
       if (m) {
         const gen = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 5, +m[5]);
@@ -450,7 +452,7 @@
         if (mins >= 0 && mins < 60 * 24) ago = mins < 1 ? "только что" : mins < 60 ? plural(mins, ["минуту", "минуты", "минут"]) + " назад" : plural(Math.floor(mins / 60), ["час", "часа", "часов"]) + " назад";
         live.classList.toggle("stale", mins > 90);
       }
-      liveText.innerHTML = `Данные на ${V.genLabel}` + (ago ? ` <span class="ago">· ${ago}</span>` : "");
+      liveText.innerHTML = `Данные на ${VIEW.genLabel}` + (ago ? ` <span class="ago">· ${ago}</span>` : "");
     }
     tick(); setInterval(tick, 30000);
   }
@@ -489,6 +491,7 @@
     ind.style.width = b.offsetWidth - 28 + "px";
   }
   function setPeriod(p, fromUser) {
+    if (P.closedMonth) p = "month";
     period = p;
     btns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.p === p)));
     moveInd();
@@ -528,12 +531,12 @@
     if (renderedTabs.has(tab)) return;
     if (tab === "ip") {
       if (window.__renderMarketTab) {
-        window.__renderMarketTab("ip", P.market, tabPanes.ip);
+        window.__renderMarketTab("ip", PAYLOAD.market, tabPanes.ip);
         renderedTabs.add(tab);
       }
     } else if (tab === "kt") {
       if (window.__renderMarketTab) {
-        window.__renderMarketTab("kt", P.market, tabPanes.kt);
+        window.__renderMarketTab("kt", PAYLOAD.market, tabPanes.kt);
         renderedTabs.add(tab);
       }
     }
@@ -575,7 +578,7 @@
     if (fromUser) {
       try { localStorage.setItem("pult-tab", tab); } catch (e) {}
       if (history.replaceState) {
-        history.replaceState(null, "", `#${tab}`);
+        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : tab}`);
       } else {
         location.hash = tab;
       }
@@ -590,7 +593,8 @@
   });
 
   window.addEventListener("hashchange", () => {
-    const h = location.hash.replace(/^#/, "");
+    const h = location.hash.replace(/^#/, "").split("/")[0];
+    if (h === "pult") selectMonth(location.hash.split("/")[1] || currentMonth);
     if (h === "reg") {
       setTab("pult", false);
     } else if (h && tabPanes[h] && h !== currentTab) {
@@ -631,6 +635,7 @@
     SCENES.forEach((id) => { const el = document.getElementById(id); if (el) el.classList.remove("scene"); });
     fitTv();
     if (on) {
+      selectMonth(currentMonth);
       preTvTab = currentTab;
       if (currentTab !== "pult") setTab("pult", false);
       if (period !== "day") setPeriod("day");
@@ -652,17 +657,61 @@
 
   setTimeout(() => location.reload(), 15 * 60 * 1000);
 
+  const monthSelect = document.getElementById("monthSelect");
+  const monthKeys = [0, 1, 2].map((offset) => {
+    const [y, m] = currentMonth.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1 - offset, 1)).toISOString().slice(0, 7);
+  });
+  // Ключ месяца приходит и из адреса: служебные имена вроде "constructor" не должны находить «месяц».
+  const hasClosedMonth = (key) => Object.prototype.hasOwnProperty.call(VIEW.closedMonths || {}, key) && !!VIEW.closedMonths[key];
+  monthSelect.innerHTML = monthKeys.map((key) => {
+    const available = key === currentMonth || hasClosedMonth(key);
+    return `<option value="${esc(key)}" ${available ? "" : "disabled"}>${MONTHS[Number(key.slice(5)) - 1]} ${key.slice(0, 4)}${available ? "" : " · недоступен"}</option>`;
+  }).join("");
+  function selectMonth(key) {
+    if (document.body.classList.contains("tv")) key = currentMonth;
+    if (key !== currentMonth && !hasClosedMonth(key)) key = currentMonth;
+    selectedMonth = key;
+    P = key === currentMonth ? PAYLOAD : PAYLOAD.closedMonths[key];
+    V = key === currentMonth ? VIEW : VIEW.closedMonths[key];
+    monthSelect.value = key;
+    document.getElementById("dateLabel").textContent = V.dateLabel;
+    document.getElementById("wdLabel").textContent = P.closedMonth ? "Закрытый месяц" : V.wdLabel;
+    document.getElementById("monthFill").style.width = P.closedMonth ? "100%" : V.monthFillPct + "%";
+    btns.forEach((b) => { b.hidden = !!P.closedMonth && b.dataset.p !== "month"; });
+    document.getElementById("signals").hidden = !!P.closedMonth;
+    document.getElementById("tasks").hidden = !!P.closedMonth;
+    document.getElementById("closedNotice").hidden = !P.closedMonth;
+    renderMonth(); renderSignals(); renderTasks();
+    setPeriod(P.closedMonth ? "month" : period);
+    animate(document.getElementById("month"));
+    observe();
+  }
+  monthSelect.addEventListener("change", () => {
+    selectMonth(monthSelect.value);
+    history.replaceState(null, "", `#pult/${selectedMonth}`);
+  });
+  function measureBars() {
+    document.documentElement.style.setProperty("--bar-height", document.querySelector(".bar").offsetHeight + "px");
+    document.documentElement.style.setProperty("--period-height", document.querySelector(".dateline").offsetHeight + "px");
+  }
+  const barsObserver = new ResizeObserver(measureBars);
+  barsObserver.observe(document.querySelector(".bar"));
+  barsObserver.observe(document.querySelector(".dateline"));
+  measureBars();
+
   /* ================= boot ================= */
   renderChrome(); renderSignals(); renderMonth(); renderTasks();
   let saved = null; try { saved = localStorage.getItem("pult-period"); } catch (e) {}
   setPeriod(/period=(day|week|month)/.exec(location.search)?.[1] || saved || "day");
   
-  let hashTab = location.hash.replace(/^#/, "");
+  let hashTab = location.hash.replace(/^#/, "").split("/")[0];
   if (hashTab === "reg") hashTab = "pult";
   let savedTab = null; try { savedTab = localStorage.getItem("pult-tab"); } catch (e) {}
   if (savedTab === "reg") savedTab = "pult";
   const initialTab = tabPanes[hashTab] ? hashTab : (tabPanes[savedTab] ? savedTab : "pult");
   setTab(initialTab, false);
+  selectMonth(location.hash.split("/")[1] || currentMonth);
 
   observe();
   if (/tv=1/.test(location.search)) toggleTv();

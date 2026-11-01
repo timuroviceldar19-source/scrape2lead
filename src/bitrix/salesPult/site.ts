@@ -73,7 +73,9 @@ export function renderPultHtml(payload: SalesPultPayload): string {
   if ("register" in safePayload) {
     delete (safePayload as Record<string, unknown>).register;
   }
-  const view = buildPultView(safePayload);
+  const view = { ...buildPultView(safePayload), closedMonths: Object.fromEntries(
+    Object.entries(payload.closedMonths || {}).map(([key, month]) => [key, month ? buildPultView(month) : null])
+  ) };
   const replacements: Record<string, string> = {
     "/*__CSS__*/": pultCss,
     "__PAYLOAD__": safeJson(safePayload),

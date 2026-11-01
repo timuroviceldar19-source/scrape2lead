@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { loadClosedMonths } from "../src/bitrix/salesPult/months.js";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -646,6 +647,37 @@ export async function runSalesPult(args: string[]): Promise<void> {
       market: marketView,
       outcomeMismatches: collected.outcomeMismatches
     };
+
+    payload.closedMonths = await loadClosedMonths(todayAlmaty, "data/pult-months", JSON.stringify(config), async (month) => {
+      const started = performance.now();
+      const history = await collectPultData({
+        client: reader, fromDate: month.from, toDate: month.to,
+        managerIds: allManagerIds, proposalStages: config.stages.proposals,
+        contractStages: config.stages.contracts, historyOnly: true
+      });
+      const daily = allManagerIds.flatMap((managerId) => getDateRange(month.from, month.to).map((date) =>
+        calculateDailyMetrics({ managerId, date, calls: history.calls,
+          kpTransitions: history.kpTransitions, contractTransitions: history.contractTransitions, deals: history.deals })));
+      const groups = config.groups.map((g) => ({ id: g.id, name: g.name, managers: g.managers.map((m) => ({
+        id: m.id, name: collected.userProfiles.get(m.id)?.name || m.name,
+        // Истории состава нет: используем текущий состав, это явно подписано в пульте.
+        active: collected.userProfiles.get(m.id)?.active ?? true, topTasks: [],
+        rollups: calculateRollups({ managerId: m.id, asOfDate: month.to,
+          dailyMetrics: daily, deals: history.deals, targets: config.targets })
+      })) }));
+      const dynamics = getDateRange(month.from, month.to).map((date) => {
+        const rows = daily.filter((r) => r.date === date);
+        return { date, calls: rows.reduce((s, r) => s + r.calls.successful, 0),
+          proposals: rows.reduce((s, r) => s + r.proposals.uniqueDealsCount, 0),
+          contracts: rows.reduce((s, r) => s + r.contracts.uniqueDealsCount, 0),
+          amount: rows.reduce((s, r) => s + r.contracts.totalAmount, 0) };
+      });
+      console.log(`[Пульт] История ${month.key}: ${Math.round(performance.now() - started)} мс`);
+      return { asOfDate: month.to, generatedAt: `${month.to} 23:59 (UTC+5)`, closedMonth: true,
+        portal: config.portal, targets: config.targets, holidays: config.holidays,
+        callsAvailable: history.callsAvailable, callsError: history.callsError,
+        proposalsTracked: config.proposalsTracked, groups, dynamics };
+    });
 
     const outDir = path.resolve("exports/sales-pult");
     fs.mkdirSync(outDir, { recursive: true });

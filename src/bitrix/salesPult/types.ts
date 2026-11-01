@@ -43,6 +43,8 @@ export interface PultGroupView {
 }
 
 export interface SalesPultPayload {
+  closedMonth?: boolean;
+  closedMonths?: Record<string, SalesPultPayload | null>;
   asOfDate: string;
   generatedAt: string;
   portal: string;

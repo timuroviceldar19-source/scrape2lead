@@ -20,6 +20,7 @@ import {
 } from "./debts.js";
 
 export interface CollectPultDataParams {
+  historyOnly?: boolean;
   client: ReadOnlyBitrixClient;
   fromDate: string;
   toDate: string;
@@ -287,7 +288,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
       "crm.stagehistory.list",
       {
         entityTypeId: 2,
-        filter: { STAGE_ID: stage, ">=CREATED_TIME": sinceCreatedTime },
+        filter: { STAGE_ID: stage, ">=CREATED_TIME": sinceCreatedTime, ...(params.historyOnly ? { "<=CREATED_TIME": endOfDayDeadline } : {}) },
         order: { ID: "ASC" },
         select: ["ID", "OWNER_ID", "STAGE_ID", "CREATED_TIME"]
       },
@@ -310,7 +311,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
       "crm.stagehistory.list",
       {
         entityTypeId: 2,
-        filter: { STAGE_ID: stage, ">=CREATED_TIME": sinceCreatedTime },
+        filter: { STAGE_ID: stage, ">=CREATED_TIME": sinceCreatedTime, ...(params.historyOnly ? { "<=CREATED_TIME": endOfDayDeadline } : {}) },
         order: { ID: "ASC" },
         select: ["ID", "OWNER_ID", "STAGE_ID", "CREATED_TIME"]
       },
@@ -342,6 +343,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     });
     outcomeDealsRaw.push(...wonList.filter((d) => String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("won:")));
   } catch (err) {
+    if (params.historyOnly) throw err;
     console.warn("[collectPultData] Failed to load won: outcome deals:", err);
   }
 
@@ -352,6 +354,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     });
     outcomeDealsRaw.push(...partnerList.filter((d) => String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("partner:")));
   } catch (err) {
+    if (params.historyOnly) throw err;
     console.warn("[collectPultData] Failed to load partner: outcome deals:", err);
   }
 
@@ -425,6 +428,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
           }
         }
       } catch (err) {
+        if (params.historyOnly) throw err;
         console.warn("[collectPultData] Failed to batch load comments for won deals:", err);
       }
     }
@@ -439,7 +443,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     const rawCalls = await client.listAllBatched<Record<string, unknown>>(
       "voximplant.statistic.get",
       {
-        FILTER: { ">=CALL_START_DATE": sinceCreatedTime },
+        FILTER: { ">=CALL_START_DATE": sinceCreatedTime, ...(params.historyOnly ? { "<=CALL_START_DATE": endOfDayDeadline } : {}) },
         SORT: "ID",
         ORDER: "ASC"
       }
@@ -461,6 +465,12 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
       // All other errors crash the run!
       throw err;
     }
+  }
+
+  if (params.historyOnly) {
+    return { asOfDate: toDate, calls, callsAvailable, callsError, kpTransitions, contractTransitions, deals,
+      tasksByManager: new Map(), debtsByManager: new Map(), userProfiles: new Map(),
+      taskErrorsByManager: new Map(), outcomeMismatches: [] };
   }
 
   // 5. User Profiles
