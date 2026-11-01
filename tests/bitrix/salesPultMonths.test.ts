@@ -74,14 +74,16 @@ describe("pult closed months", () => {
       if (month.key === "2026-09") throw new Error("unavailable");
       return payload;
     };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const first = await loadClosedMonths("2026-11-01", dir, "fixture", collect);
       expect(first["2026-10"]).toEqual(payload);
       expect(first["2026-09"]).toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/2026-09 недоступен: unavailable/));
       await loadClosedMonths("2026-11-01", dir, "fixture", collect);
       expect(calls).toBe(3);
       await loadClosedMonths("2026-11-02", dir, "fixture", collect);
       expect(calls).toBe(5);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { warn.mockRestore(); fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

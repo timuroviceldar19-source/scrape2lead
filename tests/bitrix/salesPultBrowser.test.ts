@@ -329,6 +329,17 @@ describe("salesPult in-browser Playwright test", () => {
     await page.close();
   });
 
+  it.each(["__proto__", "constructor", "2026-13"])("opens the current month for a link to #pult/%s", async (key) => {
+    const page = await browser.newPage({ reducedMotion: "reduce" });
+    const pageErrors: string[] = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+    await page.goto(`${pathToFileURL(indexPath).href}#pult/${key}`);
+    expect(await page.locator("#month h2").textContent()).toContain("Октябрь");
+    expect(await page.locator("#monthSelect").inputValue()).toBe("2026-10");
+    expect(pageErrors).toEqual([]);
+    await page.close();
+  });
+
   it("loads standalone reg.html: no console errors, reveal sections visible (opacity=1), data-w bars width > 0", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const consoleErrors: string[] = [];

@@ -35,8 +35,8 @@ export async function loadClosedMonths(
         fs.writeFileSync(`${file}.tmp`, JSON.stringify({ day: today, signature, payload }));
         fs.renameSync(`${file}.tmp`, file);
       } catch { console.warn(`[Пульт] Не удалось сохранить кэш ${month.key}`); }
-    } catch {
-      console.warn(`[Пульт] Месяц ${month.key} недоступен`);
+    } catch (err) {
+      console.warn(`[Пульт] Месяц ${month.key} недоступен: ${err instanceof Error ? err.message : String(err)}`);
       result[month.key] = null;
     }
   }

@@ -662,13 +662,15 @@
     const [y, m] = currentMonth.split("-").map(Number);
     return new Date(Date.UTC(y, m - 1 - offset, 1)).toISOString().slice(0, 7);
   });
+  // Ключ месяца приходит и из адреса: служебные имена вроде "constructor" не должны находить «месяц».
+  const hasClosedMonth = (key) => Object.prototype.hasOwnProperty.call(VIEW.closedMonths || {}, key) && !!VIEW.closedMonths[key];
   monthSelect.innerHTML = monthKeys.map((key) => {
-    const available = key === currentMonth || VIEW.closedMonths?.[key];
+    const available = key === currentMonth || hasClosedMonth(key);
     return `<option value="${esc(key)}" ${available ? "" : "disabled"}>${MONTHS[Number(key.slice(5)) - 1]} ${key.slice(0, 4)}${available ? "" : " · недоступен"}</option>`;
   }).join("");
   function selectMonth(key) {
     if (document.body.classList.contains("tv")) key = currentMonth;
-    if (key !== currentMonth && !VIEW.closedMonths?.[key]) key = currentMonth;
+    if (key !== currentMonth && !hasClosedMonth(key)) key = currentMonth;
     selectedMonth = key;
     P = key === currentMonth ? PAYLOAD : PAYLOAD.closedMonths[key];
     V = key === currentMonth ? VIEW : VIEW.closedMonths[key];
