@@ -7,6 +7,7 @@ import type {
   MarketMethodItem,
   MarketKindItem,
   MarketLostItem,
+  MarketContractItem,
   MarketCustomerItem,
   MarketCompanyItem,
   MarketYtdCompanyItem,
@@ -14,6 +15,14 @@ import type {
   MarketConfig
 } from "./types.js";
 import { loadMarketConfig } from "./config.js";
+import { GZ_PORTAL_ORIGIN } from "../goszakupOrigin.js";
+
+const MAX_CUSTOMER_CONTRACTS = 20;
+
+/** Market units keep the contract id of the portal, so the public contract page opens by it. */
+export function contractUrl(id: number): string {
+  return `${GZ_PORTAL_ORIGIN}/ru/egzcontract/cpublic/show/${id}`;
+}
 
 function sumBy<T>(items: T[], fn: (item: T) => number): number {
   return items.reduce((s, x) => s + (fn(x) || 0), 0);
@@ -264,12 +273,28 @@ export function buildMarketGroupView(
       sum: sumBy(xs, (u) => u.sum),
       qty: sumBy(xs, (u) => u.qty),
       kind: xs[0]?.kind || "",
-      price: xs[0]?.price || 0
+      price: xs[0]?.price || 0,
+      url: contractUrl(Number(idStr))
     }))
     .sort((a, b) => b.sum - a.sum)
     .slice(0, 10);
 
-  // Customers
+  // Customers, each with the contracts behind the sum
+  const contractsOf = (xs: MarketUnit[]): MarketContractItem[] =>
+    Object.entries(groupBy(xs, (u) => String(u.id)))
+      .map(([idStr, items]) => ({
+        id: Number(idStr),
+        date: items[0]?.date || "",
+        supplier: items[0]?.supplierName || items[0]?.supplier || "",
+        kind: items[0]?.kind || "",
+        sum: sumBy(items, (u) => u.sum),
+        qty: sumBy(items, (u) => u.qty),
+        us: items.some(isOurUnit),
+        url: contractUrl(Number(idStr))
+      }))
+      .sort((a, b) => b.sum - a.sum)
+      .slice(0, MAX_CUSTOMER_CONTRACTS);
+
   const byCustomer = groupBy(cur, (u) => u.customer);
   const customers: MarketCustomerItem[] = Object.entries(byCustomer)
     .map(([bin, xs]) => ({
@@ -277,7 +302,8 @@ export function buildMarketGroupView(
       name: xs[0]?.customerName || bin,
       sum: sumBy(xs, (u) => u.sum),
       us: sumBy(xs.filter(isOurUnit), (u) => u.sum),
-      contracts: countContracts(xs)
+      contracts: countContracts(xs),
+      contractList: contractsOf(xs)
     }))
     .sort((a, b) => b.sum - a.sum)
     .slice(0, 10);

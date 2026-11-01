@@ -116,6 +116,20 @@ export interface MarketLostItem {
   qty: number;
   kind: string;
   price: number;
+  /** The contract page on the procurement portal. */
+  url: string;
+}
+
+export interface MarketContractItem {
+  id: number;
+  date: string;
+  supplier: string;
+  kind: string;
+  sum: number;
+  qty: number;
+  us: boolean;
+  /** The contract page on the procurement portal. */
+  url: string;
 }
 
 export interface MarketCustomerItem {
@@ -124,6 +138,8 @@ export interface MarketCustomerItem {
   sum: number;
   us: number;
   contracts: number;
+  /** The customer's largest contracts of the month, at most 20. */
+  contractList: MarketContractItem[];
 }
 
 export interface MarketGroupView {

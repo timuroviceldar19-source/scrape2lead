@@ -104,6 +104,31 @@ describe("buildMarketGroupView", () => {
     expect(view.lost[0].sum).toBe(1000000);
   });
 
+  it("links each contract to its page on the portal: lost contracts and every customer's contracts", () => {
+    const base = {
+      month: "2026-10", group: "ИП" as const, code: "262030.100.000021", kind: "Интерактивные панели",
+      qty: 1, price: 500000, method: "Электронный магазин", us: false
+    };
+    const units: MarketUnit[] = [
+      { ...base, id: 501, date: "2026-10-05", sum: 3_000_000, supplier: "999999999999", supplierName: "Конкурент", customer: "111111111111", customerName: "Школа 1" },
+      // Two line items of one contract count as one contract.
+      { ...base, id: 502, unitIndex: 0, date: "2026-10-07", sum: 1_000_000, supplier: "061140003942", supplierName: "F3", customer: "111111111111", customerName: "Школа 1" },
+      { ...base, id: 502, unitIndex: 1, date: "2026-10-07", sum: 500_000, supplier: "061140003942", supplierName: "F3", customer: "111111111111", customerName: "Школа 1" },
+      { ...base, id: 503, date: "2026-10-09", sum: 2_000_000, supplier: "888888888888", supplierName: "Другой", customer: "222222222222", customerName: "Школа 2" }
+    ];
+
+    const view = buildMarketGroupView("ИП", units, "2026-10-20", cfg);
+
+    expect(view.lost[0].url).toBe("https://procurement.gov.kz/ru/egzcontract/cpublic/show/501");
+
+    const school1 = view.customers.find((c) => c.bin === "111111111111");
+    expect(school1?.contractList).toEqual([
+      { id: 501, date: "2026-10-05", supplier: "Конкурент", kind: "Интерактивные панели", sum: 3_000_000, qty: 1, us: false, url: "https://procurement.gov.kz/ru/egzcontract/cpublic/show/501" },
+      { id: 502, date: "2026-10-07", supplier: "F3", kind: "Интерактивные панели", sum: 1_500_000, qty: 2, us: true, url: "https://procurement.gov.kz/ru/egzcontract/cpublic/show/502" }
+    ]);
+    expect(school1?.contracts).toBe(2);
+  });
+
   it("combines group companies (F3 + Amanat Asia) into a single row, ignores stale us:false in cache, excludes both from lost", () => {
     const testCfg: MarketConfig = {
       ...cfg,
