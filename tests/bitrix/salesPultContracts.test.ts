@@ -9,6 +9,11 @@ import type { SalesPultPayload } from "../../src/bitrix/salesPult/types.js";
 
 import { fixture } from "../fixtures/sales-pult/contracts.js";
 describe('contracts from OP', () => {
+  it('contains an unexpected local file read failure', async () => {
+    const { loadRegisterView } = await import('../../src/bitrix/salesPult/register/load.js');
+    await expect(loadRegisterView({reader:{} as never,registerFilePath:process.cwd()})).resolves.toMatchObject({error:expect.any(String)});
+  });
+
   it('preserves calls on dates without an OP contract', () => {
     const f=fixture(); f.payload.dynamics=[{date:'2026-10-22',calls:17,contracts:9,amount:900}];
     attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
