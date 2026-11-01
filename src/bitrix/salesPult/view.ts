@@ -70,13 +70,13 @@ export function buildMonthView(
     pacePerDay: forecastRes.pacePerDay, forecast: forecastRes.forecast,
     left: forecastRes.left, daysLeft: forecastRes.daysLeft,
     pct: forecastRes.pct, fpct: forecastRes.fpct,
-    hasForecast: forecastRes.hasForecast,
+    hasForecast: !payload.closedMonth && forecastRes.hasForecast,
     monthDone: ctx.monthDone, monthTotal: ctx.monthTotal, wdBefore: ctx.wdBefore,
     daysInMonth: ctx.daysInMonth, targetContracts: targetMonthlyContracts,
     totalActiveCount: combinedGroups.reduce((s, g) => s + g.managers.filter((m) => m.active).length, 0),
-    verdict: forecastRes.verdict, split: buildSplit(combinedGroups),
+    verdict: payload.closedMonth ? `Выполнено ${forecastRes.pct}% плана. План рассчитан по текущему составу менеджеров и текущим нормам.` : forecastRes.verdict, split: buildSplit(combinedGroups),
     points: cum, byDay: byDayList, workDays: ctx.workDays, weekends,
-    nowXDay: D - 1 + ctx.dayFrac, dayFrac: ctx.dayFrac,
+    nowXDay: payload.closedMonth ? D : D - 1 + ctx.dayFrac, dayFrac: payload.closedMonth ? 1 : ctx.dayFrac,
     asOfDate: payload.asOfDate, asOfDay: D, asOfMonth: M, asOfYear: Y
   };
 }
@@ -321,7 +321,7 @@ export function buildPultView(payload: SalesPultPayload): PultView {
   const monthPeriodView = buildPeriodView(payload, sales, tenders, salesActive, tendersActive, "month", yesterdayLine, ctx);
 
   return {
-    signals, signalsUrgent, signalsMeta,
+    signals: payload.closedMonth ? [] : signals, signalsUrgent, signalsMeta,
     month: monthView,
     periods: { day: dayView, week: weekView, month: monthPeriodView },
     dateLabel, wdLabel, monthFillPct, todayIsWork: ctx.todayIsWork,

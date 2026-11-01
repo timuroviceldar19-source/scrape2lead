@@ -22,3 +22,11 @@ describe("Sales pult workflow market cache", () => {
     expect(step).toContain("::warning::");
   });
 });
+
+it("restores closed-month cache before collection and saves each run independently", () => {
+  const cache = workflow.indexOf("- name: Cache pult closed months");
+  expect(cache).toBeGreaterThan(-1);
+  expect(cache).toBeLessThan(workflow.indexOf("- name: Run Sales Pult"));
+  expect(workflow.slice(cache)).toContain("path: data/pult-months");
+  expect(workflow.slice(cache)).toContain("key: gz-pult-months-v1-${{ github.run_id }}");
+});

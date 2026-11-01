@@ -153,6 +153,9 @@ describe("salesPult in-browser Playwright test", () => {
       fs.readFileSync("tests/fixtures/sales-pult/midday.json", "utf8")
     );
     basePayload.portal = "https://ft3.bitrix24.kz";
+    basePayload.groups.forEach((g, gi) => g.managers.forEach((m, mi) => {
+      m.name = `Тестовый менеджер ${gi + 1}.${mi + 1}`;
+    }));
     const firstMgr = basePayload.groups[0].managers[0];
     if (firstMgr.debts) {
       firstMgr.debts.overdueOverMonth = 2;
@@ -256,6 +259,15 @@ describe("salesPult in-browser Playwright test", () => {
       register: regView
     };
 
+    const closed = structuredClone(basePayload);
+    closed.asOfDate = "2026-09-30";
+    closed.generatedAt = "2026-09-30 23:59 (UTC+5)";
+    closed.closedMonth = true;
+    closed.groups.forEach((g) => g.managers.forEach((m) => {
+      m.rollups.month.contracts.uniqueDealsCount = 7;
+      m.rollups.month.contracts.totalAmount = 700;
+    }));
+    basePayload.closedMonths = { "2026-09": closed, "2026-08": null };
     fs.writeFileSync(indexPath, renderPultHtml(basePayload), "utf8");
     fs.writeFileSync(regPath, renderRegisterHtml(regPayload), "utf8");
 
@@ -267,6 +279,54 @@ describe("salesPult in-browser Playwright test", () => {
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch {}
+  });
+
+  it.each([1280, 375])("keeps periods visible at tenders on width %i", async (width) => {
+    const page = await browser.newPage({ viewport: { width, height: 850 }, reducedMotion: "reduce" });
+    await page.goto(`${pathToFileURL(indexPath).href}#pult`);
+    await page.locator("#tenders").scrollIntoViewIfNeeded();
+    const nav = await page.locator("#periodsNav").boundingBox();
+    expect(nav).not.toBeNull();
+    expect(nav!.y).toBeGreaterThanOrEqual(0);
+    expect(nav!.y + nav!.height).toBeLessThan(850);
+    await page.evaluate(() => document.getElementById("tenders")!.scrollIntoView());
+    const heading = await page.locator("#tenders h2").boundingBox();
+    expect(heading!.y).toBeGreaterThanOrEqual(nav!.y + nav!.height);
+    await page.waitForFunction(() => document.getElementById("tenders")!.classList.contains("in"));
+    if (process.env.PULT_SCREENSHOT_DIR) {
+      fs.mkdirSync(process.env.PULT_SCREENSHOT_DIR, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.PULT_SCREENSHOT_DIR, `pult-${width}.png`), animations: "disabled" });
+    }
+    await page.close();
+  });
+
+  it("opens and switches a closed month, hides live sections, and restores current month for TV", async () => {
+    const page = await browser.newPage({ reducedMotion: "reduce" });
+    await page.goto(`${pathToFileURL(indexPath).href}#pult/2026-09`);
+    expect(await page.locator("#month h2").textContent()).toContain("Сентябрь");
+    expect(await page.locator('#periodsNav [data-p="day"]').isVisible()).toBe(false);
+    expect(await page.locator('#periodsNav [data-p="week"]').isVisible()).toBe(false);
+    expect(await page.locator("#signals").isVisible()).toBe(false);
+    expect(await page.locator("#tasks").isVisible()).toBe(false);
+    expect(await page.locator("#month .readout").isVisible()).toBe(false);
+    expect(await page.locator("#month .verdict").textContent()).toContain("Выполнено");
+    if (process.env.PULT_SCREENSHOT_DIR) {
+      await page.screenshot({ path: path.join(process.env.PULT_SCREENSHOT_DIR, "pult-closed-month.png") });
+    }
+    expect(await page.locator('#monthSelect option[value="2026-08"]').evaluate((option) => (option as HTMLOptionElement).disabled)).toBe(true);
+    const septemberFact = await page.locator("#month .big").getAttribute("data-count");
+    await page.selectOption("#monthSelect", "2026-10");
+    expect(await page.locator("#month h2").textContent()).toContain("Октябрь");
+    expect(await page.locator("#month .big").getAttribute("data-count")).not.toBe(septemberFact);
+    await page.selectOption("#monthSelect", "2026-09");
+    expect(page.url()).toContain("#pult/2026-09");
+    await page.locator('.sections a[data-t="ip"]').click();
+    expect(await page.locator("#periodsNav").isVisible()).toBe(false);
+    expect(await page.locator("#tab-ip").textContent()).toContain("ИП");
+    await page.locator('.sections a[data-t="pult"]').click();
+    await page.locator("#tvBtn").click();
+    expect(await page.locator("#month h2").textContent()).toContain("Октябрь");
+    await page.close();
   });
 
   it("loads standalone reg.html: no console errors, reveal sections visible (opacity=1), data-w bars width > 0", async () => {

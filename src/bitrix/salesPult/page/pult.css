@@ -286,7 +286,7 @@ body.tv .tv-cycle { display: block; }
 }
 @media (max-width: 760px) {
   .bar-in { grid-template-columns: 1fr auto; height: auto; padding-top: 10px; row-gap: 0; }
-  .periods { grid-column: 1 / -1; order: 3; justify-content: space-between; }
+  .periods { justify-content: space-between; }
   .periods button { padding: 12px 8px; flex: 1; }
   .periods .kbd { display: none; }
   .live .ago { display: none; }
@@ -512,4 +512,18 @@ a.r:focus-visible, .cust-d > summary:focus-visible { outline: 2px solid var(--in
 @media (max-width: 480px) {
   .block-head .meta .mobile { display: inline; }
   .block-head .meta .desktop { display: none; }
+}
+
+/* Полоса периода остаётся под шапкой, её высота учитывается для якорей. */
+.dateline { position: sticky; top: var(--bar-height, 64px); z-index: 19; background: var(--paper); }
+section[id], #closedNotice { scroll-margin-top: calc(var(--bar-height, 64px) + var(--period-height, 100px) + 18px); }
+.month-picker { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.month-picker select { font: inherit; background: var(--sheet); color: var(--ink); border: 1px solid var(--rule-3); padding: 6px; max-width: 180px; }
+[hidden] { display: none !important; }
+body.tv .month-picker { display: none; }
+@media (max-width: 760px) {
+  .dateline { gap: 6px; padding: 8px 0; }
+  .dateline .date-left { gap: 4px; font-size: 12px; }
+  .dateline .periods { width: 100%; flex-wrap: wrap; }
+  .month-picker { flex-basis: 100%; }
 }
