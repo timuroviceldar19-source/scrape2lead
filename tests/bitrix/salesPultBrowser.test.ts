@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { chromium, type Browser } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,6 +10,8 @@ import type { RegisterView } from "../../src/bitrix/salesPult/register/types.js"
 import { buildMarketGroupView } from "../../src/kz/market/aggregate.js";
 import type { MarketUnit, MarketConfig } from "../../src/kz/market/types.js";
 import { loadMarketConfig } from "../../src/kz/market/config.js";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 describe("salesPult in-browser Playwright test", () => {
   let browser: Browser;
@@ -721,4 +723,47 @@ describe("salesPult in-browser Playwright test", () => {
     expect(consoleErrors).toEqual([]);
     await page.close();
   }, 20_000);
+});
+
+// Все данные и снимки этого сценария — выдуманные.
+describe('OP contracts in the pult browser', () => {
+  it('shows OP hero, monthly departments, preliminary daily source and closed OP month', async () => {
+    const { fixture } = await import('../fixtures/sales-pult/contracts.js');
+    const { attachRegisterContracts } = await import('../../src/bitrix/salesPult/contracts.js');
+    const { buildRegisterMonthSummary } = await import('../../src/bitrix/salesPult/register/history.js');
+    const f=fixture(); f.payload.asOfDate='2026-10-29';
+    attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
+    const closed=structuredClone(f.payload); closed.closedMonth=true; closed.asOfDate='2026-09-30';
+    const summary=buildRegisterMonthSummary({month:'2026-09',fileName:'ОП итог тест.xlsx',rows:f.rows.map(r=>({...r,date:'2026-09-23'})),plans:{Алия:3000}});
+    attachRegisterContracts(closed,{error:'current unavailable',history:{asOf:'2026-10-29',months:[summary]}},new Map(),f.aliases);
+    f.payload.closedMonths={'2026-09':closed};
+    const browser=await chromium.launch({headless:true});
+    const page=await browser.newPage({viewport:{width:1440,height:1100}, reducedMotion:'reduce'});
+    const errors:string[]=[]; page.on('pageerror',e=>errors.push(e.message));
+    const screenshotDir=path.resolve('exports/pult-contracts-fixture'); fs.mkdirSync(screenshotDir,{recursive:true});
+    try {
+      await page.setContent(renderPultHtml(f.payload));
+      await page.waitForFunction(()=>document.querySelector('#month .big')?.textContent==='3');
+      expect(await page.locator('#month').innerText()).toContain('600 ₸');
+      expect((await page.locator('#month .awaiting-register').innerText()).replace(/\s+/g,' ')).toContain('ещё 1 сделка');
+      expect(await page.locator('#sales').innerText()).toContain('по Битриксу, предварительно');
+      expect(await page.locator('#tenders').innerText()).toContain('по Битриксу, предварительно');
+      await page.locator('#month').screenshot({path:path.join(screenshotDir,'current-month.png')});
+      await page.locator('[data-p="month"]').click();
+      expect(await page.locator('#sales').innerText()).toContain('по реестру ОП');
+      expect(await page.locator('#tenders').innerText()).toContain('по реестру ОП');
+      expect(await page.locator('#tenders .num').first().innerText()).toContain('1');
+      await page.locator('#tenders').screenshot({path:path.join(screenshotDir,'tenders-month.png')});
+      expect(await page.locator('#signals').innerText()).toContain('Сумма сделки 0');
+      expect(await page.locator('#signals').innerText()).toContain('договор у другого поставщика');
+      expect(await page.locator('#signals').innerText()).toContain('Закрыто в Битриксе, нет в ОП');
+      await page.locator('#signals').screenshot({path:path.join(screenshotDir,'signals.png')});
+      await page.locator('#monthSelect').selectOption('2026-09');
+      expect(await page.locator('#month').innerText()).toContain('ОП итог тест.xlsx');
+      expect(await page.locator('#sales').innerText()).toContain('по реестру ОП');
+      expect(await page.locator('#month .awaiting-register').count()).toBe(0);
+      await page.locator('#month').screenshot({path:path.join(screenshotDir,'closed-month.png')});
+      expect(errors).toEqual([]);
+    } finally { await browser.close(); }
+  });
 });

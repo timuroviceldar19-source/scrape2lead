@@ -28,6 +28,7 @@ export interface DealInfo {
   /** Planned procurement month name from UF_CRM_1715597726664. */
   planMonth?: string | null;
   outcome?: string | null;
+  contractDate?: string;
   portalSignDate?: string | null;
   closeDate?: string | null;
   dateCreate?: string | null;
@@ -221,7 +222,7 @@ export function calculateDailyMetrics(params: {
     if (toAlmatyDate(t.createdTime) !== date) continue;
     const deal = deals.get(String(t.dealId));
     if (!deal || String(deal.assignedById) !== String(managerId)) continue;
-    if (deal.stageSemanticId === "F") continue;
+    if (deal.stageSemanticId === "F" || String(deal.outcome ?? "").startsWith("lost:")) continue;
     // If the deal has a portal sign date that is different from this date,
     // it will be counted on that portal sign date instead.
     if (deal.portalSignDate && deal.portalSignDate !== date) continue;
@@ -231,7 +232,7 @@ export function calculateDailyMetrics(params: {
   // 3b. From portal contracts (won: or partner:) where portal sign date is today
   for (const deal of deals.values()) {
     if (String(deal.assignedById) !== String(managerId)) continue;
-    if (deal.stageSemanticId === "F") continue;
+    if (deal.stageSemanticId === "F" || String(deal.outcome ?? "").startsWith("lost:")) continue;
     const outcome = String(deal.outcome ?? "");
     const isPortalWon = outcome.startsWith("won:") || outcome.startsWith("partner:");
     if (!isPortalWon) continue;

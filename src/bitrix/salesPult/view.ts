@@ -51,11 +51,19 @@ export function buildMonthView(
   const monthPlan = combinedGroups.reduce(
     (s, g) => s + targetMonthlyContracts * g.managers.filter((m) => m.active).length, 0
   );
-  const monthFact = combinedGroups.reduce((s, g) => s + computeGroupTotals(g, "month").contracts, 0);
-  const monthAmount = combinedGroups.reduce((s, g) => s + computeGroupTotals(g, "month").amount, 0);
+  const op = payload.contractSource;
+  const monthFact = op?.available ? op.fact! : combinedGroups.reduce((s, g) => s + computeGroupTotals(g, "month").contracts, 0);
+  const monthAmount = op?.available ? op.amount! : combinedGroups.reduce((s, g) => s + computeGroupTotals(g, "month").amount, 0);
   const forecastRes = calculateMonthForecast(monthPlan, monthFact, ctx.monthDone, ctx.monthTotal);
 
-  const byDayMap = new Map(payload.dynamics.map((d) => [Number(d.date.slice(8, 10)), d]));
+  const crmByDay = new Map(payload.dynamics.map(d => [Number(d.date.slice(8, 10)), d]));
+  const opByDay = new Map((op?.daily ?? []).map(d => [Number(d.date.slice(8, 10)), d]));
+  const byDayMap = new Map(Array.from({ length: ctx.daysInMonth }, (_, i) => {
+    const day = i + 1;
+    const contracts = op?.available ? opByDay.get(day) : crmByDay.get(day);
+    return [day, { calls: crmByDay.get(day)?.calls ?? 0,
+      contracts: contracts?.contracts ?? 0, amount: contracts?.amount ?? 0 }];
+  }));
   const cum: number[] = [0];
   let cumSum = 0;
   for (let d = 1; d <= D; d++) {
@@ -66,6 +74,10 @@ export function buildMonthView(
   const { byDayList, weekends } = buildByDayAndWeekends(ctx.daysInMonth, Y, M, holidays, byDayMap);
 
   return {
+    hasContractDynamics: !op?.available || op.daily !== undefined,
+    sourceLabel: op?.label ?? (payload.closedMonth ? "реестр ОП за месяц недоступен, цифры по Битриксу" : "реестр ОП недоступен, цифры по Битриксу"),
+    revenuePlan: op?.revenuePlan, awaitingRegister: op?.awaiting,
+    crmFact: op?.crmFact ?? monthFact, crmAmount: op?.crmAmount ?? monthAmount,
     plan: monthPlan, fact: monthFact, amount: monthAmount,
     pacePerDay: forecastRes.pacePerDay, forecast: forecastRes.forecast,
     left: forecastRes.left, daysLeft: forecastRes.daysLeft,
@@ -74,7 +86,7 @@ export function buildMonthView(
     monthDone: ctx.monthDone, monthTotal: ctx.monthTotal, wdBefore: ctx.wdBefore,
     daysInMonth: ctx.daysInMonth, targetContracts: targetMonthlyContracts,
     totalActiveCount: combinedGroups.reduce((s, g) => s + g.managers.filter((m) => m.active).length, 0),
-    verdict: payload.closedMonth ? `Выполнено ${forecastRes.pct}% плана. План рассчитан по текущему составу менеджеров и текущим нормам.` : forecastRes.verdict, split: buildSplit(combinedGroups),
+    verdict: payload.closedMonth ? `Выполнено ${forecastRes.pct}% плана. План рассчитан по текущему составу менеджеров и текущим нормам.` : forecastRes.verdict, split: op?.available ? buildRegisterSplit(payload) : buildSplit(combinedGroups),
     points: cum, byDay: byDayList, workDays: ctx.workDays, weekends,
     nowXDay: payload.closedMonth ? D : D - 1 + ctx.dayFrac, dayFrac: payload.closedMonth ? 1 : ctx.dayFrac,
     asOfDate: payload.asOfDate, asOfDay: D, asOfMonth: M, asOfYear: Y
@@ -85,7 +97,7 @@ function buildSalesManager(
   m: PultManagerView, period: "day" | "week" | "month", isEarly: boolean,
   ctx: PaceContext, payload: SalesPultPayload
 ): PultSalesManagerView {
-  const r = m.rollups[period];
+  const r = contractRollup(payload, m, period);
   const targetCalls = getTarget(payload.targets, period, "calls");
   const targetKp = getTarget(payload.targets, period, "proposals");
   const targetContracts = getTarget(payload.targets, period, "contracts");
@@ -130,7 +142,7 @@ export function buildSalesView(
   period: "day" | "week" | "month", periodLabel: string, isEarly: boolean,
   yesterdayLine: string, ctx: PaceContext
 ): PultSalesDepartmentView {
-  const sTotals = computeGroupTotals(sales, period);
+  const sTotals = contractTotals(payload, sales, period);
   const sActiveCount = salesActive.length || 1;
   const tc = getTarget(payload.targets, period, "calls") * sActiveCount;
   const tk = getTarget(payload.targets, period, "proposals") * sActiveCount;
@@ -154,7 +166,7 @@ export function buildSalesView(
   const contractsSub = sTotals.contracts ? `На ${formatPultMoney(sTotals.amount) || "сумму, которая не указана"}` : "Пока ни одного";
   const salesMeta = `${pluralNbsp(salesActive.length, ["менеджер", "менеджера", "менеджеров"])} · норма на человека: ${pluralNbsp(getTarget(payload.targets, period, "calls"), ["дозвон", "дозвона", "дозвонов"])}, ${getTarget(payload.targets, period, "proposals")} КП, ${pluralNbsp(getTarget(payload.targets, period, "contracts"), ["договор", "договора", "договоров"])}`;
 
-  const managers = salesActive.map((m) => buildSalesManager(m, period, isEarly, ctx, payload));
+  const managers = monthlyManagers(payload, sales, salesActive, period).map((m) => buildSalesManager(m, period, isEarly, ctx, payload));
   const sortWeight: Record<string, number> = { bad: 0, warn: 1, idle: 2, good: 3 };
   managers.sort((a, b) => (sortWeight[a.calls.cls] ?? 2) - (sortWeight[b.calls.cls] ?? 2) || (a.calls.fact - b.calls.fact));
 
@@ -164,7 +176,7 @@ export function buildSalesView(
     totals: {
       calls: { fact: sTotals.calls, target: tc, expected: jc.expected, cls: jc.cls, label: jc.text, text: jc.text, sub: callsSub },
       proposals: { fact: sTotals.kp, target: tk, expected: jk.expected, cls: jk.cls, label: jk.text, text: jk.text, sub: kpSub, untracked: !payload.proposalsTracked },
-      contracts: { fact: sTotals.contracts, target: tg, expected: jg.expected, cls: jg.cls, label: jg.text, text: jg.text, sub: contractsSub, totalAmount: sTotals.amount },
+      contracts: { fact: sTotals.contracts, target: tg, expected: jg.expected, cls: jg.cls, label: jg.text, text: jg.text, sub: `${contractsSub} · ${contractLabel(payload, period)}`, totalAmount: sTotals.amount },
       attempts: sTotals.attempts, minutes: sTotals.minutes
     },
     managers, activeCount: salesActive.length
@@ -226,7 +238,7 @@ function buildTenderManager(
   m: PultManagerView, period: "day" | "week" | "month",
   ctx: PaceContext, payload: SalesPultPayload
 ): PultTenderManagerView {
-  const r = m.rollups[period];
+  const r = contractRollup(payload, m, period);
   const targetContracts = getTarget(payload.targets, period, "contracts");
   const tmJudge = judgeMetricStatus(r.contracts.uniqueDealsCount, targetContracts, period, "contracts", ctx);
   const sub = r.contracts.uniqueDealsCount ? (formatPultMoney(r.contracts.totalAmount) || "сумма не указана") : "";
@@ -235,7 +247,7 @@ function buildTenderManager(
     contracts: {
       fact: r.contracts.uniqueDealsCount, target: targetContracts,
       expected: tmJudge.expected, cls: tmJudge.cls, label: tmJudge.text, text: tmJudge.text,
-      sub, totalAmount: r.contracts.totalAmount,
+      sub: `${sub} · ${contractLabel(payload, period)}`, totalAmount: r.contracts.totalAmount,
       isEarlyEmpty: period === "day" && ctx.isEarly && r.contracts.uniqueDealsCount === 0
     },
     debts: m.debts, topTasks: m.topTasks || []
@@ -246,13 +258,13 @@ export function buildTendersView(
   payload: SalesPultPayload, tenders: PultGroupView, tendersActive: PultManagerView[],
   period: "day" | "week" | "month", periodLabel: string, ctx: PaceContext
 ): PultTendersDepartmentView {
-  const tTotals = computeGroupTotals(tenders, period);
+  const tTotals = contractTotals(payload, tenders, period);
   const tActiveCount = tendersActive.length || 1;
   const tTarget = getTarget(payload.targets, period, "contracts") * tActiveCount;
   const tJudge = judgeMetricStatus(tTotals.contracts, tTarget, period, "contracts", ctx);
   const tSub = tTotals.contracts ? `На ${formatPultMoney(tTotals.amount) || "сумму, которая не указана"}` : "Пока ни одного";
 
-  const managers = tendersActive.map((m) => buildTenderManager(m, period, ctx, payload));
+  const managers = monthlyManagers(payload, tenders, tendersActive, period).map((m) => buildTenderManager(m, period, ctx, payload));
   managers.sort((a, b) => b.contracts.fact - a.contracts.fact);
 
   return {
@@ -262,7 +274,7 @@ export function buildTendersView(
       contracts: {
         fact: tTotals.contracts, target: tTarget, expected: tJudge.expected,
         cls: tJudge.cls, label: tJudge.text, text: tJudge.text,
-        sub: tSub, totalAmount: tTotals.amount
+        sub: `${tSub} · ${contractLabel(payload, period)}`, totalAmount: tTotals.amount
       }
     },
     managers, activeCount: tendersActive.length
@@ -327,4 +339,50 @@ export function buildPultView(payload: SalesPultPayload): PultView {
     dateLabel, wdLabel, monthFillPct, todayIsWork: ctx.todayIsWork,
     genLabel: ctx.genLabel, genHour: ctx.genHour
   };
+}
+
+function contractLabel(payload: SalesPultPayload, period: string): string {
+  return period === "month"
+    ? (payload.contractSource?.label ?? "реестр ОП недоступен, цифры по Битриксу")
+    : "по Битриксу, предварительно";
+}
+
+function contractRollup(payload: SalesPultPayload, manager: PultManagerView, period: "day" | "week" | "month") {
+  const original = manager.rollups[period];
+  if (period !== "month" || !payload.contractSource?.available) return original;
+  const rows = payload.contractSource.byManager.filter(m => m.id === manager.id);
+  return { ...original, contracts: { ...original.contracts,
+    uniqueDealsCount: rows.reduce((sum, m) => sum + m.contracts, 0),
+    totalAmount: rows.reduce((sum, m) => sum + m.sale, 0)
+  } };
+}
+
+function contractTotals(payload: SalesPultPayload, group: PultGroupView, period: "day" | "week" | "month") {
+  const totals = computeGroupTotals(group, period);
+  if (period !== "month" || !payload.contractSource?.available) return totals;
+  const rows = payload.contractSource.byManager.filter(m => m.groupId === group.id);
+  return { ...totals,
+    contracts: rows.reduce((sum, m) => sum + m.contracts, 0),
+    amount: rows.reduce((sum, m) => sum + m.sale, 0)
+  };
+}
+
+function buildRegisterSplit(payload: SalesPultPayload) {
+  const entries = payload.groups.filter(g => g.id === "sales" || g.id === "tenders").map(g => ({
+    name: g.id === "sales" ? "Продажи" : "Тендеры",
+    rows: payload.contractSource!.byManager.filter(m => m.groupId === g.id)
+  }));
+  const other = payload.contractSource!.byManager.filter(m => !entries.some(e => e.rows.includes(m)));
+  if (other.length) entries.push({ name: "Другие", rows: other });
+  const split = entries.map(e => ({ name: e.name,
+    c: e.rows.reduce((sum, m) => sum + m.contracts, 0),
+    a: e.rows.reduce((sum, m) => sum + m.sale, 0)
+  }));
+  const max = Math.max(1, ...split.map(x => x.c));
+  return split.map(x => ({ ...x, amountFormatted: formatMoney(x.a) || "—", widthPct: x.c / max * 100 }));
+}
+
+function monthlyManagers(payload: SalesPultPayload, group: PultGroupView, active: PultManagerView[], period: string) {
+  if (period !== "month" || !payload.contractSource?.available) return active;
+  return group.managers.filter(m => m.active || payload.contractSource!.byManager.some(r => r.id === m.id && r.contracts > 0));
 }

@@ -1,11 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { attachRegisterContracts } from "../../src/bitrix/salesPult/contracts.js";
 import { buildPultView } from "../../src/bitrix/salesPult/view.js";
-import { calculateDailyMetrics, calculateRollups, type DealInfo } from "../../src/bitrix/salesPult/metrics.js";
-import { buildRegisterView } from "../../src/bitrix/salesPult/register/buildView.js";
 import { buildRegisterMonthSummary } from "../../src/bitrix/salesPult/register/history.js";
-import type { RegisterRow } from "../../src/bitrix/salesPult/register/types.js";
-import type { SalesPultPayload } from "../../src/bitrix/salesPult/types.js";
 
 import { fixture } from "../fixtures/sales-pult/contracts.js";
 describe('contracts from OP', () => {

@@ -136,11 +136,12 @@ export function buildPultSignals(
     info.push("Звонки сейчас не загружаются, цифры по звонкам неполные");
   }
 
-  if (bad.length === 0 && warn.length === 0 && good.length === 0 && info.length === 0) {
+  if (!(payload.contractSource?.signals.length) && bad.length === 0 && warn.length === 0 && good.length === 0 && info.length === 0) {
     return [{ color: "green", text: "Сегодня без происшествий" }];
   }
 
   return [
+    ...(payload.contractSource?.signals ?? []),
     ...bad.map((t) => ({ color: "red" as const, text: t })),
     ...warn.map((t) => ({ color: "yellow" as const, text: t })),
     ...good.map((t) => ({ color: "green" as const, text: t })),
