@@ -366,6 +366,37 @@ describe("salesPult in-browser Playwright test", () => {
     await page.close();
   }, 20_000);
 
+  it("opens contracts on the portal from lost contracts and from a customer's contract list", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const consoleErrors: string[] = [];
+    page.on("pageerror", (err) => consoleErrors.push(err.message));
+
+    await page.goto(`${pathToFileURL(indexPath).href}#ip`);
+    await page.waitForTimeout(400);
+
+    const lostLinks = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLAnchorElement>("#tab-ip .lost a.r")].map((a) => ({ href: a.href, target: a.target, rel: a.rel }))
+    );
+    // In October the IP market has one contract not ours: id 3.
+    expect(lostLinks.map((l) => l.href)).toEqual(["https://procurement.gov.kz/ru/egzcontract/cpublic/show/3"]);
+    for (const link of lostLinks) {
+      expect(link.target).toBe("_blank");
+      expect(link.rel).toContain("noopener");
+    }
+
+    // "Школа 1" bought from F3 in October: contract 2, shown as ours.
+    const customer = page.locator("#tab-ip .cust-d", { hasText: "Школа 1" });
+    expect(await customer.locator(".cust-list a.r").isVisible()).toBe(false);
+    await customer.locator("summary").click();
+    const contractLink = customer.locator(".cust-list a.r");
+    expect(await contractLink.isVisible()).toBe(true);
+    expect(await contractLink.getAttribute("href")).toBe("https://procurement.gov.kz/ru/egzcontract/cpublic/show/2");
+    expect(await contractLink.getAttribute("class")).toContain("us");
+
+    expect(consoleErrors).toEqual([]);
+    await page.close();
+  }, 20_000);
+
   it("loads pult market tab #kt: no console errors, reveal sections visible, month bars height > 0, data-w bars width > 0", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const consoleErrors: string[] = [];
