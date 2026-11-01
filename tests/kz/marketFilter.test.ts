@@ -27,6 +27,14 @@ describe("market config and classifyCode", () => {
     expect(m2).toEqual({ group: "ИП", kind: "Мультимедийные системы" });
   });
 
+  it("counts LCD panels (279020.100.*) in the IP market and fetches them by prefix", () => {
+    for (const code of ["279020.100.000000", "279020.100.000001", "279020.100.000012"]) {
+      expect(classifyCode(code, cfg)).toEqual({ group: "ИП", kind: "Жидкокристаллические панели" });
+    }
+    expect(cfg.groups["ИП"].prefixes).toContain("279020.100.");
+    expect(classifyCode("279020.200.000001", cfg)).toBeNull();
+  });
+
   it("classifies KT codes correctly", () => {
     // Компьютеры и моноблоки
     expect(classifyCode("262013.000.000011", cfg)).toEqual({ group: "КТ", kind: "Компьютеры и моноблоки" });
