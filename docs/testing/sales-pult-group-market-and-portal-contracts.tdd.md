@@ -105,3 +105,5 @@ RED:
 - браузерный тест `opens contracts on the portal from lost contracts and from a customer's contract list` в `tests/bitrix/salesPultBrowser.test.ts` локально не запускается без Chromium, в CI ставится.
 
 GREEN: `contractUrl` и `contractList` в `src/kz/market/aggregate.ts`, разметка в `market.client.js`, стили в `pult.css`. Ссылка выводится, только если адрес начинается с `https://`. Проверено в браузере на синтетических данных: на ширине 1440 и 375 без горизонтальной прокрутки, на телефоне название заказчика во всю ширину.
+
+Первый прогон CI: браузерный тест ждал два чужих договора ИП, а в тестовых данных за октябрь он один (второй — КТ). Ожидание поправлено на данные: чужой договор 3, у «Школы 1» наш договор 2.
