@@ -88,7 +88,11 @@
         <div>
           <span class="label">Подписано с 1 ${MONTHS_GEN[M - 1]}</span>
           <div class="hero-num"><span class="big" data-count="${m.fact}">0</span><span class="of">/ ${fmt(m.plan)}</span></div>
-          <div class="hero-amt">${money(m.amount) || "0 ₸"} <span class="muted">· ${m.pct}% плана</span></div>
+          <div class="hero-amt">${money(m.amount) || "0 ₸"} <span class="muted">${m.revenuePlan !== undefined ? "без НДС · " : "· "}${m.pct}% плана договоров</span></div>
+          <p class="muted contract-source">${esc(m.sourceLabel)}</p>
+          ${m.revenuePlan !== undefined ? `<p>План выручки: ${money(m.revenuePlan) || '0 ₸'} без НДС</p>` : ''}
+          ${m.awaitingRegister !== undefined ? `<p class="muted awaiting-register">ещё ${plural(m.awaitingRegister, ["сделка", "сделки", "сделок"])} в Битриксе, ждут ОП</p>` : ''}
+          <p class="muted crm-comparison">в Битриксе отмечено ${plural(m.crmFact, ["сделка", "сделки", "сделок"])} на ${fmt1(m.crmAmount / 1e6)} млн</p>
           <div class="readout" ${P.closedMonth ? "hidden" : ""}>
             <div><span class="label">Темп</span><div class="v">${m.hasForecast ? `${fmt1(m.pacePerDay)}<small> в день</small>` : "—"}</div></div>
             <div><span class="label">Прогноз</span><div class="v">${m.hasForecast ? `≈ ${fmt(m.forecast)}<small> к ${m.daysInMonth}.${String(M).padStart(2, "0")}</small>` : `—<small> с 3-го дня</small>`}</div></div>
@@ -98,7 +102,7 @@
           <div class="split">${m.split.map((x) => `<div class="split-row"><span>${esc(x.name)}</span><span class="trk"><span data-w="${x.widthPct}"></span></span><span class="num">${fmt(x.c)} · ${money(x.a) || "—"}</span></div>`).join("")}</div>
         </div>
         <div>
-          <div class="chart-wrap" id="burnWrap">${burnup()}<div class="tip" id="burnTip"></div></div>
+          <div class="chart-wrap" id="burnWrap">${m.hasContractDynamics ? burnup() : `<p class="muted">Дневная разбивка реестра ОП недоступна</p>`}<div class="tip" id="burnTip"></div></div>
           <div class="legend"><span><i></i>подписано</span><span><i class="dash"></i>${P.closedMonth ? "план" : "темп плана"}</span>${P.closedMonth ? "" : `<span><i class="dot"></i>прогноз</span>`}<span><i class="band"></i>выходные</span></div>
         </div>
       </div>`;

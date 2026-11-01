@@ -136,15 +136,21 @@ export function buildPultSignals(
     info.push("Звонки сейчас не загружаются, цифры по звонкам неполные");
   }
 
-  if (bad.length === 0 && warn.length === 0 && good.length === 0 && info.length === 0) {
+  if (!(payload.contractSource?.signals.length) && bad.length === 0 && warn.length === 0 && good.length === 0 && info.length === 0) {
     return [{ color: "green", text: "Сегодня без происшествий" }];
   }
 
+  const opSignals = payload.contractSource?.signals ?? [];
+  const opByColor = (color: SignalItem["color"]) => opSignals.filter((s) => s.color === color);
   return [
+    ...opByColor("red"),
     ...bad.map((t) => ({ color: "red" as const, text: t })),
+    ...opByColor("yellow"),
     ...warn.map((t) => ({ color: "yellow" as const, text: t })),
     ...good.map((t) => ({ color: "green" as const, text: t })),
-    ...info.map((t) => ({ color: "gray" as const, text: t }))
+    ...info.map((t) => ({ color: "gray" as const, text: t })),
+    // Расхождения с ОП «проверить» — в конце, чтобы не заслонять срочное.
+    ...opSignals.filter((s) => s.color !== "red" && s.color !== "yellow")
   ];
 }
 

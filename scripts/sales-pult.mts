@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { attachRegisterContracts } from "../src/bitrix/salesPult/contracts.js";
 import { loadClosedMonths } from "../src/bitrix/salesPult/months.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -648,7 +649,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       outcomeMismatches: collected.outcomeMismatches
     };
 
-    payload.closedMonths = await loadClosedMonths(todayAlmaty, "data/pult-months", JSON.stringify(config), async (month) => {
+    payload.closedMonths = await loadClosedMonths(todayAlmaty, "data/pult-months", JSON.stringify(config) + ":contracts-op-v1", async (month) => {
       const started = performance.now();
       const history = await collectPultData({
         client: reader, fromDate: month.from, toDate: month.to,
@@ -678,6 +679,17 @@ export async function runSalesPult(args: string[]): Promise<void> {
         callsAvailable: history.callsAvailable, callsError: history.callsError,
         proposalsTracked: config.proposalsTracked, groups, dynamics };
     });
+
+    for (const metric of dailyMetricsList) {
+      for (const id of metric.contracts.dealIds) {
+        const deal = collected.deals.get(id);
+        if (deal && (!deal.contractDate || metric.date < deal.contractDate)) deal.contractDate = metric.date;
+      }
+    }
+    attachRegisterContracts(payload, registerView, collected.deals, config.register?.managerAliases);
+    for (const closed of Object.values(payload.closedMonths)) {
+      if (closed) attachRegisterContracts(closed, registerView, new Map(), config.register?.managerAliases);
+    }
 
     const outDir = path.resolve("exports/sales-pult");
     fs.mkdirSync(outDir, { recursive: true });

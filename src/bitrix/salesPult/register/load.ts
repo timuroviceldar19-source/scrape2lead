@@ -51,6 +51,25 @@ export interface LoadRegisterOptions {
 }
 
 export async function loadRegisterView(options: LoadRegisterOptions): Promise<RegisterView> {
+  let view: RegisterView;
+  try {
+    view = await loadRegisterViewImpl(options);
+  } catch (err) {
+    view = { error: `Реестр не подключён: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (view.error) {
+    console.warn(`[Пульт] Реестр ОП недоступен: ${view.error}`);
+    // Закрытые месяцы остаются доступны из кэша даже при сбое текущего файла.
+    const cached = loadEncryptedRegisterHistory(
+      options.historyCachePath || options.cachePath || DEFAULT_REGISTER_HISTORY_PATH,
+      options.secretKey || process.env.REGISTER_HISTORY_KEY
+    );
+    view.history ??= cached.payload;
+  }
+  return view;
+}
+
+async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<RegisterView> {
   const {
     reader,
     diskFolderId,
@@ -250,6 +269,7 @@ export async function loadRegisterView(options: LoadRegisterOptions): Promise<Re
       `[Реестр] строк: ${parsed.rows.length}, договоров: ${contracts.length}, найдено в CRM: ${matchResult.matched.length}, нет в CRM: ${matchResult.missing.length}`
     );
 
+    if (!view.error) view.crmDeals = wonDeals;
     return view;
   } catch (err) {
     console.error("[Реестр] Ошибка обработки реестра:", err);

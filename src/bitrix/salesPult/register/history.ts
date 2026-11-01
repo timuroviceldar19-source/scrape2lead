@@ -132,6 +132,10 @@ export function buildRegisterMonthSummary(params: {
     month,
     label,
     fileName,
+    dailyContracts: [...new Set(contracts.map(c => c.date))].sort().map(date => ({
+      date, contracts: contracts.filter(c => c.date === date).length,
+      amount: contracts.filter(c => c.date === date).reduce((s, c) => s + c.sale, 0)
+    })),
     sale: totalSale,
     val: totalVal,
     margin,

@@ -358,6 +358,19 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     console.warn("[collectPultData] Failed to load partner: outcome deals:", err);
   }
 
+  // Противоречие WON/lost остаётся актуальным и после смены месяца.
+  if (!params.historyOnly) {
+    try {
+      const lostWins = await client.listAllBatched<RawDealItem>("crm.deal.list", {
+        filter: { STAGE_SEMANTIC_ID: "S", "%UF_CRM_S2L_GZ_OUTCOME": "lost:", ASSIGNED_BY_ID: params.managerIds },
+        select: DEAL_SELECT_FIELDS
+      });
+      outcomeDealsRaw.push(...lostWins.filter(d => d.STAGE_SEMANTIC_ID === "S" && String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("lost:")));
+    } catch (err) {
+      console.warn("[Пульт] Не удалось загрузить противоречия WON/lost:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
   for (const r of outcomeDealsRaw) {
     const id = String(r.ID);
     const amountNum = parseFloat(String(r.OPPORTUNITY ?? "0").replace(/\s+/g, ""));

@@ -100,6 +100,7 @@ export interface RegisterMissingContract {
 }
 
 export interface RegisterMonthSummary {
+  dailyContracts?: Array<{ date: string; contracts: number; amount: number }>;
   month: string;
   label: string;
   fileName: string;
@@ -196,6 +197,7 @@ export interface RegisterHistoryPayload {
 }
 
 export interface RegisterSuccessView {
+  crmDeals?: CrmWonDeal[];
   file: string;
   asOf: string;
   month: string;
@@ -214,6 +216,7 @@ export interface RegisterSuccessView {
 }
 
 export interface RegisterErrorView {
+  crmDeals?: CrmWonDeal[];
   error: string;
   file?: string;
   asOf?: string;

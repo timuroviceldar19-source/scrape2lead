@@ -43,6 +43,7 @@ export interface PultGroupView {
 }
 
 export interface SalesPultPayload {
+  contractSource?: import("./contracts.js").PultContractSource;
   closedMonth?: boolean;
   closedMonths?: Record<string, SalesPultPayload | null>;
   asOfDate: string;
@@ -230,6 +231,12 @@ export type PultCallsDepartmentView = PultPeriodView["calls"];
 export type PultTendersDepartmentView = NonNullable<PultPeriodView["tenders"]>;
 
 export interface PultMonthView {
+  hasContractDynamics: boolean;
+  sourceLabel: string;
+  revenuePlan?: number;
+  awaitingRegister?: number;
+  crmFact: number;
+  crmAmount: number;
   plan: number;
   fact: number;
   amount: number;
