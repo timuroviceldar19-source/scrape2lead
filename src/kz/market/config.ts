@@ -1,6 +1,17 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { MarketConfig } from "./types.js";
+
+/**
+ * Fingerprint of the rules that decide which contract items land in the market cache and how they are labelled.
+ * A cache built under another fingerprint (for example, before a group got new codes) is stale.
+ */
+export function marketConfigKey(cfg: MarketConfig): string {
+  const { ourBins, minUnitPrice, excludedStatuses, allowedStatuses, methods, groups } = cfg;
+  const rules = JSON.stringify({ ourBins, minUnitPrice, excludedStatuses, allowedStatuses, methods, groups });
+  return crypto.createHash("sha256").update(rules).digest("hex").slice(0, 16);
+}
 
 let cachedConfig: MarketConfig | null = null;
 let compiledMatchers: Array<{ regex: RegExp; group: "ИП" | "КТ"; kind: string }> | null = null;
