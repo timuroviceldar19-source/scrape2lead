@@ -93,6 +93,9 @@ export interface FetchMarketOptions {
   onProgress?: (pages: number, seenCount: number, matchedCount: number) => void;
   maxRetries?: number;
   timeoutMs?: number;
+  /** For tests. */
+  fetchFn?: typeof fetch;
+  retryDelayMs?: number;
 }
 
 export async function fetchMarketContracts(options: FetchMarketOptions): Promise<MarketUnit[]> {
@@ -103,42 +106,50 @@ export async function fetchMarketContracts(options: FetchMarketOptions): Promise
     cfg = loadMarketConfig(),
     onProgress,
     maxRetries = 4,
-    timeoutMs = 60_000
+    timeoutMs = 60_000,
+    fetchFn,
+    retryDelayMs = 5_000
   } = options;
 
   const dateFilter = toDate ? [fromDate, toDate] : [fromDate];
+  const pageOptions = { token, maxRetries, timeoutMs, ...(fetchFn ? { fetchFn } : {}) };
   const allUnits: MarketUnit[] = [];
   let after: number | undefined;
   let pages = 0;
   let seenCount = 0;
+  let shortRetries = 0;
 
   for (;;) {
-    const pageRes = (await goszakupGraphqlPage(
-      CONTRACT_QUERY,
-      { d: dateFilter, after },
-      "Contract",
-      { token, maxRetries, timeoutMs }
-    )) as {
-      items: RawContractItem[];
-      hasNextPage: boolean;
-      lastId?: number;
-      totalCount?: number;
-    };
+    const pageRes = await goszakupGraphqlPage<RawContractItem>(CONTRACT_QUERY, { d: dateFilter, after }, "Contract", pageOptions);
+    if (pageRes.hasNextPage && pageRes.lastId == null) {
+      throw new Error(`ows: договоры за ${dateFilter.join("..")} — есть следующая страница, но нет курсора после ${after ?? "начала"}`);
+    }
+
+    // Under load ows sometimes ends the list mid-way (01.11.2026: February stopped at 13 Feb, a later pass gave
+    // all 239 395). A short month must not be saved as complete, so the page is asked again and then the month fails.
+    const total = pageRes.totalCount;
+    const got = seenCount + pageRes.items.length;
+    if (!pageRes.hasNextPage && total !== undefined && got < total) {
+      if (shortRetries >= maxRetries) {
+        throw new Error(`ows: за ${dateFilter.join("..")} получено ${got} из ${total} договоров, список обрывается после ${after ?? "начала"}`);
+      }
+      shortRetries++;
+      console.warn(`[Рынок] ows оборвал список на ${got} из ${total} договоров, повтор ${shortRetries}/${maxRetries}`);
+      if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs * shortRetries));
+      continue;
+    }
 
     pages++;
-    seenCount += pageRes.items.length;
-
-    const matched = filterContractUnits(pageRes.items, cfg);
-    allUnits.push(...matched);
+    seenCount = got;
+    shortRetries = 0;
+    allUnits.push(...filterContractUnits(pageRes.items, cfg));
 
     if (onProgress && (pages % 10 === 0 || !pageRes.hasNextPage)) {
       onProgress(pages, seenCount, allUnits.length);
     }
 
-    if (!pageRes.hasNextPage || pageRes.lastId == null) {
-      break;
-    }
-    after = pageRes.lastId;
+    if (!pageRes.hasNextPage) break;
+    after = pageRes.lastId ?? undefined;
   }
 
   return allUnits;
