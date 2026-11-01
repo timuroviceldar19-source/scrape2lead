@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { goszakupGraphqlPage } from "../goszakupGraphql.js";
 import type { MarketConfig, MarketUnit } from "./types.js";
-import { loadMarketConfig } from "./config.js";
+import { loadMarketConfig, marketConfigKey } from "./config.js";
 import { filterContractUnits, type RawContractItem } from "./filterUnits.js";
 import { fetchZakupMarketUnits, type FetchZakupMarketOptions } from "./fetchZakupMarket.js";
 
@@ -19,12 +19,15 @@ export const DEFAULT_MARKET_UNITS_PATH = "data/market/units-2026.json";
 export interface StoredMarketData {
   updatedAt: string;
   completeMonths?: string[];
+  /** `marketConfigKey` of the config the complete months were downloaded with. */
+  configKey?: string;
   units: MarketUnit[];
 }
 
 export function loadStoredMarketData(filePath = DEFAULT_MARKET_UNITS_PATH): {
   units: MarketUnit[];
   completeMonths: string[];
+  configKey?: string;
   updatedAt?: string;
 } {
   const resolved = path.resolve(filePath);
@@ -38,6 +41,7 @@ export function loadStoredMarketData(filePath = DEFAULT_MARKET_UNITS_PATH): {
     return {
       units: Array.isArray(data.units) ? data.units : [],
       completeMonths: Array.isArray(data.completeMonths) ? data.completeMonths : [],
+      configKey: typeof data.configKey === "string" ? data.configKey : undefined,
       updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : undefined
     };
   } catch {
@@ -46,7 +50,7 @@ export function loadStoredMarketData(filePath = DEFAULT_MARKET_UNITS_PATH): {
 }
 
 export function saveStoredMarketData(
-  data: { units: MarketUnit[]; completeMonths?: string[]; updatedAt?: string },
+  data: { units: MarketUnit[]; completeMonths?: string[]; configKey?: string; updatedAt?: string },
   filePath = DEFAULT_MARKET_UNITS_PATH
 ): void {
   const resolved = path.resolve(filePath);
@@ -54,6 +58,7 @@ export function saveStoredMarketData(
   const payload: StoredMarketData = {
     updatedAt: data.updatedAt || new Date().toISOString().slice(0, 10),
     completeMonths: data.completeMonths || [],
+    ...(data.configKey ? { configKey: data.configKey } : {}),
     units: data.units
   };
   fs.writeFileSync(resolved, JSON.stringify(payload, null, 2), "utf8");
@@ -68,10 +73,12 @@ export function saveStoredMarketUnits(
   filePath = DEFAULT_MARKET_UNITS_PATH
 ): void {
   const existing = loadStoredMarketData(filePath);
+  // Keep the old key: refreshing recent days does not bring older complete months up to a new config.
   saveStoredMarketData(
     {
       units,
       completeMonths: existing.completeMonths,
+      configKey: existing.configKey,
       updatedAt: new Date().toISOString().slice(0, 10)
     },
     filePath
@@ -242,6 +249,7 @@ export interface BackfillMarketOptions {
 /**
  * Downloads market data by monthly intervals and saves progress after each month.
  * If interrupted, rerunning picks up from where it left off without losing already downloaded months.
+ * Months completed under another market config (other codes, filters or BINs) are downloaded again.
  */
 export async function backfillMarketByMonths(options: BackfillMarketOptions): Promise<MarketUnit[]> {
   const {
@@ -256,7 +264,8 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
 
   const storedData = loadStoredMarketData(filePath);
   let currentUnits = storedData.units;
-  const completeMonths = new Set(storedData.completeMonths);
+  const configKey = marketConfigKey(cfg);
+  const completeMonths = new Set(storedData.configKey === configKey ? storedData.completeMonths : []);
   const intervals = getMonthIntervals(fromDate, toDate);
 
   for (const interval of intervals) {
@@ -287,6 +296,7 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
       {
         units: currentUnits,
         completeMonths: [...completeMonths].sort(),
+        configKey,
         updatedAt: toDate
       },
       filePath
