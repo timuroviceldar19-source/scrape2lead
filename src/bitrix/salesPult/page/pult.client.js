@@ -88,7 +88,7 @@
         <div>
           <span class="label">Подписано с 1 ${MONTHS_GEN[M - 1]}</span>
           <div class="hero-num"><span class="big" data-count="${m.fact}">0</span><span class="of">/ ${fmt(m.plan)}</span></div>
-          <div class="hero-amt">${money(m.amount) || "0 ₸"} <span class="muted">· ${m.revenuePlan !== undefined ? 'без НДС' : ''} · ${m.pct}% плана договоров</span></div>
+          <div class="hero-amt">${money(m.amount) || "0 ₸"} <span class="muted">${m.revenuePlan !== undefined ? "без НДС · " : "· "}${m.pct}% плана договоров</span></div>
           <p class="muted contract-source">${esc(m.sourceLabel)}</p>
           ${m.revenuePlan !== undefined ? `<p>План выручки: ${money(m.revenuePlan) || '0 ₸'} без НДС</p>` : ''}
           ${m.awaitingRegister !== undefined ? `<p class="muted awaiting-register">ещё ${plural(m.awaitingRegister, ["сделка", "сделки", "сделок"])} в Битриксе, ждут ОП</p>` : ''}

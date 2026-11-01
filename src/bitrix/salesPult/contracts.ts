@@ -1,9 +1,9 @@
 import type { SalesPultPayload, SignalItem } from "./types.js";
 import type { DealInfo } from "./metrics.js";
 import type { RegisterView, RegisterMonthSummary } from "./register/types.js";
-import { groupRegisterContracts, matchRegisterWithCrm } from "./register/matchCrm.js";
+import { groupRegisterContracts, matchRegisterWithCrm, settleUnmatched } from "./register/matchCrm.js";
 import { isWorkDay, DEFAULT_HOLIDAYS } from "./pace.js";
-import { escapeHtml } from "./format.js";
+import { escapeHtml, MONTHS } from "./format.js";
 
 type ManagerTotal = Pick<RegisterMonthSummary["byManager"][number], "name" | "contracts" | "sale">;
 
@@ -99,9 +99,13 @@ export function attachRegisterContracts(
         }];
       });
       const result = matchRegisterWithCrm(contracts, crm, { managerAliases: aliases });
-      source.awaiting = result.extra.length;
+      const settled = settleUnmatched(result, contracts, aliases);
+      const pending = settled.extra;
+      // B2B пульт по Битриксу не считает, поэтому его договоры здесь сделок не найдут.
+      const missing = settled.missing.filter(c => c.type.toLowerCase() !== "b2b");
+      source.awaiting = pending.length;
       const holidays = new Set(payload.holidays ?? DEFAULT_HOLIDAYS);
-      for (const deal of result.extra) {
+      for (const deal of pending) {
         if (!deal.date || !/^\d{4}-\d{2}-\d{2}$/.test(deal.date)) continue;
         if (workingDaysAfter(deal.date, payload.asOfDate, holidays) > 2) {
           source.signals.push({
@@ -110,7 +114,13 @@ export function attachRegisterContracts(
           });
         }
       }
-      for (const contract of result.missing) {
+      for (const { deal, contract } of settled.repeats) {
+        source.signals.push({
+          color: "gray",
+          text: `<b>${escapeHtml(deal.manager)}</b>: Возможен дубль — ${escapeHtml(deal.title)} (${escapeHtml(deal.id)}): договор с этим заказчиком уже есть в ОП (менеджер в ОП: ${escapeHtml(contract.manager)}), проверить`
+        });
+      }
+      for (const contract of missing) {
         source.signals.push({
           color: "gray",
           text: `<b>${escapeHtml(contract.manager)}</b>: Есть в ОП, нет сделки в Битриксе — ${escapeHtml(contract.customer)}, проверить сопоставление по названию и сумме`
@@ -127,6 +137,9 @@ export function attachRegisterContracts(
       source.revenuePlan = summary.plan;
       source.daily = summary.dailyContracts;
       setManagers(summary.byManager.map(({ name, contracts, sale }) => ({ name, contracts, sale })));
+    } else if (!register.error && register.month && register.month < month) {
+      // В первые дни месяца последний файл ОП ещё за прошлый месяц — это не сбой.
+      source.label = `файла ОП за ${MONTHS[Number(month.slice(5, 7)) - 1].toLocaleLowerCase("ru")} ещё нет, цифры по Битриксу`;
     }
   }
 

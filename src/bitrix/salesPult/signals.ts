@@ -140,12 +140,17 @@ export function buildPultSignals(
     return [{ color: "green", text: "Сегодня без происшествий" }];
   }
 
+  const opSignals = payload.contractSource?.signals ?? [];
+  const opByColor = (color: SignalItem["color"]) => opSignals.filter((s) => s.color === color);
   return [
-    ...(payload.contractSource?.signals ?? []),
+    ...opByColor("red"),
     ...bad.map((t) => ({ color: "red" as const, text: t })),
+    ...opByColor("yellow"),
     ...warn.map((t) => ({ color: "yellow" as const, text: t })),
     ...good.map((t) => ({ color: "green" as const, text: t })),
-    ...info.map((t) => ({ color: "gray" as const, text: t }))
+    ...info.map((t) => ({ color: "gray" as const, text: t })),
+    // Расхождения с ОП «проверить» — в конце, чтобы не заслонять срочное.
+    ...opSignals.filter((s) => s.color !== "red" && s.color !== "yellow")
   ];
 }
 

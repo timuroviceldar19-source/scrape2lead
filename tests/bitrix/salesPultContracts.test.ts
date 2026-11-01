@@ -73,12 +73,30 @@ describe('contracts from OP', () => {
     expect(buildPultView(f.payload).month).toMatchObject({fact:2,sourceLabel:'реестр ОП недоступен, цифры по Битриксу'});
   });
 
-  it('treats product lines and duplicates of an OP contract as already in OP', () => {
-    const f=fixture([{ id:'d4', title:'Альфа', amount:50, assignedById:'s', stageSemanticId:'S' }]);
+  it('treats product lines of an OP contract as already in OP', () => {
+    const f=fixture([{ id:'d4', title:'Альфа', amount:40, assignedById:'s', stageSemanticId:'S' }]);
     f.payload.asOfDate='2026-10-29'; attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
     const v=buildPultView(f.payload);
     expect(v.month).toMatchObject({awaitingRegister:1,crmFact:3});
     expect(v.signals.some(s=>s.text.includes('(d4)') && s.text.includes('нет в ОП'))).toBe(false);
+  });
+  it('keeps a same-customer deal far above the OP contract sum awaiting OP', () => {
+    const f=fixture([{ id:'d6', title:'Альфа', amount:5000, assignedById:'s', contractDate:'2026-10-23', stageSemanticId:'S' }]);
+    f.payload.asOfDate='2026-10-29'; attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
+    const v=buildPultView(f.payload);
+    expect(v.month.awaitingRegister).toBe(2);
+    expect(v.signals.some(s=>s.text.includes('(d6)') && s.text.includes('нет в ОП'))).toBe(true);
+  });
+  it('marks a deal for a customer already in OP under another manager as a possible duplicate', () => {
+    const f=fixture([{ id:'d7', title:'Дельта', amount:200, assignedById:'s', contractDate:'2026-10-23', stageSemanticId:'S' }]);
+    f.payload.asOfDate='2026-10-29'; attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
+    const v=buildPultView(f.payload);
+    expect(v.month.awaitingRegister).toBe(1);
+    const texts=v.signals.map(s=>s.text);
+    expect(texts.some(t=>t.includes('(d7)') && t.includes('нет в ОП'))).toBe(false);
+    expect(v.signals).toEqual(expect.arrayContaining([
+      expect.objectContaining({color:'gray',text:expect.stringMatching(/Алия.*Возможен дубль.*\(d7\).*менеджер в ОП: Борис/)})
+    ]));
   });
   it('does not call an OP contract missing in CRM when the manager has a deal for that customer', () => {
     const f=fixture([{ id:'d5', title:'Дельта Омега Тау', amount:0, assignedById:'t', stageSemanticId:'S' }]);

@@ -122,6 +122,70 @@ function managerMatches(
   return false;
 }
 
+/** Сходство названий, при котором сделка без сверки суммы считается тем же заказчиком. */
+const SAME_CUSTOMER_SIMILARITY = 0.6;
+/** Сколько сделок может прийтись на договор: сумма ОП без НДС, плюс НДС 16% и допуск сверки. */
+const CONTRACT_AMOUNT_TOLERANCE = 1.16 * 1.25;
+
+function sharesCustomer(contract: RegisterContract, deal: CrmWonDeal): boolean {
+  const dealText = [deal.company, deal.title].filter(Boolean).join(" ");
+  if (hasConflictingEntityNumbers(contract.customer, dealText)) return false;
+  const similarity = Math.max(
+    calculateNameSimilarity(contract.customer, deal.title),
+    calculateNameSimilarity(contract.customer, deal.company)
+  );
+  return similarity >= SAME_CUSTOMER_SIMILARITY;
+}
+
+function sharesCustomerAndManager(
+  contract: RegisterContract,
+  deal: CrmWonDeal,
+  aliases?: Record<string, string>
+): boolean {
+  return managerMatches(contract.manager, deal.manager, aliases) && sharesCustomer(contract, deal);
+}
+
+export interface SettledUnmatched {
+  /** Сделки, которых в ОП нет. */
+  extra: CrmWonDeal[];
+  /** Сделки, чей договор уже в ОП, но учтён по другой сделке или на другого менеджера. */
+  repeats: Array<{ deal: CrmWonDeal; contract: RegisterContract }>;
+  /** Договоры ОП без сделки того же заказчика. */
+  missing: RegisterContract[];
+}
+
+/**
+ * Разбирает несопоставленное, которое ОП уже объясняет. Сделки по товарам одного договора
+ * (тот же заказчик и менеджер, вместе не дороже договора) считаются учтёнными. Сделка
+ * с суммой договора того же заказчика, уже учтённого по другой сделке или на другого
+ * менеджера, — возможный дубль. Договор, к которому есть сделка того же заказчика
+ * с другой суммой, не считается договором без сделки.
+ */
+export function settleUnmatched(
+  result: MatchCrmResult,
+  contracts: RegisterContract[],
+  aliases?: Record<string, string>
+): SettledUnmatched {
+  const budget = new Map(contracts.map((c) => [c, c.sale * CONTRACT_AMOUNT_TOLERANCE]));
+  for (const m of result.matched) budget.set(m.contract, (budget.get(m.contract) ?? 0) - m.deal.amount);
+  const extra: CrmWonDeal[] = [];
+  const repeats: SettledUnmatched["repeats"] = [];
+  for (const deal of result.extra) {
+    const part = contracts.find((c) => (budget.get(c) ?? 0) >= deal.amount && sharesCustomerAndManager(c, deal, aliases));
+    if (part) {
+      budget.set(part, (budget.get(part) ?? 0) - deal.amount);
+      continue;
+    }
+    const repeated = contracts.find((c) => checkAmountMatch(c.sale, deal.amount) && sharesCustomer(c, deal));
+    if (repeated) repeats.push({ deal, contract: repeated });
+    else extra.push(deal);
+  }
+  const missing = result.missing.filter((c) =>
+    !result.extra.some((d) => sharesCustomerAndManager(c, d, aliases)) && !repeats.some((r) => r.contract === c)
+  );
+  return { extra, repeats, missing };
+}
+
 function checkAmountMatch(contractSale: number, dealAmount: number): boolean {
   if (contractSale <= 0 || dealAmount <= 0) return false;
   const ratioVat = dealAmount / (contractSale * 1.16);
