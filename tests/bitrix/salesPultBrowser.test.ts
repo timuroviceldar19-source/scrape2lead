@@ -766,4 +766,19 @@ describe('OP contracts in the pult browser', () => {
       expect(errors).toEqual([]);
     } finally { await browser.close(); }
   });
+
+  it('shows a clean amount line when monthly contracts fall back to Bitrix', async () => {
+    const { fixture } = await import('../fixtures/sales-pult/contracts.js');
+    const { attachRegisterContracts } = await import('../../src/bitrix/salesPult/contracts.js');
+    const f=fixture(); attachRegisterContracts(f.payload,{error:'unavailable'},f.deals,f.aliases);
+    const browser=await chromium.launch({headless:true});
+    const page=await browser.newPage({viewport:{width:1440,height:1100}, reducedMotion:'reduce'});
+    try {
+      await page.setContent(renderPultHtml(f.payload));
+      const amount=(await page.locator('#month .hero-amt').innerText()).replace(/\s+/g,' ');
+      expect(amount).not.toMatch(/·\s*·/);
+      expect(amount).not.toContain('без НДС');
+      expect(amount).toContain('плана договоров');
+    } finally { await browser.close(); }
+  });
 });

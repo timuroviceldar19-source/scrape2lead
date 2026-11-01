@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { attachRegisterContracts } from "../../src/bitrix/salesPult/contracts.js";
 import { buildPultView } from "../../src/bitrix/salesPult/view.js";
 import { buildRegisterMonthSummary } from "../../src/bitrix/salesPult/register/history.js";
+import { buildRegisterView } from "../../src/bitrix/salesPult/register/buildView.js";
 
 import { fixture } from "../fixtures/sales-pult/contracts.js";
 describe('contracts from OP', () => {
@@ -70,5 +71,44 @@ describe('contracts from OP', () => {
     expect(buildPultView(f.payload).month.sourceLabel).toBe('реестр ОП за месяц недоступен, цифры по Битриксу');
     f.payload.closedMonth=false; attachRegisterContracts(f.payload,{error:'unavailable'},f.deals,f.aliases);
     expect(buildPultView(f.payload).month).toMatchObject({fact:2,sourceLabel:'реестр ОП недоступен, цифры по Битриксу'});
+  });
+
+  it('treats product lines and duplicates of an OP contract as already in OP', () => {
+    const f=fixture([{ id:'d4', title:'Альфа', amount:50, assignedById:'s', stageSemanticId:'S' }]);
+    f.payload.asOfDate='2026-10-29'; attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
+    const v=buildPultView(f.payload);
+    expect(v.month).toMatchObject({awaitingRegister:1,crmFact:3});
+    expect(v.signals.some(s=>s.text.includes('(d4)') && s.text.includes('нет в ОП'))).toBe(false);
+  });
+  it('does not call an OP contract missing in CRM when the manager has a deal for that customer', () => {
+    const f=fixture([{ id:'d5', title:'Дельта Омега Тау', amount:0, assignedById:'t', stageSemanticId:'S' }]);
+    const rows=f.rows.map(r=>r.customer==='Дельта'?{...r,customer:'Дельта Омега Сигма',type:'Госзакупки'}:r);
+    const register=buildRegisterView({fileName:'ОП тест.xlsx',asOf:'2026-10-28',month:'2026-10',rows,plans:{Алия:1000},missing:[],extraDealsCount:0});
+    f.payload.asOfDate='2026-10-29'; attachRegisterContracts(f.payload,register,f.deals,f.aliases);
+    const signals=buildPultView(f.payload).signals.map(s=>s.text);
+    expect(signals.some(t=>t.includes('Есть в ОП, нет сделки в Битриксе — Дельта'))).toBe(false);
+    expect(signals.some(t=>t.includes('(d5)') && t.includes('нет в ОП'))).toBe(false);
+    expect(signals.some(t=>t.includes('Сумма сделки 0 — Дельта Омега Тау'))).toBe(true);
+  });
+  it('does not flag B2B OP contracts as missing CRM deals', () => {
+    const f=fixture(); f.payload.asOfDate='2026-10-29';
+    attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
+    const signals=buildPultView(f.payload).signals.map(s=>s.text);
+    expect(signals.some(t=>t.includes('Есть в ОП, нет сделки в Битриксе — Дельта'))).toBe(false);
+    expect(signals.some(t=>t.includes('Есть в ОП, нет сделки в Битриксе — Эпсилон'))).toBe(true);
+  });
+  it('lists urgent signals before quiet reconciliation notes', () => {
+    const f=fixture(); f.payload.asOfDate='2026-10-29';
+    attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
+    const colors=buildPultView(f.payload).signals.map(s=>s.color);
+    expect(colors.indexOf('gray')).toBeGreaterThan(colors.lastIndexOf('red'));
+    expect(colors.indexOf('gray')).toBeGreaterThan(colors.lastIndexOf('yellow'));
+  });
+  it('says the new month OP file is not there yet instead of calling the register unavailable', () => {
+    const f=fixture(); f.payload.asOfDate='2026-11-02';
+    attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
+    const v=buildPultView(f.payload);
+    expect(v.month.sourceLabel).toBe('файла ОП за ноябрь ещё нет, цифры по Битриксу');
+    expect(v.periods.month.sales.totals.contracts.sub).toContain('файла ОП за ноябрь ещё нет');
   });
 });
