@@ -4,15 +4,15 @@ import type { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import type { StageTransition } from "../metrics.js";
 import { toAlmatyDate } from "../metrics.js";
 import type { UserProfileInfo } from "../collect.js";
-import type { RegisterView, RegisterHistoryPayload } from "./types.js";
+import type { RegisterView, RegisterHistoryPayload, RegisterContract, CrmWonDeal } from "./types.js";
 import {
   fetchLatestRegisterFromDisk,
   fetchRegisterFilesFromDisk,
   parseDateKeyFromFileName
 } from "./diskClient.js";
 import { parseRegisterExcel } from "./parseExcel.js";
-import { groupRegisterContracts, matchRegisterWithCrm } from "./matchCrm.js";
-import { fetchCrmWonDealsForRegister, fetchCrmWonDealsForMonths } from "./fetchCrmWon.js";
+import { groupRegisterContracts, matchRegisterWithCrm, type MatchCrmResult } from "./matchCrm.js";
+import { fetchCrmWonDealsForRegister, fetchCrmWonDealsForMonths, getNextMonth } from "./fetchCrmWon.js";
 import { buildRegisterView } from "./buildView.js";
 import {
   buildFullRegisterHistory,
@@ -67,6 +67,32 @@ export async function loadRegisterView(options: LoadRegisterOptions): Promise<Re
     view.history ??= cached.payload;
   }
   return view;
+}
+
+/**
+ * Пока нового файла ОП нет, последний файл — за прошлый месяц, а переходы пульта уже
+ * за новый. Такой файл сверяется со сделками своего месяца; договоры без пары ищутся
+ * и среди сделок, закрытых в следующем месяце (договор подписан в конце месяца,
+ * сделку закрыли позже). Лишними считаются только сделки самого месяца файла.
+ */
+async function matchPastMonthFile(
+  reader: ReadOnlyBitrixClient,
+  userProfiles: Map<string, UserProfileInfo> | undefined,
+  contractStages: string[] | undefined,
+  fileMonth: string,
+  contracts: RegisterContract[],
+  managerAliases: Record<string, string> | undefined
+): Promise<{ wonDeals: CrmWonDeal[]; matchResult: MatchCrmResult }> {
+  const byMonth = await fetchCrmWonDealsForMonths(reader, userProfiles || new Map(), [fileMonth], { contractStages });
+  const sameMonth = byMonth.get(fileMonth) || [];
+  const first = matchRegisterWithCrm(contracts, sameMonth, { managerAliases });
+  const used = new Set(first.matched.map((m) => m.deal.id));
+  const late = (byMonth.get(getNextMonth(fileMonth)) || []).filter((d) => !used.has(d.id));
+  const second = matchRegisterWithCrm(first.missing, late, { managerAliases });
+  return {
+    wonDeals: [...sameMonth, ...second.matched.map((m) => m.deal)],
+    matchResult: { matched: [...first.matched, ...second.matched], missing: second.missing, extra: first.extra }
+  };
 }
 
 async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<RegisterView> {
@@ -125,15 +151,24 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
     asOf = parsed.asOf || todayAlmaty;
     const contracts = groupRegisterContracts(parsed.rows);
 
-    const wonDeals = await fetchCrmWonDealsForRegister(
-      reader,
-      contractTransitions,
-      userProfiles
-    );
-
-    const matchResult = matchRegisterWithCrm(contracts, wonDeals, {
-      managerAliases
-    });
+    const fileMonth = parsed.month || todayAlmaty.slice(0, 7);
+    let wonDeals: CrmWonDeal[] | undefined;
+    let matchResult: MatchCrmResult | undefined;
+    if (fileMonth < todayAlmaty.slice(0, 7)) {
+      try {
+        ({ wonDeals, matchResult } = await matchPastMonthFile(
+          reader, userProfiles, contractStages, fileMonth, contracts, managerAliases
+        ));
+      } catch (err) {
+        console.warn(
+          `[Реестр] Сделки CRM за ${fileMonth} не загрузились, сверка по сделкам пульта: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    if (!wonDeals || !matchResult) {
+      wonDeals = await fetchCrmWonDealsForRegister(reader, contractTransitions, userProfiles);
+      matchResult = matchRegisterWithCrm(contracts, wonDeals, { managerAliases });
+    }
 
     // History handling
     const cachePath = historyCachePath || options.cachePath || DEFAULT_REGISTER_HISTORY_PATH;

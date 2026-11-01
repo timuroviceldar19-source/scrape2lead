@@ -24,8 +24,8 @@ async function writeRegister(dir: string, fileName: string, rows: Array<[string,
 
 function mockReader(history: Array<{ dealId: string; time: string }>) {
   const deals = [
-    { ID: "10", TITLE: "ТОО Синтетик Альфа", OPPORTUNITY: 174000, ASSIGNED_BY_ID: "7" },
-    { ID: "11", TITLE: "ТОО Синтетик Бета", OPPORTUNITY: 232000, ASSIGNED_BY_ID: "7" }
+    { ID: "10", TITLE: "ТОО Альфатех", OPPORTUNITY: 174000, ASSIGNED_BY_ID: "7" },
+    { ID: "11", TITLE: "ГУ Бетагрупп", OPPORTUNITY: 232000, ASSIGNED_BY_ID: "7" }
   ];
   return {
     listAllBatched: vi.fn(async (method: string) => method === "crm.stagehistory.list"
@@ -44,8 +44,8 @@ describe("register file month vs CRM wins", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reg-file-month-"));
     try {
       const filePath = await writeRegister(dir, "ОП 30.10.26.xlsx", [
-        ["2026-10-20", "ТОО Синтетик Альфа", 150000],
-        ["2026-10-30", "ТОО Синтетик Бета", 200000]
+        ["2026-10-20", "ТОО Альфатех", 150000],
+        ["2026-10-30", "ГУ Бетагрупп", 200000]
       ]);
       const reader = mockReader([
         { dealId: "10", time: "2026-10-20T10:00:00+05:00" },
@@ -73,7 +73,7 @@ describe("register file month vs CRM wins", () => {
   it("keeps using the pult's own transitions for the current month's file", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reg-file-month-"));
     try {
-      const filePath = await writeRegister(dir, "ОП 28.10.26.xlsx", [["2026-10-20", "ТОО Синтетик Альфа", 150000]]);
+      const filePath = await writeRegister(dir, "ОП 28.10.26.xlsx", [["2026-10-20", "ТОО Альфатех", 150000]]);
       const reader = mockReader([]);
       const view = await loadRegisterView({
         reader: reader as unknown as ReadOnlyBitrixClient,
