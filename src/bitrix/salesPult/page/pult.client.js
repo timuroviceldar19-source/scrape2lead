@@ -568,7 +568,7 @@
     const srcLabel = document.getElementById("srcLabel");
     const foot = document.getElementById("foot");
     if (tab === "ip" || tab === "kt") {
-      if (srcLabel) srcLabel.textContent = "госзакупки · ows.goszakup.gov.kz";
+      if (srcLabel) srcLabel.textContent = "госзакупки · zakup.gov.kz";
       if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
     } else {
       if (srcLabel) srcLabel.textContent = "CRM Битрикс24";

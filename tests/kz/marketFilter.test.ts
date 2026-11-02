@@ -4,7 +4,8 @@ import {
   classifyCode,
   cleanEntityName,
   getMethodName,
-  isExcludedStatus
+  isExcludedStatus,
+  requiresTextFilter
 } from "../../src/kz/market/config.js";
 import { filterContractUnits } from "../../src/kz/market/filterUnits.js";
 
@@ -27,12 +28,53 @@ describe("market config and classifyCode", () => {
     expect(m2).toEqual({ group: "ИП", kind: "Мультимедийные системы" });
   });
 
-  it("counts LCD panels (279020.100.*) in the IP market and fetches them by prefix", () => {
-    for (const code of ["279020.100.000000", "279020.100.000001", "279020.100.000012"]) {
-      expect(classifyCode(code, cfg)).toEqual({ group: "ИП", kind: "Жидкокристаллические панели" });
-    }
+  it("classifies LCD panels (279020.100.*) only when text contains interactive keywords", () => {
+    // ЖК-код и «интерактивная» в extra_description_ru -> «Интерактивные панели»
+    expect(
+      classifyCode("279020.100.000001", cfg, "Панель жидкокристаллическая (интерактивная)")
+    ).toEqual({ group: "ИП", kind: "Интерактивные панели" });
+
+    // ЖК-код с «интерактивті» -> попадает в «Интерактивные панели»
+    expect(
+      classifyCode("279020.100.000005", cfg, "Интерактивті сенсорлық панель")
+    ).toEqual({ group: "ИП", kind: "Интерактивные панели" });
+
+    // Английское interactive -> попадает
+    expect(
+      classifyCode("279020.100.000012", cfg, "Interactive display 75 inch")
+    ).toEqual({ group: "ИП", kind: "Интерактивные панели" });
+
+    // ЖК-код без этого слова -> не попадает в рынок
+    expect(
+      classifyCode("279020.100.000001", cfg, "Лед экран, размер модуля – 320×160 мм")
+    ).toBeNull();
+
+    // ЖК-код с пустым текстом -> не попадает
+    expect(classifyCode("279020.100.000001", cfg, "")).toBeNull();
+    expect(classifyCode("279020.100.000001", cfg)).toBeNull();
+
+    // 262030.100.000021 без текста -> как раньше
+    expect(classifyCode("262030.100.000021", cfg)).toEqual({
+      group: "ИП",
+      kind: "Интерактивные панели"
+    });
+
+    // Префикс в конфиге остаётся
     expect(cfg.groups["ИП"].prefixes).toContain("279020.100.");
-    expect(classifyCode("279020.200.000001", cfg)).toBeNull();
+  });
+
+  it("identifies codes that require text filtering based on config", () => {
+    // 279020.100.* has textPatterns defined
+    expect(requiresTextFilter("279020.100.000001", cfg)).toBe(true);
+    expect(requiresTextFilter("279020.100.000045", cfg)).toBe(true);
+
+    // Standard IP without textPatterns
+    expect(requiresTextFilter("262030.100.000021", cfg)).toBe(false);
+    expect(requiresTextFilter("262030.100.000043", cfg)).toBe(false);
+
+    // KT codes without textPatterns
+    expect(requiresTextFilter("262011.100.000001", cfg)).toBe(false);
+    expect(requiresTextFilter("262013.000.000011", cfg)).toBe(false);
   });
 
   it("classifies KT codes correctly", () => {
@@ -141,6 +183,61 @@ describe("filterContractUnits", () => {
     expect(units[0].qty).toBe(2);
     expect(units[0].us).toBe(true);
     expect(units[0].supplierName).toBe('ТОО "F3.kz"');
+  });
+
+  it("filters LCD units by plan item text: keeps interactive, drops others", () => {
+    const rawContracts = [
+      {
+        id: 101,
+        signDate: "2026-10-10T10:00:00",
+        refContractStatusId: 190,
+        faktTradeMethodsId: 60,
+        supplierBiin: "121212121212",
+        customerBin: "343434343434",
+        Supplier: { nameRu: "ТОО ТестПоставщик" },
+        Customer: { nameRu: "Школа Тест" },
+        ContractUnits: [
+          {
+            // Kept: LCD with interactive keyword in extraDescRu
+            refEnstruCode: ["279020.100.000001"],
+            quantity: 1,
+            itemPrice: 750000,
+            totalSum: 750000,
+            Plans: {
+              nameRu: "Панель жидкокристаллическая",
+              extraDescRu: "Панель интерактивная 75 дюймов",
+              extraDescKz: ""
+            }
+          },
+          {
+            // Dropped: LCD without interactive keyword
+            refEnstruCode: ["279020.100.000002"],
+            quantity: 2,
+            itemPrice: 500000,
+            totalSum: 1000000,
+            Plans: {
+              nameRu: "Панель жидкокристаллическая",
+              extraDescRu: "LED экран модульный",
+              extraDescKz: ""
+            }
+          },
+          {
+            // Dropped: LCD with empty text
+            refEnstruCode: ["279020.100.000003"],
+            quantity: 1,
+            itemPrice: 600000,
+            totalSum: 600000
+          }
+        ]
+      }
+    ];
+
+    const units = filterContractUnits(rawContracts, cfg);
+    expect(units).toHaveLength(1);
+    expect(units[0].id).toBe(101);
+    expect(units[0].code).toBe("279020.100.000001");
+    expect(units[0].kind).toBe("Интерактивные панели");
+    expect(units[0].sum).toBe(750000);
   });
 });
 

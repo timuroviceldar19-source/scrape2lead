@@ -122,6 +122,52 @@ describe("fetchZakupMarketUnits", () => {
     expect(calls.filter((c) => c.includes("/subjects/"))).toEqual(["/api/core/api/public/contracts/6/subjects/"]);
   });
 
+  it("takes line-item text from plan_item: keeps interactive LCD, drops non-interactive LCD", async () => {
+    const lcdContract = contract({ id: 8, external_id: 26000008, enstru_code: ["279020.100.000001"] });
+    const { fetchFn } = fakeSite(
+      { "279020.100.": [lcdContract] },
+      {
+        8: [
+          {
+            external_id: 1,
+            item_price_without_vat: 700_000,
+            quantity: 1,
+            contract_price_without_vat: 700_000,
+            plan_item: {
+              enstru: { code: "279020.100.000001" },
+              name_ru: "Панель жидкокристаллическая",
+              extra_description_ru: "Панель интерактивная 75 дюймов"
+            }
+          },
+          {
+            external_id: 2,
+            item_price_without_vat: 800_000,
+            quantity: 1,
+            contract_price_without_vat: 800_000,
+            plan_item: {
+              enstru: { code: "279020.100.000001" },
+              name_ru: "Панель жидкокристаллическая",
+              extra_description_ru: "Лед экран"
+            }
+          }
+        ]
+      },
+      { 8: detail([54283, "061140003942"], [6266, "990340004844"]) }
+    );
+    const units = await fetchZakupMarketUnits({
+      fromDate: "2026-10-01",
+      toDate: "2026-10-31",
+      cfg,
+      fetchFn,
+      pauseMs: 0,
+      retryDelayMs: 0,
+      orgCachePath: tmpOrgCache()
+    });
+    expect(units).toHaveLength(1);
+    expect(units[0].code).toBe("279020.100.000001");
+    expect(units[0].kind).toBe("Интерактивные панели");
+  });
+
   it("asks each contract once even when it matches several prefixes, and reuses cached BINs", async () => {
     const pc = contract({ id: 7, external_id: 26000007, enstru_code: ["262013.000.000011", "262040.000.000267"] });
     const orgCachePath = tmpOrgCache();

@@ -4,7 +4,8 @@ import {
   isExcludedStatus,
   getMethodName,
   cleanEntityName,
-  loadMarketConfig
+  loadMarketConfig,
+  requiresTextFilter
 } from "./config.js";
 
 export interface RawContractUnit {
@@ -12,6 +13,33 @@ export interface RawContractUnit {
   quantity?: number | null;
   itemPrice?: number | null;
   totalSum?: number | null;
+  text?: string | null;
+  plan_item?: {
+    name_ru?: string | null;
+    extra_description_ru?: string | null;
+    extra_description_kk?: string | null;
+  } | null;
+  Plans?: {
+    nameRu?: string | null;
+    extraDescRu?: string | null;
+    extraDescKz?: string | null;
+  } | null;
+}
+
+export function extractUnitText(u: RawContractUnit): string {
+  if (u.text) return u.text;
+  const parts: (string | null | undefined)[] = [];
+  if (u.plan_item) {
+    parts.push(u.plan_item.name_ru, u.plan_item.extra_description_ru, u.plan_item.extra_description_kk);
+  }
+  if (u.Plans) {
+    parts.push(u.Plans.nameRu, u.Plans.extraDescRu, u.Plans.extraDescKz);
+  }
+  return parts.filter((v): v is string => Boolean(v && typeof v === "string" && v.trim())).join(" ");
+}
+
+export interface FilterContractUnitsOptions {
+  onSkippedLcdWithoutText?: (count: number) => void;
 }
 
 export interface RawContractItem {
@@ -29,7 +57,8 @@ export interface RawContractItem {
 
 export function filterContractUnits(
   contracts: RawContractItem[],
-  cfg: MarketConfig = loadMarketConfig()
+  cfg: MarketConfig = loadMarketConfig(),
+  options?: FilterContractUnitsOptions
 ): MarketUnit[] {
   const units: MarketUnit[] = [];
   const ourBinsSet = new Set<string>();
@@ -62,17 +91,25 @@ export function filterContractUnits(
         ? [u.refEnstruCode]
         : [];
 
+      const unitText = extractUnitText(u);
       let classification: { group: "ИП" | "КТ"; kind: string } | null = null;
       let matchedCode = "";
       for (const code of codes) {
-        classification = classifyCode(code, cfg);
+        classification = classifyCode(code, cfg, unitText);
         if (classification) {
           matchedCode = code;
           break;
         }
       }
 
-      if (!classification) continue;
+      if (!classification) {
+        const needsText = codes.some((code) => requiresTextFilter(code, cfg));
+        const price = Number(u.itemPrice ?? 0);
+        if (needsText && !unitText.trim() && price >= cfg.minUnitPrice) {
+          options?.onSkippedLcdWithoutText?.(1);
+        }
+        continue;
+      }
 
       const price = Number(u.itemPrice ?? 0);
       if (price < cfg.minUnitPrice) continue;
