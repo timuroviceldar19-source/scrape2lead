@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { mapWithConcurrency, zakupGet, zakupListAll, type ZakupApiOptions } from "../zakupPublicApi.js";
-import { classifyCode, isExcludedStatus, loadMarketConfig } from "./config.js";
+import { classifyCode, isExcludedStatus, loadMarketConfig, matchesMarketCode } from "./config.js";
 import { filterContractUnits, type RawContractItem, type RawContractUnit } from "./filterUnits.js";
 import type { MarketConfig, MarketUnit } from "./types.js";
 
@@ -40,7 +40,12 @@ interface ZakupSubject {
   quantity?: number | null;
   contract_price_without_vat?: number | null;
   purchase_total_price_without_vat?: number | null;
-  plan_item?: { enstru?: { code?: string | null } | null } | null;
+  plan_item?: {
+    enstru?: { code?: string | null } | null;
+    name_ru?: string | null;
+    extra_description_ru?: string | null;
+    extra_description_kk?: string | null;
+  } | null;
 }
 
 interface ZakupContractDetail {
@@ -131,11 +136,16 @@ function toRawContract(
     const code = subjectCode(s, contractCodes);
     const price = Number(s.item_price_without_vat ?? 0);
     const qty = Number(s.quantity ?? 0);
+    const pi = s.plan_item;
+    const text = [pi?.name_ru, pi?.extra_description_ru, pi?.extra_description_kk]
+      .filter((v): v is string => Boolean(v && typeof v === "string" && v.trim()))
+      .join(" ");
     return {
       refEnstruCode: code ?? undefined,
       quantity: qty,
       itemPrice: price,
-      totalSum: s.contract_price_without_vat ?? s.purchase_total_price_without_vat ?? price * qty
+      totalSum: s.contract_price_without_vat ?? s.purchase_total_price_without_vat ?? price * qty,
+      text
     };
   });
   return {
@@ -182,7 +192,7 @@ export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): P
     const egz = c.status_id != null ? statusEgz.get(c.status_id) : undefined;
     if (egz === undefined || isExcludedStatus(egz, cfg)) return false;
     const codes = c.enstru_code ?? [];
-    return codes.length === 0 || codes.some((code) => classifyCode(code, cfg));
+    return codes.length === 0 || codes.some((code) => matchesMarketCode(code, cfg));
   });
 
   const orgs = loadOrgCache(orgCachePath);
@@ -197,7 +207,11 @@ export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): P
     const contractCodes = c.enstru_code ?? [];
     const matches = subjects.some((s) => {
       const code = subjectCode(s, contractCodes);
-      return code !== null && classifyCode(code, cfg) !== null;
+      const pi = s.plan_item;
+      const text = [pi?.name_ru, pi?.extra_description_ru, pi?.extra_description_kk]
+        .filter((v): v is string => Boolean(v && typeof v === "string" && v.trim()))
+        .join(" ");
+      return code !== null && classifyCode(code, cfg, text) !== null;
     });
     if (!matches) return null;
     if (!orgs[String(c.supplier_organization_id)] || !orgs[String(c.customer_organization_id)]) {

@@ -10,7 +10,10 @@ const CONTRACT_QUERY = `query($d: [String], $after: Int) {
   Contract(filter: { signDate: $d }, limit: 200, after: $after) {
     id signDate contractSum faktTradeMethodsId refContractStatusId supplierBiin customerBin
     Supplier { nameRu } Customer { nameRu }
-    ContractUnits { refEnstruCode quantity itemPrice totalSum }
+    ContractUnits {
+      refEnstruCode quantity itemPrice totalSum
+      Plans { nameRu extraDescRu extraDescKz }
+    }
   }
 }`;
 
@@ -118,6 +121,7 @@ export async function fetchMarketContracts(options: FetchMarketOptions): Promise
   let pages = 0;
   let seenCount = 0;
   let shortRetries = 0;
+  let skippedLcdWithoutDesc = 0;
 
   for (;;) {
     const pageRes = await goszakupGraphqlPage<RawContractItem>(CONTRACT_QUERY, { d: dateFilter, after }, "Contract", pageOptions);
@@ -142,7 +146,13 @@ export async function fetchMarketContracts(options: FetchMarketOptions): Promise
     pages++;
     seenCount = got;
     shortRetries = 0;
-    allUnits.push(...filterContractUnits(pageRes.items, cfg));
+    allUnits.push(
+      ...filterContractUnits(pageRes.items, cfg, {
+        onSkippedLcdWithoutText: (count) => {
+          skippedLcdWithoutDesc += count;
+        }
+      })
+    );
 
     if (onProgress && (pages % 10 === 0 || !pageRes.hasNextPage)) {
       onProgress(pages, seenCount, allUnits.length);
@@ -150,6 +160,10 @@ export async function fetchMarketContracts(options: FetchMarketOptions): Promise
 
     if (!pageRes.hasNextPage) break;
     after = pageRes.lastId ?? undefined;
+  }
+
+  if (skippedLcdWithoutDesc > 0) {
+    console.log(`[Рынок] ows: ${skippedLcdWithoutDesc} позиций ЖК без описания пропущено`);
   }
 
   return allUnits;

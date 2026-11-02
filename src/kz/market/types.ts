@@ -1,6 +1,7 @@
 export interface MarketKindConfig {
   name: string;
   patterns: string[];
+  textPatterns?: string[];
 }
 
 export interface MarketGroupConfig {

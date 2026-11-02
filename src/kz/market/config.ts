@@ -13,8 +13,15 @@ export function marketConfigKey(cfg: MarketConfig): string {
   return crypto.createHash("sha256").update(rules).digest("hex").slice(0, 16);
 }
 
+interface CompiledMatcher {
+  regex: RegExp;
+  group: "ИП" | "КТ";
+  kind: string;
+  textPatterns?: string[];
+}
+
 let cachedConfig: MarketConfig | null = null;
-let compiledMatchers: Array<{ regex: RegExp; group: "ИП" | "КТ"; kind: string }> | null = null;
+const matchersCache = new WeakMap<MarketConfig, CompiledMatcher[]>();
 
 export function loadMarketConfig(customPath?: string): MarketConfig {
   if (!customPath && cachedConfig) return cachedConfig;
@@ -60,9 +67,10 @@ export function loadMarketConfig(customPath?: string): MarketConfig {
   return cfg;
 }
 
-function getCompiledMatchers(cfg: MarketConfig) {
-  if (compiledMatchers) return compiledMatchers;
-  const list: Array<{ regex: RegExp; group: "ИП" | "КТ"; kind: string }> = [];
+function getCompiledMatchers(cfg: MarketConfig): CompiledMatcher[] {
+  const cached = matchersCache.get(cfg);
+  if (cached) return cached;
+  const list: CompiledMatcher[] = [];
 
   for (const [groupKey, groupConf] of Object.entries(cfg.groups) as [
     "ИП" | "КТ",
@@ -73,26 +81,41 @@ function getCompiledMatchers(cfg: MarketConfig) {
         list.push({
           regex: new RegExp(pattern),
           group: groupKey,
-          kind: kind.name
+          kind: kind.name,
+          textPatterns: kind.textPatterns
         });
       }
     }
   }
-  compiledMatchers = list;
+  matchersCache.set(cfg, list);
   return list;
 }
 
 export function classifyCode(
   code: string,
-  cfg: MarketConfig = loadMarketConfig()
+  cfg: MarketConfig = loadMarketConfig(),
+  text?: string | null
 ): { group: "ИП" | "КТ"; kind: string } | null {
   const matchers = getCompiledMatchers(cfg);
   for (const m of matchers) {
     if (m.regex.test(code)) {
+      if (m.textPatterns && m.textPatterns.length > 0) {
+        if (!text || !text.trim()) continue;
+        const matched = m.textPatterns.some((p) => new RegExp(p, "i").test(text));
+        if (!matched) continue;
+      }
       return { group: m.group, kind: m.kind };
     }
   }
   return null;
+}
+
+export function matchesMarketCode(
+  code: string,
+  cfg: MarketConfig = loadMarketConfig()
+): boolean {
+  const matchers = getCompiledMatchers(cfg);
+  return matchers.some((m) => m.regex.test(code));
 }
 
 export function getMethodName(methodId: number | string, cfg: MarketConfig = loadMarketConfig()): string {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fetchMarketContracts } from "../../src/kz/market/fetchMarket.js";
 import { loadMarketConfig } from "../../src/kz/market/config.js";
 
@@ -80,5 +80,44 @@ describe("fetchMarketContracts (ows)", () => {
 
     expect(units).toHaveLength(3);
     expect(fetchFn.afters).toEqual([undefined, 20]);
+  });
+
+  it("skips LCD units without text and logs one warning line", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const customContract = {
+      id: 99,
+      signDate: "2026-02-10T10:00:00",
+      contractSum: 2_000_000,
+      faktTradeMethodsId: 60,
+      refContractStatusId: 190,
+      supplierBiin: "111111111111",
+      customerBin: "222222222222",
+      Supplier: { nameRu: "ТОО Тест" },
+      Customer: { nameRu: "Школа 1" },
+      ContractUnits: [
+        // LCD without text -> skipped
+        { refEnstruCode: "279020.100.000001", quantity: 1, itemPrice: 700_000, totalSum: 700_000, Plans: null },
+        // LCD with interactive text -> kept
+        {
+          refEnstruCode: "279020.100.000002",
+          quantity: 1,
+          itemPrice: 800_000,
+          totalSum: 800_000,
+          Plans: { nameRu: "Панель", extraDescRu: "Интерактивная панель 75" }
+        }
+      ]
+    };
+    const body = {
+      data: { Contract: [customContract] },
+      extensions: { pageInfo: { hasNextPage: false, lastId: 99, totalCount: 1 } }
+    };
+    const fetchFn = fakeFetch([new Response(JSON.stringify(body), { status: 200 })]);
+
+    const units = await fetchMarketContracts({ ...BASE, fetchFn });
+    expect(units).toHaveLength(1);
+    expect(units[0].code).toBe("279020.100.000002");
+    expect(units[0].kind).toBe("Интерактивные панели");
+    expect(logSpy).toHaveBeenCalledWith("[Рынок] ows: 1 позиций ЖК без описания пропущено");
+    logSpy.mockRestore();
   });
 });
