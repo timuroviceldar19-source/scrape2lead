@@ -118,6 +118,17 @@ export function matchesMarketCode(
   return matchers.some((m) => m.regex.test(code));
 }
 
+/**
+ * Returns true if the code matches a market kind that requires text pattern matching.
+ */
+export function requiresTextFilter(
+  code: string,
+  cfg: MarketConfig = loadMarketConfig()
+): boolean {
+  const matchers = getCompiledMatchers(cfg);
+  return matchers.some((m) => m.regex.test(code) && Boolean(m.textPatterns && m.textPatterns.length > 0));
+}
+
 export function getMethodName(methodId: number | string, cfg: MarketConfig = loadMarketConfig()): string {
   const strId = String(methodId);
   return cfg.methods[strId] ?? `Способ ${methodId}`;

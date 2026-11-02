@@ -4,7 +4,8 @@ import {
   isExcludedStatus,
   getMethodName,
   cleanEntityName,
-  loadMarketConfig
+  loadMarketConfig,
+  requiresTextFilter
 } from "./config.js";
 
 export interface RawContractUnit {
@@ -102,9 +103,9 @@ export function filterContractUnits(
       }
 
       if (!classification) {
-        const isLcd = codes.some((code) => /^279020\.100\./.test(code));
+        const needsText = codes.some((code) => requiresTextFilter(code, cfg));
         const price = Number(u.itemPrice ?? 0);
-        if (isLcd && !unitText.trim() && price >= cfg.minUnitPrice) {
+        if (needsText && !unitText.trim() && price >= cfg.minUnitPrice) {
           options?.onSkippedLcdWithoutText?.(1);
         }
         continue;

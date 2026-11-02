@@ -4,7 +4,8 @@ import {
   classifyCode,
   cleanEntityName,
   getMethodName,
-  isExcludedStatus
+  isExcludedStatus,
+  requiresTextFilter
 } from "../../src/kz/market/config.js";
 import { filterContractUnits } from "../../src/kz/market/filterUnits.js";
 
@@ -60,6 +61,20 @@ describe("market config and classifyCode", () => {
 
     // Префикс в конфиге остаётся
     expect(cfg.groups["ИП"].prefixes).toContain("279020.100.");
+  });
+
+  it("identifies codes that require text filtering based on config", () => {
+    // 279020.100.* has textPatterns defined
+    expect(requiresTextFilter("279020.100.000001", cfg)).toBe(true);
+    expect(requiresTextFilter("279020.100.000045", cfg)).toBe(true);
+
+    // Standard IP without textPatterns
+    expect(requiresTextFilter("262030.100.000021", cfg)).toBe(false);
+    expect(requiresTextFilter("262030.100.000043", cfg)).toBe(false);
+
+    // KT codes without textPatterns
+    expect(requiresTextFilter("262011.100.000001", cfg)).toBe(false);
+    expect(requiresTextFilter("262013.000.000011", cfg)).toBe(false);
   });
 
   it("classifies KT codes correctly", () => {

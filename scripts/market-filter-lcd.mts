@@ -2,15 +2,17 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { goszakupGraphqlPage } from "../src/kz/goszakupGraphql.js";
 import { classifyCode, loadMarketConfig, marketConfigKey } from "../src/kz/market/config.js";
 import { dedupeSubjects } from "../src/kz/market/fetchZakupMarket.js";
-import type { MarketUnit } from "../src/kz/market/types.js";
+import type { MarketConfig, MarketUnit } from "../src/kz/market/types.js";
 import { mapWithConcurrency, zakupGet, zakupListAll } from "../src/kz/zakupPublicApi.js";
 
 const LCD_PREFIX = "279020.100.";
 const DEFAULT_IN_PATH = "tmp/market-lcd/in/units-2026.json";
 const DEFAULT_OUT_DIR = "tmp/market-lcd";
-const CACHE_FILE_NAME = ".cache-zakup-subjects.json";
+const ZAKUP_CACHE_FILE_NAME = ".cache-zakup-subjects.json";
+const OWS_CACHE_FILE_NAME = ".cache-ows-contracts.json";
 
 interface ZakupContractRow {
   id: number;
@@ -19,7 +21,7 @@ interface ZakupContractRow {
   enstru_code?: string[] | null;
 }
 
-interface ZakupSubjectItem {
+export interface ZakupSubjectItem {
   id?: number;
   external_id?: number | string | null;
   timestamp?: number | null;
@@ -40,7 +42,21 @@ interface ZakupSubjectItem {
   } | null;
 }
 
-interface MonthSummary {
+export interface OwsContractUnit {
+  refEnstruCode?: string | string[] | null;
+  Plans?: {
+    nameRu?: string | null;
+    extraDescRu?: string | null;
+    extraDescKz?: string | null;
+  } | null;
+}
+
+export interface OwsContractRow {
+  id: number;
+  ContractUnits?: OwsContractUnit[] | null;
+}
+
+export interface MonthSummary {
   month: string;
   ipSumBefore: number;
   ipCountBefore: number;
@@ -50,21 +66,58 @@ interface MonthSummary {
   lcdTotalCount: number;
   lcdKeptSum: number;
   lcdKeptCount: number;
+  lcdKeptZakupCount: number;
+  lcdKeptOwsCount: number;
   lcdRemovedSum: number;
   lcdRemovedCount: number;
+  lcdNoTextBothCount: number;
   contractsTotal: number;
   contractsFound: number;
   contractsNotFound: number;
+  contractsNotFoundBoth: number;
 }
 
-interface ScriptSummary {
+export interface ScriptSummary {
   updatedAt: string;
   configKey: string;
   months: MonthSummary[];
   total: MonthSummary;
 }
 
-export function parseArgs(rawArgs: string[] = process.argv.slice(2)): { inPath: string; outDir: string; write: boolean; noCache: boolean } {
+export interface FilterLcdUnitsInput {
+  units: MarketUnit[];
+  cfg: MarketConfig;
+  zakupSubjectsByOwsId: Map<number, ZakupSubjectItem[]>;
+  owsContractsById: Map<number, OwsContractRow>;
+  updatedAt?: string;
+}
+
+export interface OctoberRow {
+  date: string;
+  supplier: string;
+  sum: number;
+  text: string;
+  code: string;
+  id: number;
+}
+
+export interface OctoberRemovedRow extends OctoberRow {
+  reason: string;
+}
+
+export interface FilterLcdUnitsResult {
+  finalUnits: MarketUnit[];
+  scriptSummary: ScriptSummary;
+  octoberKept: OctoberRow[];
+  octoberRemoved: OctoberRemovedRow[];
+}
+
+export function parseArgs(rawArgs: string[] = process.argv.slice(2)): {
+  inPath: string;
+  outDir: string;
+  write: boolean;
+  noCache: boolean;
+} {
   const args = rawArgs;
   let inPath = DEFAULT_IN_PATH;
   let outDir = DEFAULT_OUT_DIR;
@@ -93,7 +146,7 @@ export function getMonthDates(month: string): { from: string; to: string } {
   return { from, to };
 }
 
-function loadSubjectCache(cachePath: string): Record<string, ZakupSubjectItem[]> {
+function loadJsonCache<T>(cachePath: string): Record<string, T> {
   try {
     if (fs.existsSync(cachePath)) {
       return JSON.parse(fs.readFileSync(cachePath, "utf8"));
@@ -104,7 +157,7 @@ function loadSubjectCache(cachePath: string): Record<string, ZakupSubjectItem[]>
   return {};
 }
 
-function saveSubjectCache(cachePath: string, cache: Record<string, ZakupSubjectItem[]>): void {
+function saveJsonCache<T>(cachePath: string, cache: Record<string, T>): void {
   try {
     fs.mkdirSync(path.dirname(cachePath), { recursive: true });
     fs.writeFileSync(cachePath, JSON.stringify(cache), "utf8");
@@ -118,7 +171,7 @@ async function fetchAllLcdSubjectsFromZakup(
   cachePath: string,
   noCache: boolean
 ): Promise<Map<number, ZakupSubjectItem[]>> {
-  const cache = noCache ? {} : loadSubjectCache(cachePath);
+  const cache = noCache ? {} : loadJsonCache<ZakupSubjectItem[]>(cachePath);
   const subjectsByOwsId = new Map<number, ZakupSubjectItem[]>();
 
   // Populate from cache first
@@ -128,6 +181,10 @@ async function fetchAllLcdSubjectsFromZakup(
   }
 
   console.log(`[Фильтр ЖК] В кэше уже есть субъекты для ${subjectsByOwsId.size} договоров ows`);
+
+  if (!noCache && subjectsByOwsId.size > 0) {
+    return subjectsByOwsId;
+  }
 
   // Fetch missing months/contracts
   const contractsToFetchSubjects: ZakupContractRow[] = [];
@@ -192,8 +249,67 @@ async function fetchAllLcdSubjectsFromZakup(
     }
   });
 
-  saveSubjectCache(cachePath, cache);
+  saveJsonCache(cachePath, cache);
   return subjectsByOwsId;
+}
+
+export async function fetchMissingContractsFromOws(
+  contractIds: number[],
+  cachePath: string,
+  noCache: boolean,
+  token?: string
+): Promise<Map<number, OwsContractRow>> {
+  const cache = noCache ? {} : loadJsonCache<OwsContractRow>(cachePath);
+  const owsContractsById = new Map<number, OwsContractRow>();
+
+  for (const [key, c] of Object.entries(cache)) {
+    const id = Number(key);
+    if (Number.isFinite(id)) owsContractsById.set(id, c);
+  }
+
+  const missingIds = contractIds.filter((id) => !owsContractsById.has(id));
+  if (missingIds.length === 0) {
+    console.log(`[Фильтр ЖК] Все ${contractIds.length} договоров для ows уже в кэше`);
+    return owsContractsById;
+  }
+
+  if (!token) {
+    throw new Error("GOSZAKUP_TOKEN is required in .env to fetch contracts from ows.goszakup.gov.kz");
+  }
+
+  console.log(`[Фильтр ЖК] Запрос ${missingIds.length} договоров из ows (пачками по 50)...`);
+  const query = `query($ids: [Int]) {
+    Contract(filter: { id: $ids }, limit: 50) {
+      id
+      ContractUnits {
+        refEnstruCode
+        Plans {
+          nameRu
+          extraDescRu
+          extraDescKz
+        }
+      }
+    }
+  }`;
+
+  for (let i = 0; i < missingIds.length; i += 50) {
+    const chunk = missingIds.slice(i, i + 50);
+    const res = await goszakupGraphqlPage<OwsContractRow>(
+      query,
+      { ids: chunk },
+      "Contract",
+      { token }
+    );
+    for (const c of res.items) {
+      owsContractsById.set(c.id, c);
+      cache[String(c.id)] = c;
+    }
+    const done = Math.min(i + 50, missingIds.length);
+    console.log(`[Фильтр ЖК] Загружено из ows: ${done}/${missingIds.length}`);
+  }
+
+  saveJsonCache(cachePath, cache);
+  return owsContractsById;
 }
 
 export function findBestSubject(subs: ZakupSubjectItem[], u: MarketUnit): ZakupSubjectItem | null {
@@ -220,33 +336,74 @@ export function findBestSubject(subs: ZakupSubjectItem[], u: MarketUnit): ZakupS
   return candidates[0];
 }
 
-async function main(): Promise<void> {
-  const { inPath, outDir, write, noCache } = parseArgs();
-  const cfg = loadMarketConfig();
-  const newConfigKey = marketConfigKey(cfg);
+export function extractZakupText(
+  subs: ZakupSubjectItem[] | undefined,
+  u: MarketUnit
+): { text: string; bestSubject: ZakupSubjectItem | null } {
+  if (!subs || subs.length === 0) return { text: "", bestSubject: null };
+  const best = findBestSubject(subs, u);
+  if (!best) return { text: "", bestSubject: null };
+  const pi = best.plan_item;
+  const text = [pi?.name_ru, pi?.extra_description_ru, pi?.extra_description_kk]
+    .filter((v): v is string => Boolean(v && typeof v === "string" && v.trim()))
+    .join(" ");
+  return { text, bestSubject: best };
+}
 
-  console.log(`[Фильтр ЖК] Чтение ${inPath}...`);
-  if (!fs.existsSync(inPath)) {
-    throw new Error(`Файл не найден: ${inPath}. Скачайте его через: gh release download market-seed --pattern units-2026.json --dir tmp/market-lcd/in`);
+export function extractOwsText(
+  owsContract: OwsContractRow | undefined,
+  u: MarketUnit
+): { text: string; codeMatched: boolean; matchedUnit: OwsContractUnit | null } {
+  if (!owsContract || !owsContract.ContractUnits || owsContract.ContractUnits.length === 0) {
+    return { text: "", codeMatched: false, matchedUnit: null };
   }
 
-  const rawJson = JSON.parse(fs.readFileSync(inPath, "utf8"));
-  const existingUnits: MarketUnit[] = Array.isArray(rawJson) ? rawJson : rawJson.units ?? [];
-  const completeMonths: string[] = Array.isArray(rawJson.completeMonths) ? rawJson.completeMonths : [];
-  const origUpdatedAt: string = rawJson.updatedAt || new Date().toISOString().slice(0, 10);
+  let unit = u.unitIndex != null ? owsContract.ContractUnits[u.unitIndex] : undefined;
+  let codeMatched = false;
 
-  console.log(`[Фильтр ЖК] Загружено позиций: ${existingUnits.length}, месяцев: ${completeMonths.length}`);
+  if (unit) {
+    const codes = Array.isArray(unit.refEnstruCode)
+      ? unit.refEnstruCode
+      : unit.refEnstruCode
+      ? [unit.refEnstruCode]
+      : [];
+    codeMatched = codes.includes(u.code);
+  }
 
-  const lcdUnits = existingUnits.filter((u) => u.code && u.code.startsWith(LCD_PREFIX));
-  console.log(`[Фильтр ЖК] ЖК-позиций (код ${LCD_PREFIX}*): ${lcdUnits.length}`);
+  if (!codeMatched) {
+    const fallbackUnit = owsContract.ContractUnits.find((cu) => {
+      const codes = Array.isArray(cu.refEnstruCode)
+        ? cu.refEnstruCode
+        : cu.refEnstruCode
+        ? [cu.refEnstruCode]
+        : [];
+      return codes.includes(u.code);
+    });
+    if (fallbackUnit) {
+      unit = fallbackUnit;
+      codeMatched = true;
+    }
+  }
 
+  if (!codeMatched || !unit) {
+    return { text: "", codeMatched: false, matchedUnit: null };
+  }
+
+  const p = unit.Plans;
+  const text = [p?.nameRu, p?.extraDescRu, p?.extraDescKz]
+    .filter((v): v is string => Boolean(v && typeof v === "string" && v.trim()))
+    .join(" ");
+
+  return { text, codeMatched: true, matchedUnit: unit };
+}
+
+export function filterLcdUnits(input: FilterLcdUnitsInput): FilterLcdUnitsResult {
+  const { units, cfg, zakupSubjectsByOwsId, owsContractsById } = input;
+  const configKey = marketConfigKey(cfg);
+
+  const lcdUnits = units.filter((u) => u.code && u.code.startsWith(LCD_PREFIX));
   const uniqueMonths = [...new Set(lcdUnits.map((u) => u.month))].sort();
-  console.log(`[Фильтр ЖК] Месяцы ЖК: ${uniqueMonths.join(", ")}`);
 
-  const cachePath = path.join(outDir, CACHE_FILE_NAME);
-  const subjectsByOwsId = await fetchAllLcdSubjectsFromZakup(uniqueMonths, cachePath, noCache);
-
-  // Stats tracking by month
   const monthMap = new Map<
     string,
     {
@@ -254,9 +411,13 @@ async function main(): Promise<void> {
       ipAfter: { sum: number; count: number };
       lcdTotal: { sum: number; count: number };
       lcdKept: { sum: number; count: number };
+      lcdKeptZakupCount: number;
+      lcdKeptOwsCount: number;
       lcdRemoved: { sum: number; count: number };
+      lcdNoTextBothCount: number;
       contractsInFile: Set<number>;
-      contractsFound: Set<number>;
+      contractsFoundZakup: Set<number>;
+      contractsFoundAnywhere: Set<number>;
     }
   >();
 
@@ -266,14 +427,17 @@ async function main(): Promise<void> {
       ipAfter: { sum: 0, count: 0 },
       lcdTotal: { sum: 0, count: 0 },
       lcdKept: { sum: 0, count: 0 },
+      lcdKeptZakupCount: 0,
+      lcdKeptOwsCount: 0,
       lcdRemoved: { sum: 0, count: 0 },
+      lcdNoTextBothCount: 0,
       contractsInFile: new Set<number>(),
-      contractsFound: new Set<number>()
+      contractsFoundZakup: new Set<number>(),
+      contractsFoundAnywhere: new Set<number>()
     });
   }
 
-  // Pre-calculate IP before
-  for (const u of existingUnits) {
+  for (const u of units) {
     if (u.group === "ИП" && monthMap.has(u.month)) {
       const stats = monthMap.get(u.month)!;
       stats.ipBefore.sum += u.sum;
@@ -281,13 +445,11 @@ async function main(): Promise<void> {
     }
   }
 
-  // Track October details
-  const octoberKept: Array<{ date: string; supplier: string; sum: number; text: string; code: string; id: number }> = [];
-  const octoberRemoved: Array<{ date: string; supplier: string; sum: number; text: string; code: string; id: number; reason: string }> = [];
-
+  const octoberKept: OctoberRow[] = [];
+  const octoberRemoved: OctoberRemovedRow[] = [];
   const finalUnits: MarketUnit[] = [];
 
-  for (const u of existingUnits) {
+  for (const u of units) {
     const isLcd = u.code && u.code.startsWith(LCD_PREFIX);
     if (!isLcd) {
       finalUnits.push(u);
@@ -306,67 +468,100 @@ async function main(): Promise<void> {
       stats.contractsInFile.add(u.id);
     }
 
-    const subs = subjectsByOwsId.get(u.id);
+    // Source 1: Zakup
+    const subs = zakupSubjectsByOwsId.get(u.id);
+    const foundOnZakup = Boolean(subs && subs.length > 0);
+    if (foundOnZakup && stats) {
+      stats.contractsFoundZakup.add(u.id);
+      stats.contractsFoundAnywhere.add(u.id);
+    }
+    const { text: zakupText } = extractZakupText(subs, u);
+
+    // Source 2: Ows
+    const owsContract = owsContractsById.get(u.id);
+    const foundOnOws = Boolean(owsContract);
+    if (foundOnOws && stats) {
+      stats.contractsFoundAnywhere.add(u.id);
+    }
+    const { text: owsText } = extractOwsText(owsContract, u);
+
     let kept = false;
-    let subjectText = "";
+    let keptSource: "zakup" | "ows" | null = null;
+    let usedText = "";
 
-    if (subs && subs.length > 0) {
-      if (stats) stats.contractsFound.add(u.id);
-      const best = findBestSubject(subs, u);
-      if (best) {
-        const pi = best.plan_item;
-        subjectText = [pi?.name_ru, pi?.extra_description_ru, pi?.extra_description_kk]
-          .filter((v): v is string => Boolean(v && typeof v === "string" && v.trim()))
-          .join(" ");
-
-        const classified = classifyCode(u.code, cfg, subjectText);
-        if (classified) {
-          kept = true;
-          const updatedUnit: MarketUnit = {
-            ...u,
-            kind: classified.kind
-          };
-          finalUnits.push(updatedUnit);
-          if (stats) {
-            stats.lcdKept.sum += u.sum;
-            stats.lcdKept.count++;
-            stats.ipAfter.sum += u.sum;
-            stats.ipAfter.count++;
-          }
-          if (u.month === "2026-10") {
-            octoberKept.push({
-              date: u.date,
-              supplier: u.supplierName || u.supplier,
-              sum: u.sum,
-              text: subjectText,
-              code: u.code,
-              id: u.id
-            });
-          }
-        }
+    // 1. Try zakup first
+    if (zakupText.trim()) {
+      const classified = classifyCode(u.code, cfg, zakupText);
+      if (classified) {
+        kept = true;
+        keptSource = "zakup";
+        usedText = zakupText;
       }
     }
 
-    if (!kept) {
+    // 2. If not kept, try ows
+    if (!kept && owsText.trim()) {
+      const classified = classifyCode(u.code, cfg, owsText);
+      if (classified) {
+        kept = true;
+        keptSource = "ows";
+        usedText = owsText;
+      }
+    }
+
+    if (kept) {
+      const updatedUnit: MarketUnit = {
+        ...u,
+        kind: "Интерактивные панели"
+      };
+      finalUnits.push(updatedUnit);
+      if (stats) {
+        stats.lcdKept.sum += u.sum;
+        stats.lcdKept.count++;
+        if (keptSource === "zakup") stats.lcdKeptZakupCount++;
+        else if (keptSource === "ows") stats.lcdKeptOwsCount++;
+        stats.ipAfter.sum += u.sum;
+        stats.ipAfter.count++;
+      }
+      if (u.month === "2026-10") {
+        octoberKept.push({
+          date: u.date,
+          supplier: u.supplierName || u.supplier,
+          sum: u.sum,
+          text: usedText,
+          code: u.code,
+          id: u.id
+        });
+      }
+    } else {
+      const hasNoTextInBoth = !zakupText.trim() && !owsText.trim();
       if (stats) {
         stats.lcdRemoved.sum += u.sum;
         stats.lcdRemoved.count++;
+        if (hasNoTextInBoth) {
+          stats.lcdNoTextBothCount++;
+        }
       }
       if (u.month === "2026-10") {
+        let reason = "нет слова 'интерактив'";
+        if (!foundOnZakup && !foundOnOws) {
+          reason = "договор не найден ни на zakup, ни в ows";
+        } else if (hasNoTextInBoth) {
+          reason = "нет описания ни в одном источнике";
+        }
         octoberRemoved.push({
           date: u.date,
           supplier: u.supplierName || u.supplier,
           sum: u.sum,
-          text: subjectText || "(нет данных на zakup)",
+          text: usedText || zakupText || owsText || "(нет данных)",
           code: u.code,
           id: u.id,
-          reason: subs ? "нет слова 'интерактив'" : "договор не найден на zakup"
+          reason
         });
       }
     }
   }
 
-  // Build summary
   const monthSummaries: MonthSummary[] = [];
   const totalSummary: MonthSummary = {
     month: "Итого 2026 (10 мес)",
@@ -378,21 +573,26 @@ async function main(): Promise<void> {
     lcdTotalCount: 0,
     lcdKeptSum: 0,
     lcdKeptCount: 0,
+    lcdKeptZakupCount: 0,
+    lcdKeptOwsCount: 0,
     lcdRemovedSum: 0,
     lcdRemovedCount: 0,
+    lcdNoTextBothCount: 0,
     contractsTotal: 0,
     contractsFound: 0,
-    contractsNotFound: 0
+    contractsNotFound: 0,
+    contractsNotFoundBoth: 0
   };
 
   const allContractsInFile = new Set<number>();
-  const allContractsFound = new Set<number>();
+  const allContractsFoundZakup = new Set<number>();
+  const allContractsFoundAnywhere = new Set<number>();
 
   for (const m of uniqueMonths) {
     const stats = monthMap.get(m)!;
-    const notFoundCount = stats.contractsInFile.size - stats.contractsFound.size;
     for (const id of stats.contractsInFile) allContractsInFile.add(id);
-    for (const id of stats.contractsFound) allContractsFound.add(id);
+    for (const id of stats.contractsFoundZakup) allContractsFoundZakup.add(id);
+    for (const id of stats.contractsFoundAnywhere) allContractsFoundAnywhere.add(id);
 
     const ms: MonthSummary = {
       month: m,
@@ -404,11 +604,15 @@ async function main(): Promise<void> {
       lcdTotalCount: stats.lcdTotal.count,
       lcdKeptSum: Math.round(stats.lcdKept.sum),
       lcdKeptCount: stats.lcdKept.count,
+      lcdKeptZakupCount: stats.lcdKeptZakupCount,
+      lcdKeptOwsCount: stats.lcdKeptOwsCount,
       lcdRemovedSum: Math.round(stats.lcdRemoved.sum),
       lcdRemovedCount: stats.lcdRemoved.count,
+      lcdNoTextBothCount: stats.lcdNoTextBothCount,
       contractsTotal: stats.contractsInFile.size,
-      contractsFound: stats.contractsFound.size,
-      contractsNotFound: notFoundCount
+      contractsFound: stats.contractsFoundZakup.size,
+      contractsNotFound: stats.contractsInFile.size - stats.contractsFoundZakup.size,
+      contractsNotFoundBoth: stats.contractsInFile.size - stats.contractsFoundAnywhere.size
     };
     monthSummaries.push(ms);
 
@@ -420,20 +624,99 @@ async function main(): Promise<void> {
     totalSummary.lcdTotalCount += ms.lcdTotalCount;
     totalSummary.lcdKeptSum += ms.lcdKeptSum;
     totalSummary.lcdKeptCount += ms.lcdKeptCount;
+    totalSummary.lcdKeptZakupCount += ms.lcdKeptZakupCount;
+    totalSummary.lcdKeptOwsCount += ms.lcdKeptOwsCount;
     totalSummary.lcdRemovedSum += ms.lcdRemovedSum;
     totalSummary.lcdRemovedCount += ms.lcdRemovedCount;
+    totalSummary.lcdNoTextBothCount += ms.lcdNoTextBothCount;
   }
 
   totalSummary.contractsTotal = allContractsInFile.size;
-  totalSummary.contractsFound = allContractsFound.size;
-  totalSummary.contractsNotFound = allContractsInFile.size - allContractsFound.size;
+  totalSummary.contractsFound = allContractsFoundZakup.size;
+  totalSummary.contractsNotFound = allContractsInFile.size - allContractsFoundZakup.size;
+  totalSummary.contractsNotFoundBoth = allContractsInFile.size - allContractsFoundAnywhere.size;
 
   const scriptSummary: ScriptSummary = {
-    updatedAt: origUpdatedAt,
-    configKey: newConfigKey,
+    updatedAt: input.updatedAt || new Date().toISOString().slice(0, 10),
+    configKey,
     months: monthSummaries,
     total: totalSummary
   };
+
+  return {
+    finalUnits,
+    scriptSummary,
+    octoberKept,
+    octoberRemoved
+  };
+}
+
+async function main(): Promise<void> {
+  const { inPath, outDir, write, noCache } = parseArgs();
+  const cfg = loadMarketConfig();
+  const newConfigKey = marketConfigKey(cfg);
+
+  console.log(`[Фильтр ЖК] Чтение ${inPath}...`);
+  if (!fs.existsSync(inPath)) {
+    throw new Error(
+      `Файл не найден: ${inPath}. Скачайте его через: gh release download market-seed --pattern units-2026.json --dir tmp/market-lcd/in`
+    );
+  }
+
+  const rawJson = JSON.parse(fs.readFileSync(inPath, "utf8"));
+  const existingUnits: MarketUnit[] = Array.isArray(rawJson) ? rawJson : rawJson.units ?? [];
+  const completeMonths: string[] = Array.isArray(rawJson.completeMonths) ? rawJson.completeMonths : [];
+  const origUpdatedAt: string = rawJson.updatedAt || new Date().toISOString().slice(0, 10);
+
+  console.log(`[Фильтр ЖК] Загружено позиций: ${existingUnits.length}, месяцев: ${completeMonths.length}`);
+
+  const lcdUnits = existingUnits.filter((u) => u.code && u.code.startsWith(LCD_PREFIX));
+  console.log(`[Фильтр ЖК] ЖК-позиций (код ${LCD_PREFIX}*): ${lcdUnits.length}`);
+
+  const uniqueMonths = [...new Set(lcdUnits.map((u) => u.month))].sort();
+  console.log(`[Фильтр ЖК] Месяцы ЖК: ${uniqueMonths.join(", ")}`);
+
+  // 1. Fetch Zakup subjects
+  const zakupCachePath = path.join(outDir, ZAKUP_CACHE_FILE_NAME);
+  const subjectsByOwsId = await fetchAllLcdSubjectsFromZakup(uniqueMonths, zakupCachePath, noCache);
+
+  // 2. Determine which contracts need OWS fallback:
+  // - Contracts not found on zakup, OR
+  // - Contracts where LCD position has empty text in zakup subject
+  const contractsNeedingOws = new Set<number>();
+  for (const u of lcdUnits) {
+    const subs = subjectsByOwsId.get(u.id);
+    if (!subs || subs.length === 0) {
+      contractsNeedingOws.add(u.id);
+    } else {
+      const { text } = extractZakupText(subs, u);
+      if (!text.trim()) {
+        contractsNeedingOws.add(u.id);
+      }
+    }
+  }
+
+  console.log(`[Фильтр ЖК] Договоров, требующих проверки в ows: ${contractsNeedingOws.size}`);
+
+  // 3. Fetch from OWS
+  const owsCachePath = path.join(outDir, OWS_CACHE_FILE_NAME);
+  const owsContractsById = await fetchMissingContractsFromOws(
+    [...contractsNeedingOws],
+    owsCachePath,
+    noCache,
+    process.env.GOSZAKUP_TOKEN
+  );
+
+  // 4. Run pure filter
+  const { finalUnits, scriptSummary, octoberKept, octoberRemoved } = filterLcdUnits({
+    units: existingUnits,
+    cfg,
+    zakupSubjectsByOwsId: subjectsByOwsId,
+    owsContractsById,
+    updatedAt: origUpdatedAt
+  });
+
+  const { months: monthSummaries, total: totalSummary } = scriptSummary;
 
   // Print results
   console.log("\n=================== СВОДКА ПО МЕСЯЦАМ ===================");
@@ -443,9 +726,9 @@ async function main(): Promise<void> {
       "ИП до (млн ₸)": (s.ipSumBefore / 1_000_000).toFixed(1),
       "ИП после (млн ₸)": (s.ipSumAfter / 1_000_000).toFixed(1),
       "ЖК всего (млн ₸)": (s.lcdTotalSum / 1_000_000).toFixed(1),
-      "ЖК оставлено": `${s.lcdKeptCount} шт (${(s.lcdKeptSum / 1_000_000).toFixed(1)} млн)`,
-      "ЖК удалено": `${s.lcdRemovedCount} шт (${(s.lcdRemovedSum / 1_000_000).toFixed(1)} млн)`,
-      "Договоров не найдено": `${s.contractsNotFound} из ${s.contractsTotal}`
+      "ЖК оставлено": `${s.lcdKeptCount} шт (${(s.lcdKeptSum / 1_000_000).toFixed(1)} млн: zakup=${s.lcdKeptZakupCount}, ows=${s.lcdKeptOwsCount})`,
+      "ЖК удалено": `${s.lcdRemovedCount} шт (${(s.lcdRemovedSum / 1_000_000).toFixed(1)} млн: без текста=${s.lcdNoTextBothCount})`,
+      "Не найдено нигде": `${s.contractsNotFoundBoth}`
     }))
   );
 
@@ -453,9 +736,15 @@ async function main(): Promise<void> {
   console.log(`ИП до: ${(totalSummary.ipSumBefore / 1_000_000).toFixed(1)} млн ₸ (${totalSummary.ipCountBefore} поз.)`);
   console.log(`ИП после: ${(totalSummary.ipSumAfter / 1_000_000).toFixed(1)} млн ₸ (${totalSummary.ipCountAfter} поз.)`);
   console.log(`ЖК всего: ${(totalSummary.lcdTotalSum / 1_000_000).toFixed(1)} млн ₸ (${totalSummary.lcdTotalCount} поз.)`);
-  console.log(`ЖК оставлено: ${(totalSummary.lcdKeptSum / 1_000_000).toFixed(1)} млн ₸ (${totalSummary.lcdKeptCount} поз.)`);
-  console.log(`ЖК удалено: ${(totalSummary.lcdRemovedSum / 1_000_000).toFixed(1)} млн ₸ (${totalSummary.lcdRemovedCount} поз.)`);
-  console.log(`Договоров ЖК всего: ${totalSummary.contractsTotal}, найдено на zakup: ${totalSummary.contractsFound}, не найдено: ${totalSummary.contractsNotFound}`);
+  console.log(
+    `ЖК оставлено: ${(totalSummary.lcdKeptSum / 1_000_000).toFixed(1)} млн ₸ (${totalSummary.lcdKeptCount} поз., из них zakup=${totalSummary.lcdKeptZakupCount}, ows=${totalSummary.lcdKeptOwsCount})`
+  );
+  console.log(
+    `ЖК удалено: ${(totalSummary.lcdRemovedSum / 1_000_000).toFixed(1)} млн ₸ (${totalSummary.lcdRemovedCount} поз., без текста в обоих=${totalSummary.lcdNoTextBothCount})`
+  );
+  console.log(
+    `Договоров ЖК всего: ${totalSummary.contractsTotal}, найдено на zakup: ${totalSummary.contractsFound}, не найдено на zakup: ${totalSummary.contractsNotFound}, не найдено нигде: ${totalSummary.contractsNotFoundBoth}`
+  );
   console.log(`Позиций в файле всего: до ${existingUnits.length}, после ${finalUnits.length} (-${existingUnits.length - finalUnits.length})`);
 
   // Build october-check.md
