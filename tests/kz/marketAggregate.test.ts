@@ -123,10 +123,55 @@ describe("buildMarketGroupView", () => {
 
     const school1 = view.customers.find((c) => c.bin === "111111111111");
     expect(school1?.contractList).toEqual([
-      { id: 501, date: "2026-10-05", supplier: "Конкурент", kind: "Интерактивные панели", sum: 3_000_000, qty: 1, us: false, url: "https://procurement.gov.kz/ru/egzcontract/cpublic/show/501" },
-      { id: 502, date: "2026-10-07", supplier: "F3", kind: "Интерактивные панели", sum: 1_500_000, qty: 2, us: true, url: "https://procurement.gov.kz/ru/egzcontract/cpublic/show/502" }
+      { id: 501, date: "2026-10-05", supplier: "Конкурент", customer: "Школа 1", kind: "Интерактивные панели", sum: 3_000_000, qty: 1, us: false, url: "https://procurement.gov.kz/ru/egzcontract/cpublic/show/501" },
+      { id: 502, date: "2026-10-07", supplier: "F3", customer: "Школа 1", kind: "Интерактивные панели", sum: 1_500_000, qty: 2, us: true, url: "https://procurement.gov.kz/ru/egzcontract/cpublic/show/502" }
     ]);
     expect(school1?.contracts).toBe(2);
+  });
+
+  it("lists every supplier's contracts with the customer: competitors and the F3 group row", () => {
+    const base = {
+      month: "2026-10", group: "ИП" as const, code: "262030.100.000021", kind: "Интерактивные панели",
+      qty: 1, price: 500000, method: "Электронный магазин", us: false
+    };
+    const units: MarketUnit[] = [
+      { ...base, id: 601, date: "2026-10-05", sum: 1_000_000, supplier: "999999999999", supplierName: "Конкурент", customer: "111111111111", customerName: "Школа 1" },
+      { ...base, id: 602, date: "2026-10-08", sum: 4_000_000, supplier: "999999999999", supplierName: "Конкурент", customer: "222222222222", customerName: "Школа 2" },
+      { ...base, id: 603, date: "2026-10-09", sum: 2_000_000, supplier: "061140003942", supplierName: "F3", customer: "333333333333", customerName: "Школа 3" },
+      { ...base, id: 604, date: "2026-10-10", sum: 3_000_000, supplier: "130540000688", supplierName: "Amanat Asia", customer: "111111111111", customerName: "Школа 1" }
+    ];
+    const groupCfg: MarketConfig = { ...cfg, ourBins: ["061140003942", "130540000688"] };
+
+    const view = buildMarketGroupView("ИП", units, "2026-10-20", groupCfg);
+
+    const competitor = view.suppliers.find((s) => s.bin === "999999999999");
+    expect(competitor?.contractList?.map((c) => [c.id, c.customer, c.sum])).toEqual([
+      [602, "Школа 2", 4_000_000],
+      [601, "Школа 1", 1_000_000]
+    ]);
+    expect(competitor?.contractList?.[0].url).toBe("https://procurement.gov.kz/ru/egzcontract/cpublic/show/602");
+
+    // The group row shows which of our companies signed each contract.
+    const ours = view.suppliers.find((s) => s.us);
+    expect(ours?.contractList?.map((c) => [c.id, c.supplier, c.customer, c.us])).toEqual([
+      [604, "Amanat Asia", "Школа 1", true],
+      [603, "F3", "Школа 3", true]
+    ]);
+  });
+
+  it("keeps a supplier's list to the 20 largest contracts", () => {
+    const units: MarketUnit[] = Array.from({ length: 25 }, (_, i) => ({
+      id: 700 + i, month: "2026-10", date: "2026-10-05", group: "ИП" as const, code: "262030.100.000021",
+      kind: "Интерактивные панели", sum: 100_000 * (i + 1), qty: 1, price: 100_000, method: "Электронный магазин", us: false,
+      supplier: "999999999999", supplierName: "Конкурент", customer: `1111111111${String(i).padStart(2, "0")}`, customerName: `Школа ${i}`
+    }));
+
+    const view = buildMarketGroupView("ИП", units, "2026-10-20", cfg);
+
+    const list = view.suppliers[0].contractList ?? [];
+    expect(list).toHaveLength(20);
+    expect(list[0].id).toBe(724);
+    expect(view.suppliers[0].contracts).toBe(25);
   });
 
   it("combines group companies (F3 + Amanat Asia) into a single row, ignores stale us:false in cache, excludes both from lost", () => {

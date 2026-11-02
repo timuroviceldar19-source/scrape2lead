@@ -458,13 +458,22 @@ describe("salesPult in-browser Playwright test", () => {
     }
 
     // "Школа 1" bought from F3 in October: contract 2, shown as ours.
-    const customer = page.locator("#tab-ip .cust-d", { hasText: "Школа 1" });
+    const customer = page.locator("#tab-ip div.cust > .cust-d", { hasText: "Школа 1" });
     expect(await customer.locator(".cust-list a.r").isVisible()).toBe(false);
     await customer.locator("summary").click();
     const contractLink = customer.locator(".cust-list a.r");
     expect(await contractLink.isVisible()).toBe(true);
     expect(await contractLink.getAttribute("href")).toBe("https://procurement.gov.kz/ru/egzcontract/cpublic/show/2");
     expect(await contractLink.getAttribute("class")).toContain("us");
+
+    // A supplier row opens the supplier's contracts, each with its customer.
+    const supplier = page.locator("#tab-ip .share .cust-d", { hasText: "Конкурент ИП" });
+    const supplierLink = supplier.locator(".cust-list a.r");
+    expect(await supplierLink.isVisible()).toBe(false);
+    await supplier.locator("summary").click();
+    expect(await supplierLink.isVisible()).toBe(true);
+    expect(await supplierLink.getAttribute("href")).toBe("https://procurement.gov.kz/ru/egzcontract/cpublic/show/3");
+    expect(await supplierLink.textContent()).toContain("Школа 2");
 
     expect(consoleErrors).toEqual([]);
     await page.close();

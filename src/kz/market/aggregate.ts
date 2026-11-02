@@ -17,7 +17,8 @@ import type {
 import { loadMarketConfig } from "./config.js";
 import { GZ_PORTAL_ORIGIN } from "../goszakupOrigin.js";
 
-const MAX_CUSTOMER_CONTRACTS = 20;
+/** A customer's or a supplier's drop-down list shows at most this many of the largest contracts. */
+const MAX_LIST_CONTRACTS = 20;
 
 /** Market units keep the contract id of the portal, so the public contract page opens by it. */
 export function contractUrl(id: number): string {
@@ -127,6 +128,23 @@ export function buildMarketGroupView(
   const ourUnits = cur.filter(isOurUnit);
   const competitorUnits = cur.filter((u) => !isOurUnit(u));
 
+  // Contracts behind a sum: a customer's or a supplier's drop-down list
+  const contractsOf = (xs: MarketUnit[]): MarketContractItem[] =>
+    Object.entries(groupBy(xs, (u) => String(u.id)))
+      .map(([idStr, items]) => ({
+        id: Number(idStr),
+        date: items[0]?.date || "",
+        supplier: items[0]?.supplierName || items[0]?.supplier || "",
+        customer: items[0]?.customerName || items[0]?.customer || "",
+        kind: items[0]?.kind || "",
+        sum: sumBy(items, (u) => u.sum),
+        qty: sumBy(items, (u) => u.qty),
+        us: items.some(isOurUnit),
+        url: contractUrl(Number(idStr))
+      }))
+      .sort((a, b) => b.sum - a.sum)
+      .slice(0, MAX_LIST_CONTRACTS);
+
   // Suppliers ranking: collapse all our companies into single row "Группа F3"
   const suppliers: MarketSupplierItem[] = [];
   if (ourUnits.length > 0) {
@@ -146,7 +164,8 @@ export function buildMarketGroupView(
       sum: sumBy(ourUnits, (u) => u.sum),
       contracts: countContracts(ourUnits),
       qty: sumBy(ourUnits, (u) => u.qty),
-      us: true
+      us: true,
+      contractList: contractsOf(ourUnits)
     });
   }
 
@@ -158,7 +177,8 @@ export function buildMarketGroupView(
       sum: sumBy(xs, (u) => u.sum),
       contracts: countContracts(xs),
       qty: sumBy(xs, (u) => u.qty),
-      us: false
+      us: false,
+      contractList: contractsOf(xs)
     });
   }
 
@@ -280,21 +300,6 @@ export function buildMarketGroupView(
     .slice(0, 10);
 
   // Customers, each with the contracts behind the sum
-  const contractsOf = (xs: MarketUnit[]): MarketContractItem[] =>
-    Object.entries(groupBy(xs, (u) => String(u.id)))
-      .map(([idStr, items]) => ({
-        id: Number(idStr),
-        date: items[0]?.date || "",
-        supplier: items[0]?.supplierName || items[0]?.supplier || "",
-        kind: items[0]?.kind || "",
-        sum: sumBy(items, (u) => u.sum),
-        qty: sumBy(items, (u) => u.qty),
-        us: items.some(isOurUnit),
-        url: contractUrl(Number(idStr))
-      }))
-      .sort((a, b) => b.sum - a.sum)
-      .slice(0, MAX_CUSTOMER_CONTRACTS);
-
   const byCustomer = groupBy(cur, (u) => u.customer);
   const customers: MarketCustomerItem[] = Object.entries(byCustomer)
     .map(([bin, xs]) => ({
