@@ -63,7 +63,27 @@
         </div>`
       : "";
 
-    let s = `${staleWarning}<section class="block reveal">${head("01", `Рынок ${title} · ${MONTHS[M - 1]}`, "госзакупки, все каналы · без НДС")}
+    // A row with a portal link opens the contract in a new tab; a payload without links keeps plain rows.
+    const contractRow = (url, cls, cells) => /^https:\/\//.test(url || "")
+      ? `<a class="r ${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Открыть договор на портале госзакупок">${cells}</a>`
+      : `<div class="r ${cls}">${cells}</div>`;
+    const tooShort = (name, n) => short(String(name || "").replace(/^Товарищество с ограниченной ответственностью/i, "ТОО"), n);
+    const moreContracts = (x, list) => {
+      const rest = x.contracts - list.length;
+      return rest > 0 ? `<p class="more">и ещё ${plural(rest, ["договор", "договора", "договоров"])} поменьше</p>` : "";
+    };
+
+    // A supplier row opens the supplier's contracts: whom it sold to; the F3 row also shows which of our companies signed.
+    const supplierCells = (x, i) => `<span class="rk">${i + 1}</span><span class="nm" title="${esc(x.name + (x.details ? ` (${x.details})` : ""))}"><span>${esc(tooShort(x.name, 44))}</span>${x.details ? `<span class="dim" style="display:block;font-size:10px;line-height:1.2;margin-top:2px;">${esc(x.details)}</span>` : ""}</span>${bar(V.suppliers[0]?.sum ? x.sum / V.suppliers[0].sum * 100 : 0, x.us ? "ink" : "")}<span class="num">${mln(x.sum)} млн</span><span class="num">${x.contracts}</span>`;
+    const supplierContracts = (x) => {
+      const list = x.contractList || [];
+      return `<div class="cust-list rows">${list.map((c) => contractRow(c.url, c.us ? "us" : "", `<span class="num">${ddmm(c.date)}</span><span class="cust" title="${esc(c.customer)}">${esc(short(c.customer, 90))}<span class="dim sub">${esc(x.us ? `${tooShort(c.supplier, 30)} · ${c.kind}` : c.kind)}</span></span><span class="num">${fmt(c.qty)} шт</span><span class="num">${mln(c.sum)} млн</span>`)).join("")}${moreContracts(x, list)}</div>`;
+    };
+    const supplierRow = (x, i) => (x.contractList || []).length
+      ? `<details class="cust-d"><summary class="r${x.us ? " us" : ""}">${supplierCells(x, i)}</summary>${supplierContracts(x)}</details>`
+      : `<div class="r${x.us ? " us" : ""}">${supplierCells(x, i)}</div>`;
+
+    let s = `${staleWarning}<section class="block reveal">${head("01", `Рынок ${title} · ${MONTHS[M - 1]}`, "госзакупки, все каналы · без НДС · нажмите на поставщика, чтобы увидеть договоры")}
     <div class="hero"><div>
       <span class="label">Объём рынка</span>
       <div class="hero-num"><span class="big">${fmt(V.total.sum / 1e6)}</span><span class="of">млн ₸</span></div>
@@ -76,7 +96,7 @@
       <p class="verdict">${verdict}</p>
       ${ytdHtml}
     </div><div><div class="share rows"><div class="r head"><span></span><span class="label">Поставщик</span><span class="label">Доля рынка</span><span class="label">Сумма</span><span class="label">Дог.</span></div>
-      ${V.suppliers.slice(0, 10).map((x, i) => `<div class="r${x.us ? " us" : ""}"><span class="rk">${i + 1}</span><span class="nm" title="${esc(x.name + (x.details ? ` (${x.details})` : ""))}"><span>${esc(short(x.name.replace(/^Товарищество с ограниченной ответственностью/i, "ТОО"), 44))}</span>${x.details ? `<span class="dim" style="display:block;font-size:10px;line-height:1.2;margin-top:2px;">${esc(x.details)}</span>` : ""}</span>${bar(V.suppliers[0]?.sum ? x.sum / V.suppliers[0].sum * 100 : 0, x.us ? "ink" : "")}<span class="num">${mln(x.sum)} млн</span><span class="num">${x.contracts}</span></div>`).join("")}
+      ${V.suppliers.slice(0, 10).map(supplierRow).join("")}
       <div class="r"><span></span><span class="dim">Остальные ${Math.max(0, V.total.suppliers - 10)}</span><span></span><span class="num">${mln(V.othersSum + V.suppliers.slice(10).reduce((a, x) => a + x.sum, 0))} млн</span><span></span></div>
     </div></div></div></section>`;
 
@@ -152,12 +172,6 @@
   </div></section>`;
 
     // 04 Крупные договоры не у нас
-    // A row with a portal link opens the contract in a new tab; a payload without links keeps plain rows.
-    const contractRow = (url, cls, cells) => /^https:\/\//.test(url || "")
-      ? `<a class="r ${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Открыть договор на портале госзакупок">${cells}</a>`
-      : `<div class="r ${cls}">${cells}</div>`;
-    const tooShort = (name, n) => short(String(name || "").replace(/^Товарищество с ограниченной ответственностью/i, "ТОО"), n);
-
     s += `<section class="block reveal">${head("04", "Крупные договоры не у нас", `${MONTHS[M - 1]} · топ-10 по сумме · строка открывает договор`)}<div class="lost rows">
     <div class="r head"><span class="label">Дата</span><span class="label">Заказчик</span><span class="label">Поставщик</span><span class="label">Товар</span><span class="label">Шт</span><span class="label">Сумма</span><span class="label">Канал</span></div>
     ${V.lost.map((x) => contractRow(x.url, "", `<span class="num">${ddmm(x.date)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 70))}</span><span class="cust" title="${esc(x.supplier)}">${esc(tooShort(x.supplier, 34))}</span><span>${esc(x.kind)}</span><span class="num">${fmt(x.qty)}</span><span class="num">${mln(x.sum)} млн</span><span class="dim">${esc(x.method)}</span>`)).join("")}</div></section>`;
@@ -167,15 +181,14 @@
     const customerCells = (x) => `<span class="cust" title="${esc(x.name)}">${esc(short(x.name, 100))}</span><span class="num">${mln(x.sum)} млн</span><span class="num">${x.contracts}</span><div>${bar(x.sum ? x.us / x.sum * 100 : 0, "ink")}<span class="dim">${x.us ? money(x.us) : "ничего"}</span></div>`;
     const customerContracts = (x) => {
       const list = x.contractList || [];
-      const rest = x.contracts - list.length;
-      return `<div class="cust-list rows">${list.map((c) => contractRow(c.url, c.us ? "us" : "", `<span class="num">${ddmm(c.date)}</span><span class="cust" title="${esc(c.supplier)}">${esc(tooShort(c.supplier, 60))}</span><span>${esc(c.kind)}</span><span class="num">${fmt(c.qty)} шт</span><span class="num">${mln(c.sum)} млн</span>`)).join("")}${rest > 0 ? `<p class="more">и ещё ${plural(rest, ["договор", "договора", "договоров"])} поменьше</p>` : ""}</div>`;
+      return `<div class="cust-list rows">${list.map((c) => contractRow(c.url, c.us ? "us" : "", `<span class="num">${ddmm(c.date)}</span><span class="cust" title="${esc(c.supplier)}">${esc(tooShort(c.supplier, 60))}</span><span>${esc(c.kind)}</span><span class="num">${fmt(c.qty)} шт</span><span class="num">${mln(c.sum)} млн</span>`)).join("")}${moreContracts(x, list)}</div>`;
     };
     s += `<section class="block reveal">${head("05", "Крупнейшие заказчики", `${MONTHS[M - 1]} · наша доля у каждого · нажмите, чтобы увидеть договоры`)}<div class="cust rows">
     <div class="r head"><span class="label">Заказчик</span><span class="label">Купил</span><span class="label">Дог.</span><span class="label">У нас</span></div>
     ${V.customers.map((x) => (x.contractList || []).length
       ? `<details class="cust-d"><summary class="r">${customerCells(x)}</summary>${customerContracts(x)}</details>`
       : `<div class="r">${customerCells(x)}</div>`).join("")}</div>
-    <p class="note-src">Договоры госзакупок по дате подписания, все способы закупки, включая электронный магазин. Суммы позиций без НДС. Расторгнутые и заменённые доп. соглашением версии не считаются. ${isIp ? "Коды ЕНС ТРУ: 262030.100.000021 панель интерактивная, 262030.100.000043 доска интерактивная, 262030.100.000011/13 система мультимедийная, 279020.100.* панель жидкокристаллическая." : "Коды ЕНС ТРУ: компьютеры 262013.000.000011/12, системные блоки 262040.000.000267/268, ноутбуки 262011.100.*, МФУ 262018.900.*, принтеры 262016.300.000015–19, мониторы 262017.100.*."}</p></section>`;
+    <p class="note-src">Договоры госзакупок по дате подписания, все способы закупки, включая электронный магазин. Суммы позиций без НДС. Расторгнутые и заменённые доп. соглашением версии не считаются. ${isIp ? "Коды ЕНС ТРУ: 262030.100.000021 панель интерактивная, 262030.100.000043 доска интерактивная, 262030.100.000011/13 система мультимедийная, 279020.100.* панель жидкокристаллическая, только если в описании позиции сказано «интерактивная»." : "Коды ЕНС ТРУ: компьютеры 262013.000.000011/12, системные блоки 262040.000.000267/268, ноутбуки 262011.100.*, МФУ 262018.900.*, принтеры 262016.300.000015–19, мониторы 262017.100.*."}</p></section>`;
 
     el.innerHTML = s;
     el.querySelectorAll("[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });

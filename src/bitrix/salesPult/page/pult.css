@@ -453,13 +453,18 @@ a.r:focus-visible, .cust-d > summary:focus-visible { outline: 2px solid var(--in
 .cust-d > summary { list-style: none; cursor: pointer; }
 .cust-d > summary::-webkit-details-marker { display: none; }
 .cust-d > summary:hover { background: rgba(255,255,255,.55); }
-.cust-d > summary .cust::before { content: "▸"; display: inline-block; width: 16px; color: var(--ink-3); transition: transform .25s var(--ease); }
+.cust-d > summary .cust::before, .share .cust-d > summary .nm > span:first-child::before { content: "▸"; display: inline-block; width: 16px; color: var(--ink-3); transition: transform .25s var(--ease); }
 .cust-d[open] > summary { background: var(--sheet); }
-.cust-d[open] > summary .cust::before { transform: rotate(90deg); color: var(--ink); }
+.cust-d[open] > summary .cust::before, .share .cust-d[open] > summary .nm > span:first-child::before { transform: rotate(90deg); color: var(--ink); }
 .cust .cust-list { margin: 0 0 14px 16px; }
 .cust .cust-list .r { grid-template-columns: 50px minmax(0, 2.4fr) minmax(0, 1.2fr) 70px 90px; font-size: 13px; padding: 9px 0; }
 .cust .cust-list .r.us { padding-left: 12px; }
 .cust .cust-list .more { padding: 9px 0; font: 400 12px var(--mono); color: var(--ink-3); }
+.share .cust-list { margin: 0 0 14px 28px; }
+.share .cust-list .r { grid-template-columns: 44px minmax(0, 1fr) 56px 84px; font-size: 13px; padding: 9px 0; }
+.share .cust-list .r.us { padding-left: 12px; }
+.share .cust-list .sub { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 11px; margin-top: 2px; }
+.share .cust-list .more { padding: 9px 0; font: 400 12px var(--mono); color: var(--ink-3); }
 .note-src { margin-top: 18px; font: 400 12px/1.6 var(--mono); color: var(--ink-3); max-width: 110ch; }
 .note-warn { margin: 12px 0 18px; padding: 8px 12px; background: var(--warn-t); border-left: 3px solid var(--warn); font: 500 13px var(--mono); color: var(--ink); }
 
@@ -482,9 +487,10 @@ a.r:focus-visible, .cust-d > summary:focus-visible { outline: 2px solid var(--in
   .lost .r > :nth-child(2), .miss .r > :nth-child(3), .all .r > :nth-child(3), .deals .r > :nth-child(2) { grid-column: 1 / -1; order: -1; }
   .deals { padding-left: 0; }
   .cust > .r > :first-child, .cust-d > summary > :first-child { grid-column: 1 / -1; }
-  .cust .cust-list { margin-left: 0; }
+  .cust .cust-list, .share .cust-list { margin-left: 0; }
   .cust .cust-list .r { grid-template-columns: 1fr auto; gap: 4px 12px; }
-  .cust .cust-list .r > :nth-child(2) { grid-column: 1 / -1; order: -1; }
+  .share .cust-list .r { grid-template-columns: auto 1fr auto; gap: 4px 12px; }
+  .cust .cust-list .r > :nth-child(2), .share .cust-list .r > :nth-child(2) { grid-column: 1 / -1; order: -1; }
   .share .r .rk, .chev { display: none; }
 }
 @media (max-width: 480px) {

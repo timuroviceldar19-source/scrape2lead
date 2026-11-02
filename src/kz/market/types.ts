@@ -53,6 +53,8 @@ export interface MarketSupplierItem {
   contracts: number;
   qty: number;
   us: boolean;
+  /** The supplier's largest contracts of the month, at most 20. */
+  contractList: MarketContractItem[];
 }
 
 export interface MarketCompanyItem {
@@ -125,6 +127,7 @@ export interface MarketContractItem {
   id: number;
   date: string;
   supplier: string;
+  customer: string;
   kind: string;
   sum: number;
   qty: number;
