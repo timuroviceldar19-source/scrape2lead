@@ -81,6 +81,38 @@ describe("монитор планов: модель", () => {
     const broken = new ReadOnlyBitrixClient({ async call() { throw new Error("failed"); } });
     expect(await collectPlansMonitor({ reader: broken, ...options })).toEqual({ asOf: "2026-11-03", error: expect.any(String) });
   });
+  it("ограничивает списки, сортирует и не меняет входные данные", () => {
+    const deals = Array.from({ length: 40 }, (_, i) => normalizePlanDeal(raw(i + 1, { UF_CRM_6627AEBD7C2D2: i < 25 ? "shared" : `bin-${i}`, DATE_CREATE: i === 0 ? "2026-11-04" : "2026-10-28" }), options)!);
+    const snapshot = JSON.stringify(deals);
+    const v = buildPlansMonitorView(deals, options).ip!;
+    expect(v.topOpenPlans).toHaveLength(20);
+    expect(v.managers[0].planList).toHaveLength(20);
+    expect(v.customers).toHaveLength(15);
+    expect(v.customers[0].planList).toHaveLength(20);
+    expect(v.topOpenPlans[0].id).toBe("40");
+    expect(v.total.createdLast7dCount).toBe(39);
+    expect(JSON.stringify(deals)).toBe(snapshot);
+  });
+  it.each([
+    [41, "262030.100.000021", "", "Интерактивные панели"], [41, "279020.000.000000", "", "Интерактивные панели"],
+    [41, "262030.100.000043", "", "Интерактивные и спец. доски"], [41, "262030.100.000011", "", "Мультимедийные системы"],
+    [41, "", "Другое", "Прочее ИП"], [9, "", "Компьютер", "Компьютеры и системные блоки"],
+    [9, "", "Ноутбук", "Ноутбуки"], [9, "", "Моноблок", "Моноблоки"], [9, "", "Монитор", "Мониторы"],
+    [9, "", "МФУ", "МФУ и принтеры"], [9, "", "Другое", "Прочее КТ"]
+  ])("вид товара %s %s %s", (category, code, name, expected) => {
+    expect(normalizePlanDeal(raw(1, { CATEGORY_ID: category, UF_CRM_REF_ENSTRU_CODE: code, UF_CRM_ENSTRU_NAME: name, TITLE: "[GZ 1]" }), options)?.kind).toBe(expected);
+  });
+  it("поддерживает резервные поля, неизвестных менеджеров и изоляцию их ошибок", async () => {
+    const row = raw(1, { ASSIGNED_BY_ID: "99", UF_CRM_MONTH: "", UF_CRM_1782386433277_IU_XLS: "декабрь 2027", UF_CRM_COUNT: "", UF_CRM_1713874871715: "3", UF_CRM_ENSTRU_NAME: "", UF_CRM_1713874845756: "Доска", UF_CRM_PLAN_LINK: "https://zakup.gov.kz/plan/1", UF_CRM_6627AEBD4503E: "", UF_CRM_PLAN_STATUS: "Проект договора" });
+    const reader = new ReadOnlyBitrixClient({ async call(method) {
+      if (method === "user.get") throw new Error("unavailable");
+      return { result: { p0: [row] } };
+    } });
+    const v = await collectPlansMonitor({ ...options, reader });
+    expect(v.ip!.topOpenPlans[0]).toMatchObject({ month: "2027-12", qty: 3, itemName: "Доска", method: "Не указан", outcomeCategory: "published", managerName: "ID 99", planUrl: "https://zakup.gov.kz/plan/1" });
+    expect(parsePlanMonth("02", "", "2025-11-03")).toBe("2025-02");
+    expect(normalizePlanDeal(raw(1, { UF_CRM_COUNT: "0", UF_CRM_PRICE_PER_UNIT: "n/a" }), options)?.qty).toBe(0);
+  });
 });
 
 describe("монитор планов: Chromium", () => {
@@ -104,10 +136,16 @@ describe("монитор планов: Chromium", () => {
         expect(await page.locator("#periodsNav").isVisible()).toBe(false);
       };
       await check("plans-ip", "all", 6);
+      // Семь ячеек открытого плана должны находиться на одной строке на широком экране.
+      const positions = await page.locator("#tab-plans-ip .plans-table .r:not(.head)").first().locator(":scope > span").evaluateAll(cells => cells.map(c => c.getBoundingClientRect().top));
+      expect(new Set(positions.map(Math.round)).size).toBe(1);
       expect(await page.locator('#planMonths button[data-month="all"]').textContent()).toBe("Все месяцы");
       await page.locator('#planMonths [data-month="2026-10"]').click();
       await check("plans-ip", "2026-10", 1);
       expect(await page.locator("#tab-plans-ip").textContent()).not.toContain("Ноябрь");
+      for (const selector of [".share", ".plans-breakdown", ".plans-open", ".plans-customers"]) {
+        expect(await page.locator(`#tab-plans-ip ${selector}`).textContent()).toContain("2 млн");
+      }
       await page.locator('#tab-plans-ip .months .col[data-m="2026-11"]').click();
       await check("plans-ip", "2026-11", 4);
       await page.locator('#tab-plans-ip .mlabels > span[data-m="2026-12"]').focus();
@@ -125,6 +163,14 @@ describe("монитор планов: Chromium", () => {
       await page.evaluate(() => { location.hash = "#plans-ip/constructor"; });
       await check("plans-ip", "all", 6);
       expect(await page.locator("#srcLabel").textContent()).toBe("CRM Битрикс24 · госзакупки");
+      const safety = await page.evaluate(() => {
+        const w = window as unknown as { __planMonths: (v: unknown) => string[]; __planViewForMonth: (v: unknown, key: string) => unknown };
+        const view = { total: "fallback", monthViews: Object.create({ "2026-11": { total: "inherited" } }) };
+        return [w.__planMonths(null), w.__planViewForMonth(null, "all"), w.__planViewForMonth(view, "constructor"), w.__planViewForMonth(view, "2026-11")];
+      });
+      expect(safety).toEqual([[], null, { total: "fallback", monthViews: {} }, { total: "fallback", monthViews: {} }]);
+      await page.setViewportSize({ width: 390, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       expect(errors).toEqual([]);
     } finally { await browser.close(); fs.rmSync(dir, { recursive: true, force: true }); }
   }, 30000);
