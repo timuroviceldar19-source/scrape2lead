@@ -3,6 +3,25 @@ import { loadGzRoutingConfig, resolveGzRoute, type GzRoutingConfig } from "../..
 import { buildPlansMonitorView } from "./aggregate.js";
 import type { NormalizedPlanDeal, PlanOutcome, PlansMonitorView } from "./types.js";
 
+export const PLAN_DEAL_SELECT_FIELDS = [
+  "ID", "TITLE", "CATEGORY_ID", "STAGE_ID", "STAGE_SEMANTIC_ID", "CLOSED",
+  "ASSIGNED_BY_ID", "DATE_CREATE", "OPPORTUNITY", "ORIGINATOR_ID", "ORIGIN_ID",
+  "UF_CRM_PLAN_ID", "UF_CRM_1782386293000_IU_XLS",
+  "UF_CRM_PLAN_LINK", "UF_CRM_1782386571874_IU_XLS",
+  "UF_CRM_PLAN_STATUS", "UF_CRM_6627AEBD85B4D", "UF_CRM_1713874909541",
+  "UF_CRM_S2L_GZ_OUTCOME",
+  "UF_CRM_1715597726664", "UF_CRM_MONTH", "UF_CRM_1782386433277_IU_XLS", "UF_CRM_S2L_GZ_MONTH",
+  "UF_CRM_6627AEBD54B8D", "UF_CRM_ENSTRU_NAME", "UF_CRM_1713874845756",
+  "UF_CRM_6A436D5A19612", "UF_CRM_REF_ENSTRU_CODE", "UF_CRM_S2L_GZ_TRU",
+  "UF_CRM_1782386244985_IU_XLS", "UF_CRM_KEYWORD",
+  "UF_CRM_6627AEBD7C2D2", "UF_CRM_1713874902207",
+  "UF_CRM_6627AEBD72587", "UF_CRM_1713874888434",
+  "UF_CRM_1715597423325",
+  "UF_CRM_6627AEBD67FFF", "UF_CRM_COUNT", "UF_CRM_1713874871715",
+  "UF_CRM_6627AEBD5E68B", "UF_CRM_PRICE_PER_UNIT", "UF_CRM_1713874858791",
+  "UF_CRM_6627AEBD4503E", "UF_CRM_1713874828510"
+] as const;
+
 const MONTHS = ["январ", "феврал", "март", "апрел", "май", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр"];
 const text = (v: unknown): string => Array.isArray(v) ? text(v[0]) : v == null || v === false ? "" : String(v).trim();
 function field(d: Record<string, unknown>, ...keys: string[]): string {
@@ -99,26 +118,34 @@ export interface CollectPlansOptions extends NormalizePlanOptions {
   groups?: Array<{ managers: Array<{ id: string; name: string }> }>;
 }
 export async function collectPlansMonitor(options: CollectPlansOptions): Promise<PlansMonitorView> {
+  const started = performance.now();
   try {
     const rows = await options.reader.listAllBatched<Record<string, unknown>>("crm.deal.list", {
-      filter: { CATEGORY_ID: [9, 41, 29] }, select: ["*", "UF_*"], order: { ID: "ASC" }
+      filter: { CATEGORY_ID: [9, 41, 29], ORIGINATOR_ID: "scrape2lead-gz-plans" },
+      select: [...PLAN_DEAL_SELECT_FIELDS], order: { ID: "ASC" }
     });
     const names = new Map(options.managerNames);
     for (const g of options.groups || []) for (const m of g.managers) names.set(String(m.id), m.name);
     for (const [id, p] of options.userProfiles || []) names.set(String(id), p.name);
     const deals = rows.map(d => normalizePlanDeal(d, { ...options, managerNames: names })).filter((d): d is NormalizedPlanDeal => d !== null);
-    for (const id of new Set(deals.map(d => d.managerId))) {
-      if (!id || options.userProfiles?.has(id)) continue;
+    const missingManagerIds = [...new Set(deals.map(d => d.managerId))].filter(id => id && !options.userProfiles?.has(id));
+    if (missingManagerIds.length) {
       try {
-        const raw = await options.reader.call("user.get", { ID: id });
+        const raw = await options.reader.call("user.get", { ID: missingManagerIds });
         const users = Array.isArray(raw) ? raw : (raw as { result?: unknown[] })?.result;
-        const user = users?.[0] as Record<string, unknown> | undefined;
-        const name = user && [text(user.NAME), text(user.LAST_NAME)].filter(Boolean).join(" ");
-        if (name) names.set(id, name);
+        for (const row of users || []) {
+          if (!row || typeof row !== "object") continue;
+          const user = row as Record<string, unknown>;
+          const id = text(user.ID);
+          const name = [text(user.NAME), text(user.LAST_NAME)].filter(Boolean).join(" ");
+          if (id && name) names.set(id, name);
+        }
       } catch { /* Имя из конфига или ID сохраняется при недоступности user.get. */ }
     }
     for (const d of deals) d.managerName = names.get(d.managerId) || `ID ${d.managerId || "—"}`;
-    return buildPlansMonitorView(deals, options);
+    const view = buildPlansMonitorView(deals, options);
+    console.log(`[Планы] сделок: ${deals.length}, ИП: ${view.ip!.total.count}, КТ: ${view.kt!.total.count} (${Math.round(performance.now() - started)} мс)`);
+    return view;
   } catch {
     // Ошибки транспорта могут содержать URL вебхука: не передаём их в публичный payload.
     return { asOf: options.asOfDate, error: "Не удалось загрузить планы из Битрикс24. Повторим при следующем обновлении." };

@@ -97,7 +97,7 @@ describe("монитор планов: модель", () => {
     expect(new Set(PLAN_DEAL_SELECT_FIELDS).size).toBe(PLAN_DEAL_SELECT_FIELDS.length);
     // Каждый основной и резервный ключ нормализатора должен остаться доступен при узкой проекции.
     const source = fs.readFileSync("src/bitrix/salesPult/plans/collect.ts", "utf8").split("export function normalizePlanDeal")[1].split("export interface CollectPlansOptions")[0];
-    const used = [...source.matchAll(/\bd\.([A-Z][A-Z_]+)\b|"(UF_CRM_[A-Z0-9_]+)"/g)].map(m => m[1] || m[2]);
+    const used = [...source.matchAll(/\bd\.([A-Z][A-Z0-9_]+)\b|"(UF_CRM_[A-Z0-9_]+|OPPORTUNITY)"/g)].map(m => m[1] || m[2]);
     expect([...new Set(PLAN_DEAL_SELECT_FIELDS)].sort()).toEqual([...new Set(used)].sort());
     expect(users).not.toHaveBeenCalled();
   });
