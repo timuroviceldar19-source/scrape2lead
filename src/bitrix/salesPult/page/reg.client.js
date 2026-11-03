@@ -6,10 +6,6 @@
   const R = P.register;
   const regEl = document.getElementById("tab-reg");
 
-  if (window.__renderRegisterTab) {
-    window.__renderRegisterTab(R, regEl);
-  }
-
   function animate(root) {
     if (!root) return;
     root.querySelectorAll("[data-w]").forEach((b) => { b.style.width = b.dataset.w + "%"; });
@@ -36,27 +32,50 @@
     });
   }
 
-  observe();
-
-  const dateLabel = document.getElementById("dateLabel");
-  if (dateLabel) {
-    dateLabel.textContent = `Данные на ${R?.asOf || P.asOfDate || ""}`;
+  const months = window.__registerMonths(R);
+  const picker = document.getElementById("registerMonths");
+  const buttons = new Map();
+  if (picker) {
+    for (const month of months) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.month = month;
+      button.textContent = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" })
+        .format(new Date(Number(month.slice(0, 4)), Number(month.slice(5)) - 1, 1)).replace(/ г\.$/, "");
+      button.textContent = button.textContent[0].toUpperCase() + button.textContent.slice(1);
+      button.addEventListener("click", () => {
+        if (location.hash !== `#${month}`) location.hash = month;
+        renderMonth();
+      });
+      picker.appendChild(button);
+      buttons.set(month, button);
+    }
   }
 
-  const srcLabel = document.getElementById("srcLabel");
-  if (srcLabel && R?.file) {
-    srcLabel.textContent = `${R.file} · Диск Битрикс24`;
+  let renderedMonth;
+  let rendered = false;
+  function renderMonth() {
+    const requested = location.hash.slice(1);
+    const selected = months.includes(requested) ? requested : R?.month || months[0];
+    if (rendered && renderedMonth === selected) return;
+    rendered = true;
+    renderedMonth = selected;
+    const activeView = window.__registerViewForMonth(R, selected);
+    window.__renderRegisterTab(activeView, regEl);
+    buttons.forEach((button, month) => button.setAttribute("aria-pressed", String(month === selected)));
+    const dateLabel = document.getElementById("dateLabel");
+    if (dateLabel) dateLabel.textContent = `Данные на ${activeView?.asOf || P.asOfDate || ""}`;
+    const srcLabel = document.getElementById("srcLabel");
+    if (srcLabel) srcLabel.textContent = activeView?.file ? `${activeView.file} · Диск Битрикс24` : "";
+    const footSource = document.getElementById("footSource");
+    if (footSource && activeView?.file) footSource.textContent = `Источник: реестр РОПа «${activeView.file}», папка «Реестр ОП» на Диске Битрикс24 · сверка со сделками Битрикс24`;
+    animate(regEl);
+    observe();
   }
-
+  addEventListener("hashchange", renderMonth);
+  renderMonth();
   const liveText = document.getElementById("liveText");
-  if (liveText && P.generatedAt) {
-    liveText.textContent = P.generatedAt;
-  }
-
-  const footSource = document.getElementById("footSource");
-  if (footSource && R?.file) {
-    footSource.textContent = `Источник: реестр РОПа «${R.file}», папка «Реестр ОП» на Диске Битрикс24 · сверка со сделками Битрикс24`;
-  }
+  if (liveText && P.generatedAt) liveText.textContent = P.generatedAt;
 
   function moveInd() {
     const secInd = document.querySelector(".sections .ind");

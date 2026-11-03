@@ -39,6 +39,35 @@
     return d.toISOString().slice(0, 10) + " " + d.toISOString().slice(11, 16);
   };
 
+  const validMonth = (m) => typeof m === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(m);
+  window.__registerMonths = (R) => [...new Set([
+    R?.month, ...Object.keys(R?.history?.monthViews || {}), ...(R?.history?.months || []).map(m => m.month)
+  ].filter(validMonth))].sort().reverse();
+
+  window.__registerViewForMonth = (R, month) => {
+    if (!validMonth(month) || month === R?.month) return R;
+    const views = R?.history?.monthViews;
+    let view = views && Object.prototype.hasOwnProperty.call(views, month) ? views[month] : null;
+    if (!view) {
+      const m = R?.history?.months?.find(m => m.month === month);
+      if (!m) return R;
+      const missing = m.missingCrm || [];
+      let sale = 0;
+      view = {
+        month, file: m.fileName, asOf: `${month}-${new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate()}`,
+        total: { sale: m.sale, val: m.val, hasVal: m.hasVal, margin: m.margin, contracts: m.contracts,
+          plan: m.plan, bonusMop: 0, bonusRop: 0, b2bSale: 0, b2bPlan: 0 },
+        daily: [...(m.dailyContracts || [])].sort((a, b) => a.date.localeCompare(b.date)).map(d => ({ d: d.date, sale: sale += d.amount })),
+        managers: m.byManager.map(manager => {
+          const own = missing.filter(c => c.manager === manager.name);
+          return { ...manager, bonus: 0, rows: [], missCount: own.length, missSum: own.reduce((s, c) => s + c.sale, 0) };
+        }),
+        missing, crmExtra: m.crmExtra || 0, rows: [], mix: [], channels: [], groups: [], legacySummary: true
+      };
+    }
+    return { ...view, history: R.history, historyError: R.historyError };
+  };
+
   window.__renderRegisterTab = function (R, el) {
     if (!el) return;
     if (!R || R.error) {
@@ -107,7 +136,7 @@
     ${R.missing.map((x) => `<div class="r"><span class="num">${ddmm(x.date)}</span><span class="nm">${esc(x.manager)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 90))}</span><span>${esc(x.products.join(", "))}</span><span class="num">${mln(x.sale)} млн</span></div>`).join("")}</div></section>`;
 
   // 05 Все договоры
-  s += `<section class="block reveal">${head("05", "Все договоры месяца", `${R.rows.length} строк реестра`)}
+  s += `<section class="block reveal">${head("05", "Все договоры месяца", `${R.legacySummary ? "Старый кэш: подробные строки недоступны" : `${R.rows.length} строк реестра`}`)}
     <div class="chips" id="regChips"><button aria-pressed="true" data-f="">Все</button>${R.managers.filter((m) => m.contracts).map((m) => `<button aria-pressed="false" data-f="${esc(m.name)}">${esc(m.name)}</button>`).join("")}</div>
     <div class="all rows" id="regAll"></div><button class="btn more" id="regMore"></button></section>`;
 
@@ -152,7 +181,7 @@
       const planDisplay = m.plan ? `${mln(m.plan)} млн` : `<span class="dim">—</span>`;
       const planPctDisplay = m.planPct !== null ? `${pct(m.planPct / 100)}` : `<span class="dim">—</span>`;
 
-      s += `<div class="r body" role="button" tabindex="0" aria-expanded="false" data-month="${esc(m.month)}">
+      s += `<div class="r body" role="button" tabindex="0" aria-expanded="false" data-month="${esc(m.month)}" aria-current="${m.month === R.month}">
         <div class="nm"><b>${esc(m.label || formatMonthLabel(m.month))}</b></div>
         <div class="dim" style="font-family:var(--mono); font-size:12px;">${esc(m.fileName)}</div>
         <div><span class="num">${mln(m.sale)}</span> <span class="dim">млн</span></div>
@@ -443,7 +472,7 @@
     const chartEl = document.getElementById("regChart");
     if (!chartEl || !R.daily.length) return;
     const W = innerWidth < 760 ? 420 : 760, H = innerWidth < 760 ? 280 : 330, L = 8, Rr = innerWidth < 760 ? 70 : 92, Tp = 18, B = 30;
-    const iw = W - L - Rr, ih = H - Tp - B, days = 31, plan = R.total.plan, fact = R.total.sale;
+    const iw = W - L - Rr, ih = H - Tp - B, days = new Date(Number(R.month.slice(0, 4)), M, 0).getDate(), plan = R.total.plan, fact = R.total.sale;
     const yMax = Math.max(plan, fact) * 1.08, x = (d) => L + (d / days) * iw, y = (v) => Tp + ih - (v / yMax) * ih;
     let chSvg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Выручка отдела накопительно за месяц против плана">`;
     for (let i = 0; i <= 4; i++) {
@@ -464,7 +493,7 @@
     chSvg += `<circle cx="${x(lastDayNum)}" cy="${y(fact)}" r="4.5" fill="#faf9f5" stroke="#141414" stroke-width="2"/>`;
     chSvg += `<text x="${x(lastDayNum) + 10}" y="${y(fact) + 4}" font-family="JetBrains Mono" font-size="12" font-weight="500" fill="#141414">${mln(fact)} млн</text>`;
     chSvg += `<text x="${x(days) + 8}" y="${y(plan) + 4}" font-family="JetBrains Mono" font-size="12" fill="#55534e">план ${mln(plan).split(",")[0]}</text>`;
-    for (const dd of [1, 8, 15, 22, 29]) {
+    for (const dd of [1, 8, 15, 22, 29].filter(d => d <= days)) {
       chSvg += `<text x="${x(dd - .5)}" y="${H - 8}" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#8c8981">${dd}</text>`;
     }
     chartEl.innerHTML = chSvg + `</svg><div class="legend"><span><i></i>продано, накопительно</span><span><i class="dash"></i>план равномерно</span></div>`;
