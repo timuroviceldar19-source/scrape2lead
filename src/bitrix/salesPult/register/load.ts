@@ -177,10 +177,11 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
     let historyPayload: RegisterHistoryPayload | undefined;
     let historyError: string | undefined;
 
+    const cachedHistory = loadEncryptedRegisterHistory(cachePath, secretKey);
     const shouldRefresh = shouldRefreshRegisterHistory({
       cacheFilePath: cachePath,
       attemptFilePath: attemptPath,
-      cachedPayload: loadEncryptedRegisterHistory(cachePath, secretKey).payload,
+      cachedPayload: cachedHistory.payload,
       forceRefresh: refreshHistory
     });
 
@@ -236,7 +237,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
             recordRegisterHistoryAttempt(attemptPath, { success: true });
             console.log(`[Реестр] Зашифрованная история сохранена: ${historyPayload.months.length} месяцев в ${cachePath}`);
           } else {
-            const loaded = loadEncryptedRegisterHistory(cachePath, secretKey);
+            const loaded = cachedHistory;
             historyPayload = loaded.payload;
             historyError = loaded.error;
           }
@@ -244,7 +245,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
           console.warn("[Реестр] Ошибка построения истории:", histErr);
           const errMsg = histErr instanceof Error ? histErr.message : String(histErr);
           recordRegisterHistoryAttempt(attemptPath, { success: false, error: errMsg });
-          const loaded = loadEncryptedRegisterHistory(cachePath, secretKey);
+          const loaded = cachedHistory;
           historyPayload = loaded.payload;
           historyError = `Ошибка построения истории: ${errMsg}${loaded.payload ? " (отображается кэш)" : ""}`;
           if (historyPayload) {
@@ -252,7 +253,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
           }
         }
       } else {
-        const loaded = loadEncryptedRegisterHistory(cachePath, secretKey);
+        const loaded = cachedHistory;
         historyPayload = loaded.payload;
         historyError = loaded.error;
 
@@ -266,7 +267,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
         }
       }
     } else {
-      const loaded = loadEncryptedRegisterHistory(cachePath, secretKey);
+      const loaded = cachedHistory;
       historyPayload = loaded.payload;
       historyError = loaded.error;
 

@@ -52,9 +52,14 @@
     }
   }
 
+  let renderedMonth;
+  let rendered = false;
   function renderMonth() {
     const requested = location.hash.slice(1);
     const selected = months.includes(requested) ? requested : R?.month || months[0];
+    if (rendered && renderedMonth === selected) return;
+    rendered = true;
+    renderedMonth = selected;
     const activeView = window.__registerViewForMonth(R, selected);
     window.__renderRegisterTab(activeView, regEl);
     buttons.forEach((button, month) => button.setAttribute("aria-pressed", String(month === selected)));

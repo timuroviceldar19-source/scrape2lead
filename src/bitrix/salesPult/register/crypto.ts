@@ -207,6 +207,8 @@ export function shouldRefreshRegisterHistory(options: ShouldRefreshHistoryOption
   if (!fs.existsSync(resolved)) return true;
 
   if (options.cachedPayload?.months.length && !options.cachedPayload.monthViews) {
+    // Миграция не должна повторно обходить Диск чаще раза в час.
+    if (lastAttempt && nowMs - Date.parse(lastAttempt.timestamp) < 60 * 60 * 1000) return false;
     return true;
   }
 
