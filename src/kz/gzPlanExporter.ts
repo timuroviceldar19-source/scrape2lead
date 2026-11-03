@@ -109,8 +109,8 @@ async function exportCollectedPlans(
       headless: options.headless,
       requireContacts: true,
       requireName: true,
-      profileUrlsByBin
-      , strictErrors: options.partialCollection,
+      profileUrlsByBin,
+      strictErrors: options.partialCollection,
       maxConsecutiveNetworkFailures: options.partialCollection ? options.maxConsecutiveNetworkFailures ?? 3 : undefined,
       onFailure: (bin, error, attempts) => {
         if (options.partialCollection && isTransientNetworkError(error)) networkFailures.set(bin, { error, attempts });

@@ -148,8 +148,8 @@ export async function collectGoszakupRegistryForBins(
         const result = await fetchRegistryForBinWithRetry(page!, bin, debugDir, {
           retries: options.fetchRetries,
           delayMs,
-          profileUrl: options.profileUrlsByBin?.get(bin)
-          , strictErrors: options.strictErrors
+          profileUrl: options.profileUrlsByBin?.get(bin),
+          strictErrors: options.strictErrors
         });
         consecutiveNetworkFailures = 0;
         if (result === "not_found") {
