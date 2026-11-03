@@ -516,13 +516,20 @@
   const tabPanes = {
     pult: document.getElementById("tab-pult"),
     ip: document.getElementById("tab-ip"),
-    kt: document.getElementById("tab-kt")
+    kt: document.getElementById("tab-kt"),
+    "plans-ip": document.getElementById("tab-plans-ip"),
+    "plans-kt": document.getElementById("tab-plans-kt")
   };
   const secInd = document.querySelector(".sections .ind");
   const periodsNav = document.getElementById("periodsNav");
   const marketMonths = document.getElementById("marketMonths");
   const selectedMarketMonth = { ip: null, kt: null };
   const renderedMarketMonth = { ip: null, kt: null };
+  const planMonths = document.getElementById("planMonths");
+  const selectedPlanMonth = { "plans-ip": "all", "plans-kt": "all" };
+  const isPlansTab = tab => tab === "plans-ip" || tab === "plans-kt";
+  const plansBase = tab => tab === "plans-ip" ? PAYLOAD.plans?.ip : PAYLOAD.plans?.kt;
+  const validPlanMonth = (tab, month) => window.__planMonths(plansBase(tab)).includes(month) ? month : "all";
   let currentTab = "pult";
   let preTvTab = "pult";
 
@@ -554,6 +561,10 @@
     }).join("");
   }
   function renderTabContent(tab) {
+    if (isPlansTab(tab)) {
+      window.__renderPlansTab(tab, PAYLOAD.plans, tabPanes[tab], selectedPlanMonth[tab]);
+      return;
+    }
     if ((tab !== "ip" && tab !== "kt") || !window.__renderMarketTab) return;
     const month = selectedMarketMonth[tab];
     if (renderedMarketMonth[tab] === month) return;
@@ -593,8 +604,44 @@
     });
   });
 
+  function renderPlanMonths(tab) {
+    if (!planMonths) return;
+    planMonths.hidden = !isPlansTab(tab);
+    planMonths.innerHTML = isPlansTab(tab) ? window.__planMonths(plansBase(tab)).map(month =>
+      `<button type="button" data-month="${month}" aria-pressed="${month === selectedPlanMonth[tab]}">${month === "all" ? "Все месяцы" : MONTHS[Number(month.slice(5)) - 1] + " " + month.slice(0, 4)}</button>`
+    ).join("") : "";
+  }
+  function selectPlanMonth(month, toggle) {
+    if (!isPlansTab(currentTab)) return;
+    month = validPlanMonth(currentTab, month);
+    if (toggle && selectedPlanMonth[currentTab] === month) month = "all";
+    selectedPlanMonth[currentTab] = month;
+    renderTabContent(currentTab);
+    renderPlanMonths(currentTab);
+    observe();
+    history.replaceState(null, "", `#${currentTab}/${month}`);
+  }
+  if (planMonths) planMonths.addEventListener("click", e => {
+    const button = e.target.closest("button[data-month]");
+    if (button) selectPlanMonth(button.dataset.month, false);
+  });
+  ["plans-ip", "plans-kt"].forEach(tab => {
+    const pane = tabPanes[tab];
+    pane.addEventListener("click", e => {
+      const month = e.target.closest(".months .col[data-m], .mlabels > span[data-m]");
+      if (month) selectPlanMonth(month.dataset.m, true);
+    });
+    pane.addEventListener("keydown", e => {
+      if ((e.key === "Enter" || e.key === " ") && e.target.matches(".months .col[data-m], .mlabels > span[data-m]")) {
+        e.preventDefault();
+        selectPlanMonth(e.target.dataset.m, true);
+      }
+    });
+  });
+
   function setTab(tab, fromUser, marketMonth) {
     if (!Object.prototype.hasOwnProperty.call(tabPanes, tab)) tab = "pult";
+    if (isPlansTab(tab)) selectedPlanMonth[tab] = validPlanMonth(tab, marketMonth !== undefined ? marketMonth : selectedPlanMonth[tab]);
     if (tab === "ip" || tab === "kt") {
       selectedMarketMonth[tab] = validMarketMonth(tab, marketMonth !== undefined ? marketMonth : selectedMarketMonth[tab]);
     }
@@ -614,11 +661,15 @@
     }
     renderTabContent(tab);
     renderMarketMonths(tab);
+    renderPlanMonths(tab);
     moveSecInd();
 
     const srcLabel = document.getElementById("srcLabel");
     const foot = document.getElementById("foot");
-    if (tab === "ip" || tab === "kt") {
+    if (isPlansTab(tab)) {
+      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · госзакупки";
+      if (foot) foot.innerHTML = `<span>Источник: сделки планов в Битрикс24 (scrape2lead-gz-plans) и сверка с zakup.gov.kz</span>`;
+    } else if (tab === "ip" || tab === "kt") {
       if (srcLabel) srcLabel.textContent = "госзакупки · zakup.gov.kz";
       if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
     } else {
@@ -633,7 +684,7 @@
     if (fromUser) {
       try { localStorage.setItem("pult-tab", tab); } catch (e) {}
       if (history.replaceState) {
-        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : tab + "/" + selectedMarketMonth[tab]}`);
+        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : tab + "/" + (isPlansTab(tab) ? selectedPlanMonth[tab] : selectedMarketMonth[tab])}`);
       } else {
         location.hash = tab;
       }
@@ -649,7 +700,7 @@
 
   window.addEventListener("hashchange", () => {
     const [tab, month] = location.hash.replace(/^#/, "").split("/");
-    if (tab === "ip" || tab === "kt") {
+    if (tab === "ip" || tab === "kt" || isPlansTab(tab)) {
       setTab(tab, false, month || null);
     } else if (tab === "pult" || tab === "reg") {
       selectMonth(tab === "pult" ? month || currentMonth : currentMonth);

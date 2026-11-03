@@ -51,7 +51,8 @@ const registerClientJs = fs.readFileSync(new URL("./page/register.client.js", im
 const regRunnerClientJs = fs.readFileSync(new URL("./page/reg.client.js", import.meta.url), "utf8");
 const marketClientJs = fs.readFileSync(new URL("./page/market.client.js", import.meta.url), "utf8");
 
-const pultPageClientJs = `${marketClientJs}\n${pultClientJs}`;
+const plansClientJs = fs.readFileSync(new URL("./page/plans.client.js", import.meta.url), "utf8");
+const pultPageClientJs = `${marketClientJs}\n${plansClientJs}\n${pultClientJs}`;
 const regPageClientJs = `${registerClientJs}\n${regRunnerClientJs}`;
 
 const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|\/\*__CLIENT_JS__\*\//g;
