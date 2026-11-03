@@ -35,6 +35,17 @@ function deps():AutomationDependencies {
 }
 
 describe("independent GZ collection branches", () => {
+  it("prints a shell-retry marker even when TimeoutError has no network text in its message", async () => {
+    const runs = root(), d = deps();
+    const failure = new Error("navigation expired"); failure.name = "TimeoutError";
+    vi.mocked(d.exportPlans).mockRejectedValue(failure);
+    const printed = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await runScheduledAutomation(pkConfig(runs), d);
+      expect(result.status).toBe("failed");
+      expect(printed.mock.calls.flat().join("\n")).toMatch(/fetch failed|TimeoutError/);
+    } finally { printed.mockRestore(); }
+  });
   it.each(["plans", "lots"] as const)("pushes the other branch when %s is unreachable", async failed => {
     const runs = root(), d = deps();
     vi.mocked(failed === "plans" ? d.exportPlans : d.exportLots).mockRejectedValue(new Error("page.goto: Timeout 90000ms exceeded"));
