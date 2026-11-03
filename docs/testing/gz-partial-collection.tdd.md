@@ -97,3 +97,41 @@ CLI возвращает 0; пропуски, ошибки второй ветк
 
 `npm audit` перед checkpoint-коммитами: 26 известных уязвимостей в исходном дереве
 зависимостей (1 low, 12 moderate, 11 high, 2 critical). Зависимости и lock-файл не изменялись.
+
+## Исправления замечаний ревью — 3 ноября 2026
+
+Источник требований — пять замечаний ревью к принятой реализации `bfee9a7`.
+Ветка перенесена локальным `git fetch` из исходной рабочей копии в `F:\scrape2lead-main`.
+
+### RED → GREEN
+
+- Команда: `npx vitest run tests/automation/gzPartialPeriods.test.ts tests/automation/orchestrator.test.ts tests/automation/runSummary.test.ts tests/kz/gzPartialCollection.test.ts --pool=forks --reporter=dot`.
+- RED до изменения production-кода: **11 failed, 72 passed**, четыре файла.
+  Checkpoint `2411b0c`: воспроизведены ложный чистый ноль, отсутствие пропусков деталей,
+  пустой артефакт при полном отказе, неполный список кодов и блокировка/устаревшие ошибки resume.
+- GREEN той же команды: **83 passed**, четыре файла. Checkpoint `1724cdf`.
+
+| Замечание | Исправление и проверяемая гарантия | Регрессия |
+| --- | --- | --- |
+| Сетевые потери деталей | Summary не пишет «сбоев нет» при `fetch_failed > 0`. После исчерпания сетевых повторов деталей сохраняются ключевое слово, период, ID пункта, попытки и причина. Это работает до фильтра ЕНСТРУ. Поиск, все найденные пункты которого потеряны таким образом, не считается успешным; корректный пустой запрос остаётся успешным. Если остались только сетевые потери, экспорт выбрасывает `GzSourceUnavailableError` до записи XLSX | `runSummary.test.ts`, `gzPartialCollection.test.ts` |
+| Очистка файлов | При полном отказе удаляются имена `.part.xlsx` для всех запрошенных периодов и итоговый XLSX; `.collection.json` с обоими пропусками остаётся. Проверено отдельно для plans и lots | `gzPartialPeriods.test.ts` |
+| Resume | Повторяются незавершённые доступные ветки push/approve, успешно выполненные apply/AI не повторяются. Успешная стадия удаляет только собственные старые ошибки, сохраняет посторонние и обновляет manifest на диске. Проверены сбои обеих веток и повтор AI; полностью завершённый прогон по-прежнему отклоняет повтор | `orchestrator.test.ts` |
+| Коды лотов из файла | Если явные коды и слова пусты, `readNstruCodes(inputPath)` загружает реальный список для экспортёра и fallback-отчёта. При отказе периода отчёт содержит оба кода из тестового файла | `gzPartialPeriods.test.ts` |
+| Node 24 / SQLite | Стандартный `test` теперь запускает `vitest run --pool=forks`. Прежняя авария `RemoveEnvironmentCleanupHook` зафиксирована выше; проверка исправления — полный `npm test` без дополнительных аргументов | `package.json`, полный набор |
+
+### Итоговая проверка ревизии
+
+- `npm run lint` — PASS.
+- `npm run build` — PASS.
+- **Чистый `npm test` — PASS: 1762 passed, 9 штатно skipped; 154 файла passed,
+  3 skipped, 67.94 с**, Node 24.19.0. Без дополнительных аргументов и без аварии SQLite.
+- Профильное покрытие: **92.30% statements/lines, 81.59% branches, 81.81% functions**;
+  176 passed, 8 штатно skipped. Команда:
+  `npm run test:coverage -- --pool=forks tests/automation tests/kz/goszakupPlanCollector.test.ts tests/kz/gzPlanExporter.test.ts tests/kz/gzPlanExporterIntegration.test.ts tests/kz/gzPartialCollection.test.ts tests/kz/gzPlanCompletePagination.test.ts --coverage.include=src/automation/orchestrator.ts --coverage.include=src/automation/realDependencies.ts --coverage.include=src/automation/runSummary.ts --coverage.include=src/kz/goszakupPlanCollector.ts --coverage.include=src/kz/gzPlanExporter.ts --reporter=dot`.
+- `git diff --check` — PASS. Изменения просмотрены перед push.
+- `npm audit --json` — те же 26 известных уязвимостей; зависимости не менялись.
+
+Регрессии используют подменённые ответы портала и адаптеры CRM; SQLite/XLSX настоящие.
+Штатные пропуски полного набора — восемь POSIX-тестов оболочки на Windows и один
+отдельно включаемый браузерный тест отчётности. Боевые сборы, отправка в Bitrix,
+ручной запуск workflow и деплой не выполнялись.
