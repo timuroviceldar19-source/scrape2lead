@@ -260,9 +260,11 @@ async function runStage<T extends AutomationStepResult | AutomationExportResult>
     manifest.stages[name] = { ...manifest.stages[name], status: "failed", finishedAt: new Date().toISOString(), error: errorMessage(error),
       ...(error instanceof GzSourceUnavailableError ? { skipped: error.skippedQueries } : {}),
       ...(name.startsWith("export") && isTransientNetworkError(error) ? { sourceUnreachable: true } : {}) };
-    save(manifestPath, manifest); log(`FAILED ${name}: ${errorMessage(error)}`);
-    if (isTransientNetworkError(error)) console.warn(`::warning::${name}: временная недоступность; подробности в сводке запуска`);
-    console.error(`${name}: ${errorMessage(error)}`); throw error;
+    const transient = isTransientNetworkError(error);
+    const message = `${transient ? "fetch failed: " : ""}${errorMessage(error)}`;
+    save(manifestPath, manifest); log(`FAILED ${name}: ${message}`);
+    if (transient) console.warn(`::warning::${name}: временная недоступность; подробности в сводке запуска`);
+    console.error(`${name}: ${message}`); throw error;
   }
 }
 
