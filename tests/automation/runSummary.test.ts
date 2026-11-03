@@ -44,6 +44,26 @@ function manifest(overrides: Partial<AutomationManifest> = {}): AutomationManife
 }
 
 describe("renderRunSummary", () => {
+  it("renders partial collection details and escapes table cells", () => {
+    const m = manifest();
+    m.stages.exportPlans = { ...m.stages.exportPlans, ...{ skipped: [{ stage: "plans" as const,
+      query: "Панель|доска\nещё", year: 2027, months: [1, 2], failedPage: 2, totalPages: 3,
+      keptRows: 50, attempts: 3, reason: "Timeout|network\nretry" }] } };
+    const text = renderRunSummary(m);
+    expect(text).toContain("⚠️ Частичный сбор: пропущено запросов — 1");
+    expect(text).toContain("Этап | Запрос | Период | Страница | Сохранено строк | Попыток | Причина");
+    expect(text).toContain("Панель\\|доска ещё"); expect(text).toContain("Timeout\\|network retry");
+    expect(text).toContain("2027: 1, 2"); expect(text).toContain("2–3");
+  });
+  it("labels a valid empty collection explicitly", () => {
+    const m = manifest(); m.stages.exportPlans.counts = { rows: 0, successful_queries: 1, skipped_queries: 0 };
+    expect(renderRunSummary(m)).toContain("Найдено 0, сбоев нет");
+  });
+  it("labels an unavailable source even if the other branch pushed", () => {
+    const m = manifest(); m.stages.exportLots = { status: "failed", startedAt: m.createdAt,
+      error: "fetch failed: source unreachable", ...{ sourceUnreachable: true } };
+    expect(renderRunSummary(m)).toContain("Источник полностью недоступен: exportLots");
+  });
   it("shows the run, its status and the config", () => {
     const text = renderRunSummary(manifest());
 

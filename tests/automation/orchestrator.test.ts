@@ -34,6 +34,62 @@ function deps():AutomationDependencies {
   };
 }
 
+describe("independent GZ collection branches", () => {
+  it.each(["plans", "lots"] as const)("pushes the other branch when %s is unreachable", async failed => {
+    const runs = root(), d = deps();
+    vi.mocked(failed === "plans" ? d.exportPlans : d.exportLots).mockRejectedValue(new Error("page.goto: Timeout 90000ms exceeded"));
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("pushed");
+    expect(failed === "plans" ? d.dryRunLots : d.dryRunPlans).toHaveBeenCalledTimes(1);
+    expect(failed === "plans" ? d.applyLots : d.applyPlans).toHaveBeenCalledTimes(1);
+    expect(failed === "plans" ? d.applyPlans : d.applyLots).not.toHaveBeenCalled();
+    expect(result.errors).toEqual([expect.objectContaining({ stage: failed === "plans" ? "exportPlans" : "exportLots" })]);
+    const summary = fs.readFileSync(path.join(runs, result.runId, "summary.txt"), "utf8");
+    expect(summary).toContain("Timeout");
+  });
+  it("fails without pushing when both sources are unreachable", async () => {
+    const runs = root(), d = deps();
+    vi.mocked(d.exportPlans).mockRejectedValue(new Error("fetch failed: ETIMEDOUT"));
+    vi.mocked(d.exportLots).mockRejectedValue(new Error("page.goto: Timeout"));
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("failed"); expect(result.errors).toHaveLength(2);
+    expect(d.applyPlans).not.toHaveBeenCalled(); expect(d.applyLots).not.toHaveBeenCalled();
+  });
+  it("persists partial query details on a successful export stage", async () => {
+    const runs = root(), d = deps();
+    const skipped = [{ stage: "plans" as const, query: "Панель", year: 2027, months: [1], failedPage: 2,
+      totalPages: 3, keptRows: 2, attempts: 3, reason: "page.goto: Timeout" }];
+    vi.mocked(d.exportPlans).mockImplementation(async (_cfg, out) => {
+      fs.writeFileSync(out, "plans"); return { path: out, rows: 2, skippedQueries: skipped, successfulQueries: 1 };
+    });
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("pushed");
+    expect(result.stages.exportPlans).toMatchObject({ status: "succeeded", counts: { skipped_queries: 1 }, skipped });
+    expect(fs.readFileSync(path.join(runs, result.runId, "summary.txt"), "utf8")).toContain("Панель");
+  });
+  it("allows preparing and approving only the available lots branch", async () => {
+    const runs = root(), d = deps(); vi.mocked(d.exportPlans).mockRejectedValue(new Error("page.goto: Timeout"));
+    const prepared = await prepareAutomationRun(config(runs), d);
+    expect(prepared.status).toBe("ready");
+    const applied = await approveAutomationRun(config(runs), prepared.runId, d);
+    expect(applied.status).toBe("applied"); expect(d.applyPlans).not.toHaveBeenCalled();
+    expect(d.applyLots).toHaveBeenCalledTimes(1); expect(d.analyzeLots).toHaveBeenCalledTimes(1);
+  });
+  it("does not let an unreachable branch bypass hash checks of the available branch", async () => {
+    const runs = root(), d = deps(); vi.mocked(d.exportLots).mockRejectedValue(new Error("page.goto: Timeout"));
+    const prepared = await prepareAutomationRun(config(runs), d);
+    fs.appendFileSync(prepared.artifacts.plans!.path, "tamper");
+    await expect(pushAutomationRun(config(runs), prepared.runId, d)).rejects.toThrow(/hash mismatch/);
+    expect(d.applyPlans).not.toHaveBeenCalled();
+  });
+  it("continues lots after a transient plans push failure", async () => {
+    const runs = root(), d = deps(); vi.mocked(d.applyPlans).mockRejectedValue(new Error("fetch failed: ECONNRESET"));
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("pushed"); expect(d.applyLots).toHaveBeenCalledTimes(1);
+    expect(result.errors).toEqual([expect.objectContaining({ stage: "applyPlans" })]);
+  });
+});
+
 describe("automation orchestrator",()=>{
   it("prepares both artifacts without applying CRM or AI",async()=>{
     const runs=root(), d=deps(); const result=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
