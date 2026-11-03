@@ -117,6 +117,22 @@ export interface CollectPlansOptions extends NormalizePlanOptions {
   userProfiles?: ReadonlyMap<string, { name: string }>;
   groups?: Array<{ managers: Array<{ id: string; name: string }> }>;
 }
+async function enrichManagerNames(options: CollectPlansOptions, deals: NormalizedPlanDeal[], names: Map<string, string>): Promise<void> {
+  const missingManagerIds = [...new Set(deals.map(d => d.managerId))].filter(id => id && !options.userProfiles?.has(id));
+  if (!missingManagerIds.length) return;
+  try {
+    const raw = await options.reader.call("user.get", { ID: missingManagerIds });
+    const users = Array.isArray(raw) ? raw : (raw as { result?: unknown[] })?.result;
+    for (const row of users || []) {
+      if (!row || typeof row !== "object") continue;
+      const user = row as Record<string, unknown>;
+      const id = text(user.ID);
+      const name = [text(user.NAME), text(user.LAST_NAME)].filter(Boolean).join(" ");
+      if (id && name) names.set(id, name);
+    }
+  } catch { /* Имя из конфига или ID сохраняется при недоступности user.get. */ }
+}
+
 export async function collectPlansMonitor(options: CollectPlansOptions): Promise<PlansMonitorView> {
   const started = performance.now();
   try {
@@ -128,20 +144,7 @@ export async function collectPlansMonitor(options: CollectPlansOptions): Promise
     for (const g of options.groups || []) for (const m of g.managers) names.set(String(m.id), m.name);
     for (const [id, p] of options.userProfiles || []) names.set(String(id), p.name);
     const deals = rows.map(d => normalizePlanDeal(d, { ...options, managerNames: names })).filter((d): d is NormalizedPlanDeal => d !== null);
-    const missingManagerIds = [...new Set(deals.map(d => d.managerId))].filter(id => id && !options.userProfiles?.has(id));
-    if (missingManagerIds.length) {
-      try {
-        const raw = await options.reader.call("user.get", { ID: missingManagerIds });
-        const users = Array.isArray(raw) ? raw : (raw as { result?: unknown[] })?.result;
-        for (const row of users || []) {
-          if (!row || typeof row !== "object") continue;
-          const user = row as Record<string, unknown>;
-          const id = text(user.ID);
-          const name = [text(user.NAME), text(user.LAST_NAME)].filter(Boolean).join(" ");
-          if (id && name) names.set(id, name);
-        }
-      } catch { /* Имя из конфига или ID сохраняется при недоступности user.get. */ }
-    }
+    await enrichManagerNames(options, deals, names);
     for (const d of deals) d.managerName = names.get(d.managerId) || `ID ${d.managerId || "—"}`;
     const view = buildPlansMonitorView(deals, options);
     console.log(`[Планы] сделок: ${deals.length}, ИП: ${view.ip!.total.count}, КТ: ${view.kt!.total.count} (${Math.round(performance.now() - started)} мс)`);
