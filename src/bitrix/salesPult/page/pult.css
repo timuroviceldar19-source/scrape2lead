@@ -536,3 +536,10 @@ body.tv .month-picker { display: none; }
 
 .register-months { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
 #r-history .r[aria-current="true"] { background: var(--paper, #f1efe7); box-shadow: inset 3px 0 #141414; }
+
+#marketMonths[hidden], body.tv #marketMonths { display: none !important; }
+.market-months { margin-bottom: 0; }
+.months .col[data-m], .mlabels > span[data-m] { cursor: pointer; }
+.months .col[aria-current="true"] { background: rgba(20,20,20,.06); box-shadow: inset 0 -2px var(--ink); }
+.mlabels > span[aria-current="true"] { color: var(--ink); font-weight: 600; }
+.months .col[data-m]:focus-visible, .mlabels > span[data-m]:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }

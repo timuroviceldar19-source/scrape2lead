@@ -25,10 +25,37 @@
   const head = (idx, title, meta = "") => `<div class="block-head"><h2><span class="idx">${idx}</span>${title}</h2><span class="meta">${meta}</span></div>`;
   const bar = (w, cls = "", tick) => `<div class="hbar"><span class="${cls}" data-w="${Math.max(0, Math.min(100, w)).toFixed(1)}"></span>${tick != null ? `<i style="left:${Math.min(100, tick)}%"></i>` : ""}</div>`;
 
-  window.__renderMarketTab = function (key, MK, el) {
+  const validMonth = (month) => typeof month === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
+  window.__marketMonths = function (groupView) {
+    if (!groupView) return [];
+    return [...new Set([groupView.month, ...(groupView.months || []).map(m => m.m),
+      ...Object.keys(groupView.monthViews || {})].filter(validMonth))].sort();
+  };
+
+  window.__marketViewForMonth = function (groupView, monthKey) {
+    if (!groupView) return null;
+    if (!validMonth(monthKey)) return groupView;
+    if (groupView.monthViews && Object.prototype.hasOwnProperty.call(groupView.monthViews, monthKey)) {
+      return { ...groupView, ...groupView.monthViews[monthKey], months: groupView.months, monthViews: groupView.monthViews };
+    }
+    if (monthKey === groupView.month) return groupView;
+    const item = (groupView.months || []).find(m => m.m === monthKey);
+    if (!item) return groupView;
+    return {
+      group: groupView.group, month: item.m,
+      total: { sum: item.sum, contracts: item.contracts, qty: 0, suppliers: 0, customers: 0 },
+      us: { sum: item.us, contracts: 0, qty: 0, rank: 0, share: item.sum > 0 ? item.us / item.sum : 0 },
+      prev: { sum: 0, contracts: 0, toDay: "" }, othersSum: 0,
+      suppliers: [], methods: [], kinds: [], lost: [], customers: [],
+      months: groupView.months, ourCompanies: groupView.ourCompanies, legacySummary: true
+    };
+  };
+
+  window.__renderMarketTab = function (key, MK, el, selectedMonth) {
     if (!el) return;
     const isIp = key === "ip" || key === "ИП";
-    const V = isIp ? MK?.ip : MK?.kt;
+    const baseView = isIp ? MK?.ip : MK?.kt;
+    const V = window.__marketViewForMonth(baseView, selectedMonth);
     if (!V) {
       el.innerHTML = `<section class="block"><p class="lead">${esc(MK?.error || "Данные рынка ещё собираются.")}</p></section>`;
       return;
@@ -83,7 +110,7 @@
       ? `<details class="cust-d"><summary class="r${x.us ? " us" : ""}">${supplierCells(x, i)}</summary>${supplierContracts(x)}</details>`
       : `<div class="r${x.us ? " us" : ""}">${supplierCells(x, i)}</div>`;
 
-    let s = `${staleWarning}<section class="block reveal">${head("01", `Рынок ${title} · ${MONTHS[M - 1]}`, "госзакупки, все каналы · без НДС · нажмите на поставщика, чтобы увидеть договоры")}
+    let s = `${staleWarning}${V.legacySummary ? `<p class="note-warn">Доступна сводка месяца. Детальная разбивка появится после обновления кэша.</p>` : ""}<section class="block reveal">${head("01", `Рынок ${title} · ${MONTHS[M - 1]}`, "госзакупки, все каналы · без НДС · нажмите на поставщика, чтобы увидеть договоры")}
     <div class="hero"><div>
       <span class="label">Объём рынка</span>
       <div class="hero-num"><span class="big">${fmt(V.total.sum / 1e6)}</span><span class="of">млн ₸</span></div>
@@ -103,7 +130,9 @@
     // 02 По месяцам
     const months = (V.months || []).slice(-12);
     const mMax = months.length ? Math.max(...months.map((m) => m.sum)) : 1;
-    const toDayNum = V.prev?.toDay ? Number(V.prev.toDay) : null;
+    const latestMonth = MK?.asOf ? MK.asOf.slice(0, 7) : baseView.month;
+    const currentView = window.__marketViewForMonth(baseView, latestMonth);
+    const toDayNum = currentView?.month === latestMonth && currentView.prev?.toDay ? Number(currentView.prev.toDay) : null;
     const firstOurMonth = months.find((m) => m.us > 0)?.m;
     const firstMonthWithUsNote = (firstOurMonth && months.length > 0 && firstOurMonth > months[0]?.m)
       ? `<p class="note-src" style="margin-top: 6px; font-size: 11px;">* До ${MONTHS[Number(firstOurMonth.slice(5)) - 1]} ${firstOurMonth.slice(0, 4)} года договоров группы на портале госзакупок нет.</p>`
@@ -140,15 +169,15 @@
             return `<div class="our our-${i} our-${cSlug}" data-company="${esc(c.name)}" data-h="${hPct.toFixed(1)}" style="bottom:${bPct.toFixed(1)}%" title="${esc(c.name)}: ${money(c.sum)}"></div>`;
           }).join("")
         : `<div class="our" data-h="${(m.sum ? m.us / m.sum * 100 : 0).toFixed(1)}"></div>`;
-      return `<div class="col" data-m="${m.m}" title="${MONTHS[Number(m.m.slice(5)) - 1]}: рынок ${money(m.sum)}, мы ${money(m.us)}"><div class="tot" data-h="${(m.sum / mMax * 100).toFixed(1)}"><span class="lab"><span class="desktop">${desktopLab}</span><span class="mobile">${mobileLab}</span></span>${bars}</div></div>`;
+      return `<div class="col" role="button" tabindex="0" aria-current="${m.m === V.month}" data-m="${esc(m.m)}" title="${MONTHS[Number(m.m.slice(5)) - 1]}: рынок ${money(m.sum)}, мы ${money(m.us)}"><div class="tot" data-h="${(m.sum / mMax * 100).toFixed(1)}"><span class="lab"><span class="desktop">${desktopLab}</span><span class="mobile">${mobileLab}</span></span>${bars}</div></div>`;
     }).join("")}</div>
     <div class="mlabels">${months.map((m) => {
-      const isCurrent = m.m === V.month;
+      const isCurrent = m.m === latestMonth;
       const mIdx = Number(m.m.slice(5)) - 1;
       const desktopName = isCurrent && toDayNum ? `${MONTHS_S[mIdx]} · по ${toDayNum}` : MONTHS_S[mIdx];
       const mobileName = isCurrent && toDayNum ? `${MONTHS_S[mIdx]}*` : MONTHS_S[mIdx];
       const mPct = pct(m.sum ? m.us / m.sum : 0);
-      return `<span><span class="m-name"><span class="desktop">${desktopName}</span><span class="mobile">${mobileName}</span></span><span class="m-pct">${mPct}</span></span>`;
+      return `<span role="button" tabindex="0" data-m="${esc(m.m)}" aria-current="${m.m === V.month}"><span class="m-name"><span class="desktop">${desktopName}</span><span class="mobile">${mobileName}</span></span><span class="m-pct">${mPct}</span></span>`;
     }).join("")}</div>
     ${legendHtml}
     ${incompleteMonthNote}${firstMonthWithUsNote}</section>`;
