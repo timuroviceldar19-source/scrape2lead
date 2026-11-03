@@ -543,3 +543,42 @@ body.tv .month-picker { display: none; }
 .months .col[aria-current="true"] { background: rgba(20,20,20,.06); box-shadow: inset 0 -2px var(--ink); }
 .mlabels > span[aria-current="true"], .mlabels > span[aria-current="true"] .m-name span { color: var(--ink); font-weight: 600; }
 .months .col[data-m]:focus-visible, .mlabels > span[data-m]:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* Монитор планов использует типографику и полосы рынка, свои сетки — под поля CRM. */
+.plans-summary .hero { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 32px; }
+.plans-summary .hero-num .big { font-size: clamp(76px, 10vw, 132px); }
+.plans-summary .hero-num .of { font-size: 24px; white-space: nowrap; }
+.plans-summary .readout .v { font-size: 18px; }
+.plans-summary .readout small { display: block; margin-top: 5px; }
+.plans-summary .plans-outcomes { grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 0; }
+.plans-summary .plans-outcomes > div:nth-child(3) { padding-left: 0; border-left: 0; }
+.plans-summary .share > .r, .plans-summary .share > .cust-d > .r { grid-template-columns: 28px minmax(90px, 1.3fr) minmax(40px, 1fr) 100px 100px; gap: 12px; }
+.plans-summary .share .r.head { font-size: 10px; }
+.plans-breakdown .meth .r { grid-template-columns: minmax(0, 1.5fr) 40px minmax(0, 1fr) 100px 60px; gap: 12px; }
+.plans-kinds .r { grid-template-columns: minmax(0, 2fr) 42px minmax(0, 1fr) 100px; gap: 12px; }
+.plans-statuses .r { grid-template-columns: minmax(0, 1fr) 60px 110px; gap: 12px; }
+.plans-table .r { grid-template-columns: minmax(100px, 1fr) minmax(0, 1.5fr) minmax(0, 2fr) 45px 110px minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; gap: 16px; }
+.plans-table .sub, .plans-customers .sub, .plan-list-row .sub { display: block; font-size: 11px; margin-top: 5px; }
+.plans-table a, .plan-list-row a { color: inherit; text-underline-offset: 3px; }
+.plans-table .r > span, .plans-customers .r > span, .plan-list-row > span { min-width: 0; overflow-wrap: anywhere; }
+.plans-customers .cust .cust-list .r, .plans-summary .share .cust-list .r { grid-template-columns: 70px minmax(0, 1fr) 60px 150px; align-items: start; gap: 12px; }
+.plans-months { overflow-x: auto; }
+body.tv #planMonths { display: none !important; }
+@media (max-width: 1100px) {
+  .plans-summary .hero { grid-template-columns: 1fr; }
+  .bar-in { grid-template-columns: 1fr auto; height: auto; }
+  .sections { grid-column: 1 / -1; grid-row: 2; overflow-x: auto; min-width: 0; }
+  .bar-right { grid-column: 2; grid-row: 1; }
+}
+@media (max-width: 760px) {
+  .plans-table .r, .plans-breakdown .meth .r, .plans-kinds .r, .plans-statuses .r,
+  .plans-summary .share > .r, .plans-summary .share > .cust-d > .r,
+  .plans-customers .cust .cust-list .r, .plans-summary .share .cust-list .r { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
+  .plans-table .r.head, .plans-kinds .r.head, .plans-statuses .r.head { display: none; }
+  .plans-table .r > :nth-child(2), .plans-table .r > :nth-child(3) { grid-column: 1 / -1; }
+  .plans-summary .share .cust-list, .plans-customers .cust-list { margin-left: 0; }
+  .plans-summary .readout { grid-template-columns: 1fr; }
+  .plans-summary .readout > div + div { border-left: 0; padding-left: 0; }
+  .plans-summary .plans-outcomes { grid-template-columns: 1fr 1fr; }
+  .plans-months .months, .plans-months .mlabels { min-width: 360px; }
+}
