@@ -88,7 +88,8 @@ function duration(stage: AutomationStage): string {
 function stageDetails(stage: AutomationStage): string {
   const counts = Object.entries(stage.counts ?? {}).map(([key, value]) => `${key}=${value}`);
   const parts = [...counts];
-  if (stage.status === "succeeded" && stage.counts?.rows === 0 && (stage.counts.successful_queries ?? 0) > 0 && !stage.skipped?.length) {
+  if (stage.status === "succeeded" && stage.counts?.rows === 0 && (stage.counts.successful_queries ?? 0) > 0
+    && (stage.counts.fetch_failed ?? 0) === 0 && !stage.skipped?.length) {
     parts.push("Найдено 0, сбоев нет");
   }
   if (stage.error) parts.push(shorten(stage.error));

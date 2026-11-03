@@ -83,9 +83,10 @@ export async function approveAutomationRun(config: AutomationConfig, runId: stri
   if (approvalWorkflow === "plans-only" || approvalWorkflow === "f3-b2b") {
     throw new Error(`automation run ${runId} is ${approvalWorkflow}: it has no lots to apply and no AI analysis to approve; use "automation:push" to send its records`);
   }
-  if (manifest.status === "applied") throw new Error(`automation run already applied: ${runId}`);
+  if (manifest.status === "applied" && !hasPendingGzStages(manifest, true)) throw new Error(`automation run already applied: ${runId}`);
   const resumable = manifest.approval !== null && ["failed", "applying", "applied_ai_failed"].includes(manifest.status);
-  if (manifest.status !== "ready" && manifest.status !== "pushed" && !resumable) throw new Error(`automation run is not ready: ${manifest.status}`);
+  if (manifest.status !== "ready" && manifest.status !== "pushed" && !resumable
+    && !(manifest.status === "applied" && hasPendingGzStages(manifest, true))) throw new Error(`automation run is not ready: ${manifest.status}`);
   verifyRunArtifacts(manifest);
   manifest.approval ??= { requestedAt: new Date().toISOString() }; manifest.status = "applying"; save(manifestPath, manifest);
   const log = (message: string) => fs.appendFileSync(path.join(runDir, "run.log"), `${new Date().toISOString()} ${message}\n`);
@@ -122,8 +123,10 @@ export async function pushAutomationRun(config: AutomationConfig, runId: string,
   const manifestPath = path.join(runDir, "manifest.json");
   if (!fs.existsSync(manifestPath)) throw new Error(`automation run not found: ${runId}`);
   const manifest = readManifest(manifestPath);
-  if (["pushed", "applying", "applied", "applied_ai_failed"].includes(manifest.status)) throw new Error(`automation run already pushed: ${runId}`);
-  const resumable = manifest.push != null && manifest.status === "failed";
+  const partialPush = manifestWorkflow(manifest) !== "f3-b2b"
+    && ["pushed", "applied", "applied_ai_failed"].includes(manifest.status) && hasPendingGzStages(manifest);
+  if (["pushed", "applying", "applied", "applied_ai_failed"].includes(manifest.status) && !partialPush) throw new Error(`automation run already pushed: ${runId}`);
+  const resumable = partialPush || (manifest.push != null && manifest.status === "failed");
   if (manifest.status !== "ready" && !resumable) throw new Error(`automation run is not ready: ${manifest.status}`);
   verifyRunArtifacts(manifest);
   manifest.push ??= { startedAt: new Date().toISOString() }; manifest.status = "pushing"; save(manifestPath, manifest);
@@ -150,6 +153,12 @@ export async function pushAutomationRun(config: AutomationConfig, runId: string,
 
 function availableBranches(manifest: AutomationManifest): Array<"plans" | "lots"> {
   return manifest.preparedBranches ?? (manifestWorkflow(manifest) === "plans-and-lots" ? ["plans", "lots"] : ["plans"]);
+}
+
+function hasPendingGzStages(manifest: AutomationManifest, includeAnalysis = false): boolean {
+  const branches = availableBranches(manifest);
+  return GZ_BRANCHES.some(branch => branches.includes(branch.key) && manifest.stages[branch.applyStage]?.status !== "succeeded")
+    || (includeAnalysis && branches.includes("lots") && manifest.stages.analyzeLots?.status !== "succeeded");
 }
 
 async function applyGzBranches(config: AutomationConfig, deps: AutomationDependencies, manifest: AutomationManifest,
@@ -251,6 +260,7 @@ async function runStage<T extends AutomationStepResult | AutomationExportResult>
   manifest.stages[name] = { status: "running", startedAt: new Date().toISOString() }; save(manifestPath, manifest); log(`START ${name}`);
   try {
     const result = await operation();
+    manifest.errors = manifest.errors.filter(error => error.stage !== name);
     const counts = "counts" in result ? result.counts : exportCounts(result);
     const skipped = "skippedQueries" in result ? result.skippedQueries : undefined;
     if (skipped?.length) console.warn(`::warning::${name}: Частичный сбор: пропущено запросов — ${skipped.length}`);

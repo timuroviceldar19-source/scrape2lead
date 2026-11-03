@@ -17,7 +17,7 @@ import type {
 } from "./goszakupPlanTypes.js";
 import { MONTH_NAMES_RU as MONTH_MAP } from "./goszakupPlanTypes.js";
 import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "./goszakupOrigin.js";
-import { isTransientNetworkError, collectionErrorMessage, type GzSkippedQuery } from "./gzCollection.js";
+import { isTransientNetworkError, collectionErrorMessage, GzSourceUnavailableError, type GzSkippedQuery } from "./gzCollection.js";
 
 const BASE_URL = GZ_PORTAL_ORIGIN;
 
@@ -58,6 +58,10 @@ export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Pr
   // Safe because exportCollectedPlans re-applies the same minAmount/excludeKeywords
   // filters post-detail (filterPlanRowsWithStats), so the final rows are identical.
   const collectResult = await collectGzPlans({ ...options, prefilterDetails: true });
+  if (options.partialCollection && collectResult.successfulQueries === 0 && collectResult.skippedQueries?.length
+    && !collectResult.items.some(item => item.detail?.customer_bin && isValidBin(item.detail.customer_bin))) {
+    throw new GzSourceUnavailableError(collectResult.skippedQueries);
+  }
   const truFilterResult = filterCollectedPlansByTruCode(
     collectResult.items,
     options.includeTruCodePrefixes ?? []

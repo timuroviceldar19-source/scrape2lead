@@ -4,7 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import ExcelJS from "exceljs";
 import { z } from "zod";
-import { exportGoszakupLotsByNstru, resolveLotStatusIds } from "../kz/goszakupLotsNstruExporter.js";
+import { exportGoszakupLotsByNstru, readNstruCodes, resolveLotStatusIds } from "../kz/goszakupLotsNstruExporter.js";
 import { exportGzPlansReport } from "../kz/gzPlanExporter.js";
 import { loadGzPlansConfig, mergeGzPlansExportOptions } from "../kz/gzPlansConfig.js";
 import { collectionErrorMessage, GzSourceUnavailableError, isTransientNetworkError, type GzCollectionReport, type GzSkippedQuery } from "../kz/gzCollection.js";
@@ -113,9 +113,10 @@ async function exportPlansForPeriods(configPath: string, outputPath: string, per
 
 async function exportLotsForPeriods(configPath: string, outputPath: string, periods: RollingPeriod[]): Promise<AutomationExportResult> {
   const config = LotsConfigSchema.parse(JSON.parse(fs.readFileSync(configPath, "utf8")));
-  return exportPeriods("lots", outputPath, periods, [...config.nstruCodes, ...config.keywords], async (period, partPath) => {
+  const nstruCodes = config.nstruCodes.length || config.keywords.length ? config.nstruCodes : readNstruCodes(config.inputPath);
+  return exportPeriods("lots", outputPath, periods, [...nstruCodes, ...config.keywords], async (period, partPath) => {
     return exportGoszakupLotsByNstru({
-      inputPath: config.inputPath, nstruCodes: config.nstruCodes.length ? config.nstruCodes : undefined, keywords: config.keywords,
+      inputPath: config.inputPath, nstruCodes: nstruCodes.length ? nstruCodes : undefined, keywords: config.keywords,
       year: period.year, months: period.months, statusIds: resolveLotStatusIds(config.statuses), minAmount: config.minAmount,
       excludeKeywords: config.excludeKeywords, maxPages: config.maxPages, delayMs: config.delayMs, headless: config.headless, debugDir: config.debugDir,
       pageLoadTimeoutMs: config.pageLoadTimeoutMs, outPath: partPath, partialCollection: true,
@@ -159,7 +160,11 @@ async function exportPeriods(
     fs.writeFileSync(`${reportPath}.tmp`, JSON.stringify({ successfulQueries, skippedQueries }, null, 2) + "\n");
     fs.renameSync(`${reportPath}.tmp`, reportPath);
   }
-  if (!successfulQueries && skippedQueries.length) throw new GzSourceUnavailableError(skippedQueries);
+  if (!successfulQueries && skippedQueries.length) {
+    cleanupParts(periods.map(period => partName(outputPath, period.year)));
+    fs.rmSync(outputPath, { force: true });
+    throw new GzSourceUnavailableError(skippedQueries);
+  }
   if (!parts.length) throw new Error("no periods to export");
   cleanupParts(parts.map(part => part.xlsxPath));
   return { path: outputPath, rows: parts.reduce((sum, part) => sum + part.rows, 0), successfulQueries, skippedQueries,
