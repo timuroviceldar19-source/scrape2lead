@@ -42,6 +42,7 @@ import {
 } from "../src/bitrix/salesPult/site.js";
 import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
 import { loadMarketView } from "../src/kz/market/load.js";
+import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
 import {
   loadStoredMarketUnits,
   saveStoredMarketUnits,
@@ -646,6 +647,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       dynamics,
       holidays: config.holidays,
       market: marketView,
+      plans: await collectPlansMonitor({ reader, asOfDate: todayAlmaty, portal: config.portal, userProfiles: collected.userProfiles, groups: config.groups }),
       outcomeMismatches: collected.outcomeMismatches
     };
 

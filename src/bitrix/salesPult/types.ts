@@ -58,6 +58,7 @@ export interface SalesPultPayload {
   dynamics: DayDynamic[];
   holidays?: string[];
   market?: MarketView | null;
+  plans?: import("./plans/types.js").PlansMonitorView | null;
   outcomeMismatches?: WonLostMismatchDeal[];
 }
 
