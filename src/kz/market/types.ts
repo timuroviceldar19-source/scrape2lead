@@ -146,6 +146,8 @@ export interface MarketCustomerItem {
   contractList: MarketContractItem[];
 }
 
+export type MarketGroupMonthView = Omit<MarketGroupView, "months" | "monthViews">;
+
 export interface MarketGroupView {
   group: "ИП" | "КТ";
   month: string;
@@ -171,6 +173,7 @@ export interface MarketGroupView {
   suppliers: MarketSupplierItem[];
   othersSum: number;
   months: MarketMonthItem[];
+  monthViews?: Record<string, MarketGroupMonthView>;
   methods: MarketMethodItem[];
   kinds: MarketKindItem[];
   lost: MarketLostItem[];

@@ -520,9 +520,11 @@
   };
   const secInd = document.querySelector(".sections .ind");
   const periodsNav = document.getElementById("periodsNav");
+  const marketMonths = document.getElementById("marketMonths");
+  const selectedMarketMonth = { ip: null, kt: null };
+  const renderedMarketMonth = { ip: null, kt: null };
   let currentTab = "pult";
   let preTvTab = "pult";
-  const renderedTabs = new Set();
 
   function moveSecInd() {
     const a = tabLinks.find((x) => x.dataset.t === currentTab);
@@ -531,23 +533,71 @@
     secInd.style.width = a.offsetWidth - 28 + "px";
   }
 
-  function renderTabContent(tab) {
-    if (renderedTabs.has(tab)) return;
-    if (tab === "ip") {
-      if (window.__renderMarketTab) {
-        window.__renderMarketTab("ip", PAYLOAD.market, tabPanes.ip);
-        renderedTabs.add(tab);
-      }
-    } else if (tab === "kt") {
-      if (window.__renderMarketTab) {
-        window.__renderMarketTab("kt", PAYLOAD.market, tabPanes.kt);
-        renderedTabs.add(tab);
-      }
-    }
+  function marketBase(tab) {
+    return tab === "ip" ? PAYLOAD.market?.ip : PAYLOAD.market?.kt;
   }
+  function validMarketMonth(tab, month) {
+    const base = marketBase(tab);
+    return window.__marketMonths(base).includes(month) ? month : base?.month;
+  }
+  function renderMarketMonths(tab) {
+    if (!marketMonths) return;
+    const isMarket = tab === "ip" || tab === "kt";
+    const months = isMarket ? window.__marketMonths(marketBase(tab)) : [];
+    marketMonths.hidden = months.length === 0;
+    const multipleYears = new Set(months.map(m => m.slice(0, 4))).size > 1;
+    marketMonths.innerHTML = months.map(month => {
+      const name = MONTHS[Number(month.slice(5)) - 1];
+      const label = name[0].toUpperCase() + name.slice(1);
+      const fullLabel = `${label} ${month.slice(0, 4)}`;
+      return `<button type="button" data-month="${month}" title="${fullLabel}" aria-pressed="${month === selectedMarketMonth[tab]}">${multipleYears ? fullLabel : label}</button>`;
+    }).join("");
+  }
+  function renderTabContent(tab) {
+    if ((tab !== "ip" && tab !== "kt") || !window.__renderMarketTab) return;
+    const month = selectedMarketMonth[tab];
+    if (renderedMarketMonth[tab] === month) return;
+    if (io) tabPanes[tab].querySelectorAll(".reveal").forEach(el => io.unobserve(el));
+    window.__renderMarketTab(tab, PAYLOAD.market, tabPanes[tab], month);
+    renderedMarketMonth[tab] = month;
+  }
+  function selectMarketMonth(month) {
+    if (currentTab !== "ip" && currentTab !== "kt") return;
+    month = validMarketMonth(currentTab, month);
+    if (month === selectedMarketMonth[currentTab]) return;
+    selectedMarketMonth[currentTab] = month;
+    renderTabContent(currentTab);
+    if (marketMonths) marketMonths.querySelectorAll("button[data-month]").forEach(button => {
+      button.setAttribute("aria-pressed", String(button.dataset.month === month));
+    });
+    animate(tabPanes[currentTab]);
+    observe();
+    history.replaceState(null, "", `#${currentTab}/${month}`);
+  }
+  if (marketMonths) marketMonths.addEventListener("click", e => {
+    const button = e.target.closest("button[data-month]");
+    if (button) selectMarketMonth(button.dataset.month);
+  });
+  ["ip", "kt"].forEach(tab => {
+    const pane = tabPanes[tab];
+    if (!pane) return;
+    pane.addEventListener("click", e => {
+      const month = e.target.closest(".months .col[data-m], .mlabels > span[data-m]");
+      if (month) selectMarketMonth(month.dataset.m);
+    });
+    pane.addEventListener("keydown", e => {
+      if ((e.key === "Enter" || e.key === " ") && e.target.matches(".months .col[data-m], .mlabels > span[data-m]")) {
+        e.preventDefault();
+        selectMarketMonth(e.target.dataset.m);
+      }
+    });
+  });
 
-  function setTab(tab, fromUser) {
-    if (tab === "reg" || !tabPanes[tab]) tab = "pult";
+  function setTab(tab, fromUser, marketMonth) {
+    if (!Object.prototype.hasOwnProperty.call(tabPanes, tab)) tab = "pult";
+    if (tab === "ip" || tab === "kt") {
+      selectedMarketMonth[tab] = validMarketMonth(tab, marketMonth !== undefined ? marketMonth : selectedMarketMonth[tab]);
+    }
     currentTab = tab;
     tabLinks.forEach((link) => {
       const active = link.dataset.t === tab;
@@ -563,6 +613,7 @@
       periodsNav.hidden = tab !== "pult";
     }
     renderTabContent(tab);
+    renderMarketMonths(tab);
     moveSecInd();
 
     const srcLabel = document.getElementById("srcLabel");
@@ -582,7 +633,7 @@
     if (fromUser) {
       try { localStorage.setItem("pult-tab", tab); } catch (e) {}
       if (history.replaceState) {
-        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : tab}`);
+        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : tab + "/" + selectedMarketMonth[tab]}`);
       } else {
         location.hash = tab;
       }
@@ -597,12 +648,12 @@
   });
 
   window.addEventListener("hashchange", () => {
-    const h = location.hash.replace(/^#/, "").split("/")[0];
-    if (h === "pult") selectMonth(location.hash.split("/")[1] || currentMonth);
-    if (h === "reg") {
+    const [tab, month] = location.hash.replace(/^#/, "").split("/");
+    if (tab === "ip" || tab === "kt") {
+      setTab(tab, false, month || null);
+    } else if (tab === "pult" || tab === "reg") {
+      selectMonth(tab === "pult" ? month || currentMonth : currentMonth);
       setTab("pult", false);
-    } else if (h && tabPanes[h] && h !== currentTab) {
-      setTab(h, false);
     }
   });
 
@@ -713,9 +764,10 @@
   if (hashTab === "reg") hashTab = "pult";
   let savedTab = null; try { savedTab = localStorage.getItem("pult-tab"); } catch (e) {}
   if (savedTab === "reg") savedTab = "pult";
-  const initialTab = tabPanes[hashTab] ? hashTab : (tabPanes[savedTab] ? savedTab : "pult");
-  setTab(initialTab, false);
-  selectMonth(location.hash.split("/")[1] || currentMonth);
+  const hasTab = tab => Object.prototype.hasOwnProperty.call(tabPanes, tab);
+  const initialTab = hasTab(hashTab) ? hashTab : (hasTab(savedTab) ? savedTab : "pult");
+  setTab(initialTab, false, location.hash.split("/")[1] || null);
+  selectMonth(hashTab === "pult" ? location.hash.split("/")[1] || currentMonth : currentMonth);
 
   observe();
   if (/tv=1/.test(location.search)) toggleTv();

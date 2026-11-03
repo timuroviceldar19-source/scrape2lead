@@ -1,6 +1,7 @@
 import type {
   MarketUnit,
   MarketGroupView,
+  MarketGroupMonthView,
   MarketView,
   MarketSupplierItem,
   MarketMonthItem,
@@ -118,12 +119,50 @@ export function buildMarketGroupView(
   const curCandidateContracts = countContracts(curCandidate);
   const isEarlyMonth = Number(asOfDate.slice(8, 10)) <= 5;
   const usePrevMonth = prevUnits.length > 0 && (curCandidateContracts === 0 || (isEarlyMonth && curCandidateContracts < 5));
-  const displayMonth = usePrevMonth ? prevMonth : curMonth;
+  const defaultMonth = usePrevMonth ? prevMonth : curMonth;
+  // Months
+  const byMonth = groupBy(groupUnits, (u) => u.month);
+  const months: MarketMonthItem[] = Object.entries(byMonth)
+    .map(([m, xs]) => {
+      const monthOurCompanies = ourCompaniesList.map((comp) => ({
+        bin: comp.bin,
+        name: comp.name,
+        sum: sumBy(xs.filter((u) => u.supplier === comp.bin), (u) => u.sum)
+      }));
+      return {
+        m,
+        sum: sumBy(xs, (u) => u.sum),
+        us: sumBy(xs.filter(isOurUnit), (u) => u.sum),
+        contracts: countContracts(xs),
+        ourCompanies: monthOurCompanies
+      };
+    })
+    .sort((a, b) => a.m.localeCompare(b.m));
+
+  const monthViews: Record<string, MarketGroupMonthView> = {};
+  for (const month of new Set([...months.map(m => m.m), defaultMonth])) {
+    monthViews[month] = buildSingleMonthGroupView(group, groupUnits, month, asOfDate, cfg, ourBins, ourCompaniesList);
+  }
+  return { ...monthViews[defaultMonth], months, monthViews };
+}
+
+function buildSingleMonthGroupView(
+  group: "ИП" | "КТ",
+  groupUnits: MarketUnit[],
+  displayMonth: string,
+  asOfDate: string,
+  cfg: MarketConfig,
+  ourBins: Set<string>,
+  ourCompaniesList: MarketCompanyItem[]
+): MarketGroupMonthView {
+  const isOurUnit = (u: MarketUnit) => ourBins.has(u.supplier);
+  const curMonth = asOfDate.slice(0, 7);
+  const isClosedMonth = displayMonth < curMonth;
   const comparisonMonth = getPreviousMonthKey(displayMonth);
 
   const cur = groupUnits.filter((u) => u.month === displayMonth);
   const lastDate = cur.reduce((m, l) => (l.date > m ? l.date : m), "");
-  const lastDay = lastDate ? lastDate.slice(8, 10) : (usePrevMonth ? "31" : asOfDate.slice(8, 10));
+  const lastDay = lastDate ? lastDate.slice(8, 10) : (isClosedMonth ? "31" : asOfDate.slice(8, 10));
   const prev = groupUnits.filter((u) => u.month === comparisonMonth && u.date.slice(8, 10) <= lastDay);
   const ourUnits = cur.filter(isOurUnit);
   const competitorUnits = cur.filter((u) => !isOurUnit(u));
@@ -189,25 +228,6 @@ export function buildMarketGroupView(
   const top12Sum = sumBy(top12Suppliers, (s) => s.sum);
   const curTotalSum = sumBy(cur, (u) => u.sum);
   const othersSum = curTotalSum - top12Sum;
-
-  // Months
-  const byMonth = groupBy(groupUnits, (u) => u.month);
-  const months: MarketMonthItem[] = Object.entries(byMonth)
-    .map(([m, xs]) => {
-      const monthOurCompanies = ourCompaniesList.map((comp) => ({
-        bin: comp.bin,
-        name: comp.name,
-        sum: sumBy(xs.filter((u) => u.supplier === comp.bin), (u) => u.sum)
-      }));
-      return {
-        m,
-        sum: sumBy(xs, (u) => u.sum),
-        us: sumBy(xs.filter(isOurUnit), (u) => u.sum),
-        contracts: countContracts(xs),
-        ourCompanies: monthOurCompanies
-      };
-    })
-    .sort((a, b) => a.m.localeCompare(b.m));
 
   // Year-to-date (ytd) summary
   const currentYear = displayMonth.slice(0, 4);
@@ -337,7 +357,6 @@ export function buildMarketGroupView(
     },
     suppliers: top12Suppliers,
     othersSum,
-    months,
     methods,
     kinds,
     lost,
