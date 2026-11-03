@@ -55,18 +55,19 @@ export function buildSingleSliceView(deals: NormalizedPlanDeal[], asOfDate: stri
   };
 }
 
+function buildGroupView(group: "ИП" | "КТ", deals: NormalizedPlanDeal[], asOfDate: string): PlansGroupView {
+  const items = deals.filter(d => d.group === group);
+  const all = buildSingleSliceView(items, asOfDate);
+  const monthViews: Record<string, PlansGroupSliceView> = { all };
+  const months = [...new Set(items.map(d => d.month))].sort().map(m => {
+    const ds = items.filter(d => d.month === m);
+    monthViews[m] = buildSingleSliceView(ds, asOfDate);
+    return { m, sum: sum(ds), count: ds.length, activeSum: sum(ds.filter(d => d.isOpen || d.outcomeCategory === "won")),
+      wonSum: monthViews[m].total.wonSum, newCount: monthViews[m].total.newCount };
+  });
+  return { group, ...all, months, monthViews };
+}
+
 export function buildPlansMonitorView(deals: NormalizedPlanDeal[], options: { asOfDate: string }): PlansMonitorView {
-  function groupView(group: "ИП" | "КТ"): PlansGroupView {
-    const items = deals.filter(d => d.group === group);
-    const all = buildSingleSliceView(items, options.asOfDate);
-    const monthViews: Record<string, PlansGroupSliceView> = { all };
-    const months = [...new Set(items.map(d => d.month))].sort().map(m => {
-      const ds = items.filter(d => d.month === m);
-      monthViews[m] = buildSingleSliceView(ds, options.asOfDate);
-      return { m, sum: sum(ds), count: ds.length, activeSum: sum(ds.filter(d => d.isOpen || d.outcomeCategory === "won")),
-        wonSum: monthViews[m].total.wonSum, newCount: monthViews[m].total.newCount };
-    });
-    return { group, ...all, months, monthViews };
-  }
-  return { asOf: options.asOfDate, ip: groupView("ИП"), kt: groupView("КТ") };
+  return { asOf: options.asOfDate, ip: buildGroupView("ИП", deals, options.asOfDate), kt: buildGroupView("КТ", deals, options.asOfDate) };
 }
