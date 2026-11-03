@@ -7,6 +7,8 @@ import { z } from "zod";
 import { exportGoszakupLotsByNstru, resolveLotStatusIds } from "../kz/goszakupLotsNstruExporter.js";
 import { exportGzPlansReport } from "../kz/gzPlanExporter.js";
 import { loadGzPlansConfig, mergeGzPlansExportOptions } from "../kz/gzPlansConfig.js";
+import { collectionErrorMessage, GzSourceUnavailableError, isTransientNetworkError, type GzCollectionReport, type GzSkippedQuery } from "../kz/gzCollection.js";
+import type { PlanDetailCacheStats } from "../kz/goszakupPlanTypes.js";
 import type { AutomationDependencies, AutomationExportResult, AutomationStepResult, RollingPeriod } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -15,6 +17,7 @@ const LotsConfigSchema = z.object({
   keywords: z.array(z.string()).default([]), nstruCodes: z.array(z.string()).default([]), inputPath: z.string().optional(),
   statuses: z.array(z.string()).default([]), minAmount: z.number().nonnegative().optional(), excludeKeywords: z.array(z.string()).default([]),
   maxPages: z.number().int().positive().optional(),
+  maxConsecutiveNetworkFailures: z.number().int().positive().default(3),
   delayMs: z.number().int().nonnegative().optional(), headless: z.boolean().default(true), debugDir: z.string().optional(), pageLoadTimeoutMs: z.number().int().positive().optional()
 });
 
@@ -102,39 +105,65 @@ function requireString(value: unknown, field: string): string {
 
 async function exportPlansForPeriods(configPath: string, outputPath: string, periods: RollingPeriod[]): Promise<AutomationExportResult> {
   const base = loadGzPlansConfig(configPath);
-  const parts: Array<{ path: string; rows: number }> = [];
-  const cache = { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 };
-  for (const period of periods) {
-    const partPath = partName(outputPath, period.year);
+  return exportPeriods("plans", outputPath, periods, base.keywords, async (period, partPath) => {
     const options = mergeGzPlansExportOptions(base, { year: period.year, months: period.months, outPath: partPath });
-    const result = await exportGzPlansReport({ ...options, token: process.env.GOSZAKUP_TOKEN ?? null });
-    parts.push({ path: result.xlsxPath, rows: result.rows });
-    cache.cacheHit += result.cacheStats.cacheHit; cache.cacheMiss += result.cacheStats.cacheMiss;
-    cache.fetched += result.cacheStats.fetched; cache.fetchFailed += result.cacheStats.fetchFailed;
-  }
-  await mergeWorkbooks(parts.map((part) => part.path), outputPath); cleanupParts(parts.map((part) => part.path));
-  return {
-    path: outputPath,
-    rows: parts.reduce((sum, part) => sum + part.rows, 0),
-    cacheHit: cache.cacheHit, cacheMiss: cache.cacheMiss, fetched: cache.fetched, fetchFailed: cache.fetchFailed
-  };
+    return exportGzPlansReport({ ...options, partialCollection: true, token: process.env.GOSZAKUP_TOKEN ?? null });
+  });
 }
 
 async function exportLotsForPeriods(configPath: string, outputPath: string, periods: RollingPeriod[]): Promise<AutomationExportResult> {
   const config = LotsConfigSchema.parse(JSON.parse(fs.readFileSync(configPath, "utf8")));
-  const parts: Array<{ path: string; rows: number }> = [];
-  for (const period of periods) {
-    const partPath = partName(outputPath, period.year);
-    const result = await exportGoszakupLotsByNstru({
+  return exportPeriods("lots", outputPath, periods, [...config.nstruCodes, ...config.keywords], async (period, partPath) => {
+    return exportGoszakupLotsByNstru({
       inputPath: config.inputPath, nstruCodes: config.nstruCodes.length ? config.nstruCodes : undefined, keywords: config.keywords,
       year: period.year, months: period.months, statusIds: resolveLotStatusIds(config.statuses), minAmount: config.minAmount,
       excludeKeywords: config.excludeKeywords, maxPages: config.maxPages, delayMs: config.delayMs, headless: config.headless, debugDir: config.debugDir,
-      pageLoadTimeoutMs: config.pageLoadTimeoutMs, outPath: partPath
+      pageLoadTimeoutMs: config.pageLoadTimeoutMs, outPath: partPath, partialCollection: true,
+      maxConsecutiveNetworkFailures: config.maxConsecutiveNetworkFailures
     });
-    parts.push({ path: result.xlsxPath, rows: result.rows });
+  });
+}
+
+interface PeriodExport extends GzCollectionReport { xlsxPath: string; rows: number; cacheStats?: PlanDetailCacheStats }
+
+/** Каждый завершённый период сразу попадает в итоговый XLSX и отчёт; более поздний сбой его не удаляет. */
+async function exportPeriods(
+  source: "plans" | "lots", outputPath: string, periods: RollingPeriod[], queries: string[],
+  collect: (period: RollingPeriod, partPath: string) => Promise<PeriodExport>
+): Promise<AutomationExportResult> {
+  const parts: PeriodExport[] = [];
+  const skippedQueries: GzSkippedQuery[] = [];
+  let successfulQueries = 0;
+  const cache = { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 };
+  for (const period of periods) {
+    let result: PeriodExport | undefined;
+    try {
+      result = await collect(period, partName(outputPath, period.year));
+    } catch (error) {
+      if (!isTransientNetworkError(error)) throw error;
+      if (error instanceof GzSourceUnavailableError) skippedQueries.push(...error.skippedQueries);
+      else for (const query of queries.length ? queries : ["весь период"]) {
+        skippedQueries.push({ stage: source, query, ...period, failedPage: 1, totalPages: null, keptRows: 0,
+          attempts: 0, reason: `period aborted: ${collectionErrorMessage(error)}` });
+      }
+    }
+    if (result) {
+      parts.push(result);
+      successfulQueries += result.successfulQueries ?? 1;
+      skippedQueries.push(...(result.skippedQueries ?? []));
+      if (result.cacheStats) for (const key of Object.keys(cache) as Array<keyof typeof cache>) cache[key] += result.cacheStats[key];
+      await mergeWorkbooks(parts.map(part => part.xlsxPath), outputPath);
+    }
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    const reportPath = `${outputPath}.collection.json`;
+    fs.writeFileSync(`${reportPath}.tmp`, JSON.stringify({ successfulQueries, skippedQueries }, null, 2) + "\n");
+    fs.renameSync(`${reportPath}.tmp`, reportPath);
   }
-  await mergeWorkbooks(parts.map((part) => part.path), outputPath); cleanupParts(parts.map((part) => part.path));
-  return { path: outputPath, rows: parts.reduce((sum, part) => sum + part.rows, 0) };
+  if (!successfulQueries && skippedQueries.length) throw new GzSourceUnavailableError(skippedQueries);
+  if (!parts.length) throw new Error("no periods to export");
+  cleanupParts(parts.map(part => part.xlsxPath));
+  return { path: outputPath, rows: parts.reduce((sum, part) => sum + part.rows, 0), successfulQueries, skippedQueries,
+    ...(source === "plans" ? cache : {}) };
 }
 
 async function mergeWorkbooks(inputs: string[], output: string): Promise<void> {

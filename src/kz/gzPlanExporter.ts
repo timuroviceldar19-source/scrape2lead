@@ -17,6 +17,7 @@ import type {
 } from "./goszakupPlanTypes.js";
 import { MONTH_NAMES_RU as MONTH_MAP } from "./goszakupPlanTypes.js";
 import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "./goszakupOrigin.js";
+import { isTransientNetworkError, collectionErrorMessage, type GzSkippedQuery } from "./gzCollection.js";
 
 const BASE_URL = GZ_PORTAL_ORIGIN;
 
@@ -66,7 +67,7 @@ export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Pr
 
   const cacheStats = collectResult.cacheStats ?? { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 };
   try {
-    return await exportCollectedPlans(
+    const exported = await exportCollectedPlans(
       truFilterResult.items,
       options,
       storage,
@@ -74,6 +75,8 @@ export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Pr
       truFilterResult.droppedByTruCode,
       cacheStats
     );
+    return { ...exported, successfulQueries: collectResult.successfulQueries,
+      skippedQueries: [...(collectResult.skippedQueries ?? []), ...(exported.skippedQueries ?? [])] };
   } finally {
     storage.close();
   }
@@ -95,6 +98,8 @@ async function exportCollectedPlans(
   )];
 
   let registryHits = 0;
+  const networkFailures = new Map<string, { error: unknown; attempts: number }>();
+  const skippedQueries: GzSkippedQuery[] = [];
   if (!options.skipRegistry && customerBins.length > 0) {
     const profileUrlsByBin = buildRegistryProfileHints(items);
     await collectGoszakupRegistryForBins(customerBins, {
@@ -105,6 +110,11 @@ async function exportCollectedPlans(
       requireContacts: true,
       requireName: true,
       profileUrlsByBin
+      , strictErrors: options.partialCollection,
+      maxConsecutiveNetworkFailures: options.partialCollection ? options.maxConsecutiveNetworkFailures ?? 3 : undefined,
+      onFailure: (bin, error, attempts) => {
+        if (options.partialCollection && isTransientNetworkError(error)) networkFailures.set(bin, { error, attempts });
+      }
     });
   }
 
@@ -118,6 +128,16 @@ async function exportCollectedPlans(
   }
 
   if (!options.skipRegistry) {
+    const excludedBins = new Set<string>();
+    for (const [bin, failure] of networkFailures) {
+      const record = registryByBin.get(bin);
+      if (record?.bin === bin && record.name_ru?.trim()) continue;
+      excludedBins.add(bin);
+      skippedQueries.push({ stage: "registry", query: bin, year: options.year ?? 2026, months: options.months ?? [6, 7, 8],
+        failedPage: null, totalPages: null, keptRows: 0, attempts: failure.attempts, reason: collectionErrorMessage(failure.error),
+        planPointIds: items.filter(item => item.detail?.customer_bin === bin).map(item => item.plan_point_id) });
+    }
+    items = items.filter(item => !excludedBins.has(item.detail?.customer_bin ?? ""));
     assertRegistryCoverage(items, registryByBin);
   }
 
@@ -153,7 +173,8 @@ async function exportCollectedPlans(
     rows: rows.length,
     customers: customerBins.length,
     registryHits,
-    cacheStats
+    cacheStats,
+    skippedQueries
   };
 }
 

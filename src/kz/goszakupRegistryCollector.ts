@@ -2,8 +2,13 @@ import { chromium, type Browser, type Page } from "playwright";
 import { isValidBin, sleep } from "./csv.js";
 import { KzStorage } from "./kzStorage.js";
 import { fetchRegistryForBin, type RegistryFetchResult } from "./goszakupRegistryFetcher.js";
+import { isTransientNetworkError } from "./gzCollection.js";
 
 export interface RegistryCollectOptions {
+  /** В automation ошибки кода не должны превращаться в отсутствие карточки. */
+  strictErrors?: boolean;
+  maxConsecutiveNetworkFailures?: number;
+  onFailure?: (bin: string, error: unknown, attempts: number) => void;
   databasePath?: string;
   delayMs?: number;
   headless?: boolean;
@@ -32,6 +37,7 @@ const DEFAULT_DEBUG_DIR = "data/debug";
 const REGISTRY_FETCH_RETRIES = 2;
 
 export interface RegistryFetchRetryOptions {
+  strictErrors?: boolean;
   retries?: number;
   delayMs?: number;
   profileUrl?: string;
@@ -64,12 +70,13 @@ export async function fetchRegistryForBinWithRetry(
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const result = await fetchImpl(page, bin, debugDir, options.profileUrl);
+      const result = await fetchImpl(page, bin, debugDir, options.profileUrl, options.strictErrors);
       if (result === "not_found" || result.record) return result;
       lastResult = result;
       if (attempt >= retries) return result;
       console.warn(`registry: ${bin} unparseable, retry ${attempt + 1}/${retries}`);
     } catch (error) {
+      if (options.strictErrors && !isTransientNetworkError(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       if (attempt >= retries) {
         console.error(`registry: ${bin} failed after ${attempt + 1} attempts: ${message}`);
@@ -97,6 +104,7 @@ export async function collectGoszakupRegistryForBins(
   const stats: RegistryCollectStats = { processed: 0, success: 0, not_found: 0, failed: 0, cached: 0, skipped: 0 };
   let browser: Browser | null = null;
   let page: Page | null = null;
+  let consecutiveNetworkFailures = 0;
 
   try {
     let index = 0;
@@ -120,6 +128,12 @@ export async function collectGoszakupRegistryForBins(
         continue;
       }
 
+      if (options.maxConsecutiveNetworkFailures && consecutiveNetworkFailures >= options.maxConsecutiveNetworkFailures) {
+        stats.failed++;
+        options.onFailure?.(bin, new Error("fetch failed: circuit_breaker: portal unreachable"), 0);
+        continue;
+      }
+
       if (!browser) {
         browser = await chromium.launch({
           headless: options.headless ?? true,
@@ -135,7 +149,9 @@ export async function collectGoszakupRegistryForBins(
           retries: options.fetchRetries,
           delayMs,
           profileUrl: options.profileUrlsByBin?.get(bin)
+          , strictErrors: options.strictErrors
         });
+        consecutiveNetworkFailures = 0;
         if (result === "not_found") {
           stats.not_found++;
         } else if (result.record) {
@@ -150,6 +166,10 @@ export async function collectGoszakupRegistryForBins(
           storage.recordEnrichError(bin, "goszakup_registry", "failed to parse registry profile");
         }
       } catch (error) {
+        if (options.strictErrors && !isTransientNetworkError(error)) throw error;
+        if (isTransientNetworkError(error)) consecutiveNetworkFailures++;
+        else consecutiveNetworkFailures = 0;
+        options.onFailure?.(bin, error, (options.fetchRetries ?? REGISTRY_FETCH_RETRIES) + 1);
         const message = error instanceof Error ? error.message : String(error);
         stats.failed++;
         storage.recordEnrichError(bin, "goszakup_registry", message);

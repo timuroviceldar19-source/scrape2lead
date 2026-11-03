@@ -23,7 +23,7 @@ case "$LOG" in
 esac
 mkdir -p -- "$(dirname -- "$LOG")" || exit 1
 
-NETWORK_PATTERN='net::ERR_|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED|ERR_TIMED_OUT|page\.goto: Timeout|fetch failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up'
+NETWORK_PATTERN='net::ERR_|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED|ERR_TIMED_OUT|page\.goto: Timeout|TimeoutError|fetch failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up'
 
 attempt=1
 while :; do

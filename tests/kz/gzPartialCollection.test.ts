@@ -32,7 +32,7 @@ describe("partial GZ plan collection", () => {
   it("keeps the first page when the second page times out in all attempts", async () => {
     const options = planOptions();
     browser.page.goto.mockImplementation(async (url: string) => { if (new URL(url).searchParams.get("page") === "2") throw timeout(); });
-    browser.page.content.mockResolvedValue(plansHtml().replace("count_record=50", "count_record=1"));
+    browser.page.content.mockResolvedValue(plansHtml());
     const result = await collectGzPlans(options);
     expect(result.items.map(item => item.plan_point_id)).toEqual(["101"]);
     expect(result).toMatchObject({ successfulQueries: 1, skippedQueries: [{ stage: "plans", query: "Компьютер", year: 2026,
@@ -91,7 +91,7 @@ describe("partial GZ lots collection", () => {
     const root = dir();
     browser.page.goto.mockImplementation(async (url: string) => { if (new URL(url).searchParams.get("page") === "2") throw timeout(); });
     browser.page.content.mockResolvedValue(`<strong>Показано c 1 по 50 из 51 записей</strong><a href="?page=2">2</a>
-      <table id="search-result"><tbody><tr><td><strong>101-ЗЦП1</strong></td>
+      <table id="search-result"><tbody><tr role="row"><td><strong>101-ЗЦП1</strong></td>
       <td><a href="/ru/announce/index/1">Закупка</a></td><td><strong>Компьютер</strong></td>
       <td>1</td><td><strong>1000000</strong></td><td>Конкурс</td><td>Опубликован</td></tr></tbody></table>`);
     const options = { nstruCodes: ["262011.100.000000"], year: 2026, months: [11], debugDir: root,
