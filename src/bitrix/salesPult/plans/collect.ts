@@ -67,7 +67,7 @@ export function normalizePlanDeal(d: Record<string, unknown>, options: Normalize
   const itemName = field(d, "UF_CRM_6627AEBD54B8D", "UF_CRM_ENSTRU_NAME", "UF_CRM_1713874845756") || title.split("—")[0].replace(/\[GZ \d+\]/, "").trim();
   const truCode = field(d, "UF_CRM_6A436D5A19612", "UF_CRM_REF_ENSTRU_CODE", "UF_CRM_S2L_GZ_TRU");
   const routing = options.routing || (defaultRouting ??= loadGzRoutingConfig("config/bitrix-gz-routing.json"));
-  const group = category === 9 ? "КТ" : category === 41 ? "ИП" : resolveGzRoute({ truCode, itemName, keyword: field(d, "UF_CRM_KEYWORD") }, routing).categoryId === 9 ? "КТ" : "ИП";
+  const group = category === 9 ? "КТ" : category === 41 ? "ИП" : resolveGzRoute({ truCode, itemName, keyword: field(d, "UF_CRM_1782386244985_IU_XLS", "UF_CRM_KEYWORD") }, routing).categoryId === 9 ? "КТ" : "ИП";
   const semantic = text(d.STAGE_SEMANTIC_ID), stage = text(d.STAGE_ID);
   const isOpen = semantic !== "S" && semantic !== "F" && text(d.CLOSED) !== "Y";
   const portalStatus = field(d, "UF_CRM_PLAN_STATUS", "UF_CRM_6627AEBD85B4D", "UF_CRM_1713874909541") || "Утвержден";
