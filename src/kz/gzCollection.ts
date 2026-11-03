@@ -27,7 +27,7 @@ export function isTransientNetworkError(error: unknown): boolean {
     const item = typeof error === "object" ? error as { name?: string; message?: string; code?: string; cause?: unknown } : null;
     if (item?.name === "TimeoutError") return true;
     const message = typeof error === "string" ? error : `${item?.message ?? ""} ${item?.code ?? ""}`;
-    if (/net::ERR_|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED|ERR_TIMED_OUT|page\.goto: Timeout|fetch failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(message)) return true;
+    if (/net::ERR_|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED|ERR_TIMED_OUT|page\.goto: Timeout|\bTimeout \d+ms exceeded|fetch failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(message)) return true;
     error = item?.cause;
   }
   return false;
