@@ -2,9 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { chromium } from "playwright";
-import { normalizePlanDeal, collectPlansMonitor, parsePlanMonth } from "../../src/bitrix/salesPult/plans/collect.js";
+import { normalizePlanDeal, collectPlansMonitor, parsePlanMonth, PLAN_DEAL_SELECT_FIELDS } from "../../src/bitrix/salesPult/plans/collect.js";
 import { buildPlansMonitorView } from "../../src/bitrix/salesPult/plans/aggregate.js";
 import { ReadOnlyBitrixClient } from "../../src/bitrix/reporting/readOnlyClient.js";
 import { renderPultHtml, type SalesPultPayload } from "../../src/bitrix/salesPult/site.js";
@@ -73,7 +73,7 @@ describe("монитор планов: модель", () => {
       calls.push(method);
       if (method === "user.get") return [{ ID: "8", NAME: "Иван", LAST_NAME: "Иванов" }];
       expect(JSON.stringify(body)).toContain("CATEGORY_ID");
-      expect(JSON.stringify(body)).not.toContain("CLOSED");
+      expect(JSON.stringify(body)).not.toContain("filter%5BCLOSED%5D");
       return { result: { p0: [raw(1, { ASSIGNED_BY_ID: "8" })] } };
     } });
     const v = await collectPlansMonitor({ reader, ...options });
@@ -81,6 +81,56 @@ describe("монитор планов: модель", () => {
     expect(calls).toContain("user.get");
     const broken = new ReadOnlyBitrixClient({ async call() { throw new Error("failed"); } });
     expect(await collectPlansMonitor({ reader: broken, ...options })).toEqual({ asOf: "2026-11-03", error: expect.any(String) });
+  });
+  it("ограничивает запрос на стороне CRM планами и явно используемыми полями", async () => {
+    const reader = new ReadOnlyBitrixClient({ async call() { throw new Error("unexpected transport call"); } });
+    const list = vi.spyOn(reader, "listAllBatched").mockResolvedValue([]);
+    const users = vi.spyOn(reader, "call");
+    await collectPlansMonitor({ reader, ...options });
+    expect(list).toHaveBeenCalledExactlyOnceWith("crm.deal.list", {
+      filter: { CATEGORY_ID: [9, 41, 29], ORIGINATOR_ID: "scrape2lead-gz-plans" },
+      select: PLAN_DEAL_SELECT_FIELDS,
+      order: { ID: "ASC" }
+    });
+    expect(PLAN_DEAL_SELECT_FIELDS).not.toContain("*");
+    expect(PLAN_DEAL_SELECT_FIELDS).not.toContain("UF_*");
+    expect(new Set(PLAN_DEAL_SELECT_FIELDS).size).toBe(PLAN_DEAL_SELECT_FIELDS.length);
+    // Каждый основной и резервный ключ нормализатора должен остаться доступен при узкой проекции.
+    const source = fs.readFileSync("src/bitrix/salesPult/plans/collect.ts", "utf8").split("export function normalizePlanDeal")[1].split("export interface CollectPlansOptions")[0];
+    const used = [...source.matchAll(/\bd\.([A-Z][A-Z0-9_]+)\b|"(UF_CRM_[A-Z0-9_]+|OPPORTUNITY)"/g)].map(m => m[1] || m[2]);
+    expect([...new Set(PLAN_DEAL_SELECT_FIELDS)].sort()).toEqual([...new Set(used)].sort());
+    expect(users).not.toHaveBeenCalled();
+  });
+  it("одним запросом загружает всех неизвестных менеджеров и сопоставляет по ID", async () => {
+    const reader = new ReadOnlyBitrixClient({ async call() { return [
+      { ID: "9", NAME: "Мария", LAST_NAME: "Петрова" }, { ID: "8", NAME: "Иван", LAST_NAME: "Иванов" }
+    ]; } });
+    vi.spyOn(reader, "listAllBatched").mockResolvedValue([
+      raw(1, { ASSIGNED_BY_ID: "8" }), raw(2, { ASSIGNED_BY_ID: "9", CATEGORY_ID: 9 }),
+      raw(3, { ASSIGNED_BY_ID: "8" }), raw(4), raw(5, { ASSIGNED_BY_ID: "" })
+    ]);
+    const users = vi.spyOn(reader, "call");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const view = await collectPlansMonitor({ reader, ...options, userProfiles: new Map([["7", { name: "Анна" }]]) });
+      expect(users).toHaveBeenCalledExactlyOnceWith("user.get", { ID: ["8", "9"] });
+      expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe("Иван Иванов");
+      expect(view.kt!.managers[0].name).toBe("Мария Петрова");
+      expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[Планы\] сделок: 5, ИП: 4, КТ: 1 \(\d+ мс\)$/));
+    } finally { log.mockRestore(); }
+  });
+  it.each([false, true])("при неполном ответе или ошибке user.get сохраняет профиль, конфиг и ID (ошибка=%s)", async fail => {
+    const reader = new ReadOnlyBitrixClient({ async call() {
+      if (fail) throw new Error("user lookup failed");
+      return { result: [{ ID: "8", NAME: "Иван" }] };
+    } });
+    vi.spyOn(reader, "listAllBatched").mockResolvedValue([raw(1), raw(2, { ASSIGNED_BY_ID: "8" }), raw(3, { ASSIGNED_BY_ID: "9" })]);
+    const users = vi.spyOn(reader, "call");
+    const view = await collectPlansMonitor({ reader, ...options, userProfiles: new Map([["7", { name: "Профиль" }]]), groups: [{ managers: [{ id: "8", name: "Конфиг" }] }] });
+    expect(users).toHaveBeenCalledExactlyOnceWith("user.get", { ID: ["8", "9"] });
+    expect(view.ip!.managers.find(m => m.id === "7")?.name).toBe("Профиль");
+    expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe(fail ? "Конфиг" : "Иван");
+    expect(view.ip!.managers.find(m => m.id === "9")?.name).toBe("ID 9");
   });
   it("ограничивает списки, сортирует и не меняет входные данные", () => {
     const deals = Array.from({ length: 40 }, (_, i) => normalizePlanDeal(raw(i + 1, { UF_CRM_6627AEBD7C2D2: i < 25 ? "shared" : `bin-${i}`, DATE_CREATE: i === 0 ? "2026-11-04" : "2026-10-28" }), options)!);
