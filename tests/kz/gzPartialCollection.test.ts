@@ -87,6 +87,17 @@ describe("partial GZ plan collection", () => {
 });
 
 describe("partial GZ lots collection", () => {
+  it("reports an empty successful lot search without omissions", async () => {
+    const root = dir(); browser.page.goto.mockResolvedValue(null); browser.page.content.mockResolvedValue(empty);
+    expect(await exportGoszakupLotsByNstru({ keywords: ["Компьютер"], months: [11], outPath: path.join(root, "empty.xlsx"),
+      debugDir: root, delayMs: 0, partialCollection: true })).toMatchObject({ rows: 0, successfulQueries: 1, skippedQueries: [] });
+  });
+  it("does not swallow programming errors or write a misleading empty workbook", async () => {
+    const root = dir(); const outPath = path.join(root, "lots.xlsx"); browser.page.goto.mockRejectedValue(new TypeError("invalid schema"));
+    await expect(exportGoszakupLotsByNstru({ keywords: ["Компьютер"], months: [11], outPath, debugDir: root,
+      delayMs: 0, partialCollection: true })).rejects.toThrow("invalid schema");
+    expect(browser.page.goto).toHaveBeenCalledTimes(1); expect(fs.existsSync(outPath)).toBe(false);
+  });
   it("keeps collected lot pages and writes them to the workbook", async () => {
     const root = dir();
     browser.page.goto.mockImplementation(async (url: string) => { if (new URL(url).searchParams.get("page") === "2") throw timeout(); });
