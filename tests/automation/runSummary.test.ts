@@ -44,6 +44,13 @@ function manifest(overrides: Partial<AutomationManifest> = {}): AutomationManife
 }
 
 describe("renderRunSummary", () => {
+  it("does not label failed detail fetches as a clean empty collection", () => {
+    const m = manifest();
+    m.stages.exportPlans.counts = { rows: 0, successful_queries: 1, fetch_failed: 2 };
+    const text = renderRunSummary(m);
+    expect(text).not.toContain("Найдено 0, сбоев нет");
+    expect(text).toContain("fetch_failed=2");
+  });
   it("shows excluded registry plan IDs and unknown remaining page ranges", () => {
     const m = manifest();
     m.stages.exportPlans = { ...m.stages.exportPlans, skipped: [

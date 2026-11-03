@@ -35,6 +35,37 @@ function deps():AutomationDependencies {
 }
 
 describe("independent GZ collection branches", () => {
+  it.each(["plans", "lots"] as const)("resumes a transient %s push and clears only its obsolete error", async branch => {
+    const runs = root(), d = deps(), cfg = config(runs);
+    const failed = branch === "plans" ? d.applyPlans : d.applyLots;
+    const successful = branch === "plans" ? d.applyLots : d.applyPlans;
+    vi.mocked(failed).mockRejectedValueOnce(new Error("fetch failed: ECONNRESET"));
+    const first = await runScheduledAutomation(cfg, d);
+    expect(first.status).toBe("pushed");
+    const manifestPath = path.join(runs, first.runId, "manifest.json");
+    first.errors.push({ stage: "exportPlans", message: "earlier partial search", at: first.createdAt });
+    writeManifestAtomic(manifestPath, first);
+    const resumed = await pushAutomationRun(cfg, first.runId, d);
+    expect(resumed.errors).toEqual([expect.objectContaining({ stage: "exportPlans" })]);
+    expect(failed).toHaveBeenCalledTimes(2);
+    expect(successful).toHaveBeenCalledTimes(1);
+    expect(readManifest(manifestPath).errors).toEqual(resumed.errors);
+    await expect(pushAutomationRun(cfg, first.runId, d)).rejects.toThrow(/already pushed/);
+  });
+  it.each(["plans", "lots"] as const)("resumes approval after a transient %s failure", async branch => {
+    const runs = root(), d = deps(), cfg = config(runs);
+    const failed = branch === "plans" ? d.applyPlans : d.applyLots;
+    vi.mocked(failed).mockRejectedValueOnce(new Error("fetch failed: ECONNRESET"));
+    const prepared = await prepareAutomationRun(cfg, d);
+    expect((await approveAutomationRun(cfg, prepared.runId, d)).status).toBe("applied");
+    const resumed = await approveAutomationRun(cfg, prepared.runId, d);
+    expect(resumed.status).toBe("applied");
+    expect(resumed.errors).toEqual([]);
+    expect(d.applyPlans).toHaveBeenCalledTimes(branch === "plans" ? 2 : 1);
+    expect(d.applyLots).toHaveBeenCalledTimes(branch === "lots" ? 2 : 1);
+    expect(d.analyzeLots).toHaveBeenCalledTimes(1);
+    await expect(approveAutomationRun(cfg, prepared.runId, d)).rejects.toThrow(/already applied/);
+  });
   it("prints a shell-retry marker even when TimeoutError has no network text in its message", async () => {
     const runs = root(), d = deps();
     const failure = new Error("navigation expired"); failure.name = "TimeoutError";
@@ -141,6 +172,7 @@ describe("automation orchestrator",()=>{
     vi.mocked(d.analyzeLots).mockRejectedValueOnce(new Error("AI down"));
     expect((await approveAutomationRun(config(runs),prepared.runId,d)).status).toBe("applied_ai_failed");
     expect((await approveAutomationRun(config(runs),prepared.runId,d)).status).toBe("applied");
+    expect(readManifest(path.join(runs,prepared.runId,"manifest.json")).errors).toEqual([]);
     expect(d.applyPlans).toHaveBeenCalledTimes(1); expect(d.applyLots).toHaveBeenCalledTimes(1); expect(d.analyzeLots).toHaveBeenCalledTimes(2);
     expect(readManifest(path.join(runs,prepared.runId,"manifest.json")).status).toBe("applied");
   });

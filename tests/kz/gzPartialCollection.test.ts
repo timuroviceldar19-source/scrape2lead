@@ -10,6 +10,7 @@ vi.mock("playwright", () => ({ chromium: { launch: async () => ({
 }) } }));
 import { collectGzPlans } from "../../src/kz/goszakupPlanCollector.js";
 import { exportGoszakupLotsByNstru } from "../../src/kz/goszakupLotsNstruExporter.js";
+import { exportGzPlansReport } from "../../src/kz/gzPlanExporter.js";
 
 const dirs: string[] = [];
 function dir() { const value = fs.mkdtempSync(path.join(os.tmpdir(), "gz-partial-")); dirs.push(value); return value; }
@@ -29,6 +30,28 @@ function planOptions() { const root = dir(); return {
 }; }
 
 describe("partial GZ plan collection", () => {
+  function failDetails() {
+    browser.page.goto.mockImplementation(async (url: string) => {
+      if (url.includes("show_plan") || new URL(url).searchParams.get("filter[name]") === "offline") throw timeout();
+    });
+    browser.page.content.mockResolvedValue(plansHtml().replace("из 51", "из 1").replace('<a href="?page=2">2</a>', ""));
+  }
+  it("reports plans lost to detail timeouts even when TRU filtering removes the fallback", async () => {
+    failDetails(); const options = planOptions();
+    browser.page.content.mockResolvedValueOnce(empty);
+    const result = await exportGzPlansReport({ ...options, keywords: ["empty", "Компьютер"], skipRegistry: true,
+      includeTruCodePrefixes: ["262011."], outPath: path.join(options.debugDir, "plans.xlsx") });
+    expect(result).toMatchObject({ rows: 0, successfulQueries: 1, cacheStats: { fetchFailed: 1 },
+      skippedQueries: [{ stage: "plans", query: "Компьютер", planPointIds: ["101"], attempts: 3, reason: expect.stringContaining("Timeout") }] });
+  });
+  it("does not accept a clean zero when search and detail losses are all network failures", async () => {
+    failDetails(); const options = planOptions(), outPath = path.join(options.debugDir, "plans.xlsx");
+    await expect(exportGzPlansReport({ ...options, keywords: ["Компьютер", "offline"], skipRegistry: true, outPath }))
+      .rejects.toMatchObject({ sourceUnreachable: true, skippedQueries: expect.arrayContaining([
+        expect.objectContaining({ planPointIds: ["101"] }), expect.objectContaining({ query: "offline" })
+      ]) });
+    expect(fs.existsSync(outPath)).toBe(false);
+  });
   it("keeps the first page when the second page times out in all attempts", async () => {
     const options = planOptions();
     browser.page.goto.mockImplementation(async (url: string) => { if (new URL(url).searchParams.get("page") === "2") throw timeout(); });

@@ -5,7 +5,10 @@ import ExcelJS from "exceljs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ plans: vi.fn(), lots: vi.fn() }));
 vi.mock("../../src/kz/gzPlanExporter.js", () => ({ exportGzPlansReport: mocks.plans }));
-vi.mock("../../src/kz/goszakupLotsNstruExporter.js", () => ({ exportGoszakupLotsByNstru: mocks.lots, resolveLotStatusIds: () => [] }));
+vi.mock("../../src/kz/goszakupLotsNstruExporter.js", async importOriginal => ({
+  ...await importOriginal<typeof import("../../src/kz/goszakupLotsNstruExporter.js")>(),
+  exportGoszakupLotsByNstru: mocks.lots, resolveLotStatusIds: () => []
+}));
 import { createRealAutomationDependencies } from "../../src/automation/realDependencies.js";
 
 const dirs: string[] = [];
@@ -42,7 +45,9 @@ describe.each(["plans", "lots"] as const)("partial %s across years", source => {
     await expect(s.exportSource(s.config, s.output, periods)).rejects.toMatchObject({
       sourceUnreachable: true, skippedQueries: expect.any(Array), message: expect.stringMatching(/fetch failed/)
     });
-    expect(fs.existsSync(s.output)).toBe(true);
+    expect(fs.existsSync(s.output)).toBe(false);
+    expect(fs.readdirSync(path.dirname(s.output)).filter(name => name.endsWith(".part.xlsx"))).toEqual([]);
+    expect(JSON.parse(fs.readFileSync(`${s.output}.collection.json`, "utf8")).skippedQueries).toHaveLength(2);
   });
   it("allows an empty but successful search", async () => {
     const s = setup(); s.mock.mockImplementation(options => part(options, 0));
@@ -52,4 +57,15 @@ describe.each(["plans", "lots"] as const)("partial %s across years", source => {
     const s = setup(); s.mock.mockRejectedValue(new TypeError("invalid response schema"));
     await expect(s.exportSource(s.config, s.output, periods)).rejects.toThrow("invalid response schema");
   });
+});
+
+it("reports real input codes when a lots period aborts before returning a report", async () => {
+  const dir = root(), config = path.join(dir, "config.json"), inputPath = path.join(dir, "codes.txt");
+  fs.writeFileSync(inputPath, "262011.100.000001\n262013.100.000002\n");
+  fs.writeFileSync(config, JSON.stringify({ inputPath }));
+  mocks.lots.mockRejectedValue(new Error("fetch failed: ETIMEDOUT"));
+  await expect(createRealAutomationDependencies().exportLots(config, path.join(dir, "lots.xlsx"), [periods[0]]))
+    .rejects.toMatchObject({ skippedQueries: [
+      expect.objectContaining({ query: "262011.100.000001" }), expect.objectContaining({ query: "262013.100.000002" })
+    ] });
 });
