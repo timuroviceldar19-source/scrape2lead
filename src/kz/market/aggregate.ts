@@ -119,7 +119,7 @@ export function buildMarketGroupView(
   const curCandidateContracts = countContracts(curCandidate);
   const isEarlyMonth = Number(asOfDate.slice(8, 10)) <= 5;
   const usePrevMonth = prevUnits.length > 0 && (curCandidateContracts === 0 || (isEarlyMonth && curCandidateContracts < 5));
-  const displayMonth = usePrevMonth ? prevMonth : curMonth;
+  const defaultMonth = usePrevMonth ? prevMonth : curMonth;
   // Months
   const byMonth = groupBy(groupUnits, (u) => u.month);
   const months: MarketMonthItem[] = Object.entries(byMonth)
@@ -140,10 +140,10 @@ export function buildMarketGroupView(
     .sort((a, b) => a.m.localeCompare(b.m));
 
   const monthViews: Record<string, MarketGroupMonthView> = {};
-  for (const month of new Set([...months.map(m => m.m), displayMonth])) {
+  for (const month of new Set([...months.map(m => m.m), defaultMonth])) {
     monthViews[month] = buildSingleMonthGroupView(group, groupUnits, month, asOfDate, cfg, ourBins, ourCompaniesList);
   }
-  return { ...monthViews[displayMonth], months, monthViews };
+  return { ...monthViews[defaultMonth], months, monthViews };
 }
 
 function buildSingleMonthGroupView(

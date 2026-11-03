@@ -541,5 +541,5 @@ body.tv .month-picker { display: none; }
 .market-months { margin-bottom: 0; }
 .months .col[data-m], .mlabels > span[data-m] { cursor: pointer; }
 .months .col[aria-current="true"] { background: rgba(20,20,20,.06); box-shadow: inset 0 -2px var(--ink); }
-.mlabels > span[aria-current="true"] { color: var(--ink); font-weight: 600; }
+.mlabels > span[aria-current="true"], .mlabels > span[aria-current="true"] .m-name span { color: var(--ink); font-weight: 600; }
 .months .col[data-m]:focus-visible, .mlabels > span[data-m]:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }

@@ -526,7 +526,6 @@
   let currentTab = "pult";
   let preTvTab = "pult";
 
-
   function moveSecInd() {
     const a = tabLinks.find((x) => x.dataset.t === currentTab);
     if (!a || !secInd) return;
@@ -568,7 +567,9 @@
     if (month === selectedMarketMonth[currentTab]) return;
     selectedMarketMonth[currentTab] = month;
     renderTabContent(currentTab);
-    renderMarketMonths(currentTab);
+    if (marketMonths) marketMonths.querySelectorAll("button[data-month]").forEach(button => {
+      button.setAttribute("aria-pressed", String(button.dataset.month === month));
+    });
     animate(tabPanes[currentTab]);
     observe();
     history.replaceState(null, "", `#${currentTab}/${month}`);

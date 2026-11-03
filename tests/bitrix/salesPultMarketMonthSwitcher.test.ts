@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
 import { buildMarketGroupView } from "../../src/kz/market/aggregate.js";
 import { loadMarketConfig } from "../../src/kz/market/config.js";
-import type { MarketUnit } from "../../src/kz/market/types.js";
+import type { MarketUnit, MarketGroupView } from "../../src/kz/market/types.js";
 import { renderPultHtml, type SalesPultPayload } from "../../src/bitrix/salesPult/site.js";
 
 const cfg = loadMarketConfig();
@@ -30,7 +30,7 @@ function payload() {
 describe("месячные срезы рынка", () => {
   it.each(["ИП", "КТ"] as const)("строит независимые полные срезы %s без рекурсии и считает YTD до выбранного месяца", group => {
     const view = buildMarketGroupView(group, units, "2026-11-03", cfg);
-    const views = JSON.parse(JSON.stringify(view)).monthViews;
+    const views = view.monthViews!;
     expect(Object.keys(views || {})).toEqual(months);
     expect(view.month).toBe("2026-10");
     for (const [i, month] of months.entries()) {
@@ -47,13 +47,41 @@ describe("месячные срезы рынка", () => {
       expect(v.lost[0].customer).toBe(`Заказчик ${group} ${month}-1`);
       expect(v.customers[0].contractList[0].sum).toBe((i + 1) * 2e6);
       const ytd = months.slice(0, i + 1).reduce((s, m, n) => s + (m.slice(0, 4) === month.slice(0, 4) ? (n + 1) * 1e6 : 0), 0);
-      expect(v.ytd.sum).toBe(ytd);
-      expect(v.ytd.totalSum).toBe(ytd * 3);
+      expect(v.ytd!.sum).toBe(ytd);
+      expect(v.ytd!.totalSum).toBe(ytd * 3);
       expect(v).not.toHaveProperty("months");
       expect(v).not.toHaveProperty("monthViews");
     }
     expect(views["2026-10"].prev).toEqual({ sum: 12000000, contracts: 2, toDay: "20" });
     expect(views["2026-11"].prev).toEqual({ sum: 0, contracts: 0, toDay: "02" });
+  });
+});
+
+describe("границы месячных срезов", () => {
+  it("сохраняет пустой месяц по умолчанию даже без данных группы", () => {
+    const view = buildMarketGroupView("ИП", [], "2026-11-03", cfg);
+    expect(view.month).toBe("2026-11");
+    expect(view.months).toEqual([]);
+    expect(Object.keys(view.monthViews!)).toEqual(["2026-11"]);
+    expect(view.monthViews!["2026-11"].total.sum).toBe(0);
+    expect(view.monthViews!["2026-11"].prev.toDay).toBe("03");
+  });
+  it("ограничивает списки в каждом месяце и сохраняет остальных поставщиков", () => {
+    const many = ["2026-09", "2026-10"].flatMap((month, mi) => Array.from({ length: 60 }, (_, i) => ({
+      ...units[1], id: mi * 100 + i, month, date: `${month}-15`, supplier: i < 22 ? "big" : `bin-${i}`,
+      customer: i < 25 ? "customer" : `customer-${i}`, sum: (i + 1) * 1e6
+    })));
+    const v = buildMarketGroupView("ИП", many, "2026-11-03", cfg);
+    for (const month of ["2026-09", "2026-10"]) {
+      const slice = v.monthViews![month];
+      expect(slice.suppliers).toHaveLength(12);
+      expect(slice.othersSum).toBeGreaterThan(0);
+      expect(slice.customers).toHaveLength(10);
+      expect(slice.suppliers.find(s => s.bin === "big")!.contractList).toHaveLength(20);
+      expect(slice.customers.find(c => c.bin === "customer")!.contractList).toHaveLength(20);
+      expect(slice.lost).toHaveLength(10);
+      expect(slice.suppliers.every(s => s.contractList.every(c => c.date.startsWith(month)))).toBe(true);
+    }
   });
 });
 
@@ -76,7 +104,7 @@ describe("переключатель месяцев рынка в браузер
     await page.route("https://fonts.**/*", route => route.abort());
     if (legacy) {
       const p = payload();
-      delete (p.market!.ip as any).monthViews;
+      delete p.market!.ip!.monthViews;
       fs.writeFileSync(path.join(dir, "legacy.html"), renderPultHtml(p));
     }
     await page.goto((legacy ? pathToFileURL(path.join(dir, "legacy.html")).href : url) + hash);
@@ -100,20 +128,35 @@ describe("переключатель месяцев рынка в браузер
     expect(await pane.locator('.months .col[aria-current="true"]').getAttribute("data-m")).toBe(month);
     expect(await pane.locator(".months .col").count()).toBe(months.length);
     expect(await pane.locator(".mlabels > span").count()).toBe(months.length);
+    expect(await pane.locator('.mlabels > span[aria-current="true"]').getAttribute("data-m")).toBe(month);
   }
 
   it.each(["ip", "kt"])("переключает все блоки %s кнопкой, столбиком, подписью и hash", async tab => {
     const { page, errors } = await open(`#${tab}`);
     try {
       expect(await page.locator("#marketMonths button").count()).toBe(months.length);
+      await page.setViewportSize({ width: 390, height: 844 });
+      const pickerBox = await page.locator("#marketMonths").boundingBox();
+      expect(pickerBox!.x + pickerBox!.width).toBeLessThanOrEqual(390);
+      await page.setViewportSize({ width: 1280, height: 900 });
       expect(await page.locator("#periodsNav").isVisible()).toBe(false);
+      expect(await page.locator('#marketMonths [data-month="2026-09"]').textContent()).toBe("Сентябрь 2026");
+      expect(await page.locator('#marketMonths [data-month="2026-09"]').getAttribute("title")).toBe("Сентябрь 2026");
       await assertMonth(page, tab, "2026-10");
       await page.locator('#marketMonths button[data-month="2026-09"]').click();
       await assertMonth(page, tab, "2026-09");
+      expect(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.month)).toBe("2026-09");
       expect(page.url()).toContain(`#${tab}/2026-09`);
+      const section = await page.locator(`#tab-${tab} section`).first().elementHandle();
+      await page.locator('#marketMonths button[data-month="2026-09"]').click();
+      expect(await section!.evaluate(el => el.isConnected)).toBe(true);
       await page.locator(`#tab-${tab} .months .col[data-m="2026-01"]`).click();
       await assertMonth(page, tab, "2026-01");
       await page.locator(`#tab-${tab} .mlabels > span[data-m="2026-10"]`).click();
+      await assertMonth(page, tab, "2026-10");
+      await page.locator(`#tab-${tab} .mlabels > span[data-m="2026-01"]`).press("Enter");
+      await assertMonth(page, tab, "2026-01");
+      await page.locator(`#tab-${tab} .months .col[data-m="2026-10"]`).press("Space");
       await assertMonth(page, tab, "2026-10");
       await page.evaluate(tab => { location.hash = `#${tab}/2026-09`; }, tab);
       await page.waitForFunction(tab => document.querySelector(`#tab-${tab} h2`)?.textContent?.includes("сентябрь"), tab);
@@ -121,6 +164,8 @@ describe("переключатель месяцев рынка в браузер
       expect(await page.locator(`#tab-${tab} .mlabels`).textContent()).not.toContain("окт · по");
       await page.locator('.sections [data-t="pult"]').click();
       expect(await page.locator("#marketMonths").isVisible()).toBe(false);
+      await page.locator(`.sections [data-t="${tab}"]`).click();
+      await assertMonth(page, tab, "2026-09");
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 30000);
@@ -131,7 +176,7 @@ describe("переключатель месяцев рынка в браузер
       await assertMonth(page, "kt", "2026-01");
       for (const hash of ["#ip/constructor", "#kt/__proto__", "#ip/2026-13", "#kt/toString", "#kt/2099-01", "#ip"]) {
         await page.evaluate(hash => { location.hash = hash; }, hash);
-        await page.waitForFunction(() => document.querySelector('#marketMonths [aria-pressed="true"]')?.getAttribute("data-month") === "2026-10");
+        await page.waitForFunction(hash => document.querySelector(`#tab-${hash.startsWith("#ip") ? "ip" : "kt"}`)?.classList.contains("on") && document.querySelector('#marketMonths [aria-pressed="true"]')?.getAttribute("data-month") === "2026-10", hash);
         await assertMonth(page, hash.startsWith("#ip") ? "ip" : "kt", "2026-10");
       }
       await page.locator("#tvBtn").click();
@@ -148,6 +193,20 @@ describe("переключатель месяцев рынка в браузер
       expect(await page.locator("#tab-ip .share").textContent()).not.toContain("Поставщик ИП 2026-10");
       expect(await page.locator("#tab-ip .ytd-box").count()).toBe(0);
       expect(await page.locator("#tab-ip .months .col").count()).toBe(months.length);
+      const safety = await page.evaluate((view: MarketGroupView) => {
+        const client = window as unknown as Window & {
+          __marketMonths: (view: MarketGroupView | null) => string[];
+          __marketViewForMonth: (view: MarketGroupView | null, month: string) => MarketGroupView | null;
+        };
+        view.months = [];
+        view.monthViews = Object.create({ "2026-09": { ...view, month: "2026-09" } });
+        return {
+          empty: client.__marketMonths(null), missing: client.__marketViewForMonth(null, "2026-09"),
+          inherited: client.__marketViewForMonth(view, "2026-09")?.month,
+          invalid: client.__marketViewForMonth(view, "constructor")?.month
+        };
+      }, payload().market!.ip!);
+      expect(safety).toEqual({ empty: [], missing: null, inherited: "2026-10", invalid: "2026-10" });
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 30000);
