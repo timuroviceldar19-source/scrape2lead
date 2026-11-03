@@ -345,7 +345,7 @@ describe("automation manifest compatibility",()=>{
     const runs=root(), d=deps(); const prepared=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
     const manifestPath=path.join(runs,prepared.runId,"manifest.json");
     const legacy=readManifest(manifestPath) as AutomationManifest & {workflow?:AutomationWorkflow};
-    legacy.schemaVersion=2; delete legacy.workflow; writeManifestAtomic(manifestPath,legacy);
+    legacy.schemaVersion=2; delete legacy.workflow; delete legacy.preparedBranches; writeManifestAtomic(manifestPath,legacy);
     const pushed=await pushAutomationRun(config(runs),prepared.runId,d);
     expect(pushed.status).toBe("pushed");
     expect(d.applyPlans).toHaveBeenCalledTimes(1); expect(d.applyLots).toHaveBeenCalledTimes(1);
@@ -354,7 +354,7 @@ describe("automation manifest compatibility",()=>{
     const runs=root(), d=deps(); const prepared=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
     const manifestPath=path.join(runs,prepared.runId,"manifest.json");
     const legacy=readManifest(manifestPath) as AutomationManifest & {workflow?:AutomationWorkflow};
-    legacy.schemaVersion=1; delete legacy.workflow; delete legacy.artifacts.lots; writeManifestAtomic(manifestPath,legacy);
+    legacy.schemaVersion=1; delete legacy.workflow; delete legacy.preparedBranches; delete legacy.artifacts.lots; writeManifestAtomic(manifestPath,legacy);
     await expect(pushAutomationRun(config(runs),prepared.runId,d)).rejects.toThrow(/lots artifact is missing/);
     expect(d.applyPlans).not.toHaveBeenCalled();
   });

@@ -11,6 +11,11 @@ describe("transient portal error classification", () => {
     expect(isTransientNetworkError(error)).toBe(true);
     expect(isTransientNetworkError(new Error("request failed", { cause: Object.assign(new Error("dns"), { code: "EAI_AGAIN" }) }))).toBe(true);
   });
+  it("accepts thrown network strings and safely terminates on cyclic causes", () => {
+    expect(isTransientNetworkError("ECONNRESET")).toBe(true);
+    const cyclic = new Error("unknown failure"); cyclic.cause = cyclic;
+    expect(isTransientNetworkError(cyclic)).toBe(false);
+  });
   it.each([new TypeError("invalid schema"), new Error("invalid parameter"), new Error("ENOENT"), null, undefined, 42])("does not classify %s as transient", error => {
     expect(isTransientNetworkError(error)).toBe(false);
   });

@@ -44,6 +44,18 @@ function manifest(overrides: Partial<AutomationManifest> = {}): AutomationManife
 }
 
 describe("renderRunSummary", () => {
+  it("shows excluded registry plan IDs and unknown remaining page ranges", () => {
+    const m = manifest();
+    m.stages.exportPlans = { ...m.stages.exportPlans, skipped: [
+      { stage: "registry", query: "980840002897", year: 2026, months: [11], failedPage: null, totalPages: null,
+        keptRows: 0, attempts: 3, reason: "fetch failed", planPointIds: ["42", "43"] },
+      { stage: "plans", query: "Панель", year: 2027, months: [1], failedPage: 1, totalPages: null,
+        keptRows: 0, attempts: 0, reason: "circuit_breaker: portal unreachable" }
+    ] };
+    const text = renderRunSummary(m);
+    expect(text).toContain("пункты: 42, 43"); expect(text).toContain("1 и далее");
+    expect(text).toContain("| registry | 980840002897 | 2026: 11 | — | 0 | 3 |");
+  });
   it("renders partial collection details and escapes table cells", () => {
     const m = manifest();
     m.stages.exportPlans = { ...m.stages.exportPlans, ...{ skipped: [{ stage: "plans" as const,

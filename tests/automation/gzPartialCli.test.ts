@@ -18,7 +18,7 @@ describe("scheduled automation CLI exit codes", () => {
     mocks.run.mockResolvedValue({ runId: "mock-run", status });
     try {
       process.argv = [process.execPath, "automation.mts", "run"]; process.exitCode = 0;
-      await import("../../scripts/automation.mts");
+      await import("../../scripts/automation.mjs");
       await vi.waitFor(() => expect(log).toHaveBeenCalledWith(`automation run: run=mock-run status=${status}`));
       expect(process.exitCode).toBe(expected);
     } finally { process.argv = argv; process.exitCode = previous; }
