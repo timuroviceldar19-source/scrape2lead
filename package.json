@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run --pool=forks",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "tsc -p tsconfig.json --noEmit",

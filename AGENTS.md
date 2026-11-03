@@ -60,8 +60,9 @@ npm run cloudflare:check  # wrangler deploy --dry-run
   `infra/cloudflare-github-dispatch/` (секрет репозитория `CLOUDFLARE_API_TOKEN`). Если секрета нет, job падает с пояснением.
   Запасной путь — руками: `npm run cloudflare:check`, затем `npm run cloudflare:deploy` (нужен `wrangler login`).
   Секрет `GITHUB_ACTIONS_TOKEN` лежит в Cloudflare и при деплое не трогается.
-- Сетевые сбои портала сбор переживает сам: `scripts/run-automation-with-retry.sh` — до 3 попыток с паузой 10 минут,
-  только при сетевых ошибках в логе новой попытки.
+- При сетевых сбоях automation сохраняет частичные страницы/периоды и обрабатывает планы/лоты независимо.
+  Пропуски видны в manifest/Step Summary. Если не сработала ни одна ветка, `scripts/run-automation-with-retry.sh`
+  делает до 3 попыток с паузой 10 минут. `partialCollection` включён только в automation: мониторы оставляют строгий режим.
 
 ## Подводные камни (выяснено на практике)
 
@@ -69,8 +70,9 @@ npm run cloudflare:check  # wrangler deploy --dry-run
   Playwright это переживает, Node `fetch` падает с `UNABLE_TO_VERIFY_LEAF_SIGNATURE` (в логе — просто `fetch failed`).
   Поэтому в workflow задан `NODE_EXTRA_CA_CERTS=certs/rapidssl-tls-rsa-ca-g1.crt`. Для локальных скриптов, которые
   ходят на портал через `fetch`, нужна та же переменная. Файлы `*.pem` в `.gitignore`, сертификат хранится как `.crt`.
-- **Недоступность портала с IP GitHub.** Иногда `ERR_CONNECTION_TIMED_OUT` на сборе — это временный сбой,
-  следующий часовой слот подхватывает работу. Не чинить кодом, пока это не повторяется регулярно.
+- **Недоступность портала с IP GitHub.** Повторяющиеся `ERR_CONNECTION_TIMED_OUT` обрабатываются частичным сбором;
+  после 3 последовательных отказов первой страницы оставшиеся запросы периода пропускаются (порог
+  `maxConsecutiveNetworkFailures`). Полный отказ источника не считается штатным `rows=0`.
 - **Bitrix24.** Лимит ~2 запроса в секунду на вебхук; клиент ([src/bitrix/client.ts](src/bitrix/client.ts)) держит паузу 500 мс и
   повторяет при 429/5xx/`QUERY_LIMIT_EXCEEDED`. Пауза считается внутри процесса, параллельные прогоны её не делят.
 - **`deal-outcomes`** ([scripts/check-gz-deal-outcomes.mts](scripts/check-gz-deal-outcomes.mts)) работает с `--execute` и пишет

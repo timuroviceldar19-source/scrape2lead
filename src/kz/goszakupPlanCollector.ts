@@ -27,6 +27,7 @@ import type {
 } from "./goszakupPlanTypes.js";
 import { DEFAULT_GZ_PLAN_KEYWORDS as DEFAULT_KEYWORDS } from "./goszakupPlanTypes.js";
 import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
+import { assertPortalHtmlAvailable, assertPortalResponse, collectionErrorMessage, GzCollectionState, isTransientNetworkError, type GzSkippedQuery } from "./gzCollection.js";
 
 const DEFAULT_DEBUG_DIR = "data/debug";
 const MAX_PAGES_DEFAULT = 0;
@@ -52,6 +53,7 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
   const debugDir = options.debugDir ?? DEFAULT_DEBUG_DIR;
   const pageLoadTimeoutMs = options.pageLoadTimeoutMs ?? DEFAULT_PAGE_LOAD_TIMEOUT_MS;
   const token = options.token ?? process.env.GOSZAKUP_TOKEN ?? null;
+  const collection = options.partialCollection ? new GzCollectionState(options.maxConsecutiveNetworkFailures) : undefined;
 
   const abpRefs = token
     ? await loadAbpRefs({ token }).catch((error) => {
@@ -69,20 +71,24 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
 
   const listItems: GoszakupPlanListItem[] = [];
   const listById = new Map<string, GoszakupPlanListItem>();
+  const successfulSearchItems: GoszakupPlanListItem[][] = [];
 
   try {
     for (const keyword of keywords) {
       options.onProgress?.(`search: ${keyword}`);
       // Do not pass statusIds: goszakup returns a maintenance page when filter[status][] is in the URL.
       const baseUrl = buildPlanSearchUrl({ keyword, year, months });
+      const successesBefore = collection?.successfulQueries ?? 0;
       const items = await collectPlanSearch(page, baseUrl, keyword, {
         debugDir,
         maxPages,
         pageLoadTimeoutMs,
         delayMs,
         allowedStatusNames,
-        pageLoadRetries: options.pageLoadRetries ?? SEARCH_PAGE_RETRIES
+        pageLoadRetries: options.pageLoadRetries ?? SEARCH_PAGE_RETRIES,
+        collection, year, months
       });
+      if (collection && collection.successfulQueries > successesBefore) successfulSearchItems.push(items);
 
       for (const item of items) {
         if (!matchesPlanStatus(item.status, allowedStatusNames)) continue;
@@ -115,9 +121,18 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
         storage,
         cacheTtlDays: resolveDetailCacheTtlDays(options.detailCacheTtlDays),
         forceRefresh: resolveDetailForceRefresh(options.forceDetailRefresh),
-        onProgress: options.onProgress
+        onProgress: options.onProgress,
+        partialCollection: options.partialCollection, year, months
       });
-      return { items: detailResult.items, cacheStats: detailResult.stats };
+      const report = collection?.report();
+      if (report) {
+        const lostIds = new Set(detailResult.skippedQueries.flatMap(query => query.planPointIds ?? []));
+        // Поиск с найденными пунктами не является успешным нулём, если все они потеряны в деталях.
+        report.successfulQueries -= successfulSearchItems.filter(items => items.length > 0
+          && items.every(item => lostIds.has(item.plan_point_id))).length;
+        report.skippedQueries.push(...detailResult.skippedQueries);
+      }
+      return { items: detailResult.items, cacheStats: detailResult.stats, ...report };
     } finally {
       storage.close();
     }
@@ -187,6 +202,9 @@ function parseListAmount(value: string | null): number | null {
 }
 
 export interface PlanDetailCollectOptions {
+  partialCollection?: boolean;
+  year?: number;
+  months?: number[];
   debugDir: string;
   pageLoadTimeoutMs: number;
   delayMs: number;
@@ -209,6 +227,7 @@ export interface PlanDetailCollectOptions {
 export interface PlanDetailCollectOutput {
   items: GzPlanCollectResult["items"];
   stats: PlanDetailCacheStats;
+  skippedQueries: GzSkippedQuery[];
 }
 
 export async function collectPlanDetails(
@@ -225,6 +244,7 @@ export async function collectPlanDetails(
 
   const results: GzPlanCollectResult["items"] = [];
   const stats: PlanDetailCacheStats = { cacheHit: 0, cacheMiss: 0, fetched: 0, fetchFailed: 0 };
+  const skippedQueries: GzSkippedQuery[] = [];
   let index = 0;
 
   for (const listItem of items) {
@@ -251,7 +271,12 @@ export async function collectPlanDetails(
         detail = await fetchPlanDetailHtml(page, listItem, {
           debugDir: options.debugDir,
           pageLoadTimeoutMs: options.pageLoadTimeoutMs,
-          delayMs: options.delayMs
+          delayMs: options.delayMs,
+          onNetworkFailure: options.partialCollection ? (error, attempts) => {
+            skippedQueries.push({ stage: "plans", query: listItem.keyword, year: options.year ?? 2026,
+              months: options.months ?? [6, 7, 8], failedPage: null, totalPages: null, keptRows: 0,
+              attempts, reason: `detail: ${collectionErrorMessage(error)}`, planPointIds: [listItem.plan_point_id] });
+          } : undefined
         });
         fetchedFromNetwork = true;
       }
@@ -279,7 +304,7 @@ export async function collectPlanDetails(
     `goszakup plan detail: cache_hit=${stats.cacheHit} cache_miss=${stats.cacheMiss}`
     + ` fetched=${stats.fetched} fetch_failed=${stats.fetchFailed}`
   );
-  return { items: results, stats };
+  return { items: results, stats, skippedQueries };
 }
 
 /** Placeholder detail used when the plan page could not be fetched or parsed. Never cached. */
@@ -323,11 +348,15 @@ export async function collectPlanSearch(
     delayMs: number;
     allowedStatusNames: string[];
     pageLoadRetries?: number;
+    collection?: GzCollectionState;
+    year?: number;
+    months?: number[];
   }
 ): Promise<GoszakupPlanListItem[]> {
   const allItems: GoszakupPlanListItem[] = [];
   let pageNum = 0;
   let expectedPages = 1;
+  const query = { stage: "plans" as const, query: keyword, year: options.year ?? 2026, months: options.months ?? [] };
   if (!Number.isInteger(options.maxPages) || options.maxPages < 0) {
     throw new Error("goszakup plan maxPages must be a nonnegative integer (0 = all pages)");
   }
@@ -335,6 +364,7 @@ export async function collectPlanSearch(
   if (!Number.isInteger(recordsPerPage) || recordsPerPage <= 0) {
     throw new Error("goszakup plan count_record must be a positive integer");
   }
+  if (options.collection?.skipIfOpen(query)) return [];
 
   while (options.maxPages === 0 || pageNum < options.maxPages) {
     // The registry omits `page` for the first page and numbers the next page as 2.
@@ -342,12 +372,17 @@ export async function collectPlanSearch(
     // here would silently fetch page one twice and skip every second result page.
     const portalPageNumber = pageNum === 0 ? 0 : pageNum + 1;
     const url = buildGoszakupHtmlPageUrl(baseUrl, portalPageNumber, recordsPerPage);
-    await gotoPlanSearchPage(page, url, keyword, pageNum, options);
-    await page.waitForTimeout(1500);
-
-    const html = await page.content();
-    if (/технические работы/i.test(html) && !/id="search-result"/i.test(html)) {
-      console.warn(`goszakup plan search: maintenance page for keyword="${keyword}"`);
+    let html: string;
+    let attempts = (options.pageLoadRetries ?? SEARCH_PAGE_RETRIES) + 1;
+    try {
+      attempts = await gotoPlanSearchPage(page, url, keyword, pageNum, options);
+      await page.waitForTimeout(1500);
+      html = await page.content();
+      assertPortalHtmlAvailable(html);
+    } catch (error) {
+      if (!options.collection || !isTransientNetworkError(error)) throw error;
+      options.collection.fail(query, pageNum + 1, pageNum > 0 ? expectedPages : null, allItems.length, attempts, error);
+      return allItems;
     }
     fs.mkdirSync(options.debugDir, { recursive: true });
     fs.writeFileSync(
@@ -388,6 +423,7 @@ export async function collectPlanSearch(
     if (options.delayMs > 0) await sleep(options.delayMs);
   }
 
+  options.collection?.complete();
   return allItems;
 }
 
@@ -401,14 +437,16 @@ async function gotoPlanSearchPage(
     delayMs: number;
     pageLoadRetries?: number;
   }
-): Promise<void> {
+): Promise<number> {
   const retries = options.pageLoadRetries ?? SEARCH_PAGE_RETRIES;
+  if (!Number.isInteger(retries) || retries < 0) throw new Error("pageLoadRetries must be a nonnegative integer");
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.pageLoadTimeoutMs });
-      return;
+      assertPortalResponse(await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.pageLoadTimeoutMs }));
+      return attempt + 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (!isTransientNetworkError(error)) throw error;
       if (attempt >= retries) {
         console.error(
           `goszakup plan search: keyword="${keyword}" page=${pageNum + 1} failed after ${attempt + 1} attempts: ${message}`
@@ -421,6 +459,7 @@ async function gotoPlanSearchPage(
       if (options.delayMs > 0) await sleep(options.delayMs);
     }
   }
+  throw new Error("goszakup plan pageLoadRetries must be a nonnegative integer");
 }
 
 async function fetchPlanDetailHtml(
@@ -430,6 +469,7 @@ async function fetchPlanDetailHtml(
     debugDir: string;
     pageLoadTimeoutMs: number;
     delayMs: number;
+    onNetworkFailure?: (error: unknown, attempts: number) => void;
   }
 ): Promise<GoszakupPlanDetail | null> {
   const url = listItem.detail_url
@@ -437,12 +477,16 @@ async function fetchPlanDetailHtml(
       ? `${GZ_PORTAL_ORIGIN}/ru/registry/show_plan/${listItem.plan_list_number}/${listItem.plan_point_id}`
       : `${GZ_PORTAL_ORIGIN}/ru/registry/show_plan/${listItem.plan_point_id}`);
 
+  let networkError: unknown;
+  let onlyNetworkFailures = true;
   for (let attempt = 0; attempt <= DETAIL_RETRIES; attempt++) {
     try {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.pageLoadTimeoutMs });
+      assertPortalResponse(await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.pageLoadTimeoutMs }));
       await page.waitForTimeout(1500);
 
       const html = await page.content();
+      assertPortalHtmlAvailable(html);
+      onlyNetworkFailures = false;
       fs.mkdirSync(options.debugDir, { recursive: true });
       fs.writeFileSync(
         path.join(options.debugDir, `goszakup-plan-detail-${listItem.plan_point_id}.html`),
@@ -458,12 +502,15 @@ async function fetchPlanDetailHtml(
         if (options.delayMs > 0) await sleep(options.delayMs);
       }
     } catch (error) {
+      if (isTransientNetworkError(error)) networkError = error;
+      else onlyNetworkFailures = false;
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`goszakup plan detail: ${listItem.plan_point_id} failed: ${message}`);
       if (attempt < DETAIL_RETRIES && options.delayMs > 0) await sleep(options.delayMs);
     }
   }
 
+  if (onlyNetworkFailures && networkError) options.onNetworkFailure?.(networkError, DETAIL_RETRIES + 1);
   return null;
 }
 

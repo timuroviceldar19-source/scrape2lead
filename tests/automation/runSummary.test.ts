@@ -44,6 +44,45 @@ function manifest(overrides: Partial<AutomationManifest> = {}): AutomationManife
 }
 
 describe("renderRunSummary", () => {
+  it("does not label failed detail fetches as a clean empty collection", () => {
+    const m = manifest();
+    m.stages.exportPlans.counts = { rows: 0, successful_queries: 1, fetch_failed: 2 };
+    const text = renderRunSummary(m);
+    expect(text).not.toContain("Найдено 0, сбоев нет");
+    expect(text).toContain("fetch_failed=2");
+  });
+  it("shows excluded registry plan IDs and unknown remaining page ranges", () => {
+    const m = manifest();
+    m.stages.exportPlans = { ...m.stages.exportPlans, skipped: [
+      { stage: "registry", query: "980840002897", year: 2026, months: [11], failedPage: null, totalPages: null,
+        keptRows: 0, attempts: 3, reason: "fetch failed", planPointIds: ["42", "43"] },
+      { stage: "plans", query: "Панель", year: 2027, months: [1], failedPage: 1, totalPages: null,
+        keptRows: 0, attempts: 0, reason: "circuit_breaker: portal unreachable" }
+    ] };
+    const text = renderRunSummary(m);
+    expect(text).toContain("пункты: 42, 43"); expect(text).toContain("1 и далее");
+    expect(text).toContain("| registry | 980840002897 | 2026: 11 | — | 0 | 3 |");
+  });
+  it("renders partial collection details and escapes table cells", () => {
+    const m = manifest();
+    m.stages.exportPlans = { ...m.stages.exportPlans, ...{ skipped: [{ stage: "plans" as const,
+      query: "Панель|доска\nещё", year: 2027, months: [1, 2], failedPage: 2, totalPages: 3,
+      keptRows: 50, attempts: 3, reason: "Timeout|network\nretry" }] } };
+    const text = renderRunSummary(m);
+    expect(text).toContain("⚠️ Частичный сбор: пропущено запросов — 1");
+    expect(text).toContain("Этап | Запрос | Период | Страница | Сохранено строк | Попыток | Причина");
+    expect(text).toContain("Панель\\|доска ещё"); expect(text).toContain("Timeout\\|network retry");
+    expect(text).toContain("2027: 1, 2"); expect(text).toContain("2–3");
+  });
+  it("labels a valid empty collection explicitly", () => {
+    const m = manifest(); m.stages.exportPlans.counts = { rows: 0, successful_queries: 1, skipped_queries: 0 };
+    expect(renderRunSummary(m)).toContain("Найдено 0, сбоев нет");
+  });
+  it("labels an unavailable source even if the other branch pushed", () => {
+    const m = manifest(); m.stages.exportLots = { status: "failed", startedAt: m.createdAt,
+      error: "fetch failed: source unreachable", ...{ sourceUnreachable: true } };
+    expect(renderRunSummary(m)).toContain("Источник полностью недоступен: exportLots");
+  });
   it("shows the run, its status and the config", () => {
     const text = renderRunSummary(manifest());
 

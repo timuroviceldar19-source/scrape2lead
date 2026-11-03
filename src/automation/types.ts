@@ -1,3 +1,5 @@
+import type { GzCollectionReport, GzSkippedQuery } from "../kz/gzCollection.js";
+
 export type AutomationStatus =
   | "preparing"
   | "ready"
@@ -23,6 +25,8 @@ export type AutomationWorkflow = "plans-and-lots" | "plans-only" | "f3-b2b";
 export type AutomationDeliveryMode = "prepare" | "push";
 
 export interface AutomationStage {
+  skipped?: GzSkippedQuery[];
+  sourceUnreachable?: boolean;
   status: StageStatus;
   startedAt: string;
   finishedAt?: string;
@@ -37,6 +41,8 @@ export interface AutomationArtifact {
 }
 
 export interface AutomationManifest {
+  /** Отсутствует у старых манифестов: для них проверяются обе предусмотренные workflow ветки. */
+  preparedBranches?: Array<"plans" | "lots">;
   /** v4 adds the `procurement*` artifact keys; v1/v2 lack `workflow`, read it via `manifestWorkflow`. */
   schemaVersion: 1 | 2 | 3 | 4;
   runId: string;
@@ -83,7 +89,7 @@ export interface AutomationStepResult {
   output?: string;
 }
 
-export interface AutomationExportResult {
+export interface AutomationExportResult extends GzCollectionReport {
   path: string;
   rows: number;
   /** Plan-detail cache metrics, summed across periods. Absent for stages without a detail cache (lots). */

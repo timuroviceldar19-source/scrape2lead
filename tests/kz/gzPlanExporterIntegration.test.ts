@@ -12,6 +12,8 @@ vi.mock("../../src/kz/goszakupPlanCollector.js", () => ({ collectGzPlans: mocks.
 vi.mock("../../src/kz/goszakupRegistryCollector.js", () => ({ collectGoszakupRegistryForBins: mocks.collectRegistry }));
 
 import { exportGzPlansReport } from "../../src/kz/gzPlanExporter.js";
+import { KzStorage } from "../../src/kz/kzStorage.js";
+import { parseRegistryProfileHtml } from "../../src/kz/goszakupRegistryParser.js";
 
 const tempDirs: string[] = [];
 
@@ -21,6 +23,33 @@ afterEach(() => {
 });
 
 describe("export registry preflight", () => {
+  it("excludes only the BIN with a confirmed network failure and preserves other plans", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "s2l-partial-registry-")); tempDirs.push(dir);
+    const databasePath = path.join(dir, "db.sqlite"); const storage = new KzStorage({ databasePath });
+    const record = parseRegistryProfileHtml(fs.readFileSync("tests/fixtures/goszakup-registry-profile-980840002897.html", "utf8"), "980840002897")!;
+    storage.upsertGoszakupRegistry({ ...record, updated_at: new Date().toISOString(), raw_snapshot_path: null }); storage.close();
+    mocks.collectGzPlans.mockResolvedValue({ successfulQueries: 1, skippedQueries: [], items: ["980840002897", "000240001420"].map((bin, index) => ({
+      plan_point_id: String(index + 1), plan_list_number: String(index + 1), customer_name: "Заказчик", customer_url: null,
+      item_name: "Компьютер", method: null, unit: null, quantity: "1", unit_price: "1000000", planned_amount: "1000000",
+      planned_month: "Ноябрь", status: "Утвержден", detail_url: null, keyword: "Компьютер",
+      detail: { customer_bin: bin, name_ru: "Компьютер" }
+    })) });
+    mocks.collectRegistry.mockImplementation(async (_bins, options) => {
+      options.onFailure?.("000240001420", new Error("page.goto: Timeout 30000ms exceeded"), 3);
+      return { processed: 1, success: 0, not_found: 0, failed: 1, cached: 1, skipped: 0 };
+    });
+    const options = { databasePath, outPath: path.join(dir, "plans.xlsx"), partialCollection: true, year: 2026, months: [11, 12] };
+    expect(await exportGzPlansReport(options)).toMatchObject({ rows: 1, skippedQueries: [{ stage: "registry",
+      query: "000240001420", year: 2026, months: [11, 12], failedPage: null, planPointIds: ["2"], attempts: 3 }] });
+  });
+
+  it("keeps missing registry data fatal when no network failure was confirmed", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "s2l-invalid-registry-")); tempDirs.push(dir);
+    mocks.collectGzPlans.mockResolvedValue({ items: [{ plan_point_id: "42", keyword: "Панель", detail: { customer_bin: "000240001420" } }] });
+    mocks.collectRegistry.mockResolvedValue({ processed: 1, not_found: 1 });
+    await expect(exportGzPlansReport({ databasePath: path.join(dir, "db.sqlite"), outPath: path.join(dir, "out.xlsx"), partialCollection: true }))
+      .rejects.toThrow(/registry preflight failed/);
+  });
   it("stops before writing XLSX when the customer profile is still missing", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "s2l-export-"));
     tempDirs.push(dir);

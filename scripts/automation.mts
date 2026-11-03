@@ -39,7 +39,8 @@ async function main(): Promise<void> {
     const manifest=await runScheduledAutomation(config,createRealAutomationDependencies());
     console.log(`automation run: run=${manifest.runId} status=${manifest.status}`);
     console.log(`report=${path.resolve(config.runsDir,manifest.runId,"summary.txt")}`);
-    if(manifest.status!=="pushed") process.exitCode=1; return;
+    const expectedStatus = config.deliveryMode === "prepare" ? "ready" : "pushed";
+    if(manifest.status!==expectedStatus) process.exitCode=1; return;
   }
   if(!args.runId) throw new Error("--run <run-id> is required");
   if(args.command==="status"){

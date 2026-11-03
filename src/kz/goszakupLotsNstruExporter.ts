@@ -6,6 +6,7 @@ import { sleep } from "./csv.js";
 import { filterGzItems } from "./gzItemFilter.js";
 import { parseGoszakupLotsHtml, parseGoszakupPagination, type GoszakupLotItem } from "./goszakupHtmlParser.js";
 import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
+import { assertPortalHtmlAvailable, assertPortalResponse, GzCollectionState, isTransientNetworkError, type GzCollectionReport } from "./gzCollection.js";
 
 const BASE_URL = GZ_PORTAL_ORIGIN;
 const DEFAULT_INPUT_PATH = "Nstru.txt";
@@ -33,6 +34,8 @@ const MONTH_NAMES_RU: Record<number, string> = {
 };
 
 export interface GoszakupLotsNstruOptions {
+  partialCollection?: boolean;
+  maxConsecutiveNetworkFailures?: number;
   inputPath?: string;
   nstruCodes?: string[];
   keywords?: string[];
@@ -72,7 +75,7 @@ export interface GoszakupLotsNstruRow {
   customer_url: string;
 }
 
-export interface GoszakupLotsNstruResult {
+export interface GoszakupLotsNstruResult extends GzCollectionReport {
   xlsxPath: string;
   rows: number;
   codes: number;
@@ -243,6 +246,7 @@ export async function exportGoszakupLotsByNstru(
   const pageLoadTimeoutMs = options.pageLoadTimeoutMs ?? DEFAULT_PAGE_LOAD_TIMEOUT_MS;
   const pageLoadAttempts = options.pageLoadAttempts ?? DEFAULT_PAGE_LOAD_ATTEMPTS;
   const pageLoadRetryDelayMs = options.pageLoadRetryDelayMs ?? DEFAULT_PAGE_LOAD_RETRY_DELAY_MS;
+  const collection = options.partialCollection ? new GzCollectionState(options.maxConsecutiveNetworkFailures) : undefined;
 
   const browser = await chromium.launch({
     headless: options.headless ?? true,
@@ -269,7 +273,8 @@ export async function exportGoszakupLotsByNstru(
           pageLoadTimeoutMs,
           pageLoadAttempts,
           pageLoadRetryDelayMs,
-          onRetry: options.onProgress
+          onRetry: options.onProgress,
+          collection
         });
 
         rows.push(...items.map((item) => buildExportRow(query.value, month, item)));
@@ -295,7 +300,8 @@ export async function exportGoszakupLotsByNstru(
     xlsxPath,
     rows: dedupedRows.length,
     codes: queries.length,
-    months
+    months,
+    ...collection?.report()
   };
 }
 
@@ -328,10 +334,14 @@ async function collectLotsPageSet(
     pageLoadAttempts: number;
     pageLoadRetryDelayMs: number;
     onRetry?: (message: string) => void;
+    collection?: GzCollectionState;
   }
 ): Promise<GoszakupLotItem[]> {
   const allItems: GoszakupLotItem[] = [];
   let pageNum = 0;
+  let expectedPages: number | null = null;
+  const query = { stage: "lots" as const, query: options.query.value, year: options.year, months: [options.month] };
+  if (options.collection?.skipIfOpen(query)) return [];
 
   while (pageNum < options.maxPages) {
     const url = buildLotsNstruSearchUrl({
@@ -342,15 +352,21 @@ async function collectLotsPageSet(
       statusIds: options.statusIds,
       pageNum
     });
-    await gotoLotsPageWithRetry(page, url, {
-      timeoutMs: options.pageLoadTimeoutMs,
-      maxAttempts: options.pageLoadAttempts,
-      retryDelayMs: options.pageLoadRetryDelayMs,
-      onRetry: options.onRetry
-    });
-    await page.waitForTimeout(1500);
-
-    const html = await page.content();
+    let html: string;
+    let attempts = options.pageLoadAttempts;
+    try {
+      attempts = await gotoLotsPageWithRetry(page, url, {
+        timeoutMs: options.pageLoadTimeoutMs, maxAttempts: options.pageLoadAttempts,
+        retryDelayMs: options.pageLoadRetryDelayMs, onRetry: options.onRetry
+      });
+      await page.waitForTimeout(1500);
+      html = await page.content();
+      assertPortalHtmlAvailable(html);
+    } catch (error) {
+      if (!options.collection || !isTransientNetworkError(error)) throw error;
+      options.collection.fail(query, pageNum + 1, expectedPages, allItems.length, attempts, error);
+      return allItems;
+    }
     fs.mkdirSync(options.debugDir, { recursive: true });
     fs.writeFileSync(
       path.join(options.debugDir, `goszakup-lots-nstru-${sanitizeCode(options.query.value)}-month${options.month}-page${pageNum}.html`),
@@ -365,18 +381,22 @@ async function collectLotsPageSet(
       console.warn(
         `goszakup lots: filter[enstru]=${options.query.value} ignored by site (mixed lot names, code likely missing from dictionary) — skipping month ${options.month}`
       );
+      options.collection?.complete();
       return [];
     }
 
     allItems.push(...items);
 
     const pagination = parseGoszakupPagination(html);
-    const totalPages = Math.min(pagination.totalPages > 0 ? pagination.totalPages : 1, options.maxPages);
+    expectedPages = pagination.totalCount > 0 ? Math.ceil(pagination.totalCount / 50)
+      : Math.max(1, ...Array.from(html.matchAll(/\bpage=(\d+)/g), match => Number(match[1])));
+    const totalPages = Math.min(expectedPages, options.maxPages);
     if (pageNum + 1 >= totalPages) break;
 
     pageNum++;
   }
 
+  options.collection?.complete();
   return allItems;
 }
 
@@ -394,15 +414,16 @@ export async function gotoLotsPageWithRetry(
     retryDelayMs: number;
     onRetry?: (message: string) => void;
   }
-): Promise<void> {
-  const maxAttempts = Math.max(1, Math.trunc(options.maxAttempts));
+): Promise<number> {
+  if (!Number.isInteger(options.maxAttempts) || options.maxAttempts < 1) throw new Error("pageLoadAttempts must be a positive integer");
+  const maxAttempts = options.maxAttempts;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.timeoutMs });
-      return;
+      assertPortalResponse(await page.goto(url, { waitUntil: "domcontentloaded", timeout: options.timeoutMs }));
+      return attempt;
     } catch (error) {
-      if (attempt >= maxAttempts) throw error;
+      if (!isTransientNetworkError(error) || attempt >= maxAttempts) throw error;
 
       const message = error instanceof Error ? error.message : String(error);
       options.onRetry?.(`goszakup lots navigation retry ${attempt}/${maxAttempts - 1}: ${message}`);
@@ -410,6 +431,7 @@ export async function gotoLotsPageWithRetry(
       if (delayMs > 0) await page.waitForTimeout(delayMs);
     }
   }
+  throw new Error("unreachable navigation retry state");
 }
 
 function buildExportRow(code: string, month: number, item: GoszakupLotItem): GoszakupLotsNstruRow {

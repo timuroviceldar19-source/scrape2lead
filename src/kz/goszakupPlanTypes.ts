@@ -1,3 +1,5 @@
+import type { GzCollectionReport } from "./gzCollection.js";
+
 export interface GoszakupPlanListItem {
   plan_point_id: string;
   plan_list_number: string | null;
@@ -62,6 +64,9 @@ export interface GzPlanExportRow {
 }
 
 export interface GzPlanCollectOptions {
+  /** Разрешать неполный поиск только для независимого импорта; мониторы оставляют строгий режим. */
+  partialCollection?: boolean;
+  maxConsecutiveNetworkFailures?: number;
   keywords?: string[];
   year?: number;
   months?: number[];
@@ -103,7 +108,7 @@ export interface PlanDetailCacheStats {
   fetchFailed: number;
 }
 
-export interface GzPlanCollectResult {
+export interface GzPlanCollectResult extends GzCollectionReport {
   items: Array<GoszakupPlanListItem & { detail: GoszakupPlanDetail | null }>;
   cacheStats?: PlanDetailCacheStats;
 }
@@ -116,7 +121,7 @@ export interface GzPlanExportOptions extends GzPlanCollectOptions {
   includeTruCodePrefixes?: string[];
 }
 
-export interface GzPlanExportResult {
+export interface GzPlanExportResult extends GzCollectionReport {
   xlsxPath: string;
   rows: number;
   customers: number;

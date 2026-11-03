@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Page } from "playwright";
 import { parseRegistryProfileHtml, parseRegistrySearchHtml } from "./goszakupRegistryParser.js";
 import { GZ_PORTAL_ORIGIN, isGzPortalRootHost } from "./goszakupOrigin.js";
+import { assertPortalResponse, assertPortalHtmlAvailable, isTransientNetworkError } from "./gzCollection.js";
 
 const REGISTRY_SEARCH_URL = `${GZ_PORTAL_ORIGIN}/ru/registry/supplierreg`;
 
@@ -14,7 +15,8 @@ export async function fetchRegistryForBin(
   page: Page,
   bin: string,
   debugDir: string,
-  profileUrl?: string
+  profileUrl?: string,
+  strictErrors = false
 ): Promise<RegistryFetchResult> {
   if (profileUrl && isAllowedSupplierProfileUrl(profileUrl)) {
     try {
@@ -32,12 +34,13 @@ export async function fetchRegistryForBin(
       }
       console.warn(`registry: direct profile BIN mismatch or parse failure for ${bin}; falling back to search`);
     } catch (error) {
+      if (strictErrors && !isTransientNetworkError(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`registry: direct profile failed for ${bin}: ${message}; falling back to search`);
     }
   }
 
-  await page.goto(REGISTRY_SEARCH_URL, { waitUntil: "networkidle", timeout: 30_000 });
+  assertPortalResponse(await page.goto(REGISTRY_SEARCH_URL, { waitUntil: "networkidle", timeout: 30_000 }));
 
   const searchInput = page.locator('input[placeholder*="Наименование"], input[placeholder*="БИН"], input[name="search_bin"], input[name="bin_iin"]');
   await searchInput.first().waitFor({ timeout: 10_000 });
@@ -48,6 +51,7 @@ export async function fetchRegistryForBin(
   await page.waitForLoadState("networkidle", { timeout: 15_000 });
 
   const searchHtml = await page.content();
+  assertPortalHtmlAvailable(searchHtml);
   const searchResult = parseRegistrySearchHtml(searchHtml, bin);
   if (!searchResult) return "not_found";
 
@@ -70,8 +74,9 @@ async function fetchRegistryProfile(
   profileUrl: string,
   debugDir: string
 ): Promise<Exclude<RegistryFetchResult, "not_found">> {
-  await page.goto(profileUrl, { waitUntil: "networkidle", timeout: 30_000 });
+  assertPortalResponse(await page.goto(profileUrl, { waitUntil: "networkidle", timeout: 30_000 }));
   const profileHtml = await page.content();
+  assertPortalHtmlAvailable(profileHtml);
   const record = parseRegistryProfileHtml(profileHtml, bin);
   if (!record) return { record: null, rawSnapshotPath: null };
 

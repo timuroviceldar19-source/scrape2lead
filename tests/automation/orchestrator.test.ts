@@ -34,6 +34,104 @@ function deps():AutomationDependencies {
   };
 }
 
+describe("independent GZ collection branches", () => {
+  it.each(["plans", "lots"] as const)("resumes a transient %s push and clears only its obsolete error", async branch => {
+    const runs = root(), d = deps(), cfg = config(runs);
+    const failed = branch === "plans" ? d.applyPlans : d.applyLots;
+    const successful = branch === "plans" ? d.applyLots : d.applyPlans;
+    vi.mocked(failed).mockRejectedValueOnce(new Error("fetch failed: ECONNRESET"));
+    const first = await runScheduledAutomation(cfg, d);
+    expect(first.status).toBe("pushed");
+    const manifestPath = path.join(runs, first.runId, "manifest.json");
+    first.errors.push({ stage: "exportPlans", message: "earlier partial search", at: first.createdAt });
+    writeManifestAtomic(manifestPath, first);
+    const resumed = await pushAutomationRun(cfg, first.runId, d);
+    expect(resumed.errors).toEqual([expect.objectContaining({ stage: "exportPlans" })]);
+    expect(failed).toHaveBeenCalledTimes(2);
+    expect(successful).toHaveBeenCalledTimes(1);
+    expect(readManifest(manifestPath).errors).toEqual(resumed.errors);
+    await expect(pushAutomationRun(cfg, first.runId, d)).rejects.toThrow(/already pushed/);
+  });
+  it.each(["plans", "lots"] as const)("resumes approval after a transient %s failure", async branch => {
+    const runs = root(), d = deps(), cfg = config(runs);
+    const failed = branch === "plans" ? d.applyPlans : d.applyLots;
+    vi.mocked(failed).mockRejectedValueOnce(new Error("fetch failed: ECONNRESET"));
+    const prepared = await prepareAutomationRun(cfg, d);
+    expect((await approveAutomationRun(cfg, prepared.runId, d)).status).toBe("applied");
+    const resumed = await approveAutomationRun(cfg, prepared.runId, d);
+    expect(resumed.status).toBe("applied");
+    expect(resumed.errors).toEqual([]);
+    expect(d.applyPlans).toHaveBeenCalledTimes(branch === "plans" ? 2 : 1);
+    expect(d.applyLots).toHaveBeenCalledTimes(branch === "lots" ? 2 : 1);
+    expect(d.analyzeLots).toHaveBeenCalledTimes(1);
+    await expect(approveAutomationRun(cfg, prepared.runId, d)).rejects.toThrow(/already applied/);
+  });
+  it("prints a shell-retry marker even when TimeoutError has no network text in its message", async () => {
+    const runs = root(), d = deps();
+    const failure = new Error("navigation expired"); failure.name = "TimeoutError";
+    vi.mocked(d.exportPlans).mockRejectedValue(failure);
+    const printed = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await runScheduledAutomation(pkConfig(runs), d);
+      expect(result.status).toBe("failed");
+      expect(printed.mock.calls.flat().join("\n")).toMatch(/fetch failed|TimeoutError/);
+    } finally { printed.mockRestore(); }
+  });
+  it.each(["plans", "lots"] as const)("pushes the other branch when %s is unreachable", async failed => {
+    const runs = root(), d = deps();
+    vi.mocked(failed === "plans" ? d.exportPlans : d.exportLots).mockRejectedValue(new Error("page.goto: Timeout 90000ms exceeded"));
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("pushed");
+    expect(failed === "plans" ? d.dryRunLots : d.dryRunPlans).toHaveBeenCalledTimes(1);
+    expect(failed === "plans" ? d.applyLots : d.applyPlans).toHaveBeenCalledTimes(1);
+    expect(failed === "plans" ? d.applyPlans : d.applyLots).not.toHaveBeenCalled();
+    expect(result.errors).toEqual([expect.objectContaining({ stage: failed === "plans" ? "exportPlans" : "exportLots" })]);
+    const summary = fs.readFileSync(path.join(runs, result.runId, "summary.txt"), "utf8");
+    expect(summary).toContain("Timeout");
+  });
+  it("fails without pushing when both sources are unreachable", async () => {
+    const runs = root(), d = deps();
+    vi.mocked(d.exportPlans).mockRejectedValue(new Error("fetch failed: ETIMEDOUT"));
+    vi.mocked(d.exportLots).mockRejectedValue(new Error("page.goto: Timeout"));
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("failed"); expect(result.errors).toHaveLength(2);
+    expect(d.applyPlans).not.toHaveBeenCalled(); expect(d.applyLots).not.toHaveBeenCalled();
+  });
+  it("persists partial query details on a successful export stage", async () => {
+    const runs = root(), d = deps();
+    const skipped = [{ stage: "plans" as const, query: "Панель", year: 2027, months: [1], failedPage: 2,
+      totalPages: 3, keptRows: 2, attempts: 3, reason: "page.goto: Timeout" }];
+    vi.mocked(d.exportPlans).mockImplementation(async (_cfg, out) => {
+      fs.writeFileSync(out, "plans"); return { path: out, rows: 2, skippedQueries: skipped, successfulQueries: 1 };
+    });
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("pushed");
+    expect(result.stages.exportPlans).toMatchObject({ status: "succeeded", counts: { skipped_queries: 1 }, skipped });
+    expect(fs.readFileSync(path.join(runs, result.runId, "summary.txt"), "utf8")).toContain("Панель");
+  });
+  it("allows preparing and approving only the available lots branch", async () => {
+    const runs = root(), d = deps(); vi.mocked(d.exportPlans).mockRejectedValue(new Error("page.goto: Timeout"));
+    const prepared = await prepareAutomationRun(config(runs), d);
+    expect(prepared.status).toBe("ready");
+    const applied = await approveAutomationRun(config(runs), prepared.runId, d);
+    expect(applied.status).toBe("applied"); expect(d.applyPlans).not.toHaveBeenCalled();
+    expect(d.applyLots).toHaveBeenCalledTimes(1); expect(d.analyzeLots).toHaveBeenCalledTimes(1);
+  });
+  it("does not let an unreachable branch bypass hash checks of the available branch", async () => {
+    const runs = root(), d = deps(); vi.mocked(d.exportLots).mockRejectedValue(new Error("page.goto: Timeout"));
+    const prepared = await prepareAutomationRun(config(runs), d);
+    fs.appendFileSync(prepared.artifacts.plans!.path, "tamper");
+    await expect(pushAutomationRun(config(runs), prepared.runId, d)).rejects.toThrow(/hash mismatch/);
+    expect(d.applyPlans).not.toHaveBeenCalled();
+  });
+  it("continues lots after a transient plans push failure", async () => {
+    const runs = root(), d = deps(); vi.mocked(d.applyPlans).mockRejectedValue(new Error("fetch failed: ECONNRESET"));
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("pushed"); expect(d.applyLots).toHaveBeenCalledTimes(1);
+    expect(result.errors).toEqual([expect.objectContaining({ stage: "applyPlans" })]);
+  });
+});
+
 describe("automation orchestrator",()=>{
   it("prepares both artifacts without applying CRM or AI",async()=>{
     const runs=root(), d=deps(); const result=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
@@ -74,6 +172,7 @@ describe("automation orchestrator",()=>{
     vi.mocked(d.analyzeLots).mockRejectedValueOnce(new Error("AI down"));
     expect((await approveAutomationRun(config(runs),prepared.runId,d)).status).toBe("applied_ai_failed");
     expect((await approveAutomationRun(config(runs),prepared.runId,d)).status).toBe("applied");
+    expect(readManifest(path.join(runs,prepared.runId,"manifest.json")).errors).toEqual([]);
     expect(d.applyPlans).toHaveBeenCalledTimes(1); expect(d.applyLots).toHaveBeenCalledTimes(1); expect(d.analyzeLots).toHaveBeenCalledTimes(2);
     expect(readManifest(path.join(runs,prepared.runId,"manifest.json")).status).toBe("applied");
   });
@@ -278,7 +377,7 @@ describe("automation manifest compatibility",()=>{
     const runs=root(), d=deps(); const prepared=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
     const manifestPath=path.join(runs,prepared.runId,"manifest.json");
     const legacy=readManifest(manifestPath) as AutomationManifest & {workflow?:AutomationWorkflow};
-    legacy.schemaVersion=2; delete legacy.workflow; writeManifestAtomic(manifestPath,legacy);
+    legacy.schemaVersion=2; delete legacy.workflow; delete legacy.preparedBranches; writeManifestAtomic(manifestPath,legacy);
     const pushed=await pushAutomationRun(config(runs),prepared.runId,d);
     expect(pushed.status).toBe("pushed");
     expect(d.applyPlans).toHaveBeenCalledTimes(1); expect(d.applyLots).toHaveBeenCalledTimes(1);
@@ -287,7 +386,7 @@ describe("automation manifest compatibility",()=>{
     const runs=root(), d=deps(); const prepared=await prepareAutomationRun(config(runs),d,new Date("2026-07-12T10:00:00Z"));
     const manifestPath=path.join(runs,prepared.runId,"manifest.json");
     const legacy=readManifest(manifestPath) as AutomationManifest & {workflow?:AutomationWorkflow};
-    legacy.schemaVersion=1; delete legacy.workflow; delete legacy.artifacts.lots; writeManifestAtomic(manifestPath,legacy);
+    legacy.schemaVersion=1; delete legacy.workflow; delete legacy.preparedBranches; delete legacy.artifacts.lots; writeManifestAtomic(manifestPath,legacy);
     await expect(pushAutomationRun(config(runs),prepared.runId,d)).rejects.toThrow(/lots artifact is missing/);
     expect(d.applyPlans).not.toHaveBeenCalled();
   });

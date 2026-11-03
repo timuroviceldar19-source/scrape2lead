@@ -21,6 +21,7 @@ const GzPlansConfigSchema = z.object({
   includeTruCodePrefixes: z.array(z.string().trim().min(1)).default([]),
   // Zero collects every result page. A positive value is an explicit safety budget.
   maxPages: z.coerce.number().int().nonnegative().default(0),
+  maxConsecutiveNetworkFailures: z.coerce.number().int().positive().default(3),
   delayMs: z.coerce.number().int().nonnegative().default(2000),
   skipRegistry: z.boolean().default(false),
   forceRegistryRefresh: z.boolean().default(false),
@@ -86,6 +87,7 @@ export function mergeGzPlansExportOptions(
     excludeKeywords: merged.excludeKeywords,
     includeTruCodePrefixes: merged.includeTruCodePrefixes,
     maxPages,
+    maxConsecutiveNetworkFailures: merged.maxConsecutiveNetworkFailures,
     delayMs,
     skipRegistry: merged.skipRegistry,
     forceRegistryRefresh: merged.forceRegistryRefresh,

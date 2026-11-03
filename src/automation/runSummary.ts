@@ -26,7 +26,8 @@ export function findLatestManifestPath(runsDir: string): string | null {
 /** Markdown для GitHub Step Summary: что запуск сделал и сколько сделок это дало. */
 export function renderRunSummary(manifest: AutomationManifest): string {
   const failed = manifest.status === "failed" || Object.values(manifest.stages).some((stage) => stage.status === "failed");
-  const icon = failed ? "❌" : "✅";
+  const skipped = Object.values(manifest.stages).flatMap(stage => stage.skipped ?? []);
+  const icon = manifest.status === "failed" ? "❌" : skipped.length || failed ? "⚠️" : "✅";
   const lines = [
     `### ${icon} Запуск ${manifest.runId}: ${manifest.status}`,
     "",
@@ -39,6 +40,21 @@ export function renderRunSummary(manifest: AutomationManifest): string {
   ];
   for (const [name, stage] of Object.entries(manifest.stages)) {
     lines.push(`| ${name} | ${STATUS_ICON[stage.status]} | ${duration(stage)} | ${stageDetails(stage)} |`);
+  }
+  for (const [name, stage] of Object.entries(manifest.stages)) {
+    if (stage.sourceUnreachable) lines.push("", `**Источник полностью недоступен: ${name}**`, "");
+  }
+  if (skipped.length) {
+    lines.push("", `**⚠️ Частичный сбор: пропущено запросов — ${skipped.length}**`, "",
+      "| Этап | Запрос | Период | Страница | Сохранено строк | Попыток | Причина |",
+      "| --- | --- | --- | --- | --- | --- | --- |");
+    for (const query of skipped) {
+      const page = query.failedPage === null ? "—" : query.totalPages && query.totalPages > query.failedPage
+        ? `${query.failedPage}–${query.totalPages}` : query.totalPages === null ? `${query.failedPage} и далее` : String(query.failedPage);
+      const reason = query.reason + (query.planPointIds?.length ? `; пункты: ${query.planPointIds.join(", ")}` : "");
+      lines.push(`| ${[query.stage, query.query, `${query.year}: ${query.months.join(", ")}`, page,
+        String(query.keptRows), String(query.attempts), reason].map(cell).join(" | ")} |`);
+    }
   }
   return `${lines.join("\n")}\n`;
 }
@@ -72,6 +88,10 @@ function duration(stage: AutomationStage): string {
 function stageDetails(stage: AutomationStage): string {
   const counts = Object.entries(stage.counts ?? {}).map(([key, value]) => `${key}=${value}`);
   const parts = [...counts];
+  if (stage.status === "succeeded" && stage.counts?.rows === 0 && (stage.counts.successful_queries ?? 0) > 0
+    && (stage.counts.fetch_failed ?? 0) === 0 && !stage.skipped?.length) {
+    parts.push("Найдено 0, сбоев нет");
+  }
   if (stage.error) parts.push(shorten(stage.error));
   return cell(parts.join(" ")) || "—";
 }
