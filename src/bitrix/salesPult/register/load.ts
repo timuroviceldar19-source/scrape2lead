@@ -180,6 +180,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
     const shouldRefresh = shouldRefreshRegisterHistory({
       cacheFilePath: cachePath,
       attemptFilePath: attemptPath,
+      cachedPayload: loadEncryptedRegisterHistory(cachePath, secretKey).payload,
       forceRefresh: refreshHistory
     });
 
@@ -296,6 +297,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
       fileName: registerFileName,
       asOf,
       month: parsed.month || todayAlmaty.slice(0, 7),
+      hasValColumn: parsed.hasValColumn,
       history: historyPayload,
       historyError
     });
@@ -304,7 +306,13 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
       `[Реестр] строк: ${parsed.rows.length}, договоров: ${contracts.length}, найдено в CRM: ${matchResult.matched.length}, нет в CRM: ${matchResult.missing.length}`
     );
 
-    if (!view.error) view.crmDeals = wonDeals;
+    if (view.error === undefined) {
+      view.history ??= { asOf, months: [] };
+      const { history, historyError: _historyError, ...snapshot } = view;
+      history.monthViews ??= {};
+      history.monthViews[view.month] = snapshot;
+      view.crmDeals = wonDeals;
+    }
     return view;
   } catch (err) {
     console.error("[Реестр] Ошибка обработки реестра:", err);

@@ -1,3 +1,4 @@
+import { buildRegisterView } from "./buildView.js";
 import { zakupListAll, zakupGet, type ZakupPage, type ZakupApiOptions } from "../../../kz/zakupPublicApi.js";
 import type { MarketConfig } from "../../../kz/market/types.js";
 import { isExcludedStatus, loadMarketConfig } from "../../../kz/market/config.js";
@@ -1085,6 +1086,9 @@ export function reconcileRegisterWithCrmAcrossMonths(
       type: c.type
     }));
   }
+  for (const summary of sortedSummaries) {
+    summary.crmExtra = (availableDealsByMonth.get(summary.month) || []).filter(d => !usedDealIds.has(d.id)).length;
+  }
 }
 
 export async function buildFullRegisterHistory(
@@ -1172,6 +1176,24 @@ export async function buildFullRegisterHistory(
   } else {
     for (const s of months) {
       s.reconciliationPerformed = false;
+    }
+  }
+
+  const monthViews: NonNullable<RegisterHistoryPayload["monthViews"]> = {};
+  for (const summary of months) {
+    const finalPf = parsedFiles.find(pf => pf.fileName === summary.fileName)!;
+    const missing = groupRegisterContracts(finalPf.rows).filter(c =>
+      summary.reconciliationPerformed && summary.missingCrm?.some(m =>
+        m.date === c.date && m.manager === c.manager && m.customer === c.customer && m.sale === c.sale));
+    const view = buildRegisterView({
+      rows: finalPf.rows, plans: finalPf.plans, missing,
+      extraDealsCount: summary.reconciliationPerformed ? summary.crmExtra || 0 : 0,
+      fileName: finalPf.fileName, asOf: finalPf.dateKey, month: summary.month,
+      hasValColumn: finalPf.hasValColumn
+    });
+    if (view.error === undefined) {
+      const { history, historyError, ...snapshot } = view;
+      monthViews[summary.month] = snapshot;
     }
   }
 
@@ -1299,6 +1321,7 @@ export async function buildFullRegisterHistory(
   return {
     asOf: options.todayAlmaty,
     months,
+    monthViews,
     portalMissing,
     discipline,
     failedFiles: options.failedFiles

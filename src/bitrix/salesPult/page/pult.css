@@ -533,3 +533,6 @@ body.tv .month-picker { display: none; }
   .dateline .periods { width: 100%; flex-wrap: wrap; }
   .month-picker { flex-basis: 100%; }
 }
+
+.register-months { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+#r-history .r[aria-current="true"] { background: var(--paper, #f1efe7); box-shadow: inset 3px 0 #141414; }

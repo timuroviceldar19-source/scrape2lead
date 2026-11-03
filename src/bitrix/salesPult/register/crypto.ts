@@ -172,6 +172,7 @@ export interface ShouldRefreshHistoryOptions {
   attemptFilePath?: string;
   nowIso?: string;
   forceRefresh?: boolean;
+  cachedPayload?: RegisterHistoryPayload;
 }
 
 /**
@@ -204,6 +205,10 @@ export function shouldRefreshRegisterHistory(options: ShouldRefreshHistoryOption
 
   const resolved = path.resolve(options.cacheFilePath);
   if (!fs.existsSync(resolved)) return true;
+
+  if (options.cachedPayload?.months.length && !options.cachedPayload.monthViews) {
+    return true;
+  }
 
   const stats = fs.statSync(resolved);
   const mtimeMs = stats.mtime.getTime();

@@ -122,6 +122,7 @@ export interface RegisterMonthSummary {
   }>;
   missingCrm?: RegisterMissingContract[];
   reconciliationPerformed?: boolean;
+  crmExtra?: number;
 }
 
 export interface RegisterPortalMissingContract {
@@ -190,6 +191,7 @@ export interface RegisterHistoryPayload {
   asOf: string;
   cachedAt?: string;
   months: RegisterMonthSummary[];
+  monthViews?: Record<string, Omit<RegisterSuccessView, "history" | "historyError">>;
   portalMissing?: RegisterPortalReconciliationView;
   discipline?: RegisterDisciplineView;
   failedFiles?: Array<{ fileName: string; reason: string }>;

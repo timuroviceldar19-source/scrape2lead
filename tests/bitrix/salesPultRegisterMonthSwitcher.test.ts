@@ -38,7 +38,6 @@ describe("переключатель месяцев реестра", () => {
 
   it("переключает весь отчёт кнопкой/hash и поддерживает старый кэш", async () => {
     const history = await fixture();
-    const { parseRegisterExcel } = await import("../../src/bitrix/salesPult/register/parseExcel.js");
     const { buildRegisterView } = await import("../../src/bitrix/salesPult/register/buildView.js");
     // Независимый текущий view позволяет проверить UI даже в RED без monthViews.
     const register = buildRegisterView({ rows: [], plans: {}, missing: [], extraDealsCount: 0, fileName: "current.xlsx", asOf: "2026-11-03", month: "2026-11", history });
@@ -63,6 +62,7 @@ describe("переключатель месяцев реестра", () => {
       await page.waitForTimeout(30);
       expect(await page.locator("#r-month").textContent()).toContain("Ноябрь");
       delete (history as any).monthViews;
+      await page.goto("about:blank");
       await page.setContent(renderRegisterHtml({ register: { ...register, history }, asOfDate: "2026-11-03", generatedAt: "test" }));
       await page.locator('#registerMonths button[data-month="2026-09"]').click();
       expect(await page.locator(".mgr").textContent()).toContain("Менеджер 09");
