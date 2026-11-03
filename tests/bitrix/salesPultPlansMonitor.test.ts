@@ -28,6 +28,7 @@ describe("монитор планов: модель", () => {
     expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 9 }), options)?.group).toBe("КТ");
     expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 29, UF_CRM_ENSTRU_NAME: "Монитор" }), options)?.group).toBe("КТ");
     expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 29 }), options)?.group).toBe("ИП");
+    expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 29, UF_CRM_ENSTRU_NAME: "Техника", UF_CRM_1782386244985_IU_XLS: "ноутбук" }), options)?.group).toBe("КТ");
     for (const extra of [{ ORIGINATOR_ID: "scrape2lead-gz-lots" }, { ORIGIN_ID: "gz-lot:1" }, { ORIGINATOR_ID: "other", TITLE: "Чужая" }, { CATEGORY_ID: 1 }]) {
       expect(normalizePlanDeal(raw(1, extra), options)).toBeNull();
     }
