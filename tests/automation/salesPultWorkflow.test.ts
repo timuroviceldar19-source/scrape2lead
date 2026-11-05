@@ -30,3 +30,14 @@ it("restores closed-month cache before collection and saves each run independent
   expect(workflow.slice(cache)).toContain("path: data/pult-months");
   expect(workflow.slice(cache)).toContain("key: gz-pult-months-v1-${{ github.run_id }}");
 });
+
+it("imports verified education contracts only on request and before generating the site", () => {
+  const start = workflow.indexOf("- name: Import verified education history");
+  const run = workflow.indexOf("- name: Run Sales Pult");
+  expect(start).toBeGreaterThan(workflow.indexOf("- name: Cache market data"));
+  expect(run).toBeGreaterThan(start);
+  const step = workflow.slice(start, run);
+  expect(step).toContain("if: ${{ inputs.market_import_education == true }}");
+  expect(step).toContain("--pattern education-kits-2026.json");
+  expect(step).toContain("npx tsx scripts/market-import-education.mts data/market/education-kits-2026.json");
+});

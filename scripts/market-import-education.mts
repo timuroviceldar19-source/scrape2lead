@@ -1,0 +1,11 @@
+import fs from "node:fs";
+import { importEducationHistory, type EducationSupplement } from "../src/kz/market/educationImport.js";
+import { loadMarketConfig } from "../src/kz/market/config.js";
+import { loadStoredMarketData, saveStoredMarketData } from "../src/kz/market/fetchMarket.js";
+const input = process.argv[2];
+if (!input) throw new Error("Education supplement file is required");
+const extra = JSON.parse(fs.readFileSync(input, "utf8")) as EducationSupplement;
+const stored = loadStoredMarketData();
+const updated = importEducationHistory({ ...stored, updatedAt: stored.updatedAt ?? "" }, extra, loadMarketConfig());
+saveStoredMarketData(updated);
+console.log(`[Рынок] Учебные комплекты: ${extra.units.length} позиций, ${new Set(extra.units.map(u => u.id)).size} договоров. Остальная история сохранена.`);
