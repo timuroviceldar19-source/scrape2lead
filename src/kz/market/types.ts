@@ -2,6 +2,8 @@ export interface MarketKindConfig {
   name: string;
   patterns: string[];
   textPatterns?: string[];
+  /** A kind may include low-cost kits without lowering the hardware threshold. */
+  minUnitPrice?: number;
 }
 
 export interface MarketGroupConfig {

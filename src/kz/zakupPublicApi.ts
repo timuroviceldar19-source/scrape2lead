@@ -88,6 +88,20 @@ export async function zakupListAll<T>(path: string, params: ZakupParams = {}, op
   for (let offset = 0; ; offset += ZAKUP_PAGE_SIZE) {
     const page = await zakupGet<ZakupPage<T>>(path, { ...params, limit: ZAKUP_PAGE_SIZE, offset }, options);
     if (!Array.isArray(page?.results)) throw new Error(`zakup ${path}: response without results`);
+    // The live API rejects offset >= 10000. Partition inclusive signing dates
+    // before crossing that ceiling; never return a truncated month as complete.
+    if (offset === 0 && page.count > 10000) {
+      const from = String(params.sign_date__gte ?? "");
+      const to = String(params.sign_date__lte ?? "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from >= to) {
+        throw new Error(`zakup ${path}: ${page.count} records exceed the 10000-record window; use a smaller signing-date range`);
+      }
+      const first = Date.parse(`${from}T00:00:00Z`), last = Date.parse(`${to}T00:00:00Z`);
+      const middle = first + Math.floor((last - first) / 86400000 / 2) * 86400000;
+      const left = await zakupListAll<T>(path, { ...params, sign_date__lte: new Date(middle).toISOString().slice(0, 10) }, options);
+      const right = await zakupListAll<T>(path, { ...params, sign_date__gte: new Date(middle + 86400000).toISOString().slice(0, 10) }, options);
+      return [...left, ...right];
+    }
     items.push(...page.results);
     if (page.results.length < ZAKUP_PAGE_SIZE || items.length >= page.count) return items;
   }

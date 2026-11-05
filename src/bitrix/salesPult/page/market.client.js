@@ -61,7 +61,7 @@
       return;
     }
 
-    const title = isIp ? "интерактивных панелей" : "компьютерной техники";
+    const title = isIp ? "интерактивных панелей и учебного оборудования" : "компьютерной техники";
     const M = Number(V.month.slice(5, 7));
     const delta = V.prev.sum ? V.total.sum / V.prev.sum - 1 : 0;
     const second = V.suppliers.find((x) => !x.us) ?? { name: "—", sum: 0 };
@@ -79,13 +79,17 @@
     const deltaText = roundedDelta === 0 ? "0%" : `${roundedDelta > 0 ? "+" : "−"}${Math.abs(roundedDelta)}%`;
     const deltaCls = roundedDelta === 0 ? "" : (roundedDelta > 0 ? "good" : "bad");
 
+    const kitsSum = (V.kinds || []).filter(k => k.kind === "Учебные комплекты").reduce((sum, k) => sum + k.sum, 0);
+    const scopeHtml = isIp && !V.legacySummary
+      ? `<p class="market-scope">Панели, доски и мультимедийные системы: <b>${mln(V.total.sum - kitsSum)} млн ₸</b><br>Учебные комплекты целиком: <b>${mln(kitsSum)} млн ₸</b></p>`
+      : "";
     const ytdHtml = V.ytd
       ? `<div class="ytd-box" style="margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--rule-2);">
-          <span class="label" style="display:block;margin-bottom:8px;">С начала года</span>
+          <span class="label" style="display:block;margin-bottom:8px;">С января по ${MONTHS[M - 1]} ${V.month.slice(0, 4)} года</span>
           <div class="readout" style="border:0;padding:0;">
-            <div><span class="label">Доля группы</span><div class="v">${pct1(V.ytd.share)}<small> · ${mln(V.ytd.sum)} млн</small></div></div>
-            <div><span class="label">Место группы</span><div class="v">${V.ytd.rank || "—"}<small> из ${V.ytd.totalSuppliers}</small></div></div>
-            <div><span class="label">По компаниям</span><div class="v" style="font-size:12px;line-height:1.4;margin-top:4px;">${V.ytd.companies.map((c) => `<div><b>${esc(c.name)}:</b> ${mln(c.sum)} млн <span class="dim">(${pct1(c.share)})</span></div>`).join("")}</div></div>
+            <div><span class="label">Доля F3 и партнёров</span><div class="v">${pct1(V.ytd.share)}<small> · ${mln(V.ytd.sum)} млн</small></div></div>
+            <div><span class="label">Место F3 и партнёров</span><div class="v">${V.ytd.rank || "—"}<small> из ${V.ytd.totalSuppliers}</small></div></div>
+            <div><span class="label">Договоры компаний с начала года</span><div class="v" style="font-size:12px;line-height:1.4;margin-top:4px;">${V.ytd.companies.map((c) => `<div><b>${esc(c.name)}:</b> договоры на ${mln(c.sum)} млн ₸ <span class="dim">— ${pct1(c.share)} всего рынка</span></div>`).join("")}</div></div>
           </div>
         </div>`
       : "";
@@ -115,9 +119,10 @@
       <span class="label">Объём рынка</span>
       <div class="hero-num"><span class="big">${fmt(V.total.sum / 1e6)}</span><span class="of">млн ₸</span></div>
       <div class="hero-amt">${plural(V.total.contracts, ["договор", "договора", "договоров"])} <span class="muted">· ${plural(V.total.suppliers, ["поставщик", "поставщика", "поставщиков"])}</span></div>
+      ${scopeHtml}
       <div class="readout">
-        <div><span class="label">Наша доля</span><div class="v">${pct1(V.us.share)}<small> · ${mln(V.us.sum)} млн</small></div></div>
-        <div><span class="label">Наше место</span><div class="v">${V.us.rank || "—"}<small> из ${V.total.suppliers}</small></div></div>
+        <div><span class="label">Доля F3 и партнёров</span><div class="v">${pct1(V.us.share)}<small> · ${mln(V.us.sum)} млн</small></div></div>
+        <div><span class="label">Место F3 и партнёров</span><div class="v">${V.us.rank || "—"}<small> из ${V.total.suppliers}</small></div></div>
         <div><span class="label">К 1–${Number(V.prev.toDay)} ${MONTHS_S[M >= 2 ? M - 2 : 11]}</span><div class="v ${deltaCls}">${deltaText}<small> рынок</small></div></div>
       </div>
       <p class="verdict">${verdict}</p>
@@ -135,7 +140,7 @@
     const toDayNum = currentView?.month === latestMonth && currentView.prev?.toDay ? Number(currentView.prev.toDay) : null;
     const firstOurMonth = months.find((m) => m.us > 0)?.m;
     const firstMonthWithUsNote = (firstOurMonth && months.length > 0 && firstOurMonth > months[0]?.m)
-      ? `<p class="note-src" style="margin-top: 6px; font-size: 11px;">* До ${MONTHS[Number(firstOurMonth.slice(5)) - 1]} ${firstOurMonth.slice(0, 4)} года договоров группы на портале госзакупок нет.</p>`
+      ? `<p class="note-src" style="margin-top: 6px; font-size: 11px;">* До ${MONTHS[Number(firstOurMonth.slice(5)) - 1]} ${firstOurMonth.slice(0, 4)} года договоров F3 и партнёров на портале госзакупок нет.</p>`
       : "";
     const incompleteMonthNote = toDayNum
       ? `<p class="note-src mobile-note" style="margin-top: 6px; font-size: 11px;">* Данные за текущий месяц по ${toDayNum}-е число.</p>`
@@ -217,7 +222,7 @@
     ${V.customers.map((x) => (x.contractList || []).length
       ? `<details class="cust-d"><summary class="r">${customerCells(x)}</summary>${customerContracts(x)}</details>`
       : `<div class="r">${customerCells(x)}</div>`).join("")}</div>
-    <p class="note-src">Договоры госзакупок по дате подписания, все способы закупки, включая электронный магазин. Суммы позиций без НДС. Расторгнутые и заменённые доп. соглашением версии не считаются. ${isIp ? "Коды ЕНС ТРУ: 262030.100.000021 панель интерактивная, 262030.100.000043 доска интерактивная, 262030.100.000011/13 система мультимедийная, 279020.100.* панель жидкокристаллическая, только если в описании позиции сказано «интерактивная»." : "Коды ЕНС ТРУ: компьютеры 262013.000.000011/12, системные блоки 262040.000.000267/268, ноутбуки 262011.100.*, МФУ 262018.900.*, принтеры 262016.300.000015–19, мониторы 262017.100.*."}</p></section>`;
+    <p class="note-src">Договоры госзакупок по дате подписания, все способы закупки, включая электронный магазин. Суммы позиций без НДС. Расторгнутые и заменённые доп. соглашением версии не считаются. ${isIp ? "Коды ЕНС ТРУ: 262030.100.000021 панель интерактивная, 262030.100.000043 доска интерактивная, 262030.100.000011/13 система мультимедийная, 279020.100.* панель жидкокристаллическая, только если в описании позиции сказано «интерактивная»; 329959.900.000019 — все учебные комплекты целиком." : "Коды ЕНС ТРУ: компьютеры 262013.000.000011/12, системные блоки 262040.000.000267/268, ноутбуки 262011.100.*, МФУ 262018.900.*, принтеры 262016.300.000015–19, мониторы 262017.100.*."}</p></section>`;
 
     el.innerHTML = s;
     el.querySelectorAll("[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });

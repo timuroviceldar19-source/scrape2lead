@@ -44,6 +44,20 @@ describe("zakupPublicApi", () => {
     expect(offsets).toEqual([0, 100]);
   });
 
+  it("splits large signed-date ranges before the API's 10000-record offset ceiling", async () => {
+    const calls: string[][] = [];
+    const fetchFn = vi.fn(async (url: string) => {
+      const p = new URL(url).searchParams;
+      const from = p.get("sign_date__gte")!, to = p.get("sign_date__lte")!;
+      calls.push([from, to, p.get("offset")!]);
+      if (from !== to) return json({ count: 10001, results: [{ id: -1 }] });
+      return json({ count: 1, results: [{ id: from === "2026-01-01" ? 1 : 2 }] });
+    });
+    const result = await zakupListAll("/public/contracts/", { sign_date__gte: "2026-01-01", sign_date__lte: "2026-01-02", enstru_code__isnull: true }, { ...fast, fetchFn: fetchFn as unknown as typeof fetch });
+    expect(result).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(calls).toEqual([["2026-01-01", "2026-01-02", "0"], ["2026-01-01", "2026-01-01", "0"], ["2026-01-02", "2026-01-02", "0"]]);
+  });
+
   it("keeps input order and the concurrency limit", async () => {
     let inFlight = 0;
     let peak = 0;

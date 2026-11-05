@@ -563,7 +563,7 @@ describe("salesPult in-browser Playwright test", () => {
       const card = document.querySelector("#tab-kt .ytd-box");
       return card ? card.textContent : "";
     });
-    expect(ytdCardText).toContain("С начала года");
+    expect(ytdCardText).toContain("С января по октябрь 2026 года");
     expect(ytdCardText).toContain("F3");
     expect(ytdCardText).toContain("Amanat Asia");
 
