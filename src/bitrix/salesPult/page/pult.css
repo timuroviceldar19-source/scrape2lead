@@ -582,3 +582,13 @@ body.tv #planMonths { display: none !important; }
   .plans-summary .plans-outcomes { grid-template-columns: 1fr 1fr; }
   .plans-months .months, .plans-months .mlabels { min-width: 360px; }
 }
+
+/* Market totals explain their scope; company amounts remain readable on narrow screens. */
+.market-scope { margin: 16px 0; font-size: 13px; line-height: 1.7; }
+.ytd-box .readout { grid-template-columns: 1fr 1fr; }
+.ytd-box .readout > div:last-child { grid-column: 1 / -1; border-left: 0; padding-left: 0; }
+.ytd-box .readout > div:last-child .v { font-family: var(--font-body, sans-serif); font-size: 14px !important; line-height: 1.7 !important; }
+@media (max-width: 700px) {
+  .ytd-box .readout { grid-template-columns: 1fr; }
+  .ytd-box .readout > div { border-left: 0; padding-left: 0; }
+}

@@ -198,7 +198,7 @@ function buildSingleMonthGroupView(
 
     suppliers.push({
       bin: [...ourBins][0] || "our-group",
-      name: "Группа F3",
+      name: "F3 и партнёры",
       details,
       sum: sumBy(ourUnits, (u) => u.sum),
       contracts: countContracts(ourUnits),
