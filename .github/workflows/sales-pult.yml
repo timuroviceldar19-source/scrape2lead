@@ -12,6 +12,11 @@ on:
           - site
           - morning
           - evening
+      market_import_education:
+        description: "Add verified 2026 education kits while preserving existing market history"
+        required: false
+        default: false
+        type: boolean
       market_backfill_from:
         description: "Initial market backfill start date (YYYY-MM-DD, e.g. 2026-01-01)"
         required: false
@@ -75,6 +80,15 @@ jobs:
           else
             echo "::warning::Рынок: кэша нет и файла market-seed нет, вкладки рынка будут пустыми"
           fi
+
+      - name: Import verified education history
+        if: ${{ inputs.market_import_education == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release download market-seed --pattern education-kits-2026.json --dir data/market --clobber
+          npx tsx scripts/market-import-education.mts data/market/education-kits-2026.json
 
       - name: Run Sales Pult
         env:
