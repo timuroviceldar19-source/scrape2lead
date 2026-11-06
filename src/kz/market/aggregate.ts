@@ -101,7 +101,8 @@ export function buildMarketGroupView(
   group: "ИП" | "КТ",
   allUnits: MarketUnit[],
   asOfDate: string,
-  cfg: MarketConfig = loadMarketConfig()
+  cfg: MarketConfig = loadMarketConfig(),
+  additionalMonths: string[] = []
 ): MarketGroupView {
   const ourBins = getOurBinsSet(cfg);
   const ourCompaniesList = getOurCompaniesList(cfg);
@@ -122,6 +123,8 @@ export function buildMarketGroupView(
   const defaultMonth = usePrevMonth ? prevMonth : curMonth;
   // Months
   const byMonth = groupBy(groupUnits, (u) => u.month);
+  // Месяц без подтверждённых комплектов остаётся доступен для списка «На проверке».
+  for (const month of additionalMonths) byMonth[month] ??= [];
   const months: MarketMonthItem[] = Object.entries(byMonth)
     .map(([m, xs]) => {
       const monthOurCompanies = ourCompaniesList.map((comp) => ({
@@ -371,17 +374,21 @@ export function buildMarketView(
   asOfDate: string,
   cfg: MarketConfig = loadMarketConfig(),
   error?: string,
-  updatedAt?: string
+  updatedAt?: string,
+  educationPending: MarketView["educationPending"] = {}
 ): MarketView {
-  const months = [...new Set(units.map((u) => u.month))].sort();
-  const ip = units.length > 0 ? buildMarketGroupView("ИП", units, asOfDate, cfg) : null;
-  const kt = units.length > 0 ? buildMarketGroupView("КТ", units, asOfDate, cfg) : null;
+  const pendingMonths = Object.keys(educationPending);
+  const months = [...new Set([...units.map((u) => u.month), ...pendingMonths])].sort();
+  const hasData = units.length > 0 || pendingMonths.length > 0;
+  const ip = hasData ? buildMarketGroupView("ИП", units, asOfDate, cfg, pendingMonths) : null;
+  const kt = hasData ? buildMarketGroupView("КТ", units, asOfDate, cfg) : null;
   const isStale = Boolean(updatedAt && updatedAt < getPreviousWorkday(asOfDate));
   return {
     asOf: asOfDate,
     months,
     ip,
     kt,
+    educationPending,
     updatedAt: updatedAt || asOfDate,
     stale: isStale,
     error

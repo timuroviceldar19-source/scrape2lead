@@ -161,6 +161,7 @@ describe("salesPult tabs & standalone register page rendering", () => {
     const payloadWithMarketError: SalesPultPayload = {
       ...basePayload,
       market: {
+        educationPending: {},
         asOf: "2026-10-28",
         months: [],
         ip: null,

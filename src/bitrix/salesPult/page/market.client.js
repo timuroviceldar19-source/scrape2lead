@@ -81,7 +81,11 @@
 
     const kitsSum = (V.kinds || []).filter(k => k.kind === "Учебные комплекты").reduce((sum, k) => sum + k.sum, 0);
     const scopeHtml = isIp && !V.legacySummary
-      ? `<p class="market-scope">Панели, доски и мультимедийные системы: <b>${mln(V.total.sum - kitsSum)} млн ₸</b><br>Учебные комплекты целиком: <b>${mln(kitsSum)} млн ₸</b></p>`
+      ? `<p class="market-scope">Панели, доски и мультимедийные системы: <b>${mln(V.total.sum - kitsSum)} млн ₸</b><br>Учебные комплекты с подтверждённой панелью, сумма комплектов целиком: <b>${mln(kitsSum)} млн ₸</b></p>`
+      : "";
+    const pending = isIp ? MK?.educationPending?.[V.month] : null;
+    const pendingHtml = pending?.contracts > 0
+      ? `<details class="education-pending"><summary>На проверке: ${plural(pending.contracts, ["договор", "договора", "договоров"])} на ${mln(pending.sum)} млн ₸, в суммы не входят</summary><ul>${pending.ids.map(id => `<li><a href="https://procurement.gov.kz/ru/egzcontract/cpublic/show/${esc(id)}" target="_blank" rel="noopener noreferrer">Договор ${esc(id)}</a></li>`).join("")}</ul></details>`
       : "";
     const ytdHtml = V.ytd
       ? `<div class="ytd-box" style="margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--rule-2);">
@@ -120,6 +124,7 @@
       <div class="hero-num"><span class="big">${fmt(V.total.sum / 1e6)}</span><span class="of">млн ₸</span></div>
       <div class="hero-amt">${plural(V.total.contracts, ["договор", "договора", "договоров"])} <span class="muted">· ${plural(V.total.suppliers, ["поставщик", "поставщика", "поставщиков"])}</span></div>
       ${scopeHtml}
+      ${pendingHtml}
       <div class="readout">
         <div><span class="label">Доля F3 и партнёров</span><div class="v">${pct1(V.us.share)}<small> · ${mln(V.us.sum)} млн</small></div></div>
         <div><span class="label">Место F3 и партнёров</span><div class="v">${V.us.rank || "—"}<small> из ${V.total.suppliers}</small></div></div>
@@ -222,7 +227,7 @@
     ${V.customers.map((x) => (x.contractList || []).length
       ? `<details class="cust-d"><summary class="r">${customerCells(x)}</summary>${customerContracts(x)}</details>`
       : `<div class="r">${customerCells(x)}</div>`).join("")}</div>
-    <p class="note-src">Договоры госзакупок по дате подписания, все способы закупки, включая электронный магазин. Суммы позиций без НДС. Расторгнутые и заменённые доп. соглашением версии не считаются. ${isIp ? "Коды ЕНС ТРУ: 262030.100.000021 панель интерактивная, 262030.100.000043 доска интерактивная, 262030.100.000011/13 система мультимедийная, 279020.100.* панель жидкокристаллическая, только если в описании позиции сказано «интерактивная»; 329959.900.000019 — все учебные комплекты целиком." : "Коды ЕНС ТРУ: компьютеры 262013.000.000011/12, системные блоки 262040.000.000267/268, ноутбуки 262011.100.*, МФУ 262018.900.*, принтеры 262016.300.000015–19, мониторы 262017.100.*."}</p></section>`;
+    <p class="note-src">Договоры госзакупок по дате подписания, все способы закупки, включая электронный магазин. Суммы позиций без НДС. Расторгнутые и заменённые доп. соглашением версии не считаются. ${isIp ? "Коды ЕНС ТРУ: 262030.100.000021 панель интерактивная, 262030.100.000043 доска интерактивная, 262030.100.000011/13 система мультимедийная, 279020.100.* панель жидкокристаллическая, только если в описании позиции сказано «интерактивная»; 329959.900.000019 — комплекты считаются только при подтверждённой панели, сумма комплектов целиком." : "Коды ЕНС ТРУ: компьютеры 262013.000.000011/12, системные блоки 262040.000.000267/268, ноутбуки 262011.100.*, МФУ 262018.900.*, принтеры 262016.300.000015–19, мониторы 262017.100.*."}</p></section>`;
 
     el.innerHTML = s;
     el.querySelectorAll("[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });
