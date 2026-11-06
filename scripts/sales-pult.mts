@@ -80,6 +80,7 @@ export interface PultConfig {
   register?: {
     diskFolderId?: number;
     managerAliases?: Record<string, string>;
+    hiddenManagers?: string[];
   };
 }
 
@@ -619,6 +620,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       reader,
       diskFolderId: config.register?.diskFolderId,
       managerAliases: config.register?.managerAliases,
+      hiddenManagers: config.register?.hiddenManagers,
       registerFilePath,
       todayAlmaty,
       contractTransitions: collected.contractTransitions,

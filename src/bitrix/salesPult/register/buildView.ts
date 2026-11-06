@@ -23,6 +23,11 @@ function countUniqueContracts(rows: RegisterRow[]): number {
   return set.size;
 }
 
+/** B2B и скрытые менеджеры входят в план отдела, но своей строки в списке не получают. */
+export function listedPlanManagers(plans: Record<string, number>, hiddenManagers: string[] = []): string[] {
+  return Object.keys(plans).filter((n) => n !== "B2B" && !hiddenManagers.includes(n));
+}
+
 function buildDailyPoints(rows: RegisterRow[]): RegisterDailyPoint[] {
   const byDay = new Map<string, number>();
   for (const r of rows) {
@@ -40,7 +45,8 @@ function buildManagersSummary(
   rows: RegisterRow[],
   plans: Record<string, number>,
   missing: RegisterContract[],
-  hasVal: boolean
+  hasVal: boolean,
+  hiddenManagers?: string[]
 ): RegisterManagerSummary[] {
   const missingByManager = new Map<string, RegisterContract[]>();
   for (const m of missing) {
@@ -50,7 +56,7 @@ function buildManagersSummary(
   }
 
   const allNames = new Set<string>([
-    ...Object.keys(plans).filter((n) => n !== "B2B"),
+    ...listedPlanManagers(plans, hiddenManagers),
     ...rows.map((r) => r.manager)
   ]);
 
@@ -138,11 +144,12 @@ export function buildRegisterView(params: {
   asOf: string;
   month: string;
   hasValColumn?: boolean;
+  hiddenManagers?: string[];
   history?: RegisterHistoryPayload;
   historyError?: string;
   error?: string;
 }): RegisterView {
-  const { rows, plans, missing, extraDealsCount, fileName, asOf, month, hasValColumn, history, historyError, error } = params;
+  const { rows, plans, missing, extraDealsCount, fileName, asOf, month, hasValColumn, hiddenManagers, history, historyError, error } = params;
   const hasVal = hasValColumn ?? (rows.length === 0 || rows.some((r) => r.val !== null));
 
   const totalSale = sumBy(rows, (r) => r.sale);
@@ -196,7 +203,7 @@ export function buildRegisterView(params: {
     month,
     total,
     daily: buildDailyPoints(rows),
-    managers: buildManagersSummary(rows, plans, missing, hasVal),
+    managers: buildManagersSummary(rows, plans, missing, hasVal, hiddenManagers),
     mix: buildMixItems(rows, hasVal),
     channels: buildChannelItems(rows, hasVal),
     groups,
