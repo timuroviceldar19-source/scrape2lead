@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { mapWithConcurrency, zakupGet, zakupListAll, type ZakupApiOptions } from "../zakupPublicApi.js";
-import { classifyCode, isExcludedStatus, loadMarketConfig, matchesMarketCode } from "./config.js";
+import { mapWithConcurrency, zakupGet, zakupListAll, zakupErrorReason, zakupSafeCause, ZakupIncompleteDataError, type ZakupApiOptions } from "../zakupPublicApi.js";
+import { classifyCode, isExcludedStatus, loadMarketConfig } from "./config.js";
 import { filterContractUnits, type RawContractItem, type RawContractUnit } from "./filterUnits.js";
 import type { MarketConfig, MarketUnit } from "./types.js";
 
@@ -12,6 +12,8 @@ export const DEFAULT_ORG_CACHE_PATH = "data/market/orgs.json";
 const GOSZAKUP_SYSTEM_ID = 1;
 /** «Товар» в справочнике предметов закупки. */
 const GOODS_SUBJECT_ID = 1;
+/** Массовый отказ основного API: прекращаем очередь и разрешаем запасной источник. */
+export const MARKET_FIRST_PASS_FAILURE_LIMIT = 20;
 
 interface ZakupDictItem {
   id: number;
@@ -49,8 +51,27 @@ interface ZakupSubject {
 }
 
 interface ZakupContractDetail {
+  external_id?: number | string | null;
   supplier_organization?: { id?: number | null; iin_bin?: string | null } | null;
   customer_organization?: { id?: number | null; iin_bin?: string | null } | null;
+}
+
+export interface ZakupMarketStats {
+  missingListIds: number;
+  withoutCodes: number;
+  skippedWithoutId: number;
+}
+
+export interface ZakupMarketResult {
+  units: MarketUnit[];
+  keepContractIds: number[];
+  stats: ZakupMarketStats;
+}
+
+function contractId(value: unknown): number | null {
+  if (value === null || value === undefined || value === "" || String(value).trim() === "") return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 export interface FetchZakupMarketOptions extends ZakupApiOptions {
@@ -60,6 +81,8 @@ export interface FetchZakupMarketOptions extends ZakupApiOptions {
   orgCachePath?: string;
   /** Line-item requests in flight at once. */
   concurrency?: number;
+  /** Пауза перед вторым проходом по неответившим договорам. */
+  secondPassDelayMs?: number;
   onProgress?: (info: { listed: number; candidates: number; done: number }) => void;
 }
 
@@ -165,9 +188,10 @@ function toRawContract(
 /**
  * Market units (ИП, КТ) signed in [fromDate, toDate], from the public API of zakup.gov.kz.
  * Contracts are listed by ENSTRU prefix, plus goods contracts whose contract-level code list is empty
- * (the codes are then only in the line items). BINs are fetched only for contracts with a matching item.
+ * (the codes are then only in the line items). Cards supply missing numbers and BINs;
+ * uncoded contracts may retain existing units, but never manufacture new market positions.
  */
-export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): Promise<MarketUnit[]> {
+export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): Promise<ZakupMarketResult> {
   const { fromDate, toDate, cfg = loadMarketConfig(), orgCachePath = DEFAULT_ORG_CACHE_PATH, concurrency = 4, onProgress } = options;
   const api: ZakupApiOptions = options;
 
@@ -188,22 +212,22 @@ export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): P
   for (const row of withoutCodes) byId.set(row.id, row);
 
   const candidates = [...byId.values()].filter((c) => {
-    if (!Number.isFinite(Number(c.external_id)) || c.external_id === null || c.external_id === "") return false;
     const egz = c.status_id != null ? statusEgz.get(c.status_id) : undefined;
-    if (egz === undefined || isExcludedStatus(egz, cfg)) return false;
-    const codes = c.enstru_code ?? [];
-    return codes.length === 0 || codes.some((code) => matchesMarketCode(code, cfg));
+    // Список уже ограничен префиксами. Его коды могут отличаться от предметов:
+    // ранний фильтр по точному коду скрыл бы договоры с неизвестными кодами предметов.
+    return egz !== undefined && !isExcludedStatus(egz, cfg);
   });
 
   const orgs = loadOrgCache(orgCachePath);
   const knownOrgs = Object.keys(orgs).length;
-  let done = 0;
-  const raw = await mapWithConcurrency(candidates, concurrency, async (c): Promise<RawContractItem | null> => {
+  const stats: ZakupMarketStats = {
+    missingListIds: candidates.filter(c => contractId(c.external_id) === null).length,
+    withoutCodes: 0,
+    skippedWithoutId: 0
+  };
+  const keepContractIds = new Set<number>();
+  const readContract = async (c: ZakupContract): Promise<RawContractItem | null> => {
     const subjects = dedupeSubjects(asList<ZakupSubject>(await zakupGet(`/public/contracts/${c.id}/subjects/`, {}, api)));
-    done++;
-    if (onProgress && (done % 100 === 0 || done === candidates.length)) {
-      onProgress({ listed: byId.size, candidates: candidates.length, done });
-    }
     const contractCodes = c.enstru_code ?? [];
     const matches = subjects.some((s) => {
       const code = subjectCode(s, contractCodes);
@@ -213,16 +237,76 @@ export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): P
         .join(" ");
       return code !== null && classifyCode(code, cfg, text) !== null;
     });
-    if (!matches) return null;
-    if (!orgs[String(c.supplier_organization_id)] || !orgs[String(c.customer_organization_id)]) {
+    const withoutCode = !matches && (subjects.length === 0 || subjects.some(s => subjectCode(s, contractCodes) === null));
+    if (!matches && !withoutCode) return null;
+    let id = contractId(c.external_id);
+    // Один запрос карточки и для номера, и для БИН. Ошибки не превращаются в пропуск договора.
+    if (id === null || (matches && (!orgs[String(c.supplier_organization_id)] || !orgs[String(c.customer_organization_id)]))) {
       const detail = await zakupGet<ZakupContractDetail>(`/public/contracts/${c.id}/`, {}, api);
+      id ??= contractId(detail?.external_id);
       for (const org of [detail?.supplier_organization, detail?.customer_organization]) {
         if (org?.id != null && org.iin_bin) orgs[String(org.id)] = String(org.iin_bin).trim();
       }
     }
-    return toRawContract(c, subjects, statusEgz.get(c.status_id as number) as number, methodEgz, orgs);
-  });
+    // Счётчики меняются только после успешного чтения всех необходимых данных.
+    if (withoutCode) stats.withoutCodes++;
+    if (id === null) {
+      stats.skippedWithoutId++;
+      return null;
+    }
+    if (withoutCode) {
+      keepContractIds.add(id);
+      return null;
+    }
+    return toRawContract({ ...c, external_id: id }, subjects, statusEgz.get(c.status_id as number) as number, methodEgz, orgs);
+  };
+
+  const raw: Array<RawContractItem | null> = Array(candidates.length).fill(null);
+  const failed: Array<{ contract: ZakupContract; index: number; error: unknown }> = [];
+  let done = 0;
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, candidates.length)) }, async () => {
+    while (next < candidates.length && failed.length < MARKET_FIRST_PASS_FAILURE_LIMIT) {
+      const index = next++;
+      const contract = candidates[index];
+      try {
+        raw[index] = await readContract(contract);
+      } catch (error) {
+        failed.push({ contract, index, error });
+      } finally {
+        done++;
+        if (onProgress && (done % 100 === 0 || done === candidates.length)) {
+          onProgress({ listed: byId.size, candidates: candidates.length, done });
+        }
+      }
+    }
+  }));
+  if (failed.length >= MARKET_FIRST_PASS_FAILURE_LIMIT) {
+    const reasons = [...new Set(failed.map(item => zakupErrorReason(item.error)))].join("; ");
+    // Обычная ошибка включает ows; все уже начатые чтения завершены, второй проход не запускается.
+    throw new Error(`Рынок: массовый сбой чтения договоров: ${failed.length}; причины: ${reasons}`, {
+      cause: zakupSafeCause(failed[0].error)
+    });
+  }
+  if (failed.length) {
+    const reasons = [...new Set(failed.map(item => zakupErrorReason(item.error)))].join("; ");
+    console.warn(`[Рынок] Второй проход: договоров ${failed.length}; причины: ${reasons}`);
+    const delay = options.secondPassDelayMs ?? 5000;
+    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+    const errors: unknown[] = [];
+    await mapWithConcurrency(failed, concurrency, async ({ contract, index }) => {
+      try {
+        raw[index] = await readContract(contract);
+      } catch (error) {
+        errors.push(error);
+      }
+    });
+    if (errors.length) {
+      const finalReasons = [...new Set(errors.map(zakupErrorReason))].join("; ");
+      throw new ZakupIncompleteDataError(`Рынок: договоров без ответа на обоих проходах: ${errors.length}; причины: ${finalReasons}`, { cause: zakupSafeCause(errors[0]) });
+    }
+  }
 
   if (Object.keys(orgs).length !== knownOrgs) saveOrgCache(orgCachePath, orgs);
-  return filterContractUnits(raw.filter((item): item is RawContractItem => item !== null), cfg);
+  return { units: filterContractUnits(raw.filter((item): item is RawContractItem => item !== null), cfg), keepContractIds: [...keepContractIds].sort((a, b) => a - b), stats };
 }

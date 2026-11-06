@@ -1,10 +1,45 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildZakupUrl, mapWithConcurrency, zakupGet, zakupListAll } from "../../src/kz/zakupPublicApi.js";
+import { buildZakupUrl, mapWithConcurrency, zakupErrorReason, zakupGet, zakupListAll } from "../../src/kz/zakupPublicApi.js";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const fast = { retryDelayMs: 0, pauseMs: 0 };
 
 describe("zakupPublicApi", () => {
+  it("preserves a real AbortSignal.timeout reason without logging its message", async () => {
+    const fetchFn = vi.fn(async (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+      new Promise((_resolve, reject) => {
+        const signal = init!.signal!;
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }));
+    // AbortSignal.timeout uses an unref timer; keep the test process alive until it fires.
+    const alive = setTimeout(() => {}, 1000);
+    try {
+      const error = await zakupGet("/public/contracts/", {}, { ...fast, timeoutMs: 10, maxRetries: 0, fetchFn }).catch(e => e as Error);
+      expect((error as Error).cause).toBeInstanceOf(DOMException);
+      expect(zakupErrorReason(error)).toContain("TimeoutError");
+      expect(zakupErrorReason(error)).not.toContain("operation");
+    } finally { clearTimeout(alive); }
+  });
+  it.each(["EPIPE", "CUSTOM_NETWORK_7"])("reports safe code %s outside a fixed list", async code => {
+    const original = Object.assign(new TypeError("private-message"), { code });
+    const error = await zakupGet("/public/contracts/", {}, { ...fast, maxRetries: 0, fetchFn: vi.fn().mockRejectedValue(original) }).catch(e => e as Error);
+    expect((error as Error).cause).toBe(original);
+    expect(zakupErrorReason(error)).toContain(code);
+    expect(zakupErrorReason(error)).not.toContain("private-message");
+  });
+  it("reports invalid JSON without returning HTML or response text", async () => {
+    const fetchFn = vi.fn(async () => new Response("<html>private-body secret-token</html>"));
+    const error = await zakupGet("/public/contracts/", {}, { ...fast, maxRetries: 0, fetchFn }).catch(e => e as Error);
+    expect(zakupErrorReason(error)).toContain("invalid JSON");
+    expect(zakupErrorReason(error)).not.toMatch(/html|private-body|secret-token/);
+  });
+  it("reports fetch failed without a code as TypeError, without its original text", async () => {
+    const original = new TypeError("fetch failed private-message");
+    const error = await zakupGet("/public/contracts/", {}, { ...fast, maxRetries: 0, fetchFn: vi.fn().mockRejectedValue(original) }).catch(e => e as Error);
+    expect((error as Error).cause).toBe(original);
+    expect(zakupErrorReason(error)).toBe("TypeError");
+  });
   it("builds urls under the public API and drops empty params", () => {
     expect(buildZakupUrl("/public/contracts/", { limit: 100, offset: 0, system_id: 1, enstru_code__startswith: "262030.100.", empty: "", none: undefined }))
       .toBe("https://zakup.gov.kz/api/core/api/public/contracts/?limit=100&offset=0&system_id=1&enstru_code__startswith=262030.100.");
@@ -27,7 +62,7 @@ describe("zakupPublicApi", () => {
 
   it("names the network cause after the last retry", async () => {
     const fetchFn = vi.fn().mockRejectedValue(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }));
-    await expect(zakupGet("/public/lots/", {}, { ...fast, maxRetries: 2, fetchFn })).rejects.toThrow("zakup /public/lots/: ECONNRESET");
+    await expect(zakupGet("/public/lots/", {}, { ...fast, maxRetries: 2, fetchFn })).rejects.toThrow(/zakup \/public\/lots\/: .*ECONNRESET/);
     expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
@@ -70,5 +105,23 @@ describe("zakupPublicApi", () => {
     });
     expect(out).toEqual([50, 10, 30, 20, 40]);
     expect(peak).toBe(2);
+  });
+
+  it("retries a short page without accepting or duplicating its partial rows", async () => {
+    const offsets: number[] = [];
+    const fetchFn = vi.fn(async (raw: string) => {
+      const offset = Number(new URL(raw).searchParams.get("offset")); offsets.push(offset);
+      const size = offsets.length === 1 ? 1 : offset === 0 ? 100 : 30;
+      return json({ count: 130, results: Array.from({ length: size }, (_, i) => ({ id: offset + i })) });
+    });
+    const rows = await zakupListAll("/public/contracts/", {}, { ...fast, fetchFn: fetchFn as unknown as typeof fetch });
+    expect(rows).toHaveLength(130);
+    expect(offsets).toEqual([0, 0, 100]);
+  });
+
+  it("rejects a list that remains incomplete after retrying the same page", async () => {
+    const fetchFn = vi.fn().mockImplementation(async () => json({ count: 2, results: [{ id: 1 }] }));
+    await expect(zakupListAll("/public/contracts/", {}, { ...fast, fetchFn })).rejects.toThrow(/неполн/);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 });

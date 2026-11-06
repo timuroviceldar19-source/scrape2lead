@@ -7,6 +7,34 @@ export const ZAKUP_API_URL = "https://zakup.gov.kz/api/core/api";
 export const ZAKUP_PAGE_SIZE = 100;
 
 export class ZakupRecordNotFoundError extends Error {}
+export class ZakupIncompleteDataError extends Error {}
+
+/** Только безопасные HTTP/сетевые причины: без URL, токенов и тел ответов. */
+export function zakupErrorReason(error: unknown): string {
+  const reasons = new Set<string>();
+  const seen = new Set<unknown>();
+  let current = error;
+  for (let depth = 0; current && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current);
+    const e = current as { message?: unknown; code?: unknown; name?: unknown; cause?: unknown };
+    const message = typeof e.message === "string" ? e.message : "";
+    for (const match of message.matchAll(/\bHTTP [1-5]\d{2}\b/g)) reasons.add(match[0]);
+    if (typeof e.code === "string" && /^[A-Z0-9_]+$/.test(e.code)) reasons.add(e.code);
+    if (message.includes("invalid JSON")) reasons.add("invalid JSON");
+    for (const name of ["TimeoutError", "AbortError", "TypeError", "SyntaxError"]) {
+      if (e.name === name || new RegExp(`\\b${name}\\b`).test(message)) reasons.add(name);
+    }
+    current = e.cause;
+  }
+  return [...reasons].join(", ") || (error instanceof ZakupIncompleteDataError ? "неполные данные" : "Error");
+}
+
+/** Сохраняем безопасный код в cause, не перенося туда исходный текст или тело ответа. */
+export function zakupSafeCause(error: unknown): Error {
+  const reason = zakupErrorReason(error);
+  const code = reason.split(", ").find(item => /^[A-Z0-9_]+$/.test(item));
+  return Object.assign(new Error(reason), { code });
+}
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -57,8 +85,7 @@ export async function zakupGet<T>(path: string, params: ZakupParams = {}, option
         signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       });
     } catch (error) {
-      const cause = (error as { cause?: { code?: string } })?.cause?.code;
-      lastError = new Error(`zakup ${path}: ${cause ?? (error instanceof Error ? error.message : String(error))}`);
+      lastError = new Error(`zakup ${path}: ${zakupErrorReason(error)}`, { cause: error });
       continue;
     }
 
@@ -74,8 +101,8 @@ export async function zakupGet<T>(path: string, params: ZakupParams = {}, option
     if (!response.ok) throw new Error(`zakup ${path}: HTTP ${response.status} ${text.slice(0, 120)}`);
     try {
       return JSON.parse(text) as T;
-    } catch {
-      lastError = new Error(`zakup ${path}: invalid JSON (${text.slice(0, 80)})`);
+    } catch (error) {
+      lastError = new Error(`zakup ${path}: invalid JSON`, { cause: error });
     }
   }
 
@@ -85,9 +112,13 @@ export async function zakupGet<T>(path: string, params: ZakupParams = {}, option
 /** Walks `limit`/`offset` pages until `count` records are read or a page comes back short. */
 export async function zakupListAll<T>(path: string, params: ZakupParams = {}, options: ZakupApiOptions = {}): Promise<T[]> {
   const items: T[] = [];
+  let expectedCount = 0;
   for (let offset = 0; ; offset += ZAKUP_PAGE_SIZE) {
-    const page = await zakupGet<ZakupPage<T>>(path, { ...params, limit: ZAKUP_PAGE_SIZE, offset }, options);
-    if (!Array.isArray(page?.results)) throw new Error(`zakup ${path}: response without results`);
+    const pageParams = { ...params, limit: ZAKUP_PAGE_SIZE, offset };
+    let page = await zakupGet<ZakupPage<T>>(path, pageParams, options);
+    if (!Array.isArray(page?.results) || !Number.isSafeInteger(page.count) || page.count < 0) {
+      throw new ZakupIncompleteDataError("zakup: неполные данные страницы списка");
+    }
     // The live API rejects offset >= 10000. Partition inclusive signing dates
     // before crossing that ceiling; never return a truncated month as complete.
     if (offset === 0 && page.count > 10000) {
@@ -102,8 +133,25 @@ export async function zakupListAll<T>(path: string, params: ZakupParams = {}, op
       const right = await zakupListAll<T>(path, { ...params, sign_date__gte: new Date(middle + 86400000).toISOString().slice(0, 10) }, options);
       return [...left, ...right];
     }
+    expectedCount = Math.max(expectedCount, page.count);
+    if (page.results.length < ZAKUP_PAGE_SIZE && items.length + page.results.length < expectedCount) {
+      const delay = options.retryDelayMs ?? 2000;
+      if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+      try {
+        page = await zakupGet<ZakupPage<T>>(path, pageParams, options);
+      } catch (cause) {
+        throw new ZakupIncompleteDataError("zakup: повторное чтение неполной страницы не удалось", { cause: zakupSafeCause(cause) });
+      }
+      if (!Array.isArray(page?.results) || !Number.isSafeInteger(page.count) || page.count < 0) {
+        throw new ZakupIncompleteDataError("zakup: неполная страница списка");
+      }
+      expectedCount = Math.max(expectedCount, page.count);
+      if (page.results.length < ZAKUP_PAGE_SIZE && items.length + page.results.length < expectedCount) {
+        throw new ZakupIncompleteDataError(`zakup: неполный список, получено ${items.length + page.results.length} из ${expectedCount}`);
+      }
+    }
     items.push(...page.results);
-    if (page.results.length < ZAKUP_PAGE_SIZE || items.length >= page.count) return items;
+    if (items.length >= expectedCount) return items;
   }
 }
 
