@@ -22,6 +22,12 @@
   };
   const list = plans => `<div class="cust-list rows">${plans.map(d => `<div class="r plan-list-row"><span>${esc(d.month)}</span><span>${link(d.dealUrl, d.planNumber || d.id)} · ${esc(d.customerName)}<span class="dim sub">${esc(d.itemName)}</span></span><span>${fmt(d.qty)} шт.</span><span class="num">${money(d.sum)} · ${link(d.planUrl, "План ↗")}</span></div>`).join("")}</div>`;
 
+  // Общая прокрутка выбранной кнопки для месяцев и строк фильтров.
+  window.__scrollPlanSelection = row => {
+    const button = row?.querySelector('[aria-pressed="true"]');
+    if (button) row.scrollLeft += button.getBoundingClientRect().left - row.getBoundingClientRect().left - 16;
+  };
+
   const tableStates = new Map();
   const filterLabels = { managerId: "Менеджер", kind: "Вид товара", portalStatus: "Статус портала", method: "Способ закупки" };
   function readTableState(key) {
@@ -56,13 +62,16 @@
       return `<fieldset class="plan-filter-group"><legend>${label}</legend><div class="chips">${button("", "Все")}${[...choicesByKey.get(key)].sort((a, b) => String(a[1]).localeCompare(String(b[1]), "ru")).map(([value, name]) => button(value, name)).join("")}</div></fieldset>`;
     }).join("");
     open.innerHTML = `${head("04", "Открытые планы", `Показано ${fmt(Math.min(state.limit, matches.length))} из ${fmt(matches.length)}`)}
-      <div class="plan-filters" aria-label="Фильтры открытых планов">${filterHtml}</div>
+      <div class="plan-filters" role="group" aria-label="Фильтры открытых планов">${filterHtml}</div>
       <div class="rows plans-table" role="table" aria-label="Открытые планы">
         <div class="r head" role="row">${sortHead("month", "Месяц")}<span role="columnheader">Заказчик</span><span role="columnheader">Товар / вид</span>${sortHead("qty", "Кол-во")}${sortHead("sum", "Сумма")}<span role="columnheader">Статус портала</span><span role="columnheader">Менеджер</span></div>
         ${matches.slice(0, state.limit).map(d => `<div class="r" role="row" data-plan-id="${esc(d.id)}"><span role="cell">${esc(d.month)}<span class="sub">${link(d.dealUrl, `Сделка ${d.id} ↗`)} · ${link(d.planUrl, `План ${d.planNumber} ↗`)}</span></span><span role="cell">${esc(d.customerName)}<span class="dim sub">${esc(d.customerBin)}</span></span><span role="cell">${esc(d.itemName)}<span class="dim sub">${[d.truCode, d.kind].filter(Boolean).map(esc).join(" · ")}</span></span><span role="cell" data-label="Количество">${fmt(d.qty)} шт.</span><span role="cell" class="num" data-label="Сумма">${money(d.sum)}</span><span role="cell" data-label="Статус портала">${esc(d.portalStatus)}</span><span role="cell" data-label="Менеджер">${esc(d.managerName)}${d.isNewStage ? '<span class="bad sub">Новая · ждёт разбора</span>' : ""}</span></div>`).join("")}
       </div>${!matches.length ? `<p class="muted" role="status">${Object.values(state.filters).some(Boolean) ? "Ничего не найдено. Измените фильтры или месяц." : "Открытых планов нет"}</p>` : ""}
       ${matches.length > state.limit ? '<button type="button" class="btn plans-more" data-plan-more>Показать ещё</button>' : ""}`;
-    open.querySelectorAll(".plan-filter-group .chips").forEach((row, i) => { row.scrollLeft = scrollPositions[i] || 0; });
+    open.querySelectorAll(".plan-filter-group .chips").forEach((row, i) => {
+      row.scrollLeft = scrollPositions[i] || 0;
+      if (!scrollPositions.length) window.__scrollPlanSelection(row);
+    });
     open.onclick = event => {
       const button = event.target.closest("button");
       if (!button) return;
@@ -85,8 +94,8 @@
         window.scrollTo({ top: scrollY + open.getBoundingClientRect().top - offset, behavior: "instant" });
       } else if (button.dataset.planSort) open.querySelector(`[data-plan-sort="${button.dataset.planSort}"]`)?.focus({ preventScroll: true });
       else {
-        const target = open.querySelector("[data-plan-more]") || open.querySelectorAll("[data-plan-id]")[previousLimit]?.querySelector("a");
-        target?.focus();
+        const target = open.querySelectorAll("[data-plan-id]")[previousLimit]?.querySelector("a");
+        target?.focus({ preventScroll: true });
       }
     };
   }

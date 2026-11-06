@@ -604,6 +604,8 @@ body.tv .plan-filters { display: none !important; }
 .plans-table [aria-sort="ascending"], .plans-table [aria-sort="descending"] { color: var(--ink); }
 .plans-more { margin-top: 20px; }
 @media (max-width: 760px) {
+  #planMonths { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; min-width: 0; }
+  #planMonths button { flex: 0 0 auto; white-space: nowrap; }
   .plan-filters { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .plan-filter-group .chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
   .plan-filter-group .chips button { flex: 0 0 auto; max-width: none; white-space: nowrap; }

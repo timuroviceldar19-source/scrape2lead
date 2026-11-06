@@ -161,8 +161,12 @@ it.each([1440, 390])("правки ревью: фильтры рядом, пам
     const pane = page.locator("#tab-plans-ip");
     const rows = pane.locator("[data-plan-id]");
     const more = pane.getByRole("button", { name: "Показать ещё" });
+    await more.scrollIntoViewIfNeeded();
+    const beforeMore = await page.evaluate(() => scrollY);
     await more.click();
-    expect(await more.evaluate(el => el === document.activeElement)).toBe(true);
+    expect(await page.evaluate(() => scrollY)).toBe(beforeMore);
+    expect(await rows.nth(50).locator("a").first().evaluate(el => el === document.activeElement)).toBe(true);
+    expect(await rows.nth(50).evaluate(el => el.getBoundingClientRect().top < innerHeight && el.getBoundingClientRect().bottom > 0)).toBe(true);
     expect(await rows.count()).toBe(100);
     await more.click();
     expect(await rows.count()).toBe(110);
@@ -227,5 +231,50 @@ it.each([1440, 390])("правки ревью: фильтры рядом, пам
     await page.reload();
     await pane.locator('[data-plan-filter="managerId"][data-value="7"]').click();
     expect(await pane.locator('[data-plan-filter="managerId"][data-value="7"]').getAttribute("aria-pressed")).toBe("true");
+  } finally { await browser.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+}, 60000);
+
+it("13 месяцев на 390×664: таблица и выбранные кнопки видны после загрузки и смены месяца", async () => {
+  const months = ["2025-12", ...Array.from({ length: 12 }, (_, i) => `2026-${String(i + 1).padStart(2, "0")}`)];
+  const p = payload();
+  p.plans = buildPlansMonitorView(fixture().map((d, i) => ({ ...d, month: months[i % 13], managerId: String(7 + i % 24), managerName: `Тестовый менеджер ${String(i % 24 + 1).padStart(2, "0")}` })), options);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plans-month-strip-"));
+  const file = path.join(dir, "index.html");
+  fs.writeFileSync(file, renderPultHtml(p));
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 390, height: 664 } });
+  await page.route("https://fonts.googleapis.com/**", r => r.abort());
+  try {
+    await page.goto(pathToFileURL(file).href + "#plans-ip/2026-10");
+    const pane = page.locator("#tab-plans-ip");
+    expect(await page.locator("#planMonths button").count()).toBe(14);
+    expect(await pane.locator(".plan-filters").getAttribute("role")).toBe("group");
+    await pane.locator('[data-plan-filter="managerId"][data-value="30"]').click();
+    const bounds = await pane.locator(".plans-table").evaluate(el => ({ top: el.getBoundingClientRect().top, stickyBottom: document.querySelector(".dateline")!.getBoundingClientRect().bottom }));
+    expect(bounds.top).toBeGreaterThanOrEqual(bounds.stickyBottom);
+    expect(bounds.top).toBeLessThan(624);
+    expect(await page.locator("#planMonths").evaluate(el => getComputedStyle(el).flexWrap)).toBe("nowrap");
+    expect(await page.locator("#planMonths").evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(50);
+    const buttonVisible = async (selector: string) => page.locator(selector).evaluate(el => {
+      const b = el.getBoundingClientRect(), row = el.parentElement!.getBoundingClientRect();
+      return b.left >= row.left - 1 && b.right <= row.right + 1;
+    });
+    await page.reload();
+    expect(await pane.locator('[data-plan-filter="managerId"][data-value="30"]').getAttribute("aria-pressed")).toBe("true");
+    expect(await page.locator('#planMonths [data-month="2026-10"]').getAttribute("aria-pressed")).toBe("true");
+    expect(await buttonVisible('#tab-plans-ip [data-plan-filter="managerId"][data-value="30"]')).toBe(true);
+    expect(await buttonVisible('#planMonths [data-month="2026-10"]')).toBe(true);
+    await page.locator('#planMonths [data-month="2026-01"]').click();
+    expect(await buttonVisible('#tab-plans-ip [data-plan-filter="managerId"][data-value="30"]')).toBe(true);
+    expect(await buttonVisible('#planMonths [aria-pressed="true"]')).toBe(true);
+    await page.locator('#planMonths [data-month="2026-10"]').click();
+    expect(await buttonVisible('#tab-plans-ip [data-plan-filter="managerId"][data-value="30"]')).toBe(true);
+    expect(await buttonVisible('#planMonths [aria-pressed="true"]')).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const shots = process.env.PLANS_SCREENSHOTS_DIR;
+    if (shots) {
+      await pane.locator('[data-plan-filter="managerId"][data-value="30"]').click();
+      await page.screenshot({ path: path.join(shots, "months-13-390x664.png") });
+    }
   } finally { await browser.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 }, 60000);

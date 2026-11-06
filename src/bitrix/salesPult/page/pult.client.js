@@ -610,6 +610,7 @@
     planMonths.innerHTML = isPlansTab(tab) ? window.__planMonths(plansBase(tab)).map(month =>
       `<button type="button" data-month="${month}" aria-pressed="${month === selectedPlanMonth[tab]}">${month === "all" ? "Все месяцы" : MONTHS[Number(month.slice(5)) - 1] + " " + month.slice(0, 4)}</button>`
     ).join("") : "";
+    window.__scrollPlanSelection(planMonths);
   }
   function selectPlanMonth(month, toggle) {
     if (!isPlansTab(currentTab)) return;
