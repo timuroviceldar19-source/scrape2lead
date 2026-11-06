@@ -197,6 +197,7 @@ describe("salesPult in-browser Playwright test", () => {
       }
     ];
     basePayload.market = {
+      educationPending: {},
       asOf: "2026-10-29",
       months: ["2026-01", "2026-09", "2026-10"],
       ip: marketIp,

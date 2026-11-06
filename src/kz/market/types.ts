@@ -184,11 +184,14 @@ export interface MarketGroupView {
   ytd?: MarketYtdView;
 }
 
+export type MarketEducationPending = Record<string, { contracts: number; sum: number; ids: number[] }>;
+
 export interface MarketView {
   asOf: string;
   months?: string[];
   ip: MarketGroupView | null;
   kt: MarketGroupView | null;
+  educationPending: MarketEducationPending;
   updatedAt?: string;
   stale?: boolean;
   error?: string;

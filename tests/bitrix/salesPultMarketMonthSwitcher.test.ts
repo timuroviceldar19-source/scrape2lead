@@ -23,7 +23,7 @@ const units: MarketUnit[] = ["ИП", "КТ"].flatMap((group, gi) => months.flatM
 
 function payload() {
   const p: SalesPultPayload = JSON.parse(fs.readFileSync("tests/fixtures/sales-pult/midday.json", "utf8"));
-  p.market = { asOf: "2026-11-03", ip: buildMarketGroupView("ИП", units, "2026-11-03", cfg), kt: buildMarketGroupView("КТ", units, "2026-11-03", cfg) };
+  p.market = { asOf: "2026-11-03", educationPending: {}, ip: buildMarketGroupView("ИП", units, "2026-11-03", cfg), kt: buildMarketGroupView("КТ", units, "2026-11-03", cfg) };
   return p;
 }
 
