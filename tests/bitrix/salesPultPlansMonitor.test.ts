@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { chromium } from "playwright";
+import { loadMarketConfig } from "../../src/kz/market/config.js";
 import { normalizePlanDeal, collectPlansMonitor, parsePlanMonth, PLAN_DEAL_SELECT_FIELDS } from "../../src/bitrix/salesPult/plans/collect.js";
 import { buildPlansMonitorView } from "../../src/bitrix/salesPult/plans/aggregate.js";
 import { ReadOnlyBitrixClient } from "../../src/bitrix/reporting/readOnlyClient.js";
@@ -23,18 +24,73 @@ function fixture() {
 }
 
 describe("монитор планов: модель", () => {
-  it("отделяет планы от лотов и чужих сделок, переиспользует маршрутизацию", () => {
+  it("отделяет планы от лотов и чужих сделок, группирует по товару", () => {
     expect(normalizePlanDeal(raw(1), options)?.group).toBe("ИП");
-    expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 9 }), options)?.group).toBe("КТ");
+    expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 9 }), options)?.group).toBe("ИП");
     expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 29, UF_CRM_ENSTRU_NAME: "Монитор" }), options)?.group).toBe("КТ");
     expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 29 }), options)?.group).toBe("ИП");
-    expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 29, UF_CRM_ENSTRU_NAME: "Техника", UF_CRM_1782386244985_IU_XLS: "ноутбук" }), options)?.group).toBe("КТ");
+    expect(normalizePlanDeal(raw(1, { CATEGORY_ID: 29, UF_CRM_ENSTRU_NAME: "Ноутбук" }), options)?.group).toBe("КТ");
     for (const extra of [{ ORIGINATOR_ID: "scrape2lead-gz-lots" }, { ORIGIN_ID: "gz-lot:1" }, { ORIGINATOR_ID: "other", TITLE: "Чужая" }, { CATEGORY_ID: 1 }]) {
       expect(normalizePlanDeal(raw(1, extra), options)).toBeNull();
     }
     for (const extra of [{ UF_CRM_PLAN_ID: "42" }, { UF_CRM_1782386293000_IU_XLS: "42" }, { ORIGIN_ID: "gz-plan:42" }, { TITLE: "[GZ 42]" }]) {
       expect(normalizePlanDeal(raw(1, { ORIGINATOR_ID: "", TITLE: "", ...extra }), options)).not.toBeNull();
     }
+  });
+  it.each([9, 41, 29])("код определяет группу независимо от воронки %s и названия", category => {
+    for (const [code, group, expectedKind] of [
+      ["262013.000.000011", "КТ", "Компьютеры и системные блоки"],
+      ["262011.100.000001", "КТ", "Ноутбуки"],
+      ["262030.100.000021", "ИП", "Интерактивные панели"],
+      ["262030.100.000043", "ИП", "Интерактивные и спец. доски"],
+      ["262030.100.000011", "ИП", "Мультимедийные системы"],
+      ["262030.100.000013", "ИП", "Мультимедийные системы"],
+      ["329959.900.000019", "ИП", "Учебные комплекты"]
+    ]) {
+      expect(normalizePlanDeal(raw(12, { CATEGORY_ID: category, UF_CRM_REF_ENSTRU_CODE: code, UF_CRM_ENSTRU_NAME: "Товар" }), options)).toMatchObject({ group, kind: expectedKind });
+    }
+    for (const extra of [
+      { UF_CRM_REF_ENSTRU_CODE: "259330.100.000001", UF_CRM_ENSTRU_NAME: "Интерактивная панель" },
+      ...["Молоток", "Швабра", "Услуги", "Техника", "Услуги ремонта компьютеров", "Аренда интерактивной панели"].map(name => ({ UF_CRM_ENSTRU_NAME: name }))
+    ]) expect(normalizePlanDeal(raw(12, { CATEGORY_ID: category, ...extra }), options)).toBeNull();
+  });
+  it("использует все префиксы конфигурации рынка и резервное название при пустом коде", () => {
+    for (const [group, config] of Object.entries(loadMarketConfig().groups)) {
+      for (const prefix of config.prefixes) {
+        const code = prefix === "262030.100." ? `${prefix}000021` : prefix.endsWith(".") ? `${prefix}999999` : prefix;
+        expect(normalizePlanDeal(raw(12, { UF_CRM_REF_ENSTRU_CODE: code, UF_CRM_ENSTRU_NAME: "Товар" }), options)?.group).toBe(group);
+      }
+    }
+    expect(normalizePlanDeal(raw(12, { UF_CRM_REF_ENSTRU_CODE: " ", UF_CRM_ENSTRU_NAME: "", TITLE: "[GZ 12] Ноутбук — Заказчик" }), options)?.group).toBe("КТ");
+  });
+  it.each(["Учебный комплект", "Комплект учебного оборудования"])("учебные комплекты без кода: %s", name => {
+    expect(normalizePlanDeal(raw(17, { UF_CRM_ENSTRU_NAME: name }), options)).toMatchObject({
+      group: "ИП", kind: "Учебные комплекты", truCode: ""
+    });
+  });
+  it.each([9, 41, 29])("исключает остальные коды семейства 262030.100. в воронке %s", category => {
+    for (const suffix of ["000001", "000012", "000014", "000022", "000042", "000044", "999999"]) {
+      for (const name of ["Транспондер", "Криптопровайдер", "Стол", "Интерактивная панель"]) {
+        expect(normalizePlanDeal(raw(18, {
+          CATEGORY_ID: category, UF_CRM_REF_ENSTRU_CODE: `262030.100.${suffix}`, UF_CRM_ENSTRU_NAME: name
+        }), options)).toBeNull();
+      }
+    }
+  });
+  it("считает вне групп только подходящие планы и не включает их в итоги", async () => {
+    const reader = new ReadOnlyBitrixClient({ async call() { return []; } });
+    vi.spyOn(reader, "listAllBatched").mockResolvedValue([
+      raw(11), raw(12, { CATEGORY_ID: 41, UF_CRM_ENSTRU_NAME: "Компьютер" }),
+      raw(13, { UF_CRM_ENSTRU_NAME: "Швабра" }), raw(14, { UF_CRM_ENSTRU_NAME: "Услуги" }),
+      raw(15, { ORIGINATOR_ID: "scrape2lead-gz-lots" })
+    ]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const view = await collectPlansMonitor({ ...options, reader });
+      expect(view.ip!.total.count).toBe(1);
+      expect(view.kt!.total.count).toBe(1);
+      expect(log).toHaveBeenCalledWith("[Планы] вне групп: 2");
+    } finally { log.mockRestore(); }
   });
   it.each([["Ноябрь", "2026-11"], ["январь 2025", "2025-01"], ["11.2026", "2026-11"], ["2026-12", "2026-12"], ["11", "2026-11"], ["13", "2026-10"], ["", "2026-10"]])("месяц %s → %s", (input, expected) => {
     expect(parsePlanMonth(input, "2026-10-01", options.asOfDate)).toBe(expected);
@@ -96,7 +152,7 @@ describe("монитор планов: модель", () => {
     expect(PLAN_DEAL_SELECT_FIELDS).not.toContain("UF_*");
     expect(new Set(PLAN_DEAL_SELECT_FIELDS).size).toBe(PLAN_DEAL_SELECT_FIELDS.length);
     // Каждый основной и резервный ключ нормализатора должен остаться доступен при узкой проекции.
-    const source = fs.readFileSync("src/bitrix/salesPult/plans/collect.ts", "utf8").split("export function normalizePlanDeal")[1].split("export interface CollectPlansOptions")[0];
+    const source = fs.readFileSync("src/bitrix/salesPult/plans/collect.ts", "utf8").split("function isPlanDeal")[1].split("export interface CollectPlansOptions")[0];
     const used = [...source.matchAll(/\bd\.([A-Z][A-Z0-9_]+)\b|"(UF_CRM_[A-Z0-9_]+|OPPORTUNITY)"/g)].map(m => m[1] || m[2]);
     expect([...new Set(PLAN_DEAL_SELECT_FIELDS)].sort()).toEqual([...new Set(used)].sort());
     expect(users).not.toHaveBeenCalled();
@@ -106,7 +162,7 @@ describe("монитор планов: модель", () => {
       { ID: "9", NAME: "Мария", LAST_NAME: "Петрова" }, { ID: "8", NAME: "Иван", LAST_NAME: "Иванов" }
     ]; } });
     vi.spyOn(reader, "listAllBatched").mockResolvedValue([
-      raw(1, { ASSIGNED_BY_ID: "8" }), raw(2, { ASSIGNED_BY_ID: "9", CATEGORY_ID: 9 }),
+      raw(1, { ASSIGNED_BY_ID: "8" }), raw(2, { ASSIGNED_BY_ID: "9", CATEGORY_ID: 9, UF_CRM_ENSTRU_NAME: "Ноутбук" }),
       raw(3, { ASSIGNED_BY_ID: "8" }), raw(4), raw(5, { ASSIGNED_BY_ID: "" })
     ]);
     const users = vi.spyOn(reader, "call");
@@ -145,11 +201,11 @@ describe("монитор планов: модель", () => {
     expect(JSON.stringify(deals)).toBe(snapshot);
   });
   it.each([
-    [41, "262030.100.000021", "", "Интерактивные панели"], [41, "279020.000.000000", "", "Интерактивные панели"],
+    [41, "262030.100.000021", "", "Интерактивные панели"], [41, "279020.100.000000", "", "Интерактивные панели"],
     [41, "262030.100.000043", "", "Интерактивные и спец. доски"], [41, "262030.100.000011", "", "Мультимедийные системы"],
-    [41, "", "Другое", "Прочее ИП"], [9, "", "Компьютер", "Компьютеры и системные блоки"],
+    [41, "329959.900.000019", "Другое", "Учебные комплекты"], [9, "", "Компьютер", "Компьютеры и системные блоки"],
     [9, "", "Ноутбук", "Ноутбуки"], [9, "", "Моноблок", "Моноблоки"], [9, "", "Монитор", "Мониторы"],
-    [9, "", "МФУ", "МФУ и принтеры"], [9, "", "Другое", "Прочее КТ"]
+    [9, "", "МФУ", "МФУ и принтеры"], [9, "262014.999.999999", "Другое", "Прочее КТ"]
   ])("вид товара %s %s %s", (category, code, name, expected) => {
     expect(normalizePlanDeal(raw(1, { CATEGORY_ID: category, UF_CRM_REF_ENSTRU_CODE: code, UF_CRM_ENSTRU_NAME: name, TITLE: "[GZ 1]" }), options)?.kind).toBe(expected);
   });
