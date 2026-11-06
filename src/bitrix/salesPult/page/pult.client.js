@@ -605,8 +605,6 @@
   });
 
   function renderPlanMonths(tab) {
-    const filters = document.getElementById("planFilters");
-    if (filters) filters.hidden = !isPlansTab(tab) || !plansBase(tab);
     if (!planMonths) return;
     planMonths.hidden = !isPlansTab(tab);
     planMonths.innerHTML = isPlansTab(tab) ? window.__planMonths(plansBase(tab)).map(month =>

@@ -47,7 +47,6 @@ export function buildSingleSliceView(deals: NormalizedPlanDeal[], asOfDate: stri
       return { kind: ds[0].kind, sum: sum(ds), count: ds.length, qty, avgPrice: qty > 0 ? sum(ds) / qty : 0 };
     })),
     statuses: largest(buckets(deals, d => d.portalStatus).map(ds => ({ status: ds[0].portalStatus, sum: sum(ds), count: ds.length }))),
-    topOpenPlans: planList(open),
     customers: largest(buckets(deals, customerKey).map(ds => ({
       bin: ds[0].customerBin, name: ds[0].customerName, sum: sum(ds), count: ds.length,
       openSum: sum(ds.filter(d => d.isOpen)), openCount: ds.filter(d => d.isOpen).length, planList: planList(ds)

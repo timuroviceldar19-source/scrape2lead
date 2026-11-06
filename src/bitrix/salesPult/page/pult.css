@@ -594,8 +594,8 @@ body.tv #planMonths { display: none !important; }
 }
 
 /* Фильтры относятся только к открытой таблице и прокручиваются со страницей. */
-#planFilters[hidden], body.tv #planFilters { display: none !important; }
-#planFilters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin-top: 24px; }
+body.tv .plan-filters { display: none !important; }
+.plan-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 8px 0 24px; }
 .plan-filter-group { min-width: 0; margin: 0; padding: 0; border: 0; }
 .plan-filter-group legend { font: 12px var(--mono); margin-bottom: 8px; color: var(--ink-2); }
 .plan-filter-group .chips { margin: 0; }
@@ -604,7 +604,9 @@ body.tv #planMonths { display: none !important; }
 .plans-table [aria-sort="ascending"], .plans-table [aria-sort="descending"] { color: var(--ink); }
 .plans-more { margin-top: 20px; }
 @media (max-width: 760px) {
-  #planFilters { grid-template-columns: minmax(0, 1fr); }
+  .plan-filters { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .plan-filter-group .chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .plan-filter-group .chips button { flex: 0 0 auto; max-width: none; white-space: nowrap; }
   .plans-table .r.head { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .plans-table .r.head > span { display: none; grid-column: auto; }
   .plans-table .r.head > span:has([data-plan-sort]) { display: block; }

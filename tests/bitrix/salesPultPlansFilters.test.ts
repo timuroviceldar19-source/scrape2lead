@@ -38,6 +38,7 @@ it("хранит полный список открытых планов оди�
     expect(group.openPlans[0]).toHaveProperty("managerId");
   }
   expect(html.match(/"openPlans":/g)).toHaveLength(2);
+  expect(html).not.toContain("topOpenPlans");
   const reg = renderRegisterHtml({ asOfDate: p.asOfDate, generatedAt: p.generatedAt, register: {} as never });
   expect(reg).not.toContain('"openPlans":');
   expect(reg).not.toContain("data-plan-filter");
@@ -89,7 +90,7 @@ it.each([1440, 390])("месяц + четыре фильтра + сортиро�
             managerId: String(7 + (bits & 1)), kind: bits & 2 ? (tab === "plans-ip" ? "Интерактивные и спец. доски" : "Ноутбуки") : (tab === "plans-ip" ? "Интерактивные панели" : "Компьютеры и системные блоки"),
             portalStatus: bits & 4 ? "Опубликован" : "Утвержден", method: bits & 8 ? "Конкурс" : "Электронный магазин"
           };
-          for (const [key, value] of Object.entries(filters)) await page.locator(`#planFilters [data-plan-filter="${key}"][data-value="${value}"]`).click();
+          for (const [key, value] of Object.entries(filters)) await pane.locator(`.plan-filters [data-plan-filter="${key}"][data-value="${value}"]`).click();
           const selected = source.filter(d => d.month === month && Object.entries(filters).every(([k, v]) => d[k as keyof typeof d] === v));
           for (const sort of ["sum", "month", "qty"] as const) {
             for (let click = 0; click < 2; click++) {
@@ -114,34 +115,117 @@ it.each([1440, 390])("месяц + четыре фильтра + сортиро�
         });
         await page.screenshot({ path: path.join(shots, `${tab}-${width}-${name}.png`) });
       };
-      await screenshot("#planFilters", "filters");
+      await screenshot(`#tab-${tab} .plan-filters`, "filters");
       await screenshot(`#tab-${tab} .plans-open`, "table");
       // У этого менеджера есть план только в октябре, а выбран ноябрь.
-      await page.locator('#planFilters [data-plan-filter="managerId"]').filter({ hasText: "Тестовый менеджер В" }).click();
+      await pane.locator('.plan-filters [data-plan-filter="managerId"]').filter({ hasText: "Тестовый менеджер В" }).click();
       expect(await rows.count()).toBe(0);
       expect(await pane.locator(".plans-open").textContent()).toContain("Ничего не найдено");
       expect(await pane.getByRole("button", { name: "Показать ещё" }).count()).toBe(0);
       await screenshot(`#tab-${tab} .plans-open`, "empty");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      expect(await page.locator("#planFilters").evaluate(el => getComputedStyle(el).position)).toBe("static");
+      expect(await pane.locator(".plan-filters").evaluate(el => getComputedStyle(el).position)).toBe("static");
       await page.keyboard.press("t");
       expect(await page.locator("body").getAttribute("class")).toContain("tv");
-      expect(await page.locator("#planFilters").isVisible()).toBe(false);
+      expect(await page.locator(".plan-filters:visible").count()).toBe(0);
       expect(await pane.isVisible()).toBe(false);
       expect(await page.locator('#tab-pult [data-plan-id]').count()).toBe(0);
       await page.keyboard.press("t");
     }
     for (const tab of ["pult", "ip", "kt"]) {
       await page.goto(pathToFileURL(file).href + `#${tab}`);
-      expect(await page.locator("#planFilters").isVisible()).toBe(false);
+      expect(await page.locator(".plan-filters:visible").count()).toBe(0);
       expect(await page.locator(`#tab-${tab} [data-plan-id]`).count()).toBe(0);
     }
     // При ошибке сбора не оставляем старые фильтры от предыдущей группы.
     const errorFile = path.join(dir, "error.html");
     fs.writeFileSync(errorFile, renderPultHtml({ ...p, plans: { asOf: options.asOfDate, error: "Тестовая ошибка загрузки" } }));
     await page.goto(pathToFileURL(errorFile).href + "#plans-ip");
-    expect(await page.locator("#planFilters").isVisible()).toBe(false);
+    expect(await page.locator(".plan-filters:visible").count()).toBe(0);
     expect(await page.locator("#tab-plans-ip").textContent()).toContain("Тестовая ошибка загрузки");
     expect(errors).toEqual([]);
   } finally { await browser.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 }, 180000);
+
+it.each([1440, 390])("правки ревью: фильтры рядом, память сессии, пустая выдача и фокус на %s px", async width => {
+  const p = payload();
+  p.plans = buildPlansMonitorView(fixture().filter(d => Number(d.id) % 2000 <= 110), options);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plans-review-"));
+  const file = path.join(dir, "index.html");
+  fs.writeFileSync(file, renderPultHtml(p));
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width, height: 1000 } });
+  await page.route("https://fonts.googleapis.com/**", r => r.abort());
+  try {
+    await page.goto(pathToFileURL(file).href + "#plans-ip");
+    const pane = page.locator("#tab-plans-ip");
+    const rows = pane.locator("[data-plan-id]");
+    const more = pane.getByRole("button", { name: "Показать ещё" });
+    await more.click();
+    expect(await more.evaluate(el => el === document.activeElement)).toBe(true);
+    expect(await rows.count()).toBe(100);
+    await more.click();
+    expect(await rows.count()).toBe(110);
+    expect(await more.count()).toBe(0);
+    expect(await rows.nth(100).locator("a").first().evaluate(el => el === document.activeElement)).toBe(true);
+    expect(await rows.first().locator('[role="cell"]').nth(2).textContent()).not.toMatch(/·/);
+
+    await page.locator('#planMonths [data-month="2026-11"]').click();
+    await pane.locator('[data-plan-filter="managerId"][data-value="7"]').click();
+    const geometry = await pane.locator(".plans-table").evaluate(el => ({ top: el.getBoundingClientRect().top, height: innerHeight,
+      stickyBottom: Math.max(document.querySelector(".bar")!.getBoundingClientRect().bottom, document.querySelector(".dateline")!.getBoundingClientRect().bottom) }));
+    expect(geometry.top).toBeGreaterThanOrEqual(geometry.stickyBottom);
+    expect(geometry.top).toBeLessThan(geometry.height - 40);
+    expect(await pane.locator(".plan-filters").evaluate(el => el.closest(".plans-open") !== null)).toBe(true);
+    if (width === 390) {
+      expect(await pane.locator(".plan-filters").evaluate(el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(260);
+      expect(await pane.locator(".plan-filter-group .chips").evaluateAll(es => es.every(el => getComputedStyle(el).flexWrap === "nowrap" && getComputedStyle(el).overflowX === "auto"))).toBe(true);
+    }
+    const selectedFilters = { managerId: "7", kind: "Интерактивные панели", portalStatus: "Утвержден", method: "Электронный магазин" };
+    for (const [key, value] of Object.entries(selectedFilters)) await pane.locator(`[data-plan-filter="${key}"][data-value="${value}"]`).click();
+    await pane.locator('[data-plan-sort="qty"]').click();
+    await page.reload();
+    expect(await page.locator('#planMonths [aria-pressed="true"]').getAttribute("data-month")).toBe("2026-11");
+    expect(await pane.locator('[data-plan-filter="managerId"][data-value="7"]').getAttribute("aria-pressed")).toBe("true");
+    expect(await pane.locator('[data-plan-sort="qty"]').getAttribute("data-direction")).toBe("desc");
+    for (const [key, value] of Object.entries(selectedFilters)) expect(await pane.locator(`[data-plan-filter="${key}"][data-value="${value}"]`).getAttribute("aria-pressed")).toBe("true");
+    await page.locator('.sections [data-t="plans-kt"]').click();
+    expect(await page.locator('#tab-plans-kt [data-plan-filter="managerId"][data-value=""]').getAttribute("aria-pressed")).toBe("true");
+    await page.locator('#tab-plans-kt [data-plan-filter="managerId"][data-value="8"]').click();
+    await page.reload();
+    expect(await page.locator('#tab-plans-kt [data-plan-filter="managerId"][data-value="8"]').getAttribute("aria-pressed")).toBe("true");
+    await page.locator('.sections [data-t="plans-ip"]').click();
+    expect(await pane.locator('[data-plan-filter="managerId"][data-value="7"]').getAttribute("aria-pressed")).toBe("true");
+
+    for (const key of Object.keys(selectedFilters)) await pane.locator(`[data-plan-filter="${key}"][data-value=""]`).click();
+    await page.locator('#planMonths [data-month="all"]').click();
+    await more.click();
+    await page.reload();
+    expect(await rows.count()).toBe(50);
+    await page.evaluate(() => sessionStorage.setItem("sales-pult:plans:plans-ip", JSON.stringify({ filters: { managerId: "missing", kind: "missing" }, sort: "bad", direction: "bad" })));
+    await page.reload();
+    expect(await pane.locator('[data-plan-filter="managerId"][data-value=""]').getAttribute("aria-pressed")).toBe("true");
+    expect(await pane.locator('[data-plan-filter="kind"][data-value=""]').getAttribute("aria-pressed")).toBe("true");
+    expect(await pane.locator('[data-plan-sort="sum"]').getAttribute("data-direction")).toBe("desc");
+
+    // Сохраняем выбранный фильтр, но в выбранном месяце нет открытых планов.
+    const emptyMonth = "2026-12";
+    p.plans!.ip!.months.push({ m: emptyMonth, count: 0, sum: 0, activeSum: 0, wonSum: 0, newCount: 0 });
+    fs.writeFileSync(file, renderPultHtml(p));
+    await page.reload();
+    await page.locator(`#planMonths [data-month="${emptyMonth}"]`).click();
+    expect(await pane.locator('[role="status"]').textContent()).toBe("Открытых планов нет");
+    await pane.locator('[data-plan-filter="managerId"][data-value="7"]').click();
+    expect(await pane.locator('[role="status"]').textContent()).toContain("Ничего не найдено");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    // Повреждённое хранилище и запрет доступа не должны ломать таблицу.
+    await page.evaluate(() => sessionStorage.setItem("sales-pult:plans:plans-ip", "{bad json"));
+    await page.reload();
+    expect(await pane.locator('[data-plan-filter="managerId"][data-value=""]').getAttribute("aria-pressed")).toBe("true");
+    await page.addInitScript(() => Object.defineProperty(window, "sessionStorage", { get() { throw new Error("Storage disabled"); } }));
+    await page.reload();
+    await pane.locator('[data-plan-filter="managerId"][data-value="7"]').click();
+    expect(await pane.locator('[data-plan-filter="managerId"][data-value="7"]').getAttribute("aria-pressed")).toBe("true");
+  } finally { await browser.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+}, 60000);

@@ -50,7 +50,6 @@ export interface PlansGroupSliceView {
   methods: PlanMethodItem[];
   kinds: PlanKindItem[];
   statuses: PlanStatusItem[];
-  topOpenPlans: PlanDealItem[];
   customers: PlanCustomerItem[];
 }
 export interface PlansGroupView extends PlansGroupSliceView {
