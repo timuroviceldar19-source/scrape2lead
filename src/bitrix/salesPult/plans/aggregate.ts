@@ -47,7 +47,6 @@ export function buildSingleSliceView(deals: NormalizedPlanDeal[], asOfDate: stri
       return { kind: ds[0].kind, sum: sum(ds), count: ds.length, qty, avgPrice: qty > 0 ? sum(ds) / qty : 0 };
     })),
     statuses: largest(buckets(deals, d => d.portalStatus).map(ds => ({ status: ds[0].portalStatus, sum: sum(ds), count: ds.length }))),
-    topOpenPlans: planList(open),
     customers: largest(buckets(deals, customerKey).map(ds => ({
       bin: ds[0].customerBin, name: ds[0].customerName, sum: sum(ds), count: ds.length,
       openSum: sum(ds.filter(d => d.isOpen)), openCount: ds.filter(d => d.isOpen).length, planList: planList(ds)
@@ -65,7 +64,7 @@ function buildGroupView(group: "ИП" | "КТ", deals: NormalizedPlanDeal[], asO
     return { m, sum: sum(ds), count: ds.length, activeSum: sum(ds.filter(d => d.isOpen || d.outcomeCategory === "won")),
       wonSum: monthViews[m].total.wonSum, newCount: monthViews[m].total.newCount };
   });
-  return { group, ...all, months, monthViews };
+  return { group, ...all, months, monthViews, openPlans: largest(items.filter(d => d.isOpen)).map(d => ({ ...planItem(d), managerId: d.managerId })) };
 }
 
 export function buildPlansMonitorView(deals: NormalizedPlanDeal[], options: { asOfDate: string }): PlansMonitorView {

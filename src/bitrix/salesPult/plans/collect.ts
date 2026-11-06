@@ -91,7 +91,7 @@ function productGroup(code: string, name: string): "ИП" | "КТ" | null {
   }
   const n = name.toLowerCase();
   if (/услуг|ремонт|обслуживан|аренд/.test(n)) return null;
-  if (/панел|доск|мультимедийн.*систем/.test(n) || EDUCATION_KIT_NAME.test(n)) return "ИП";
+  if (/панел|доск|мультимедийн.*систем|систем.*мультимедийн/.test(n) || EDUCATION_KIT_NAME.test(n)) return "ИП";
   if (/компьютер|системн.*блок|ноутбук|лэптоп|моноблок|монитор|мфу|многофункциональн|принтер/.test(n)) return "КТ";
   return null;
 }

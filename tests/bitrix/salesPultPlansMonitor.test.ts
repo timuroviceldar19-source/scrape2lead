@@ -118,7 +118,7 @@ describe("монитор планов: модель", () => {
       expect(s.customers[0].count).toBe(count);
       expect(s).not.toHaveProperty("monthViews");
     }
-    expect(v.ip!.topOpenPlans.map(d => d.id)).toEqual(["3", "2", "1"]);
+    expect(v.ip!.openPlans.map(d => d.id)).toEqual(["3", "2", "1"]);
     expect(v.ip!.managers[0].planList.map(d => d.id)).toEqual(["3", "2", "1"]);
     expect(v.ip!.kinds[0].avgPrice).toBe(21e6 / 12);
     expect(buildPlansMonitorView([], options).ip!.total.count).toBe(0);
@@ -214,11 +214,11 @@ describe("монитор планов: модель", () => {
     const deals = Array.from({ length: 40 }, (_, i) => normalizePlanDeal(raw(i + 1, { UF_CRM_6627AEBD7C2D2: i < 25 ? "shared" : `bin-${i}`, DATE_CREATE: i === 0 ? "2026-11-04" : "2026-10-28" }), options)!);
     const snapshot = JSON.stringify(deals);
     const v = buildPlansMonitorView(deals, options).ip!;
-    expect(v.topOpenPlans).toHaveLength(20);
+    expect(v.openPlans).toHaveLength(40);
     expect(v.managers[0].planList).toHaveLength(20);
     expect(v.customers).toHaveLength(15);
     expect(v.customers[0].planList).toHaveLength(20);
-    expect(v.topOpenPlans[0].id).toBe("40");
+    expect(v.openPlans[0].id).toBe("40");
     expect(v.total.createdLast7dCount).toBe(39);
     expect(JSON.stringify(deals)).toBe(snapshot);
   });
@@ -238,7 +238,7 @@ describe("монитор планов: модель", () => {
       return { result: { p0: [row] } };
     } });
     const v = await collectPlansMonitor({ ...options, reader });
-    expect(v.ip!.topOpenPlans[0]).toMatchObject({ month: "2027-12", qty: 3, itemName: "Доска", method: "Не указан", outcomeCategory: "published", managerName: "ID 99", planUrl: "https://zakup.gov.kz/plan/1" });
+    expect(v.ip!.openPlans[0]).toMatchObject({ month: "2027-12", qty: 3, itemName: "Доска", method: "Не указан", outcomeCategory: "published", managerName: "ID 99", planUrl: "https://zakup.gov.kz/plan/1" });
     expect(parsePlanMonth("02", "", "2025-11-03")).toBe("2025-02");
     expect(normalizePlanDeal(raw(1, { UF_CRM_COUNT: "0", UF_CRM_PRICE_PER_UNIT: "n/a" }), options)?.qty).toBe(0);
   });
