@@ -48,6 +48,7 @@ import {
   saveStoredMarketUnits,
   fetchMarketUnits,
   mergeMarketUnits,
+  logMarketRefreshCounts,
   backfillMarketByMonths,
   DEFAULT_MARKET_UNITS_PATH
 } from "../src/kz/market/fetchMarket.js";
@@ -236,14 +237,16 @@ export async function runSalesPult(args: string[]): Promise<void> {
     const cutoffDate = d.toISOString().slice(0, 10);
     try {
       console.log(`[Рынок] Утреннее обновление за последние 45 дней (с ${cutoffDate})...`);
-      const { units: freshUnits, source } = await fetchMarketUnits({
+      const result = await fetchMarketUnits({
         token: gzToken,
         fromDate: cutoffDate,
         toDate: todayAlmaty
       });
+      const { units: freshUnits, source, keepContractIds } = result;
       const existingUnits = loadStoredMarketUnits(DEFAULT_MARKET_UNITS_PATH);
-      const merged = mergeMarketUnits(existingUnits, freshUnits, cutoffDate, todayAlmaty);
+      const merged = mergeMarketUnits(existingUnits, freshUnits, cutoffDate, todayAlmaty, keepContractIds);
       saveStoredMarketUnits(merged, DEFAULT_MARKET_UNITS_PATH);
+      logMarketRefreshCounts(existingUnits, result, cutoffDate, todayAlmaty);
       console.log(`[Рынок] Утреннее обновление (${source}): свежих ${freshUnits.length}, всего ${merged.length}`);
     } catch (marketErr: any) {
       console.warn(`::warning::[Рынок] Ошибка при утреннем обновлении рынка: ${marketErr?.message || marketErr}`);

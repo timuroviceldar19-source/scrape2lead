@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { mapWithConcurrency, zakupGet, zakupListAll, type ZakupApiOptions } from "../zakupPublicApi.js";
-import { classifyCode, isExcludedStatus, loadMarketConfig, matchesMarketCode } from "./config.js";
+import { classifyCode, isExcludedStatus, loadMarketConfig } from "./config.js";
 import { filterContractUnits, type RawContractItem, type RawContractUnit } from "./filterUnits.js";
 import type { MarketConfig, MarketUnit } from "./types.js";
 
@@ -49,8 +49,27 @@ interface ZakupSubject {
 }
 
 interface ZakupContractDetail {
+  external_id?: number | string | null;
   supplier_organization?: { id?: number | null; iin_bin?: string | null } | null;
   customer_organization?: { id?: number | null; iin_bin?: string | null } | null;
+}
+
+export interface ZakupMarketStats {
+  missingListIds: number;
+  withoutCodes: number;
+  skippedWithoutId: number;
+}
+
+export interface ZakupMarketResult {
+  units: MarketUnit[];
+  keepContractIds: number[];
+  stats: ZakupMarketStats;
+}
+
+function contractId(value: unknown): number | null {
+  if (value === null || value === undefined || value === "" || String(value).trim() === "") return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 export interface FetchZakupMarketOptions extends ZakupApiOptions {
@@ -165,9 +184,10 @@ function toRawContract(
 /**
  * Market units (ИП, КТ) signed in [fromDate, toDate], from the public API of zakup.gov.kz.
  * Contracts are listed by ENSTRU prefix, plus goods contracts whose contract-level code list is empty
- * (the codes are then only in the line items). BINs are fetched only for contracts with a matching item.
+ * (the codes are then only in the line items). Cards supply missing numbers and BINs;
+ * uncoded contracts may retain existing units, but never manufacture new market positions.
  */
-export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): Promise<MarketUnit[]> {
+export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): Promise<ZakupMarketResult> {
   const { fromDate, toDate, cfg = loadMarketConfig(), orgCachePath = DEFAULT_ORG_CACHE_PATH, concurrency = 4, onProgress } = options;
   const api: ZakupApiOptions = options;
 
@@ -188,15 +208,20 @@ export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): P
   for (const row of withoutCodes) byId.set(row.id, row);
 
   const candidates = [...byId.values()].filter((c) => {
-    if (!Number.isFinite(Number(c.external_id)) || c.external_id === null || c.external_id === "") return false;
     const egz = c.status_id != null ? statusEgz.get(c.status_id) : undefined;
-    if (egz === undefined || isExcludedStatus(egz, cfg)) return false;
-    const codes = c.enstru_code ?? [];
-    return codes.length === 0 || codes.some((code) => matchesMarketCode(code, cfg));
+    // Список уже ограничен префиксами. Его коды могут отличаться от предметов:
+    // ранний фильтр по точному коду скрыл бы договоры с неизвестными кодами предметов.
+    return egz !== undefined && !isExcludedStatus(egz, cfg);
   });
 
   const orgs = loadOrgCache(orgCachePath);
   const knownOrgs = Object.keys(orgs).length;
+  const stats: ZakupMarketStats = {
+    missingListIds: [...byId.values()].filter(c => contractId(c.external_id) === null).length,
+    withoutCodes: 0,
+    skippedWithoutId: 0
+  };
+  const keepContractIds = new Set<number>();
   let done = 0;
   const raw = await mapWithConcurrency(candidates, concurrency, async (c): Promise<RawContractItem | null> => {
     const subjects = dedupeSubjects(asList<ZakupSubject>(await zakupGet(`/public/contracts/${c.id}/subjects/`, {}, api)));
@@ -213,16 +238,29 @@ export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): P
         .join(" ");
       return code !== null && classifyCode(code, cfg, text) !== null;
     });
-    if (!matches) return null;
-    if (!orgs[String(c.supplier_organization_id)] || !orgs[String(c.customer_organization_id)]) {
+    const withoutCode = !matches && (subjects.length === 0 || subjects.some(s => subjectCode(s, contractCodes) === null));
+    if (!matches && !withoutCode) return null;
+    if (withoutCode) stats.withoutCodes++;
+    let id = contractId(c.external_id);
+    // Один запрос карточки и для номера, и для БИН. Ошибки не превращаются в пропуск договора.
+    if (id === null || (matches && (!orgs[String(c.supplier_organization_id)] || !orgs[String(c.customer_organization_id)]))) {
       const detail = await zakupGet<ZakupContractDetail>(`/public/contracts/${c.id}/`, {}, api);
+      id ??= contractId(detail?.external_id);
       for (const org of [detail?.supplier_organization, detail?.customer_organization]) {
         if (org?.id != null && org.iin_bin) orgs[String(org.id)] = String(org.iin_bin).trim();
       }
     }
-    return toRawContract(c, subjects, statusEgz.get(c.status_id as number) as number, methodEgz, orgs);
+    if (id === null) {
+      stats.skippedWithoutId++;
+      return null;
+    }
+    if (withoutCode) {
+      keepContractIds.add(id);
+      return null;
+    }
+    return toRawContract({ ...c, external_id: id }, subjects, statusEgz.get(c.status_id as number) as number, methodEgz, orgs);
   });
 
   if (Object.keys(orgs).length !== knownOrgs) saveOrgCache(orgCachePath, orgs);
-  return filterContractUnits(raw.filter((item): item is RawContractItem => item !== null), cfg);
+  return { units: filterContractUnits(raw.filter((item): item is RawContractItem => item !== null), cfg), keepContractIds: [...keepContractIds].sort((a, b) => a - b), stats };
 }

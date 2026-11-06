@@ -4,7 +4,7 @@ import { goszakupGraphqlPage } from "../goszakupGraphql.js";
 import type { MarketConfig, MarketUnit } from "./types.js";
 import { loadMarketConfig, marketConfigKey } from "./config.js";
 import { filterContractUnits, type RawContractItem } from "./filterUnits.js";
-import { fetchZakupMarketUnits, type FetchZakupMarketOptions } from "./fetchZakupMarket.js";
+import { fetchZakupMarketUnits, type FetchZakupMarketOptions, type ZakupMarketResult, type ZakupMarketStats } from "./fetchZakupMarket.js";
 
 const CONTRACT_QUERY = `query($d: [String], $after: Int) {
   Contract(filter: { signDate: $d }, limit: 200, after: $after) {
@@ -179,33 +179,38 @@ export interface FetchMarketUnitsOptions {
   cfg?: MarketConfig;
   /** For tests: replace the real sources. */
   sources?: {
-    zakup?: (options: FetchZakupMarketOptions) => Promise<MarketUnit[]>;
+    zakup?: (options: FetchZakupMarketOptions) => Promise<ZakupMarketResult>;
     ows?: (options: FetchMarketOptions) => Promise<MarketUnit[]>;
   };
+}
+
+export interface MarketFetchResult {
+  units: MarketUnit[];
+  source: MarketSource;
+  keepContractIds?: number[];
+  stats?: ZakupMarketStats;
 }
 
 /**
  * Main source is the public API of zakup.gov.kz (no token). The ows API with GOSZAKUP_TOKEN is the backup:
  * it is tried only when zakup fails, so one dead source does not leave the market tabs stale.
  */
-export async function fetchMarketUnits(options: FetchMarketUnitsOptions): Promise<{ units: MarketUnit[]; source: MarketSource }> {
+export async function fetchMarketUnits(options: FetchMarketUnitsOptions): Promise<MarketFetchResult> {
   const { fromDate, toDate, cfg, token } = options;
   const zakup = options.sources?.zakup ?? fetchZakupMarketUnits;
   const ows = options.sources?.ows ?? fetchMarketContracts;
   try {
-    return { units: await zakup({ fromDate, toDate, ...(cfg ? { cfg } : {}) }), source: "zakup" };
+    return { ...await zakup({ fromDate, toDate, ...(cfg ? { cfg } : {}) }), source: "zakup" };
   } catch (zakupErr) {
-    const zakupMessage = zakupErr instanceof Error ? zakupErr.message : String(zakupErr);
     if (!token) {
-      console.warn(`[Рынок] zakup.gov.kz не ответил (${zakupMessage}), а GOSZAKUP_TOKEN для запасного API не задан`);
-      throw zakupErr;
+      console.warn("[Рынок] Основной источник не ответил, запасной API не настроен");
+      throw new Error("Рынок: выгрузка не завершена; кэш не обновлён", { cause: zakupErr });
     }
-    console.warn(`[Рынок] zakup.gov.kz не ответил (${zakupMessage}), берём запасной API ows.goszakup.gov.kz`);
+    console.warn("[Рынок] Основной источник не ответил, берём запасной API");
     try {
       return { units: await ows({ token, fromDate, toDate, ...(cfg ? { cfg } : {}) }), source: "ows" };
     } catch (owsErr) {
-      const owsMessage = owsErr instanceof Error ? owsErr.message : String(owsErr);
-      throw new Error(`Рынок: не ответили оба источника. zakup: ${zakupMessage}; ows: ${owsMessage}`);
+      throw new Error("Рынок: не ответили оба источника; кэш не обновлён", { cause: owsErr });
     }
   }
 }
@@ -214,15 +219,18 @@ export function mergeMarketUnits(
   existingUnits: MarketUnit[],
   freshUnits: MarketUnit[],
   fromDate: string,
-  toDate?: string
+  toDate?: string,
+  keepContractIds: readonly number[] = []
 ): MarketUnit[] {
-  // Retain units strictly outside the [fromDate, toDate] window
-  const outsideWindowUnits = existingUnits.filter((u) => u.date < fromDate || (toDate ? u.date > toDate : false));
+  const keep = new Set(keepContractIds);
+  const replaced = new Set(freshUnits.map(u => u.id));
+  // В окне удерживаем только явно указанные договоры, для которых нет новых позиций.
+  const retainedUnits = existingUnits.filter((u) => u.date < fromDate || (toDate ? u.date > toDate : false) || (keep.has(u.id) && !replaced.has(u.id)));
   const byKey = new Map<string, MarketUnit>();
 
   const unitKey = (u: MarketUnit) => `${u.id}|${u.unitIndex ?? 0}|${u.code}|${u.price}|${u.qty}`;
 
-  for (const u of outsideWindowUnits) {
+  for (const u of retainedUnits) {
     byKey.set(unitKey(u), u);
   }
   for (const u of freshUnits) {
@@ -230,6 +238,16 @@ export function mergeMarketUnits(
   }
 
   return [...byKey.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Только количества: детали ответа API и номера договоров в публичный лог не попадают. */
+export function logMarketRefreshCounts(existing: MarketUnit[], result: MarketFetchResult, fromDate: string, toDate: string): void {
+  const inWindow = new Set(existing.filter(u => u.date >= fromDate && u.date <= toDate).map(u => u.id));
+  const fresh = new Set(result.units.map(u => u.id));
+  const keep = new Set(result.keepContractIds ?? []);
+  const retained = [...inWindow].filter(id => keep.has(id) && !fresh.has(id)).length;
+  const removed = [...inWindow].filter(id => !keep.has(id) && !fresh.has(id)).length;
+  console.log(`[Рынок] Без номера в списке: ${result.stats?.missingListIds ?? 0}, без кода: ${result.stats?.withoutCodes ?? 0}, удержано в окне: ${retained}, ушло из окна: ${removed}, пропущено без номера: ${result.stats?.skippedWithoutId ?? 0}`);
 }
 
 export function getMonthIntervals(
@@ -268,7 +286,7 @@ export interface BackfillMarketOptions {
   filePath?: string;
   cfg?: MarketConfig;
   onProgress?: (info: { month: string; matched: number; totalSaved: number; source?: MarketSource }) => void;
-  fetchUnits?: (options: FetchMarketUnitsOptions) => Promise<{ units: MarketUnit[]; source: MarketSource }>;
+  fetchUnits?: (options: FetchMarketUnitsOptions) => Promise<MarketFetchResult>;
 }
 
 /**
@@ -308,12 +326,14 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
       continue;
     }
 
-    const { units: monthUnits, source } = await fetchUnits({ token, fromDate: interval.from, toDate: interval.to, cfg });
+    const result = await fetchUnits({ token, fromDate: interval.from, toDate: interval.to, cfg });
+    const { units: monthUnits, source, keepContractIds } = result;
     if (onProgress) {
       onProgress({ month: interval.month, matched: monthUnits.length, totalSaved: currentUnits.length + monthUnits.length, source });
     }
 
-    currentUnits = mergeMarketUnits(currentUnits, monthUnits, interval.from, interval.to);
+    const previousUnits = currentUnits;
+    currentUnits = mergeMarketUnits(currentUnits, monthUnits, interval.from, interval.to, keepContractIds);
     if (!isCurrentMonth && interval.isFullMonth) {
       completeMonths.add(interval.month);
     }
@@ -326,6 +346,7 @@ export async function backfillMarketByMonths(options: BackfillMarketOptions): Pr
       },
       filePath
     );
+    logMarketRefreshCounts(previousUnits, result, interval.from, interval.to);
   }
 
   return currentUnits;
