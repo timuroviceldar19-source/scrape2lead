@@ -133,6 +133,26 @@ export function normalizePlanDeal(d: Record<string, unknown>, options: Normalize
     portalStatus, outcomeKey, outcomeCategory, isOpen, isNewStage: isOpen && (stage === "NEW" || stage.endsWith(":NEW")), isWonCrm: semantic === "S", isLostCrm: semantic === "F"
   };
 }
+/** Один rootrecordId — один пункт, независимо от товарной группы и ORIGIN_ID. */
+export function dedupePlanDeals(deals: readonly NormalizedPlanDeal[]): NormalizedPlanDeal[] {
+  const result: NormalizedPlanDeal[] = [];
+  const positions = new Map<string, number>();
+  const compare = (a: NormalizedPlanDeal, b: NormalizedPlanDeal): number =>
+    Number(a.outcomeCategory === "won") - Number(b.outcomeCategory === "won") ||
+    Number(a.isOpen) - Number(b.isOpen) ||
+    Number(Boolean(a.truCode.trim())) - Number(Boolean(b.truCode.trim())) ||
+    a.id.localeCompare(b.id, "en", { numeric: true });
+  for (const deal of deals) {
+    const key = deal.planNumber.trim();
+    const position = key ? positions.get(key) : undefined;
+    if (position === undefined) {
+      if (key) positions.set(key, result.length);
+      result.push(deal);
+    } else if (compare(deal, result[position]) > 0) result[position] = deal;
+  }
+  return result;
+}
+
 export interface CollectPlansOptions extends NormalizePlanOptions {
   reader: ReadOnlyBitrixClient;
   userProfiles?: ReadonlyMap<string, { name: string }>;
@@ -166,8 +186,13 @@ export async function collectPlansMonitor(options: CollectPlansOptions): Promise
     for (const g of options.groups || []) for (const m of g.managers) names.set(String(m.id), m.name);
     for (const [id, p] of options.userProfiles || []) names.set(String(id), p.name);
     const planRows = rows.filter(isPlanDeal);
-    const deals = planRows.map(d => normalizePlanDeal(d, { ...options, managerNames: names })).filter((d): d is NormalizedPlanDeal => d !== null);
-    console.log(`[Планы] вне групп: ${planRows.length - deals.length}`);
+    // Отдельный шаг: принадлежность к планам не зависит от стадии CRM.
+    const withoutDuplicateStages = planRows.filter(d => !/DUPLICATE|DOUBLE/i.test(text(d.STAGE_ID)));
+    console.log(`[Планы] на стадии «Дубль»: ${planRows.length - withoutDuplicateStages.length}`);
+    const normalized = withoutDuplicateStages.map(d => normalizePlanDeal(d, { ...options, managerNames: names })).filter((d): d is NormalizedPlanDeal => d !== null);
+    console.log(`[Планы] вне групп: ${withoutDuplicateStages.length - normalized.length}`);
+    const deals = dedupePlanDeals(normalized);
+    console.log(`[Планы] повторов: ${normalized.length - deals.length}`);
     await enrichManagerNames(options, deals, names);
     for (const d of deals) d.managerName = names.get(d.managerId) || `ID ${d.managerId || "—"}`;
     const view = buildPlansMonitorView(deals, options);
