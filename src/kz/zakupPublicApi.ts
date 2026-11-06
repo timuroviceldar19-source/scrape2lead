@@ -7,6 +7,29 @@ export const ZAKUP_API_URL = "https://zakup.gov.kz/api/core/api";
 export const ZAKUP_PAGE_SIZE = 100;
 
 export class ZakupRecordNotFoundError extends Error {}
+export class ZakupIncompleteDataError extends Error {}
+
+/** Только безопасные HTTP/сетевые причины: без URL, токенов и тел ответов. */
+export function zakupErrorReason(error: unknown): string {
+  const codes = ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN", "ENOTFOUND", "ABORT_ERR", "CERT_HAS_EXPIRED", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID"];
+  const reasons = new Set<string>();
+  const seen = new Set<unknown>();
+  let current = error;
+  for (let depth = 0; current && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current);
+    const e = current as { message?: unknown; code?: unknown; name?: unknown; cause?: unknown };
+    const message = typeof e.message === "string" ? e.message : "";
+    for (const match of message.matchAll(/\bHTTP [1-5]\d{2}\b/g)) reasons.add(match[0]);
+    for (const code of codes) {
+      if (e.code === code || new RegExp(`\\b${code}\\b`).test(message)) reasons.add(code);
+    }
+    for (const name of ["TimeoutError", "AbortError", "TypeError", "SyntaxError"]) {
+      if (e.name === name || new RegExp(`\\b${name}\\b`).test(message)) reasons.add(name);
+    }
+    current = e.cause;
+  }
+  return [...reasons].join(", ") || (error instanceof ZakupIncompleteDataError ? "неполные данные" : "Error");
+}
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -85,9 +108,13 @@ export async function zakupGet<T>(path: string, params: ZakupParams = {}, option
 /** Walks `limit`/`offset` pages until `count` records are read or a page comes back short. */
 export async function zakupListAll<T>(path: string, params: ZakupParams = {}, options: ZakupApiOptions = {}): Promise<T[]> {
   const items: T[] = [];
+  let expectedCount = 0;
   for (let offset = 0; ; offset += ZAKUP_PAGE_SIZE) {
-    const page = await zakupGet<ZakupPage<T>>(path, { ...params, limit: ZAKUP_PAGE_SIZE, offset }, options);
-    if (!Array.isArray(page?.results)) throw new Error(`zakup ${path}: response without results`);
+    const pageParams = { ...params, limit: ZAKUP_PAGE_SIZE, offset };
+    let page = await zakupGet<ZakupPage<T>>(path, pageParams, options);
+    if (!Array.isArray(page?.results) || !Number.isSafeInteger(page.count) || page.count < 0) {
+      throw new ZakupIncompleteDataError("zakup: неполные данные страницы списка");
+    }
     // The live API rejects offset >= 10000. Partition inclusive signing dates
     // before crossing that ceiling; never return a truncated month as complete.
     if (offset === 0 && page.count > 10000) {
@@ -102,8 +129,25 @@ export async function zakupListAll<T>(path: string, params: ZakupParams = {}, op
       const right = await zakupListAll<T>(path, { ...params, sign_date__gte: new Date(middle + 86400000).toISOString().slice(0, 10) }, options);
       return [...left, ...right];
     }
+    expectedCount = Math.max(expectedCount, page.count);
+    if (page.results.length < ZAKUP_PAGE_SIZE && items.length + page.results.length < expectedCount) {
+      const delay = options.retryDelayMs ?? 2000;
+      if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+      try {
+        page = await zakupGet<ZakupPage<T>>(path, pageParams, options);
+      } catch (cause) {
+        throw new ZakupIncompleteDataError("zakup: повторное чтение неполной страницы не удалось", { cause: new Error(zakupErrorReason(cause)) });
+      }
+      if (!Array.isArray(page?.results) || !Number.isSafeInteger(page.count) || page.count < 0) {
+        throw new ZakupIncompleteDataError("zakup: неполная страница списка");
+      }
+      expectedCount = Math.max(expectedCount, page.count);
+      if (page.results.length < ZAKUP_PAGE_SIZE && items.length + page.results.length < expectedCount) {
+        throw new ZakupIncompleteDataError(`zakup: неполный список, получено ${items.length + page.results.length} из ${expectedCount}`);
+      }
+    }
     items.push(...page.results);
-    if (page.results.length < ZAKUP_PAGE_SIZE || items.length >= page.count) return items;
+    if (items.length >= expectedCount) return items;
   }
 }
 

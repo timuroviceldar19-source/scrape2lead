@@ -71,4 +71,22 @@ describe("zakupPublicApi", () => {
     expect(out).toEqual([50, 10, 30, 20, 40]);
     expect(peak).toBe(2);
   });
+
+  it("retries a short page without accepting or duplicating its partial rows", async () => {
+    const offsets: number[] = [];
+    const fetchFn = vi.fn(async (raw: string) => {
+      const offset = Number(new URL(raw).searchParams.get("offset")); offsets.push(offset);
+      const size = offsets.length === 1 ? 1 : offset === 0 ? 100 : 30;
+      return json({ count: 130, results: Array.from({ length: size }, (_, i) => ({ id: offset + i })) });
+    });
+    const rows = await zakupListAll("/public/contracts/", {}, { ...fast, fetchFn: fetchFn as unknown as typeof fetch });
+    expect(rows).toHaveLength(130);
+    expect(offsets).toEqual([0, 0, 100]);
+  });
+
+  it("rejects a list that remains incomplete after retrying the same page", async () => {
+    const fetchFn = vi.fn().mockImplementation(async () => json({ count: 2, results: [{ id: 1 }] }));
+    await expect(zakupListAll("/public/contracts/", {}, { ...fast, fetchFn })).rejects.toThrow(/неполн/);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
 });

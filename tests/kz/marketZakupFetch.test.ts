@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { inspect } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadMarketConfig } from "../../src/kz/market/config.js";
 import { fetchZakupMarketUnits } from "../../src/kz/market/fetchZakupMarket.js";
@@ -247,7 +248,7 @@ describe("fetchMarketUnits: zakup first, ows as the backup", () => {
     expect(res.source).toBe("ows");
     expect(res).not.toHaveProperty("keepContractIds");
     expect(ows).toHaveBeenCalledWith(expect.objectContaining({ token: "t", fromDate: "2026-10-01", toDate: "2026-10-31" }));
-    expect(warn.mock.calls.flat().join(" ")).not.toContain("UND_ERR_CONNECT_TIMEOUT");
+    expect(warn.mock.calls.flat().join(" ")).toContain("UND_ERR_CONNECT_TIMEOUT");
     warn.mockRestore();
   });
 
@@ -261,10 +262,16 @@ describe("fetchMarketUnits: zakup first, ows as the backup", () => {
   });
 
   it("reports both errors when the backup fails too", async () => {
-    const zakup = vi.fn().mockRejectedValue(new Error("zakup down"));
-    const ows = vi.fn().mockRejectedValue(new Error("ows 403"));
+    const zakup = vi.fn().mockRejectedValue(new Error("HTTP 502 body-secret token=secret-token"));
+    const ows = vi.fn().mockRejectedValue(new Error("HTTP 403 body-secret token=secret-token"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await expect(fetchMarketUnits({ fromDate: "2026-10-01", toDate: "2026-10-31", token: "t", sources: { zakup, ows } })).rejects.toThrow(/не ответили оба источника/);
+    const error = await fetchMarketUnits({ fromDate: "2026-10-01", toDate: "2026-10-31", token: "t", sources: { zakup, ows } }).catch(e => e as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/zakup: HTTP 502.*ows: HTTP 403/);
+    expect((error as Error).message).not.toMatch(/body-secret|secret-token/);
+    expect(inspect(error)).not.toMatch(/body-secret|secret-token/);
+    expect(warn.mock.calls.flat().join(" ")).toContain("HTTP 502");
+    expect(warn.mock.calls.flat().join(" ")).not.toMatch(/body-secret|secret-token/);
     warn.mockRestore();
   });
 });

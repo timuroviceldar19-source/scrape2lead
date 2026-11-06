@@ -5,6 +5,7 @@ import type { MarketConfig, MarketUnit } from "./types.js";
 import { loadMarketConfig, marketConfigKey } from "./config.js";
 import { filterContractUnits, type RawContractItem } from "./filterUnits.js";
 import { fetchZakupMarketUnits, type FetchZakupMarketOptions, type ZakupMarketResult, type ZakupMarketStats } from "./fetchZakupMarket.js";
+import { zakupErrorReason, ZakupIncompleteDataError } from "../zakupPublicApi.js";
 
 const CONTRACT_QUERY = `query($d: [String], $after: Int) {
   Contract(filter: { signDate: $d }, limit: 200, after: $after) {
@@ -202,15 +203,22 @@ export async function fetchMarketUnits(options: FetchMarketUnitsOptions): Promis
   try {
     return { ...await zakup({ fromDate, toDate, ...(cfg ? { cfg } : {}) }), source: "zakup" };
   } catch (zakupErr) {
-    if (!token) {
-      console.warn("[Рынок] Основной источник не ответил, запасной API не настроен");
-      throw new Error("Рынок: выгрузка не завершена; кэш не обновлён", { cause: zakupErr });
+    const zakupReason = zakupErrorReason(zakupErr);
+    if (zakupErr instanceof ZakupIncompleteDataError) {
+      console.warn(`[Рынок] Неполная выгрузка zakup: ${zakupReason}; кэш не обновлён`);
+      throw new Error(`Рынок: неполная выгрузка; zakup: ${zakupReason}; кэш не обновлён`);
     }
-    console.warn("[Рынок] Основной источник не ответил, берём запасной API");
+    if (!token) {
+      console.warn(`[Рынок] zakup: ${zakupReason}; запасной API не настроен`);
+      throw new Error(`Рынок: выгрузка не завершена; zakup: ${zakupReason}; кэш не обновлён`);
+    }
+    console.warn(`[Рынок] zakup: ${zakupReason}; берём запасной API`);
     try {
       return { units: await ows({ token, fromDate, toDate, ...(cfg ? { cfg } : {}) }), source: "ows" };
     } catch (owsErr) {
-      throw new Error("Рынок: не ответили оба источника; кэш не обновлён", { cause: owsErr });
+      const owsReason = zakupErrorReason(owsErr);
+      console.warn(`[Рынок] ows: ${owsReason}`);
+      throw new Error(`Рынок: не ответили оба источника; zakup: ${zakupReason}; ows: ${owsReason}; кэш не обновлён`);
     }
   }
 }

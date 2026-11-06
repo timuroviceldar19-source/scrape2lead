@@ -27,10 +27,71 @@ function site(rows: unknown[], subjects: unknown[] = [subject], card: unknown = 
     return Response.json(card);
   }) as unknown as typeof fetch;
   const orgCachePath = path.join(tmp(), "orgs.json");
-  return { calls, options: { fromDate: "2026-10-01", toDate: "2026-10-31", cfg, fetchFn, pauseMs: 0, maxRetries: 0, orgCachePath } };
+  return { calls, options: { fromDate: "2026-10-01", toDate: "2026-10-31", cfg, fetchFn, pauseMs: 0, maxRetries: 0, secondPassDelayMs: 0, retryDelayMs: 0, orgCachePath } };
 }
 
 describe("утреннее обновление сохраняет договоры без кода", () => {
+  it("пауза предшествует второму проходу; договор и счётчик не дублируются", async () => {
+    const s = site([row({ external_id: null, enstru_code: [] })], []);
+    const original = s.options.fetchFn; let cards = 0;
+    s.options.fetchFn = vi.fn(async (url, init) => {
+      if (new URL(String(url)).pathname.endsWith("/public/contracts/1/")) {
+        cards++;
+        if (cards === 1) throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+      }
+      return original(url, init);
+    });
+    vi.useFakeTimers();
+    try {
+      const promise = fetchZakupMarketUnits({ ...s.options, secondPassDelayMs: 50 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cards).toBe(1);
+      await vi.advanceTimersByTimeAsync(49);
+      expect(cards).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await promise;
+      expect(cards).toBe(2);
+      expect(result.keepContractIds).toEqual([501]);
+      expect(result.stats).toEqual({ missingListIds: 1, withoutCodes: 1, skippedWithoutId: 0 });
+    } finally { vi.useRealTimers(); }
+  });
+  it.each(["subjects", "card"] as const)("повторяет неответивший %s после остальных договоров и возвращает его", async failure => {
+    const s = site([row({ external_id: null }), row({ id: 2, external_id: 502 })]);
+    const original = s.options.fetchFn; const order: string[] = []; let attempts = 0;
+    const target = failure === "subjects" ? "/1/subjects/" : "/1/";
+    s.options.fetchFn = vi.fn(async (url, init) => {
+      const p = new URL(String(url)).pathname;
+      if (p.endsWith(target)) {
+        order.push("target"); attempts++;
+        if (attempts === 1) throw Object.assign(new Error("Тестовый сбой"), { cause: { code: "ECONNRESET" } });
+      }
+      if (p.endsWith("/2/subjects/")) order.push("other");
+      return original(url, init);
+    });
+    const result = await fetchZakupMarketUnits({ ...s.options, concurrency: 1 });
+    expect(result.units.map(u => u.id)).toEqual([501, 502]);
+    expect(order).toEqual(["target", "other", "target"]);
+    expect(attempts).toBe(2);
+  });
+  it("missingListIds не включает исключённый статус", async () => {
+    const s = site([row({ external_id: null }), row({ id: 2, external_id: null, status_id: 2 })]);
+    expect((await fetchZakupMarketUnits(s.options)).stats.missingListIds).toBe(1);
+  });
+  it("неполная страница обрывает обновление без записи кэша и без запасного источника", async () => {
+    const s = site([row()]); const original = s.options.fetchFn;
+    let pages = 0;
+    s.options.fetchFn = vi.fn(async (url, init) => {
+      if (new URL(String(url)).pathname.endsWith("/public/contracts/")) { pages++; return Response.json({ count: 2, results: [row()] }); }
+      return original(url, init);
+    });
+    const file = path.join(tmp(), "units.json"); saveStoredMarketData({ units: [unit(501)] }, file);
+    const before = fs.readFileSync(file, "utf8"); const ows = vi.fn();
+    await expect(backfillMarketByMonths({ filePath: file, fromDate: "2026-10-01", toDate: "2026-10-31", cfg,
+      fetchUnits: () => fetchMarketUnits({ ...s.options, token: "test-token", sources: { zakup: () => fetchZakupMarketUnits(s.options), ows } })
+    })).rejects.toThrow(/неполн/);
+    expect(pages).toBe(2); expect(ows).not.toHaveBeenCalled();
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
+  });
   it("получает номер из карточки одним запросом вместе с БИН, даже если БИН уже в кэше", async () => {
     const s = site([row({ external_id: null })]);
     fs.writeFileSync(s.options.orgCachePath, JSON.stringify({ 11: "111111111111", 12: "222222222222" }));
@@ -98,9 +159,12 @@ describe("утреннее обновление сохраняет догово�
     const s = site([row({ external_id: null })], [subject], detail, failure);
     const file = path.join(tmp(), "units.json"); saveStoredMarketData({ units: [unit(501)] }, file);
     const before = fs.readFileSync(file, "utf8");
+    const ows = vi.fn();
     await expect(backfillMarketByMonths({ filePath: file, fromDate: "2026-10-01", toDate: "2026-10-31", cfg,
-      fetchUnits: () => fetchMarketUnits({ ...s.options, sources: { zakup: () => fetchZakupMarketUnits(s.options) } })
+      fetchUnits: () => fetchMarketUnits({ ...s.options, token: "test-token", sources: { zakup: () => fetchZakupMarketUnits(s.options), ows } })
     })).rejects.toThrow();
+    expect(ows).not.toHaveBeenCalled();
+    expect(s.calls.filter(p => p === (failure === "subjects" ? "/public/contracts/1/subjects/" : "/public/contracts/1/"))).toHaveLength(2);
     expect(fs.readFileSync(file, "utf8")).toBe(before);
   });
 });
