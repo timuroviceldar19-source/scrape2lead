@@ -34,6 +34,7 @@ export interface LoadRegisterOptions {
   reader: ReadOnlyBitrixClient;
   diskFolderId?: number;
   managerAliases?: Record<string, string>;
+  hiddenManagers?: string[];
   registerFilePath?: string;
   todayAlmaty?: string;
   contractTransitions?: StageTransition[];
@@ -100,6 +101,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
     reader,
     diskFolderId,
     managerAliases,
+    hiddenManagers,
     registerFilePath,
     todayAlmaty = getAlmatyToday(),
     contractTransitions,
@@ -215,6 +217,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
             historyPayload = await buildFullRegisterHistory({
               files: filesToProcess,
               managerAliases,
+              hiddenManagers,
               todayAlmaty,
               crmWonDealsByMonth: crmWonByMonth,
               crmWonDeals: wonDeals,
@@ -299,6 +302,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
       asOf,
       month: parsed.month || todayAlmaty.slice(0, 7),
       hasValColumn: parsed.hasValColumn,
+      hiddenManagers,
       history: historyPayload,
       historyError
     });

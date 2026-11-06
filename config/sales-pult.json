@@ -124,6 +124,10 @@
     "diskFolderId": 89975,
     "managerAliases": {
       "Мухаметжан": "Мұхаметжан"
-    }
+    },
+    "hiddenManagers": [
+      "Нурдаулет",
+      "Анель"
+    ]
   }
 }

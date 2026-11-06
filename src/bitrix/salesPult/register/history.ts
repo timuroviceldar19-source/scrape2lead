@@ -1,4 +1,4 @@
-import { buildRegisterView } from "./buildView.js";
+import { buildRegisterView, listedPlanManagers } from "./buildView.js";
 import { zakupListAll, zakupGet, type ZakupPage, type ZakupApiOptions } from "../../../kz/zakupPublicApi.js";
 import type { MarketConfig } from "../../../kz/market/types.js";
 import { isExcludedStatus, loadMarketConfig } from "../../../kz/market/config.js";
@@ -89,8 +89,9 @@ export function buildRegisterMonthSummary(params: {
   rows: RegisterRow[];
   plans: Record<string, number>;
   hasValColumn?: boolean;
+  hiddenManagers?: string[];
 }): RegisterMonthSummary {
-  const { month, fileName, rows, plans } = params;
+  const { month, fileName, rows, plans, hiddenManagers } = params;
   const label = params.label || formatMonthLabel(month);
   const hasVal = params.hasValColumn ?? (rows.length === 0 || rows.some((r) => r.val !== null));
 
@@ -103,7 +104,7 @@ export function buildRegisterMonthSummary(params: {
 
   // By Manager breakdown
   const allManagers = new Set<string>([
-    ...Object.keys(plans).filter((m) => m !== "B2B"),
+    ...listedPlanManagers(plans, hiddenManagers),
     ...rows.map((r) => r.manager)
   ]);
 
@@ -992,6 +993,7 @@ export interface BuildFullRegisterHistoryOptions {
     updateTime?: string;
   }>;
   managerAliases?: Record<string, string>;
+  hiddenManagers?: string[];
   todayAlmaty: string;
   crmWonDealsByMonth?: Map<string, CrmWonDeal[]>;
   crmWonDeals?: CrmWonDeal[];
@@ -1146,7 +1148,8 @@ export async function buildFullRegisterHistory(
       fileName: finalPf.fileName,
       rows: finalPf.rows,
       plans: finalPf.plans,
-      hasValColumn: finalPf.hasValColumn
+      hasValColumn: finalPf.hasValColumn,
+      hiddenManagers: options.hiddenManagers
     });
 
     const contracts = groupRegisterContracts(finalPf.rows);
@@ -1189,7 +1192,7 @@ export async function buildFullRegisterHistory(
       rows: finalPf.rows, plans: finalPf.plans, missing,
       extraDealsCount: summary.reconciliationPerformed ? summary.crmExtra || 0 : 0,
       fileName: finalPf.fileName, asOf: finalPf.dateKey, month: summary.month,
-      hasValColumn: finalPf.hasValColumn
+      hasValColumn: finalPf.hasValColumn, hiddenManagers: options.hiddenManagers
     });
     if (view.error === undefined) {
       const { history, historyError, ...snapshot } = view;

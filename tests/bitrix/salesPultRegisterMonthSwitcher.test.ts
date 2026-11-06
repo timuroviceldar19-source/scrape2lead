@@ -23,6 +23,64 @@ async function fixture() {
 }
 
 describe("переключатель месяцев реестра", () => {
+  it("hiddenManagers убирает менеджера из списка, но не из плана отдела и не из договоров", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Лист1");
+    ws.getRow(1).values = [null, "Дата договора", "Контрагент", "Товар", "Сумма продажи без НДС", "Менеджер"];
+    ws.getRow(2).values = [null, "2026-11-02", "Заказчик", "панель", 100, "Менеджер В"];
+    ws.getRow(4).values = [null, null, "Менеджер", "План на месяц"];
+    ws.getRow(5).values = [null, null, "Менеджер Б", 2000];
+    ws.getRow(6).values = [null, null, "Менеджер В", 0];
+    ws.getRow(7).values = [null, null, "Менеджер А", 3000];
+    const history = await buildFullRegisterHistory({
+      files: [{ fileName: "ОП 03.11.26.xlsx", buffer: Buffer.from(await wb.xlsx.writeBuffer()) }],
+      hiddenManagers: ["Менеджер Б", "Менеджер В"],
+      todayAlmaty: "2026-11-03",
+      fetchPortal: false,
+      crmWonDealsByMonth: new Map()
+    });
+
+    const [month] = history.months;
+    expect(month.byManager.map((m) => m.name).sort()).toEqual(["Менеджер А", "Менеджер В"]);
+    expect(month.plan).toBe(5000);
+    expect(month.sale).toBe(100);
+
+    const view = history.monthViews!["2026-11"];
+    expect(view.managers.map((m) => m.name).sort()).toEqual(["Менеджер А", "Менеджер В"]);
+    expect(view.total.plan).toBe(5000);
+    expect(view.rows).toHaveLength(1);
+  });
+
+  it("hiddenManagers работает и для текущего файла", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Лист1");
+    ws.getRow(1).values = [null, "Дата договора", "Контрагент", "Товар", "Сумма продажи без НДС", "Менеджер"];
+    ws.getRow(2).values = [null, "2026-11-02", "Заказчик", "панель", 100, "Менеджер А"];
+    ws.getRow(4).values = [null, null, "Менеджер", "План на месяц"];
+    ws.getRow(5).values = [null, null, "Менеджер Б", 2000];
+    ws.getRow(6).values = [null, null, "Менеджер А", 3000];
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "register-hidden-"));
+    try {
+      const registerFilePath = path.join(dir, "ОП 03.11.26.xlsx");
+      await wb.xlsx.writeFile(registerFilePath);
+      const reader = { call: async () => [], listAllBatched: async () => [] } as unknown as ReadOnlyBitrixClient;
+
+      const view = await loadRegisterView({
+        reader,
+        registerFilePath,
+        hiddenManagers: ["Менеджер Б"],
+        todayAlmaty: "2026-11-03",
+        historyCachePath: path.join(dir, "history.json"),
+        secretKey: "test-key",
+        fetchPortal: false
+      });
+
+      expect(view.error).toBeUndefined();
+      expect(view.managers?.map((m) => m.name)).toEqual(["Менеджер А"]);
+      expect(view.total?.plan).toBe(5000);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it("сохраняет независимые полные срезы после сверки CRM", async () => {
     const history = await fixture();
     const views = history.monthViews!;
