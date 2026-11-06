@@ -22,6 +22,55 @@
   };
   const list = plans => `<div class="cust-list rows">${plans.map(d => `<div class="r plan-list-row"><span>${esc(d.month)}</span><span>${link(d.dealUrl, d.planNumber || d.id)} · ${esc(d.customerName)}<span class="dim sub">${esc(d.itemName)}</span></span><span>${fmt(d.qty)} шт.</span><span class="num">${money(d.sum)} · ${link(d.planUrl, "План ↗")}</span></div>`).join("")}</div>`;
 
+  const tableStates = new Map();
+  const filterLabels = { managerId: "Менеджер", kind: "Вид товара", portalStatus: "Статус портала", method: "Способ закупки" };
+  function renderOpenPlans(base, el, active, state) {
+    const source = base.openPlans || base.topOpenPlans || [];
+    const matches = source.filter(d => (active === "all" || d.month === active) &&
+      Object.keys(filterLabels).every(key => !state.filters[key] || String(d[key] ?? "") === state.filters[key]));
+    matches.sort((a, b) => {
+      const cmp = state.sort === "month" ? String(a.month).localeCompare(String(b.month)) : (a[state.sort] || 0) - (b[state.sort] || 0);
+      return (state.direction === "asc" ? cmp : -cmp) || String(a.id).localeCompare(String(b.id), "ru", { numeric: true });
+    });
+    const sortHead = (key, label) => `<span role="columnheader" aria-sort="${state.sort === key ? state.direction === "asc" ? "ascending" : "descending" : "none"}"><button type="button" data-plan-sort="${key}" data-direction="${state.sort === key ? state.direction : ""}">${label}${state.sort === key ? state.direction === "asc" ? " ↑" : " ↓" : " ↕"}</button></span>`;
+    const open = el.querySelector(".plans-open");
+    open.innerHTML = `${head("04", "Открытые планы", `Показано ${fmt(Math.min(state.limit, matches.length))} из ${fmt(matches.length)}`)}
+      <div class="rows plans-table" role="table" aria-label="Открытые планы">
+        <div class="r head" role="row">${sortHead("month", "Месяц")}<span role="columnheader">Заказчик</span><span role="columnheader">Товар / вид</span>${sortHead("qty", "Кол-во")}${sortHead("sum", "Сумма")}<span role="columnheader">Статус портала</span><span role="columnheader">Менеджер</span></div>
+        ${matches.slice(0, state.limit).map(d => `<div class="r" role="row" data-plan-id="${esc(d.id)}"><span role="cell">${esc(d.month)}<span class="sub">${link(d.dealUrl, `Сделка ${d.id} ↗`)} · ${link(d.planUrl, `План ${d.planNumber} ↗`)}</span></span><span role="cell">${esc(d.customerName)}<span class="dim sub">${esc(d.customerBin)}</span></span><span role="cell">${esc(d.itemName)}<span class="dim sub">${esc(d.truCode)} · ${esc(d.kind)}</span></span><span role="cell" data-label="Количество">${fmt(d.qty)} шт.</span><span role="cell" class="num" data-label="Сумма">${money(d.sum)}</span><span role="cell" data-label="Статус портала">${esc(d.portalStatus)}</span><span role="cell" data-label="Менеджер">${esc(d.managerName)}${d.isNewStage ? '<span class="bad sub">Новая · ждёт разбора</span>' : ""}</span></div>`).join("")}
+      </div>${!matches.length ? '<p class="muted" role="status">Ничего не найдено. Измените фильтры или месяц.</p>' : ""}
+      ${matches.length > state.limit ? '<button type="button" class="btn plans-more" data-plan-more>Показать ещё</button>' : ""}`;
+    const filters = document.getElementById("planFilters");
+    if (filters) {
+      filters.innerHTML = Object.entries(filterLabels).map(([key, label]) => {
+        const choices = new Map(source.map(d => [String(d[key] ?? ""), key === "managerId" ? d.managerName : d[key]]).filter(([value]) => value));
+        const button = (value, name) => `<button type="button" data-plan-filter="${key}" data-value="${esc(value)}" aria-pressed="${(state.filters[key] || "") === value}">${esc(name)}</button>`;
+        return `<fieldset class="plan-filter-group"><legend>${label}</legend><div class="chips">${button("", "Все")}${[...choices].sort((a, b) => String(a[1]).localeCompare(String(b[1]), "ru")).map(([value, name]) => button(value, name)).join("")}</div></fieldset>`;
+      }).join("");
+      filters.onclick = event => {
+        const button = event.target.closest("button[data-plan-filter]");
+        if (!button) return;
+        state.filters[button.dataset.planFilter] = button.dataset.value;
+        state.limit = 50;
+        renderOpenPlans(base, el, active, state);
+        const focused = [...filters.querySelectorAll("button")].find(b => b.dataset.planFilter === button.dataset.planFilter && b.dataset.value === button.dataset.value);
+        focused?.focus({ preventScroll: true });
+      };
+    }
+    open.onclick = event => {
+      const button = event.target.closest("button");
+      if (button?.hasAttribute("data-plan-more")) state.limit += 50;
+      else if (button?.dataset.planSort) {
+        const key = button.dataset.planSort;
+        state.direction = state.sort === key && state.direction === "desc" ? "asc" : "desc";
+        state.sort = key;
+        state.limit = 50;
+      } else return;
+      renderOpenPlans(base, el, active, state);
+      if (button.dataset.planSort) open.querySelector(`[data-plan-sort="${button.dataset.planSort}"]`)?.focus({ preventScroll: true });
+    };
+  }
+
   window.__renderPlansTab = function (key, PLANS, el, selectedMonth) {
     if (!el) return;
     const base = key === "plans-ip" || key === "ИП" ? PLANS?.ip : PLANS?.kt;
@@ -60,15 +109,17 @@
           <h3>Статусы на портале</h3><div class="rows plans-statuses">${V.statuses.map(s => `<div class="r"><span>${esc(s.status)}</span><span>${fmt(s.count)} шт.</span><span class="num">${money(s.sum)}</span></div>`).join("")}</div>
         </div></div>
       </section>
-      <section class="block plans-open" data-slice="${active}">${head("04", "Крупнейшие открытые планы", "Топ-20 в работе")}
-        <div class="rows plans-table"><div class="r head"><span>Планируемый месяц</span><span>Заказчик</span><span>Товар / вид</span><span>Шт.</span><span>Сумма</span><span>Статус портала</span><span>Менеджер</span></div>
-          ${V.topOpenPlans.map(d => `<div class="r"><span>${esc(d.month)}<span class="sub">${link(d.dealUrl, `Сделка ${d.id} ↗`)} · ${link(d.planUrl, `План ${d.planNumber} ↗`)}</span></span><span>${esc(d.customerName)}<span class="dim sub">${esc(d.customerBin)}</span></span><span>${esc(d.itemName)}<span class="dim sub">${esc(d.truCode)} · ${esc(d.kind)}</span></span><span>${fmt(d.qty)}</span><span class="num">${money(d.sum)}</span><span>${esc(d.portalStatus)}</span><span>${esc(d.managerName)}${d.isNewStage ? '<span class="bad sub">Новая · ждёт разбора</span>' : ""}</span></div>`).join("") || '<p class="muted">Открытых планов нет</p>'}
-        </div>
-      </section>
+      <section class="block plans-open" data-slice="${active}"></section>
       <section class="block plans-customers" data-slice="${active}">${head("05", "Крупнейшие заказчики по планам", "Топ-15")}
         <div class="cust rows"><div class="r head"><span>Заказчик / БИН</span><span>Сумма планов</span><span>Пунктов</span><span>В работе</span></div>
           ${V.customers.map(c => `<details class="cust-d"><summary class="r"><span class="cust">${esc(c.name)}<span class="dim sub">${esc(c.bin)}</span></span><span class="num">${money(c.sum)}</span><span>${fmt(c.count)}</span><span>${money(c.openSum)} · ${fmt(c.openCount)} шт.${bar(c.openSum, c.sum, "ink")}</span></summary>${list(c.planList)}</details>`).join("")}
         </div>
       </section>`;
+    const stateKey = base.group || key;
+    if (!tableStates.has(stateKey)) tableStates.set(stateKey, { filters: {}, sort: "sum", direction: "desc", limit: 50 });
+    const state = tableStates.get(stateKey);
+    if (state.month !== active) state.limit = 50;
+    state.month = active;
+    renderOpenPlans(base, el, active, state);
   };
 })();

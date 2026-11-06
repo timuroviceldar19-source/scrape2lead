@@ -557,7 +557,7 @@ body.tv .month-picker { display: none; }
 .plans-breakdown .meth .r { grid-template-columns: minmax(0, 1.5fr) 40px minmax(0, 1fr) 100px 60px; gap: 12px; }
 .plans-kinds .r { grid-template-columns: minmax(0, 2fr) 42px minmax(0, 1fr) 100px; gap: 12px; }
 .plans-statuses .r { grid-template-columns: minmax(0, 1fr) 60px 110px; gap: 12px; }
-.plans-table .r { grid-template-columns: minmax(100px, 1fr) minmax(0, 1.5fr) minmax(0, 2fr) 45px 110px minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; gap: 16px; }
+.plans-table .r { grid-template-columns: minmax(100px, 1fr) minmax(0, 1.5fr) minmax(0, 2fr) 75px 110px minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; gap: 16px; }
 .plans-table .sub, .plans-customers .sub, .plan-list-row .sub { display: block; font-size: 11px; margin-top: 5px; }
 .plans-table a, .plan-list-row a { color: inherit; text-underline-offset: 3px; }
 .plans-table .r > span, .plans-customers .r > span, .plan-list-row > span { min-width: 0; overflow-wrap: anywhere; }
@@ -591,4 +591,22 @@ body.tv #planMonths { display: none !important; }
 @media (max-width: 700px) {
   .ytd-box .readout { grid-template-columns: 1fr; }
   .ytd-box .readout > div { border-left: 0; padding-left: 0; }
+}
+
+/* Фильтры относятся только к открытой таблице и прокручиваются со страницей. */
+#planFilters[hidden], body.tv #planFilters { display: none !important; }
+#planFilters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin-top: 24px; }
+.plan-filter-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.plan-filter-group legend { font: 12px var(--mono); margin-bottom: 8px; color: var(--ink-2); }
+.plan-filter-group .chips { margin: 0; }
+.plan-filter-group button { max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.plans-table [data-plan-sort] { border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 0; }
+.plans-table [aria-sort="ascending"], .plans-table [aria-sort="descending"] { color: var(--ink); }
+.plans-more { margin-top: 20px; }
+@media (max-width: 760px) {
+  #planFilters { grid-template-columns: minmax(0, 1fr); }
+  .plans-table .r.head { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .plans-table .r.head > span { display: none; grid-column: auto; }
+  .plans-table .r.head > span:has([data-plan-sort]) { display: block; }
+  .plans-table .r:not(.head) > [data-label]::before { content: attr(data-label); display: block; font: 10px var(--mono); color: var(--ink-2); margin-bottom: 4px; }
 }

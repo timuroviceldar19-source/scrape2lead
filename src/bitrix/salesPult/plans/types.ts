@@ -54,6 +54,7 @@ export interface PlansGroupSliceView {
   customers: PlanCustomerItem[];
 }
 export interface PlansGroupView extends PlansGroupSliceView {
+  openPlans: Array<PlanDealItem & { managerId: string }>;
   group: "ИП" | "КТ";
   months: PlanMonthBarItem[];
   monthViews: Record<string, PlansGroupSliceView>;

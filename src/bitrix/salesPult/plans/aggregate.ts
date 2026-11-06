@@ -65,7 +65,7 @@ function buildGroupView(group: "ИП" | "КТ", deals: NormalizedPlanDeal[], asO
     return { m, sum: sum(ds), count: ds.length, activeSum: sum(ds.filter(d => d.isOpen || d.outcomeCategory === "won")),
       wonSum: monthViews[m].total.wonSum, newCount: monthViews[m].total.newCount };
   });
-  return { group, ...all, months, monthViews };
+  return { group, ...all, months, monthViews, openPlans: largest(items.filter(d => d.isOpen)).map(d => ({ ...planItem(d), managerId: d.managerId })) };
 }
 
 export function buildPlansMonitorView(deals: NormalizedPlanDeal[], options: { asOfDate: string }): PlansMonitorView {
