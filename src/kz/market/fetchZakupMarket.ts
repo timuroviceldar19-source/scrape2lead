@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { mapWithConcurrency, zakupGet, zakupListAll, zakupErrorReason, ZakupIncompleteDataError, type ZakupApiOptions } from "../zakupPublicApi.js";
+import { mapWithConcurrency, zakupGet, zakupListAll, zakupErrorReason, zakupSafeCause, ZakupIncompleteDataError, type ZakupApiOptions } from "../zakupPublicApi.js";
 import { classifyCode, isExcludedStatus, loadMarketConfig } from "./config.js";
 import { filterContractUnits, type RawContractItem, type RawContractUnit } from "./filterUnits.js";
 import type { MarketConfig, MarketUnit } from "./types.js";
@@ -12,6 +12,8 @@ export const DEFAULT_ORG_CACHE_PATH = "data/market/orgs.json";
 const GOSZAKUP_SYSTEM_ID = 1;
 /** «Товар» в справочнике предметов закупки. */
 const GOODS_SUBJECT_ID = 1;
+/** Массовый отказ основного API: прекращаем очередь и разрешаем запасной источник. */
+export const MARKET_FIRST_PASS_FAILURE_LIMIT = 20;
 
 interface ZakupDictItem {
   id: number;
@@ -262,18 +264,30 @@ export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): P
   const raw: Array<RawContractItem | null> = Array(candidates.length).fill(null);
   const failed: Array<{ contract: ZakupContract; index: number; error: unknown }> = [];
   let done = 0;
-  await mapWithConcurrency(candidates.map((contract, index) => ({ contract, index })), concurrency, async ({ contract, index }) => {
-    try {
-      raw[index] = await readContract(contract);
-    } catch (error) {
-      failed.push({ contract, index, error });
-    } finally {
-      done++;
-      if (onProgress && (done % 100 === 0 || done === candidates.length)) {
-        onProgress({ listed: byId.size, candidates: candidates.length, done });
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, candidates.length)) }, async () => {
+    while (next < candidates.length && failed.length < MARKET_FIRST_PASS_FAILURE_LIMIT) {
+      const index = next++;
+      const contract = candidates[index];
+      try {
+        raw[index] = await readContract(contract);
+      } catch (error) {
+        failed.push({ contract, index, error });
+      } finally {
+        done++;
+        if (onProgress && (done % 100 === 0 || done === candidates.length)) {
+          onProgress({ listed: byId.size, candidates: candidates.length, done });
+        }
       }
     }
-  });
+  }));
+  if (failed.length >= MARKET_FIRST_PASS_FAILURE_LIMIT) {
+    const reasons = [...new Set(failed.map(item => zakupErrorReason(item.error)))].join("; ");
+    // Обычная ошибка включает ows; все уже начатые чтения завершены, второй проход не запускается.
+    throw new Error(`Рынок: массовый сбой чтения договоров: ${failed.length}; причины: ${reasons}`, {
+      cause: zakupSafeCause(failed[0].error)
+    });
+  }
   if (failed.length) {
     const reasons = [...new Set(failed.map(item => zakupErrorReason(item.error)))].join("; ");
     console.warn(`[Рынок] Второй проход: договоров ${failed.length}; причины: ${reasons}`);
@@ -289,7 +303,7 @@ export async function fetchZakupMarketUnits(options: FetchZakupMarketOptions): P
     });
     if (errors.length) {
       const finalReasons = [...new Set(errors.map(zakupErrorReason))].join("; ");
-      throw new ZakupIncompleteDataError(`Рынок: договоров без ответа на обоих проходах: ${errors.length}; причины: ${finalReasons}`, { cause: new Error(finalReasons) });
+      throw new ZakupIncompleteDataError(`Рынок: договоров без ответа на обоих проходах: ${errors.length}; причины: ${finalReasons}`, { cause: zakupSafeCause(errors[0]) });
     }
   }
 

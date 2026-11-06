@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchZakupMarketUnits } from "../../src/kz/market/fetchZakupMarket.js";
+import { fetchZakupMarketUnits, MARKET_FIRST_PASS_FAILURE_LIMIT } from "../../src/kz/market/fetchZakupMarket.js";
+import { ZakupIncompleteDataError } from "../../src/kz/zakupPublicApi.js";
 import { backfillMarketByMonths, fetchMarketUnits, logMarketRefreshCounts, mergeMarketUnits, saveStoredMarketData } from "../../src/kz/market/fetchMarket.js";
 import { loadMarketConfig } from "../../src/kz/market/config.js";
 import type { MarketUnit } from "../../src/kz/market/types.js";
@@ -31,6 +32,54 @@ function site(rows: unknown[], subjects: unknown[] = [subject], card: unknown = 
 }
 
 describe("утреннее обновление сохраняет договоры без кода", () => {
+  it.each([1, 4])("массовый 503 останавливает очередь и вызывает ows без изменения кэша, concurrency=%s", async concurrency => {
+    const count = MARKET_FIRST_PASS_FAILURE_LIMIT + 15;
+    const s = site(Array.from({ length: count }, (_, i) => row({ id: i + 1, external_id: 501 + i })));
+    const original = s.options.fetchFn; const requested: string[] = [];
+    s.options.fetchFn = vi.fn(async (url, init) => {
+      const p = new URL(String(url)).pathname;
+      if (p.endsWith("/subjects/")) { requested.push(p); return Response.json({}, { status: 503 }); }
+      return original(url, init);
+    });
+    const file = path.join(tmp(), "units.json"); saveStoredMarketData({ units: [unit(501)] }, file);
+    const before = fs.readFileSync(file, "utf8");
+    const ows = vi.fn(async () => {
+      expect(fs.readFileSync(file, "utf8")).toBe(before);
+      throw new Error("HTTP 502");
+    });
+    await expect(backfillMarketByMonths({ filePath: file, fromDate: "2026-10-01", toDate: "2026-10-31", cfg,
+      fetchUnits: () => fetchMarketUnits({ ...s.options, token: "test-token", sources: {
+        zakup: async () => {
+          try { return await fetchZakupMarketUnits({ ...s.options, concurrency }); }
+          catch (error) { expect(error).not.toBeInstanceOf(ZakupIncompleteDataError); throw error; }
+        }, ows
+      } })
+    })).rejects.toThrow(/HTTP 503.*HTTP 502/);
+    expect(ows).toHaveBeenCalledTimes(1);
+    expect(requested.length).toBeGreaterThanOrEqual(MARKET_FIRST_PASS_FAILURE_LIMIT);
+    expect(requested.length).toBeLessThanOrEqual(MARKET_FIRST_PASS_FAILURE_LIMIT + concurrency - 1);
+    expect(new Set(requested).size).toBe(requested.length); // второго прохода нет
+    expect(requested).not.toContain(`/api/core/api/public/contracts/${count}/subjects/`);
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
+    expect(fs.existsSync(s.options.orgCachePath)).toBe(false);
+  });
+  it("при числе отказов на единицу меньше порога второй проход восстанавливает все договоры", async () => {
+    const count = MARKET_FIRST_PASS_FAILURE_LIMIT + 5;
+    const s = site(Array.from({ length: count }, (_, i) => row({ id: i + 1, external_id: 501 + i })));
+    const original = s.options.fetchFn; const attempts = new Map<number, number>();
+    s.options.fetchFn = vi.fn(async (url, init) => {
+      const match = /\/contracts\/(\d+)\/subjects\/$/.exec(new URL(String(url)).pathname);
+      if (match) {
+        const id = Number(match[1]); const n = (attempts.get(id) ?? 0) + 1; attempts.set(id, n);
+        if (id < MARKET_FIRST_PASS_FAILURE_LIMIT && n === 1) return Response.json({}, { status: 503 });
+      }
+      return original(url, init);
+    });
+    const result = await fetchZakupMarketUnits({ ...s.options, concurrency: 1 });
+    expect(result.units).toHaveLength(count);
+    expect([...attempts].filter(([, n]) => n === 2)).toHaveLength(MARKET_FIRST_PASS_FAILURE_LIMIT - 1);
+    expect(attempts.get(count)).toBe(1);
+  });
   it("пауза предшествует второму проходу; договор и счётчик не дублируются", async () => {
     const s = site([row({ external_id: null, enstru_code: [] })], []);
     const original = s.options.fetchFn; let cards = 0;

@@ -11,7 +11,6 @@ export class ZakupIncompleteDataError extends Error {}
 
 /** Только безопасные HTTP/сетевые причины: без URL, токенов и тел ответов. */
 export function zakupErrorReason(error: unknown): string {
-  const codes = ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN", "ENOTFOUND", "ABORT_ERR", "CERT_HAS_EXPIRED", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID"];
   const reasons = new Set<string>();
   const seen = new Set<unknown>();
   let current = error;
@@ -20,15 +19,21 @@ export function zakupErrorReason(error: unknown): string {
     const e = current as { message?: unknown; code?: unknown; name?: unknown; cause?: unknown };
     const message = typeof e.message === "string" ? e.message : "";
     for (const match of message.matchAll(/\bHTTP [1-5]\d{2}\b/g)) reasons.add(match[0]);
-    for (const code of codes) {
-      if (e.code === code || new RegExp(`\\b${code}\\b`).test(message)) reasons.add(code);
-    }
+    if (typeof e.code === "string" && /^[A-Z0-9_]+$/.test(e.code)) reasons.add(e.code);
+    if (message.includes("invalid JSON")) reasons.add("invalid JSON");
     for (const name of ["TimeoutError", "AbortError", "TypeError", "SyntaxError"]) {
       if (e.name === name || new RegExp(`\\b${name}\\b`).test(message)) reasons.add(name);
     }
     current = e.cause;
   }
   return [...reasons].join(", ") || (error instanceof ZakupIncompleteDataError ? "неполные данные" : "Error");
+}
+
+/** Сохраняем безопасный код в cause, не перенося туда исходный текст или тело ответа. */
+export function zakupSafeCause(error: unknown): Error {
+  const reason = zakupErrorReason(error);
+  const code = reason.split(", ").find(item => /^[A-Z0-9_]+$/.test(item));
+  return Object.assign(new Error(reason), { code });
 }
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -80,8 +85,7 @@ export async function zakupGet<T>(path: string, params: ZakupParams = {}, option
         signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       });
     } catch (error) {
-      const cause = (error as { cause?: { code?: string } })?.cause?.code;
-      lastError = new Error(`zakup ${path}: ${cause ?? (error instanceof Error ? error.message : String(error))}`);
+      lastError = new Error(`zakup ${path}: ${zakupErrorReason(error)}`, { cause: error });
       continue;
     }
 
@@ -97,8 +101,8 @@ export async function zakupGet<T>(path: string, params: ZakupParams = {}, option
     if (!response.ok) throw new Error(`zakup ${path}: HTTP ${response.status} ${text.slice(0, 120)}`);
     try {
       return JSON.parse(text) as T;
-    } catch {
-      lastError = new Error(`zakup ${path}: invalid JSON (${text.slice(0, 80)})`);
+    } catch (error) {
+      lastError = new Error(`zakup ${path}: invalid JSON`, { cause: error });
     }
   }
 
@@ -136,7 +140,7 @@ export async function zakupListAll<T>(path: string, params: ZakupParams = {}, op
       try {
         page = await zakupGet<ZakupPage<T>>(path, pageParams, options);
       } catch (cause) {
-        throw new ZakupIncompleteDataError("zakup: повторное чтение неполной страницы не удалось", { cause: new Error(zakupErrorReason(cause)) });
+        throw new ZakupIncompleteDataError("zakup: повторное чтение неполной страницы не удалось", { cause: zakupSafeCause(cause) });
       }
       if (!Array.isArray(page?.results) || !Number.isSafeInteger(page.count) || page.count < 0) {
         throw new ZakupIncompleteDataError("zakup: неполная страница списка");

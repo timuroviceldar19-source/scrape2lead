@@ -241,7 +241,7 @@ describe("fetchMarketUnits: zakup first, ows as the backup", () => {
   });
 
   it("falls back to ows with the token when zakup fails", async () => {
-    const zakup = vi.fn().mockRejectedValue(new Error("zakup /public/contracts/: UND_ERR_CONNECT_TIMEOUT"));
+    const zakup = vi.fn().mockRejectedValue(Object.assign(new TypeError("fetch failed"), { cause: { code: "UND_ERR_CONNECT_TIMEOUT" } }));
     const ows = vi.fn().mockResolvedValue([unit]);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const res = await fetchMarketUnits({ fromDate: "2026-10-01", toDate: "2026-10-31", token: "t", sources: { zakup, ows } });
