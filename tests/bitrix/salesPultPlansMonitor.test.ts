@@ -127,14 +127,14 @@ describe("монитор планов: модель", () => {
     const calls: string[] = [];
     const reader = new ReadOnlyBitrixClient({ async call(method, body) {
       calls.push(method);
-      if (method === "user.get") return [{ ID: "8", NAME: "Иван", LAST_NAME: "Иванов" }];
+      if (method === "im.user.get") return { name: "Иван Иванов", active: false };
       expect(JSON.stringify(body)).toContain("CATEGORY_ID");
       expect(JSON.stringify(body)).not.toContain("filter%5BCLOSED%5D");
       return { result: { p0: [raw(1, { ASSIGNED_BY_ID: "8" })] } };
     } });
     const v = await collectPlansMonitor({ reader, ...options });
     expect(v.ip!.managers[0].name).toBe("Иван Иванов");
-    expect(calls).toContain("user.get");
+    expect(calls).toContain("im.user.get");
     const broken = new ReadOnlyBitrixClient({ async call() { throw new Error("failed"); } });
     expect(await collectPlansMonitor({ reader: broken, ...options })).toEqual({ asOf: "2026-11-03", error: expect.any(String) });
   });
@@ -157,10 +157,13 @@ describe("монитор планов: модель", () => {
     expect([...new Set(PLAN_DEAL_SELECT_FIELDS)].sort()).toEqual([...new Set(used)].sort());
     expect(users).not.toHaveBeenCalled();
   });
-  it("одним запросом загружает всех неизвестных менеджеров и сопоставляет по ID", async () => {
-    const reader = new ReadOnlyBitrixClient({ async call() { return [
-      { ID: "9", NAME: "Мария", LAST_NAME: "Петрова" }, { ID: "8", NAME: "Иван", LAST_NAME: "Иванов" }
-    ]; } });
+  it("загружает уникальных менеджеров через im.user.get, включая неактивных", async () => {
+    const reader = new ReadOnlyBitrixClient({ async call(method, body) {
+      expect(method).toBe("im.user.get");
+      return (body as { ID: number }).ID === 8
+        ? { name: "Иван Иванов", active: false }
+        : { first_name: "Мария", last_name: "Петрова", active: true };
+    } });
     vi.spyOn(reader, "listAllBatched").mockResolvedValue([
       raw(1, { ASSIGNED_BY_ID: "8" }), raw(2, { ASSIGNED_BY_ID: "9", CATEGORY_ID: 9, UF_CRM_ENSTRU_NAME: "Ноутбук" }),
       raw(3, { ASSIGNED_BY_ID: "8" }), raw(4), raw(5, { ASSIGNED_BY_ID: "" })
@@ -169,24 +172,43 @@ describe("монитор планов: модель", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const view = await collectPlansMonitor({ reader, ...options, userProfiles: new Map([["7", { name: "Анна" }]]) });
-      expect(users).toHaveBeenCalledExactlyOnceWith("user.get", { ID: ["8", "9"] });
+      expect(users.mock.calls).toEqual([["im.user.get", { ID: 8 }], ["im.user.get", { ID: 9 }]]);
       expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe("Иван Иванов");
       expect(view.kt!.managers[0].name).toBe("Мария Петрова");
       expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[Планы\] сделок: 5, ИП: 4, КТ: 1 \(\d+ мс\)$/));
     } finally { log.mockRestore(); }
   });
-  it.each([false, true])("при неполном ответе или ошибке user.get сохраняет профиль, конфиг и ID (ошибка=%s)", async fail => {
-    const reader = new ReadOnlyBitrixClient({ async call() {
+  it.each([false, true])("при неполном ответе или ошибке im.user.get сохраняет профиль, конфиг и ID (ошибка=%s)", async fail => {
+    const reader = new ReadOnlyBitrixClient({ async call(method, body) {
       if (fail) throw new Error("user lookup failed");
-      return { result: [{ ID: "8", NAME: "Иван" }] };
+      return (body as { ID: number }).ID === 8 ? { first_name: "Иван" } : {};
     } });
     vi.spyOn(reader, "listAllBatched").mockResolvedValue([raw(1), raw(2, { ASSIGNED_BY_ID: "8" }), raw(3, { ASSIGNED_BY_ID: "9" })]);
     const users = vi.spyOn(reader, "call");
     const view = await collectPlansMonitor({ reader, ...options, userProfiles: new Map([["7", { name: "Профиль" }]]), groups: [{ managers: [{ id: "8", name: "Конфиг" }] }] });
-    expect(users).toHaveBeenCalledExactlyOnceWith("user.get", { ID: ["8", "9"] });
+    expect(users.mock.calls).toEqual([["im.user.get", { ID: 8 }], ["im.user.get", { ID: 9 }]]);
     expect(view.ip!.managers.find(m => m.id === "7")?.name).toBe("Профиль");
     expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe(fail ? "Конфиг" : "Иван");
     expect(view.ip!.managers.find(m => m.id === "9")?.name).toBe("ID 9");
+  });
+  it("изолирует сбой одного менеджера и не выводит URL из ошибки", async () => {
+    const reader = new ReadOnlyBitrixClient({ async call(method, body) {
+      expect(method).toBe("im.user.get");
+      if ((body as { ID: number }).ID === 8) throw new Error("requires higher privileges https://crm.example/rest/1/fake-secret/");
+      return { name: "Тестовый Менеджер", active: false };
+    } });
+    vi.spyOn(reader, "listAllBatched").mockResolvedValue([
+      raw(21, { ASSIGNED_BY_ID: "8" }), raw(22, { ASSIGNED_BY_ID: "9" })
+    ]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const view = await collectPlansMonitor({ ...options, reader });
+      expect(view.error).toBeUndefined();
+      expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe("ID 8");
+      expect(view.ip!.managers.find(m => m.id === "9")?.name).toBe("Тестовый Менеджер");
+      expect(warn).toHaveBeenCalledExactlyOnceWith("[Планы] Не удалось загрузить имя менеджера ID 8 через im.user.get");
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/https:|fake-secret|requires higher privileges/);
+    } finally { warn.mockRestore(); }
   });
   it("ограничивает списки, сортирует и не меняет входные данные", () => {
     const deals = Array.from({ length: 40 }, (_, i) => normalizePlanDeal(raw(i + 1, { UF_CRM_6627AEBD7C2D2: i < 25 ? "shared" : `bin-${i}`, DATE_CREATE: i === 0 ? "2026-11-04" : "2026-10-28" }), options)!);
@@ -212,7 +234,7 @@ describe("монитор планов: модель", () => {
   it("поддерживает резервные поля, неизвестных менеджеров и изоляцию их ошибок", async () => {
     const row = raw(1, { ASSIGNED_BY_ID: "99", UF_CRM_MONTH: "", UF_CRM_1782386433277_IU_XLS: "декабрь 2027", UF_CRM_COUNT: "", UF_CRM_1713874871715: "3", UF_CRM_ENSTRU_NAME: "", UF_CRM_1713874845756: "Доска", UF_CRM_PLAN_LINK: "https://zakup.gov.kz/plan/1", UF_CRM_6627AEBD4503E: "", UF_CRM_PLAN_STATUS: "Проект договора" });
     const reader = new ReadOnlyBitrixClient({ async call(method) {
-      if (method === "user.get") throw new Error("unavailable");
+      if (method === "im.user.get") throw new Error("unavailable");
       return { result: { p0: [row] } };
     } });
     const v = await collectPlansMonitor({ ...options, reader });

@@ -140,18 +140,19 @@ export interface CollectPlansOptions extends NormalizePlanOptions {
 }
 async function enrichManagerNames(options: CollectPlansOptions, deals: NormalizedPlanDeal[], names: Map<string, string>): Promise<void> {
   const missingManagerIds = [...new Set(deals.map(d => d.managerId))].filter(id => id && !options.userProfiles?.has(id));
-  if (!missingManagerIds.length) return;
-  try {
-    const raw = await options.reader.call("user.get", { ID: missingManagerIds });
-    const users = Array.isArray(raw) ? raw : (raw as { result?: unknown[] })?.result;
-    for (const row of users || []) {
-      if (!row || typeof row !== "object") continue;
-      const user = row as Record<string, unknown>;
-      const id = text(user.ID);
-      const name = [text(user.NAME), text(user.LAST_NAME)].filter(Boolean).join(" ");
-      if (id && name) names.set(id, name);
+  for (const id of missingManagerIds) {
+    try {
+      const user = await options.reader.call("im.user.get", { ID: Number(id) }) as {
+        name?: string; first_name?: string; last_name?: string; active?: boolean;
+      } | null;
+      const name = text(user?.name) || [text(user?.first_name), text(user?.last_name)].filter(Boolean).join(" ");
+      // Неактивный сотрудник остаётся владельцем исторических планов.
+      if (name) names.set(id, name);
+    } catch {
+      // Текст ошибки транспорта может содержать URL вебхука: выводим только безопасный контекст.
+      console.warn(`[Планы] Не удалось загрузить имя менеджера ID ${id} через im.user.get`);
     }
-  } catch { /* Имя из конфига или ID сохраняется при недоступности user.get. */ }
+  }
 }
 
 export async function collectPlansMonitor(options: CollectPlansOptions): Promise<PlansMonitorView> {
