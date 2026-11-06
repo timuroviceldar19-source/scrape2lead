@@ -55,9 +55,12 @@ export function parsePlanMonth(value: string, dateCreate: string, asOfDate: stri
 function https(value: string): string {
   try { const u = new URL(value); return u.protocol === "https:" && !u.username && !u.password ? u.href : ""; } catch { return ""; }
 }
+const EDUCATION_KIT_NAME = /учебн.*комплект|комплект.*учебн/;
+
 function kind(group: "ИП" | "КТ", code: string, name: string): string {
   const n = name.toLowerCase();
   if (group === "ИП") {
+    if (code === "329959.900.000019" || (!code && EDUCATION_KIT_NAME.test(n))) return "Учебные комплекты";
     if (/^262030\.100\.000021$/.test(code) || code.startsWith("279020") || /панел/.test(n)) return "Интерактивные панели";
     if (/^262030\.100\.000043$/.test(code) || /доск/.test(n)) return "Интерактивные и спец. доски";
     if (/^262030\.100\.0000(11|13)$/.test(code)) return "Мультимедийные системы";
@@ -78,6 +81,8 @@ export interface NormalizePlanOptions {
 /** Код имеет приоритет; название используется только при отсутствии кода. */
 function productGroup(code: string, name: string): "ИП" | "КТ" | null {
   if (code) {
+    // Уточнение только для планов: конфиг и ключ истории Рынка не меняем.
+    if (code.startsWith("262030.100.") && !/^262030\.100\.0000(11|13|21|43)$/.test(code)) return null;
     const groups = loadMarketConfig().groups;
     for (const group of ["ИП", "КТ"] as const) {
       if (groups[group].prefixes.some(prefix => code.startsWith(prefix))) return group;
@@ -86,7 +91,7 @@ function productGroup(code: string, name: string): "ИП" | "КТ" | null {
   }
   const n = name.toLowerCase();
   if (/услуг|ремонт|обслуживан|аренд/.test(n)) return null;
-  if (/панел|доск|мультимедийн.*систем|учебн.*комплект/.test(n)) return "ИП";
+  if (/панел|доск|мультимедийн.*систем/.test(n) || EDUCATION_KIT_NAME.test(n)) return "ИП";
   if (/компьютер|системн.*блок|ноутбук|лэптоп|моноблок|монитор|мфу|многофункциональн|принтер/.test(n)) return "КТ";
   return null;
 }

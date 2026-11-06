@@ -45,7 +45,7 @@ describe("монитор планов: модель", () => {
       ["262030.100.000043", "ИП", "Интерактивные и спец. доски"],
       ["262030.100.000011", "ИП", "Мультимедийные системы"],
       ["262030.100.000013", "ИП", "Мультимедийные системы"],
-      ["329959.900.000019", "ИП", "Прочее ИП"]
+      ["329959.900.000019", "ИП", "Учебные комплекты"]
     ]) {
       expect(normalizePlanDeal(raw(12, { CATEGORY_ID: category, UF_CRM_REF_ENSTRU_CODE: code, UF_CRM_ENSTRU_NAME: "Товар" }), options)).toMatchObject({ group, kind: expectedKind });
     }
@@ -57,11 +57,25 @@ describe("монитор планов: модель", () => {
   it("использует все префиксы конфигурации рынка и резервное название при пустом коде", () => {
     for (const [group, config] of Object.entries(loadMarketConfig().groups)) {
       for (const prefix of config.prefixes) {
-        const code = prefix.endsWith(".") ? `${prefix}999999` : prefix;
+        const code = prefix === "262030.100." ? `${prefix}000021` : prefix.endsWith(".") ? `${prefix}999999` : prefix;
         expect(normalizePlanDeal(raw(12, { UF_CRM_REF_ENSTRU_CODE: code, UF_CRM_ENSTRU_NAME: "Товар" }), options)?.group).toBe(group);
       }
     }
     expect(normalizePlanDeal(raw(12, { UF_CRM_REF_ENSTRU_CODE: " ", UF_CRM_ENSTRU_NAME: "", TITLE: "[GZ 12] Ноутбук — Заказчик" }), options)?.group).toBe("КТ");
+  });
+  it.each(["Учебный комплект", "Комплект учебного оборудования"])("учебные комплекты без кода: %s", name => {
+    expect(normalizePlanDeal(raw(17, { UF_CRM_ENSTRU_NAME: name }), options)).toMatchObject({
+      group: "ИП", kind: "Учебные комплекты", truCode: ""
+    });
+  });
+  it.each([9, 41, 29])("исключает остальные коды семейства 262030.100. в воронке %s", category => {
+    for (const suffix of ["000001", "000012", "000014", "000022", "000042", "000044", "999999"]) {
+      for (const name of ["Транспондер", "Криптопровайдер", "Стол", "Интерактивная панель"]) {
+        expect(normalizePlanDeal(raw(18, {
+          CATEGORY_ID: category, UF_CRM_REF_ENSTRU_CODE: `262030.100.${suffix}`, UF_CRM_ENSTRU_NAME: name
+        }), options)).toBeNull();
+      }
+    }
   });
   it("считает вне групп только подходящие планы и не включает их в итоги", async () => {
     const reader = new ReadOnlyBitrixClient({ async call() { return []; } });
@@ -189,7 +203,7 @@ describe("монитор планов: модель", () => {
   it.each([
     [41, "262030.100.000021", "", "Интерактивные панели"], [41, "279020.100.000000", "", "Интерактивные панели"],
     [41, "262030.100.000043", "", "Интерактивные и спец. доски"], [41, "262030.100.000011", "", "Мультимедийные системы"],
-    [41, "262030.100.999999", "Другое", "Прочее ИП"], [9, "", "Компьютер", "Компьютеры и системные блоки"],
+    [41, "329959.900.000019", "Другое", "Учебные комплекты"], [9, "", "Компьютер", "Компьютеры и системные блоки"],
     [9, "", "Ноутбук", "Ноутбуки"], [9, "", "Моноблок", "Моноблоки"], [9, "", "Монитор", "Мониторы"],
     [9, "", "МФУ", "МФУ и принтеры"], [9, "262014.999.999999", "Другое", "Прочее КТ"]
   ])("вид товара %s %s %s", (category, code, name, expected) => {
