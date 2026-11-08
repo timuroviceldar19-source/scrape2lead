@@ -12,6 +12,11 @@ on:
           - site
           - morning
           - evening
+      market_reseed:
+        description: "Restore market history from market-seed and strictly refresh the recent window (site only)"
+        required: false
+        default: false
+        type: boolean
       market_import_education:
         description: "Add verified 2026 education kits while preserving existing market history"
         required: false
@@ -42,6 +47,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate market reseed
+        if: ${{ inputs.market_reseed == true }}
+        env:
+          MODE: ${{ inputs.mode || 'site' }}
+          MARKET_BACKFILL: ${{ inputs.market_backfill_from || '' }}
+        run: |
+          set -eu
+          if [ "$MODE" != "site" ] || [ -n "$MARKET_BACKFILL" ]; then
+            echo "::error::market_reseed requires mode=site and cannot be combined with market_backfill_from"
+            exit 1
+          fi
+
       - name: Cache register history
         uses: actions/cache@v4
         with:
@@ -66,23 +83,40 @@ jobs:
           restore-keys: |
             gz-market-v1-
 
+      - name: Reset market history
+        if: ${{ inputs.market_reseed == true }}
+        run: |
+          set -eu
+          COUNT=$(npx tsx -e 'import { loadStoredMarketUnits } from "./src/kz/market/fetchMarket.ts"; console.log(loadStoredMarketUnits().length)')
+          echo "[Рынок] Перед восстановлением: позиций в кэше $COUNT"
+          rm -f data/market/units-2026.json
+
       # Кэша рынка ещё нет: берём файл, скачанный локально (API госзакупок днём не всегда отвечает GitHub).
       # Когда кэш появится, шаг пропускается, а утренний прогон дальше обновляет последние 45 дней.
       - name: Seed market data
         if: hashFiles('data/market/units-2026.json') == ''
         env:
           GH_TOKEN: ${{ github.token }}
+          MARKET_RESEED: ${{ inputs.market_reseed }}
         run: |
           set -eu
           mkdir -p data/market
           if gh release download market-seed --pattern units-2026.json --dir data/market; then
             echo "Рынок: кэша нет, взят файл из релиза market-seed"
           else
+            if [ "$MARKET_RESEED" = "true" ]; then
+              echo "::error::Рынок: восстановление остановлено, не удалось скачать market-seed"
+              exit 1
+            fi
             echo "::warning::Рынок: кэша нет и файла market-seed нет, вкладки рынка будут пустыми"
+          fi
+          if [ "$MARKET_RESEED" = "true" ]; then
+            COUNT=$(npx tsx -e 'import { loadStoredMarketUnits } from "./src/kz/market/fetchMarket.ts"; console.log(loadStoredMarketUnits().length)')
+            echo "MARKET_SEED_COUNT=$COUNT" >> "$GITHUB_ENV"
           fi
 
       - name: Import verified education history
-        if: ${{ inputs.market_import_education == true }}
+        if: ${{ inputs.market_import_education == true || inputs.market_reseed == true }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -90,11 +124,19 @@ jobs:
           gh release download market-seed --pattern education-kits-2026.json --dir data/market --clobber
           npx tsx scripts/market-import-education.mts data/market/education-kits-2026.json
 
+      - name: Count restored education history
+        if: ${{ inputs.market_reseed == true }}
+        run: |
+          set -eu
+          COUNT=$(npx tsx -e 'import { loadStoredMarketUnits } from "./src/kz/market/fetchMarket.ts"; console.log(loadStoredMarketUnits().length)')
+          echo "MARKET_EDUCATION_COUNT=$COUNT" >> "$GITHUB_ENV"
+
       - name: Run Sales Pult
         env:
           BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
           GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
           REGISTER_HISTORY_KEY: ${{ secrets.REGISTER_HISTORY_KEY }}
+          MARKET_RESEED: ${{ inputs.market_reseed }}
           MODE: ${{ github.event.inputs.mode || 'site' }}
           MARKET_BACKFILL: ${{ github.event.inputs.market_backfill_from || '' }}
           PULT_CHAT_ENABLED: ${{ vars.PULT_CHAT_ENABLED }}
@@ -106,7 +148,11 @@ jobs:
             BACKFILL_FLAG="--market-backfill-from $MARKET_BACKFILL"
           fi
           if [ "$MODE" = "site" ]; then
-            npm run bitrix:sales-pult -- --mode site $BACKFILL_FLAG
+            RESEED_FLAGS=""
+            if [ "$MARKET_RESEED" = "true" ]; then
+              RESEED_FLAGS="--market-update --market-update-strict"
+            fi
+            npm run bitrix:sales-pult -- --mode site $BACKFILL_FLAG $RESEED_FLAGS
           else
             EXECUTE_FLAG=""
             if [ "${PULT_CHAT_ENABLED:-}" = "true" ]; then
