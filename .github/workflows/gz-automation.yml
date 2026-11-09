@@ -120,7 +120,7 @@ jobs:
       - name: Run summary
         if: always()
         continue-on-error: true
-        run: npx tsx scripts/gz-run-summary.mts '${{ inputs.runs-dir }}' >> "$GITHUB_STEP_SUMMARY"
+        run: npx tsx scripts/gz-run-summary.mts '${{ inputs.runs-dir }}' '${{ inputs.log-path }}' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save plan cache
         if: always()
