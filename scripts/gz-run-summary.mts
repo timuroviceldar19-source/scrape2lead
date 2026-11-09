@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { readManifest } from "../src/automation/core.js";
 import { findLatestManifestPath, renderRunSummary } from "../src/automation/runSummary.js";
 
@@ -5,8 +6,16 @@ import { findLatestManifestPath, renderRunSummary } from "../src/automation/runS
 // Никогда не падает: сводка — удобство, она не должна менять итог job.
 const runsDir = process.argv[2] ?? "runs";
 try {
-  const manifestPath = findLatestManifestPath(runsDir);
-  console.log(manifestPath ? renderRunSummary(readManifest(manifestPath)) : `Запуск в \`${runsDir}\` не найден: манифест не создан.\n`);
+  const logPath = process.argv[3];
+  const stateKey = `${process.env.GITHUB_RUN_ID ?? "local"}:${process.env.GITHUB_RUN_ATTEMPT ?? "1"}`;
+  const blocked = logPath && fs.existsSync(`${logPath}.portal-probe-state`)
+    && fs.readFileSync(`${logPath}.portal-probe-state`, "utf8").trim() === `${stateKey}:blocked`;
+  if (blocked) {
+    console.log("❌ портал недоступен с этой машины GitHub, прогон не начинался.\n");
+  } else {
+    const manifestPath = findLatestManifestPath(runsDir);
+    console.log(manifestPath ? renderRunSummary(readManifest(manifestPath)) : `Запуск в \`${runsDir}\` не найден: манифест не создан.\n`);
+  }
 } catch (error) {
   console.log(`Сводку запуска собрать не удалось: ${error instanceof Error ? error.message : String(error)}\n`);
 }

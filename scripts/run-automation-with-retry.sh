@@ -25,19 +25,39 @@ mkdir -p -- "$(dirname -- "$LOG")" || exit 1
 
 NETWORK_PATTERN='net::ERR_|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED|ERR_TIMED_OUT|page\.goto: Timeout|Timeout [0-9]+ms exceeded|TimeoutError|fetch failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up'
 
+cd -- "$root" || exit 1
+# Отдельно от кэша manifests; ключ не позволяет принять состояние прошлого job/повтора.
+STATE="$LOG.portal-probe-state"
+STATE_KEY="${GITHUB_RUN_ID:-local}:${GITHUB_RUN_ATTEMPT:-1}"
+started=0
+printf '%s:probing\n' "$STATE_KEY" > "$STATE" || exit 1
 attempt=1
 while :; do
-  # Смотрим только строки, появившиеся в логе за эту попытку.
-  if [ -f "$LOG" ]; then before=$(wc -l < "$LOG"); else before=0; fi
-
-  sh "$root/scripts/run-automation.sh" "$CONFIG" "$LOG"
-  code=$?
+  npx --no-install tsx "$root/scripts/gz-portal-probe.mts" >>"$LOG" 2>&1
+  probe_code=$?
+  if [ "$probe_code" -eq 75 ]; then
+    code=1
+  else
+    if [ "$probe_code" -ne 0 ]; then
+      printf 'portal probe: inconclusive (probe exit %s)\n' "$probe_code" >>"$LOG"
+    fi
+    started=1
+    printf '%s:started\n' "$STATE_KEY" > "$STATE" || exit 1
+    # Проверку не включаем в классификацию ошибки самого прогона.
+    before=$(wc -l < "$LOG")
+    sh "$root/scripts/run-automation.sh" "$CONFIG" "$LOG"
+    code=$?
+  fi
   [ "$code" -eq 0 ] && exit 0
 
-  if ! tail -n "+$((before + 1))" "$LOG" | grep -Eq "$NETWORK_PATTERN"; then
+  if [ "$probe_code" -ne 75 ] && ! tail -n "+$((before + 1))" "$LOG" | grep -Eq "$NETWORK_PATTERN"; then
     exit "$code"
   fi
   if [ "$attempt" -ge "$ATTEMPTS" ]; then
+    if [ "$started" -eq 0 ]; then
+      printf '%s:blocked\n' "$STATE_KEY" > "$STATE" || exit 1
+      printf '%s\n' 'портал недоступен с этой машины GitHub, прогон не начинался' >>"$LOG"
+    fi
     exit "$code"
   fi
 
