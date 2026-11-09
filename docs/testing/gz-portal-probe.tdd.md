@@ -88,3 +88,54 @@
 
 Это расчёт, не замер на GitHub: реальный отказ DNS может завершить проверки быстрее.
 Время запуска Node/tsx и shell добавляет небольшой накладной расход.
+
+## Ревью PR #116: TLS и сбой самой проверки (09.11.2026)
+
+Принцип: probe только экономит время. Сомнительный результат не блокирует
+прежний путь automation. Эти решения заменяют первоначальную обработку кодов
+1/2 и TLS, описанную выше; остальные решения не меняются.
+
+### RED
+
+Сначала добавлены девять вариантов TLS/certificate cause у TypeError("fetch failed"):
+UNABLE_TO_VERIFY_LEAF_SIGNATURE, UNABLE_TO_GET_ISSUER_CERT/LOCALLY,
+SELF_SIGNED_CERT_IN_CHAIN, DEPTH_ZERO_SELF_SIGNED_CERT, CERT_HAS_EXPIRED,
+CERT_NOT_YET_VALID, ERR_TLS_CERT_ALTNAME_INVALID, ERR_SSL_WRONG_VERSION_NUMBER.
+Ожидание: inconclusive, сохранён TLS-код, одна попытка, никаких пауз,
+строка не совпадает с NETWORK_PATTERN из shell-обёртки.
+
+Подставной probe в тестах обёртки переведён на код 75 для недоступности.
+Тест «does not retry an unexpected probe error» заменён на параметризованный
+«starts automation when the probe itself fails» для кодов 1 и 2.
+Добавлены сценарии: probe выводит сетевую ошибку и возвращает 1/2, затем automation
+падает по несетевой причине — только один запуск, без ошибочного сетевого повтора.
+
+Первый запуск двух файлов: **16 FAIL, 16 PASS**. Код ещё не изменялся.
+
+### GREEN
+
+- Результат модуля имеет явный status: ok / unreachable / inconclusive.
+- До общей сетевой классификации просматривается вся цепочка cause с защитой
+  от циклов. Ошибки сертификатов/TLS дают inconclusive без повторов.
+  В причине сохраняются TLS-коды, но исключается внешнее «fetch failed»;
+  при TLS-тексте без кода используется нейтральная причина.
+- CLI возвращает **75 только для unreachable**, 0 для ok/inconclusive.
+  Неожиданное исключение CLI по-прежнему даёт 2, но больше не блокирует automation.
+- В обёртке только 75 пропускает automation и участвует в ATTEMPTS/PAUSE.
+  Любой другой ненулевой код пишет «portal probe: inconclusive (probe exit N)»
+  и запускает automation обычным путём. Эта строка не совпадает с NETWORK_PATTERN.
+- Позиция before остаётся после всего вывода probe и строки inconclusive.
+  Сетевая классификация после запуска читает только вывод automation.
+- Три отказа с кодом 75 оставляют код job 1, состояние blocked и сообщение
+  «прогон не начинался». Логика сводки, Bitrix и workflow не менялась.
+
+### Проверки после правок
+
+- Целевые четыре файла: **54 PASS** (21 probe, 11 wrapper, 4 summary, 18 workflow).
+  После добавления явной проверки status=inconclusive: 21 тест probe PASS.
+- `npm test`: **1900 PASS, 10 FAIL, 25 SKIP**; 159 файлов PASS, 8 FAIL, 3 SKIP.
+  Те же ограничения окружения Chromium/Python, что в предыдущем запуске и
+  на чистой базе 274dfca. Новых падений нет, исключения/пропуски не добавлялись.
+- `npm run lint`: PASS. `npm run build`: PASS. `git diff --check`: PASS.
+- Все новые сценарии без сети; automation и probe в shell-тестах подставные.
+  Боевые workflow, Bitrix и merge не запускались. Расчёт времени отказа прежний.

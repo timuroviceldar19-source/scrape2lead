@@ -35,21 +35,22 @@ attempt=1
 while :; do
   npx --no-install tsx "$root/scripts/gz-portal-probe.mts" >>"$LOG" 2>&1
   probe_code=$?
-  if [ "$probe_code" -eq 0 ]; then
+  if [ "$probe_code" -eq 75 ]; then
+    code=1
+  else
+    if [ "$probe_code" -ne 0 ]; then
+      printf 'portal probe: inconclusive (probe exit %s)\n' "$probe_code" >>"$LOG"
+    fi
     started=1
     printf '%s:started\n' "$STATE_KEY" > "$STATE" || exit 1
     # Проверку не включаем в классификацию ошибки самого прогона.
     before=$(wc -l < "$LOG")
     sh "$root/scripts/run-automation.sh" "$CONFIG" "$LOG"
     code=$?
-  elif [ "$probe_code" -eq 1 ]; then
-    code=1
-  else
-    exit "$probe_code"
   fi
   [ "$code" -eq 0 ] && exit 0
 
-  if [ "$probe_code" -eq 0 ] && ! tail -n "+$((before + 1))" "$LOG" | grep -Eq "$NETWORK_PATTERN"; then
+  if [ "$probe_code" -ne 75 ] && ! tail -n "+$((before + 1))" "$LOG" | grep -Eq "$NETWORK_PATTERN"; then
     exit "$code"
   fi
   if [ "$attempt" -ge "$ATTEMPTS" ]; then

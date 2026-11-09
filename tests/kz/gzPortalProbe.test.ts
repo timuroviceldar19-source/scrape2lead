@@ -33,6 +33,24 @@ describe("GZ portal probe (no network)", () => {
     expect(deps.fetch).toHaveBeenCalledTimes(3);
     expect(deps.sleep.mock.calls).toEqual([[10_000], [10_000]]);
   });
+  it.each([
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    "SELF_SIGNED_CERT_IN_CHAIN", "DEPTH_ZERO_SELF_SIGNED_CERT", "CERT_HAS_EXPIRED",
+    "CERT_NOT_YET_VALID", "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_SSL_WRONG_VERSION_NUMBER"
+  ])("treats TLS/certificate failure %s as inconclusive without retries", async code => {
+    const deps = setup();
+    deps.fetch.mockRejectedValue(new TypeError("fetch failed", {
+      cause: Object.assign(new Error("certificate verification failed"), { code })
+    }));
+    const result = await probeGzPortal(deps);
+    expect(result.status).toBe("inconclusive");
+    expect(result.line).toContain("portal probe: inconclusive:");
+    expect(result.line).toContain(code);
+    expect(result.line).not.toContain("unreachable");
+    expect(result.line).not.toMatch(pattern);
+    expect(deps.fetch).toHaveBeenCalledTimes(1);
+    expect(deps.sleep).not.toHaveBeenCalled();
+  });
   it("propagates unexpected errors without retries", async () => {
     const deps = setup();
     deps.fetch.mockRejectedValue(new TypeError("invalid URL"));

@@ -13,7 +13,7 @@ const PROBE_OK = "portal probe: ok (HTTP 200, 0 s)";
 const PROBE_FAILURE = "portal probe: unreachable: fetch failed ENOTFOUND";
 
 /** Изолированный runner: оба процесса подставные, ни npm, ни сети, ни Bitrix. */
-async function run(failures: number, message: string, probeFailures = 0, oldLog = "", probeCode = 1) {
+async function run(failures: number, message: string, probeFailures = 0, oldLog = "", probeCode = 75) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "s2l-retry-sh-")); dirs.push(dir);
   const scripts = path.join(dir, "scripts"); fs.mkdirSync(scripts);
   fs.copyFileSync("scripts/run-automation-with-retry.sh", path.join(scripts, "run-automation-with-retry.sh"));
@@ -93,10 +93,23 @@ describe.skipIf(process.platform === "win32")("scheduler runner with retry (posi
     expect(result.probes).toBe(2);
     expect(result.calls).toBe(1);
   });
-  it("does not retry an unexpected probe error", async () => {
-    const result = await run(0, TIMEOUT, 99, "", 2);
-    expect(result.code).toBe(2);
+  it.each([1, 2])("starts automation when the probe itself fails (exit %i)", async probeCode => {
+    const result = await run(0, TIMEOUT, 99, "", probeCode);
+    expect(result.code).toBe(0);
     expect(result.probes).toBe(1);
-    expect(result.calls).toBe(0);
+    expect(result.calls).toBe(1);
+    expect(result.log).toContain(`portal probe: inconclusive (probe exit ${probeCode})`);
+    expect(result.state).toMatch(/:started\n$/);
+  });
+  it.each([1, 2])("does not classify automation errors using failed probe output (exit %i)", async probeCode => {
+    const result = await run(99, "TypeError: boom", 99, "", probeCode);
+    expect(result.code).toBe(1);
+    expect(result.calls).toBe(1);
+    expect(result.probes).toBe(1);
+    const inconclusive = result.log.split("\n").find(line => line.includes("inconclusive"));
+    const pattern = new RegExp(fs.readFileSync("scripts/run-automation-with-retry.sh", "utf8").match(/NETWORK_PATTERN='([^']+)'/)![1]);
+    expect(inconclusive).toBe(`portal probe: inconclusive (probe exit ${probeCode})`);
+    expect(inconclusive).not.toMatch(pattern);
+    expect(result.log).not.toContain("retry");
   });
 });
