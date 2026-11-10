@@ -348,9 +348,10 @@ describe("salesPultSite", () => {
     expect(formatMoney(0)).toBe("");
   });
 
-  it("ensures tender department section is present in template", () => {
+  it("keeps the tender department inside the team table, without a separate section", () => {
     const html = renderPultHtml(basePayload);
-    expect(html).toContain('id="tenders"');
+    expect(html).not.toContain('id="tenders"');
+    expect(html).toContain('groupRow("tenders"');
     expect(html).toContain("Тендерный отдел");
   });
 

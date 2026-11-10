@@ -153,7 +153,7 @@ describe("salesPult tabs & standalone register page rendering", () => {
 
   it("keeps TV mode limited strictly to pult scenes, excluding register and market", () => {
     const html = renderPultHtml(basePayload);
-    expect(html).toContain('const SCENES = ["month", "sales", "calls", "signals", "tenders"]');
+    expect(html).toContain('const SCENES = ["month", "sales", "calls", "signals"]');
     expect(html).toContain("body.tv .sections");
   });
 
