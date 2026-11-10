@@ -210,6 +210,24 @@
     });
   }
 
+  /* ================= «Я — …»: только моя строка и мои задачи ================= */
+  // Выбор хранится в браузере человека. В ТВ всегда показывается вся команда.
+  let me = "";
+  let showAllTeam = false;
+  try { me = localStorage.getItem("pult-me") || ""; } catch (e) {}
+  function teamPeople() {
+    const day = VIEW.periods.day;
+    const all = [...day.sales.managers, ...(day.tenders ? day.tenders.managers : [])];
+    return [...new Map(all.map((m) => [m.id, m.name])).entries()].map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  }
+  function myGroup(sp, tp) {
+    if (!me || showAllTeam || document.body.classList.contains("tv")) return "";
+    if (sp.managers.some((m) => m.id === me)) return "sales";
+    if (tp && tp.managers.some((m) => m.id === me)) return "tenders";
+    return "";
+  }
+
   /* ================= team: sales and tenders in one table ================= */
   const NA_CELL = (label) => `<div class="cell na" data-l="${label}"><span class="muted">—</span></div>`;
 
@@ -232,18 +250,30 @@
     const tp = V.periods[period].tenders;
     const tc = sp.totals.calls, tk = sp.totals.proposals, tg = sp.totals.contracts;
     const people = sp.managers.length + (tp ? tp.managers.length : 0);
+    const mine = myGroup(sp, tp);
     const callsTotal = P.callsAvailable ? groupCell("Дозвонились", tc) : `<div class="cell" data-l="Дозвонились"><span class="muted">нет доступа</span></div>`;
-    document.getElementById("sales").innerHTML = `
-      <div class="block-head"><h2><span class="idx">03</span>Команда ${sp.periodName}</h2><span class="meta">${plural(people, ["человек", "человека", "человек"])} · строка раскрывает долги и задачи</span></div>
+    const salesRows = mine === "tenders" ? [] : sp.managers.filter((m) => mine !== "sales" || m.id === me);
+    const tenderRows = !tp || mine === "sales" ? [] : tp.managers.filter((m) => mine !== "tenders" || m.id === me);
+    const el = document.getElementById("sales");
+    el.innerHTML = `
+      <div class="block-head"><h2><span class="idx">03</span>Команда ${sp.periodName}</h2><span class="meta">${mine ? "показана только ваша строка · «Я — …» в полосе периода" : `${plural(people, ["человек", "человека", "человек"])} · строка раскрывает долги и задачи`}</span></div>
       ${sp.isEarly ? `<p class="early">${sp.earlyText}</p>` : ""}
       <div class="team" role="table" aria-label="Команда: отдел продаж и тендерный отдел">
         <div class="trow head label" role="row"><span>Менеджер</span><span>Дозвонился</span><span>КП</span><span>Подписал</span><span>Долги сегодня</span><span></span></div>
-        ${groupRow("sales", sp.name, sp.meta, callsTotal + groupCell("КП", tk) + groupCell("Подписали", tg))}
-        ${sp.managers.map((m) => managerRow(m, period)).join("")}
-        ${tp ? groupRow("tenders", tp.name, tp.meta, NA_CELL("Дозвонился") + NA_CELL("КП") + groupCell("Подписали", tp.totals.contracts)) : ""}
-        ${tp ? tp.managers.map(tenderRow).join("") : ""}
-      </div>`;
-    wireRows(document.getElementById("sales"));
+        ${mine === "tenders" ? "" : groupRow("sales", sp.name, sp.meta, callsTotal + groupCell("КП", tk) + groupCell("Подписали", tg))}
+        ${salesRows.map((m) => managerRow(m, period)).join("")}
+        ${tp && mine !== "sales" ? groupRow("tenders", tp.name, tp.meta, NA_CELL("Дозвонился") + NA_CELL("КП") + groupCell("Подписали", tp.totals.contracts)) : ""}
+        ${tenderRows.map(tenderRow).join("")}
+      </div>
+      ${mine ? `<button type="button" class="btn team-all">Показать всю команду (${fmt(people)})</button>` : ""}`;
+    wireRows(el);
+    if (mine) {
+      el.querySelector(".team-all").addEventListener("click", () => {
+        showAllTeam = true;
+        renderSales(period);
+        if (el.classList.contains("in")) animate(el);
+      });
+    }
   }
 
   function tenderRow(m) {
@@ -514,6 +544,7 @@
     const el = document.getElementById("tasks");
     if (!all.length) { el.innerHTML = `<div class="block-head"><h2><span class="idx">05</span>Что сделать сегодня</h2></div><div class="mini-empty">Срочных задач нет.</div>`; return; }
     const owners = [...new Map(all.map((x) => [x.m.id, x.m])).values()];
+    if (taskFilter !== "all" && !owners.some((m) => m.id === taskFilter)) taskFilter = "all";
     const list = all.filter((x) => taskFilter === "all" || x.m.id === taskFilter)
       .sort((a, b) => (a.t.group || 9) - (b.t.group || 9) || (a.t.passedPlanMonthNote ? 1 : 0) - (b.t.passedPlanMonthNote ? 1 : 0) || (b.t.amount || 0) - (a.t.amount || 0) || String(a.t.deadline || "").localeCompare(String(b.t.deadline || "")));
     const sumAmt = list.reduce((s, x) => s + (x.t.amount || 0), 0);
@@ -845,6 +876,8 @@
     if (more) more.open = on;
     const callsMore = document.querySelector("#calls .calls-more");
     if (callsMore) callsMore.open = on || callsMoreOpen;
+    // В ТВ — вся команда, после выхода снова «Я — …».
+    renderSales(period);
     const errors = document.querySelector("#signals .outcome-mismatches");
     if (errors) errors.open = false;
     const tvBtn = document.getElementById("tvBtn");
@@ -918,6 +951,21 @@
   barsObserver.observe(document.querySelector(".bar"));
   barsObserver.observe(document.querySelector(".dateline"));
   measureBars();
+
+  const meSelect = document.getElementById("meSelect");
+  const people = teamPeople();
+  if (me && !people.some((p) => p.id === me)) me = "";
+  if (me) taskFilter = me;
+  meSelect.innerHTML = `<option value="">вся команда</option>` + people.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  meSelect.value = me;
+  meSelect.addEventListener("change", () => {
+    me = meSelect.value;
+    showAllTeam = false;
+    try { if (me) localStorage.setItem("pult-me", me); else localStorage.removeItem("pult-me"); } catch (e) {}
+    taskFilter = me || "all"; taskAll = false;
+    renderSales(period); renderTasks();
+    ["sales", "tasks"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
+  });
 
   /* ================= boot ================= */
   renderChrome(); renderSignals(); renderMonth(); renderTasks();
