@@ -87,9 +87,9 @@ describe('Д5: четыре вкладки вместо шести',()=>{
     const page=await browser.newPage({viewport:{width:375,height:900}});
     try{
       await page.setContent(renderRegisterHtml(reg));
-      expect(await navTexts(page)).toEqual(['Сегодня','Выручка','Планы','Рынок']);
+      expect(await navTexts(page)).toEqual(['Сегодня','Радар','Выручка','Планы','Рынок']);
       expect(await active(page)).toBe('Выручка');
-      expect(await page.locator('.sections a').evaluateAll(es=>es.map(e=>e.getAttribute('href')))).toEqual(['./#pult','./reg.html','./#plans-ip','./#ip']);
+      expect(await page.locator('.sections a').evaluateAll(es=>es.map(e=>e.getAttribute('href')))).toEqual(['./#pult','./#radar-ip','./reg.html','./#plans-ip','./#ip']);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     }finally{await page.close();}
   });
