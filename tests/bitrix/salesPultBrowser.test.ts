@@ -804,7 +804,7 @@ describe("salesPult in-browser Playwright test", () => {
       const el = document.querySelector(".outcome-mismatches");
       return el ? el.textContent : "";
     });
-    expect(boxText).toContain("Ошибка в CRM: 1 сделка выиграно на портале, но закрыты как проигрыш");
+    expect(boxText).toContain("Ошибка в CRM: 1 сделка выиграна на портале, но закрыта как проигрыш");
     expect(boxText).toContain("Школа №72");
     expect(boxText).toContain("от 29.09");
 

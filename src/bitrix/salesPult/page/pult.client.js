@@ -48,7 +48,7 @@
       };
       mismatchesHtml = `
         <details class="outcome-mismatches">
-          <summary class="sig s-bad"><span>Ошибка в CRM: ${plural(P.outcomeMismatches.length, ["сделка", "сделки", "сделок"])} выиграно на портале, но закрыты как проигрыш</span><span class="mismatch-toggle">список</span></summary>
+          <summary class="sig s-bad"><span>Ошибка в CRM: ${plural(P.outcomeMismatches.length, ["сделка выиграна", "сделки выиграны", "сделок выиграно"])} на портале, но ${P.outcomeMismatches.length % 10 === 1 && P.outcomeMismatches.length % 100 !== 11 ? "закрыта" : "закрыты"} как проигрыш</span><span class="mismatch-toggle">список</span></summary>
           <div class="mismatch-content">
           <div class="box-desc">
             По этим сделкам проверка портала зафиксировала действующий договор группы, но в CRM они закрыты со статусом проигрыша. Проверьте и исправьте стадию:
@@ -99,7 +99,7 @@
           <span class="label">Договоры</span>
           <div class="tile-value">${fmt(m.fact)} <span>/ ${fmt(m.plan)}</span></div>
           <div class="hbar"><span style="width:${Math.max(0, Math.min(100, m.pct))}%"></span></div>
-          <p class="tile-note">темп ${fmt1(m.pacePerDay)} в день, нужно ${fmt1(need)}</p>
+          <p class="tile-note">${P.closedMonth || m.daysLeft <= 0 ? `в среднем ${fmt1(m.pacePerDay)} в день` : `темп ${fmt1(m.pacePerDay)} в день, нужно ${fmt1(need)}`}</p>
         </div>
         <div class="month-tile">
           <span class="label">Выручка</span>

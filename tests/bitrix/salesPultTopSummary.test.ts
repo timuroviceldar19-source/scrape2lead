@@ -66,7 +66,7 @@ describe('Д4а: верх главной',()=>{
         expect(await page.locator('#signals .mismatches-box').count()).toBe(0);
         const details=page.locator('#signals .outcome-mismatches');
         expect(await details.count()).toBe(1);
-        expect(clean(await details.locator('summary').innerText())).toContain('Ошибка в CRM: 2 сделки выиграно на портале, но закрыты как проигрыш');
+        expect(clean(await details.locator('summary').innerText())).toContain('Ошибка в CRM: 2 сделки выиграны на портале, но закрыты как проигрыш');
         expect(await details.locator('summary').innerText()).toContain('список');
         expect(await details.getAttribute('open')).toBeNull();
         const meta=await page.locator('#signals .block-head .meta').innerText();
@@ -78,6 +78,15 @@ describe('Д4а: верх главной',()=>{
         expect(await details.innerText()).toContain('от 23.10');
         expect(await page.locator('#signals .block-head .meta').innerText()).toBe(meta);
         expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+        const layout=await page.evaluate(()=>{
+          const list=document.querySelector('#signals .outcome-mismatches')!.getBoundingClientRect();
+          const all=document.querySelector('#signals .signals')!.getBoundingClientRect();
+          const next=document.querySelector('#signals .signals > .sig');
+          return {ratio:list.width/all.width,listBottom:list.bottom,nextTop:next?next.getBoundingClientRect().top:null};
+        });
+        expect(layout.ratio).toBeGreaterThanOrEqual(0.95);
+        expect(layout.nextTop).not.toBeNull();
+        expect(layout.nextTop!).toBeGreaterThanOrEqual(layout.listBottom-1);
         await page.keyboard.press('t');
         expect(await details.getAttribute('open')).toBeNull();
         await details.locator('summary').evaluate(el=>(el as HTMLElement).click());
@@ -96,12 +105,21 @@ describe('Д4а: верх главной',()=>{
       expect(await page.locator('.outcome-mismatches').count()).toBe(0);
     }finally{await page.close();}
   });
+  it('uses singular wording for one outcome error',async()=>{
+    const payload=sample();payload.outcomeMismatches=payload.outcomeMismatches!.slice(0,1);
+    const page=await browser.newPage();
+    try{await page.setContent(renderPultHtml(payload));
+      expect(clean(await page.locator('#signals .outcome-mismatches summary').innerText())).toContain('Ошибка в CRM: 1 сделка выиграна на портале, но закрыта как проигрыш');
+    }finally{await page.close();}
+  });
   it('uses closed month result and monthly calls',async()=>{
     const payload=sample();payload.closedMonth=true;const v=buildPultView(payload);
     const page=await browser.newPage();
     try{await page.setContent(renderPultHtml(payload));
       expect(await page.locator('.month-tile').nth(2).innerText()).toContain(`Итог: ${v.month.pct}% плана`);
       expect(await page.locator('.month-tile').nth(2).innerText()).not.toContain('Прогноз');
+      expect(await page.locator('.month-tile').nth(0).innerText()).not.toContain('нужно');
+      expect(await page.locator('.month-tile').nth(0).innerText()).toContain('в среднем');
       expect(await page.locator('.month-tile').nth(3).textContent()).toContain('Дозвоны за месяц');
       expect(clean(await page.locator('.month-tile').nth(3).innerText())).toContain(`${num(v.periods.month.sales.totals.calls.fact)} / ${num(v.periods.month.sales.totals.calls.target)}`);
     }finally{await page.close();}

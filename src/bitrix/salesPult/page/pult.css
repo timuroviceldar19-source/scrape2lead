@@ -661,6 +661,7 @@ body.tv .plan-filters { display: none !important; }
 .month-more > summary { cursor: pointer; padding: 12px 0; font: 400 13px var(--mono); color: var(--ink-2); }
 .month-more[open] > summary { margin-bottom: 20px; }
 .month-more > summary:focus-visible, .outcome-mismatches > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.outcome-mismatches { grid-column: 1 / -1; min-width: 0; }
 .outcome-mismatches > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 6px; color: var(--bad); }
 .outcome-mismatches > summary::-webkit-details-marker { display: none; }
 .outcome-mismatches > summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
