@@ -1,3 +1,4 @@
+import { enrichManagerNames } from "./managerNames.js";
 import { ReadOnlyBitrixClient, flattenBitrixParams } from "../reporting/readOnlyClient.js";
 import type { WonLostMismatchDeal } from "./types.js";
 import {
@@ -363,7 +364,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
   if (!params.historyOnly) {
     try {
       const lostWins = await client.listAllBatched<RawDealItem>("crm.deal.list", {
-        filter: { STAGE_SEMANTIC_ID: "S", "%UF_CRM_S2L_GZ_OUTCOME": "lost:", ASSIGNED_BY_ID: params.managerIds },
+        filter: { STAGE_SEMANTIC_ID: "S", "%UF_CRM_S2L_GZ_OUTCOME": "lost:" },
         select: DEAL_SELECT_FIELDS
       });
       outcomeDealsRaw.push(...lostWins.filter(d => d.STAGE_SEMANTIC_ID === "S" && String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("lost:")));
@@ -744,6 +745,18 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     }
   }
 
+  const urgentOwners = [...deals.values()].filter(d => {
+    const outcome = d.outcome ?? "";
+    const lostInCrm = d.stageSemanticId === "F" && !/DUPLICATE|DOUBLE/i.test(d.stageId ?? "");
+    const wonInCrm = d.stageSemanticId === "S" || /(?:^|:)WON$/.test(d.stageId ?? "");
+    return (lostInCrm && /^(won|partner):/.test(outcome)) || (wonInCrm && outcome.startsWith("lost:"));
+  }).map(d => String(d.assignedById));
+  const names = new Map([...userProfiles].map(([id, profile]) => [id, profile.name]));
+  await enrichManagerNames(client, urgentOwners, names);
+  for (const id of new Set(urgentOwners)) {
+    if (!userProfiles.has(id)) userProfiles.set(id, { id, name: names.get(id)!, active: true });
+  }
+
   // 8. Identify outcome mismatches (won on portal, but stage is lost in CRM; duplicates are excluded)
   const outcomeMismatches: WonLostMismatchDeal[] = [];
   for (const d of deals.values()) {
@@ -751,7 +764,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     if ((oc.startsWith("won:") || oc.startsWith("partner:")) && d.stageSemanticId === "F") {
       const stageUpper = String(d.stageId ?? "").toUpperCase();
       if (stageUpper.includes("DUPLICATE") || stageUpper.includes("DOUBLE")) continue;
-      const mgrName = userProfiles.get(String(d.assignedById))?.name || `Менеджер ${d.assignedById}`;
+      const mgrName = userProfiles.get(String(d.assignedById))?.name || `сотрудник ID ${d.assignedById}`;
       outcomeMismatches.push({
         id: d.id,
         title: d.title,

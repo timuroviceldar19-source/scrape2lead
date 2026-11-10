@@ -189,7 +189,7 @@ describe("монитор планов: модель", () => {
     expect(users.mock.calls).toEqual([["im.user.get", { ID: 8 }], ["im.user.get", { ID: 9 }]]);
     expect(view.ip!.managers.find(m => m.id === "7")?.name).toBe("Профиль");
     expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe(fail ? "Конфиг" : "Иван");
-    expect(view.ip!.managers.find(m => m.id === "9")?.name).toBe("ID 9");
+    expect(view.ip!.managers.find(m => m.id === "9")?.name).toBe("сотрудник ID 9");
   });
   it("изолирует сбой одного менеджера и не выводит URL из ошибки", async () => {
     const reader = new ReadOnlyBitrixClient({ async call(method, body) {
@@ -204,9 +204,9 @@ describe("монитор планов: модель", () => {
     try {
       const view = await collectPlansMonitor({ ...options, reader });
       expect(view.error).toBeUndefined();
-      expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe("ID 8");
+      expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe("сотрудник ID 8");
       expect(view.ip!.managers.find(m => m.id === "9")?.name).toBe("Тестовый Менеджер");
-      expect(warn).toHaveBeenCalledExactlyOnceWith("[Планы] Не удалось загрузить имя менеджера ID 8 через im.user.get");
+      expect(warn).toHaveBeenCalledExactlyOnceWith("[Пульт] Не удалось загрузить имя сотрудника ID 8 через im.user.get");
       expect(JSON.stringify(warn.mock.calls)).not.toMatch(/https:|fake-secret|requires higher privileges/);
     } finally { warn.mockRestore(); }
   });
@@ -238,7 +238,7 @@ describe("монитор планов: модель", () => {
       return { result: { p0: [row] } };
     } });
     const v = await collectPlansMonitor({ ...options, reader });
-    expect(v.ip!.openPlans[0]).toMatchObject({ month: "2027-12", qty: 3, itemName: "Доска", method: "Не указан", outcomeCategory: "published", managerName: "ID 99", planUrl: "https://zakup.gov.kz/plan/1" });
+    expect(v.ip!.openPlans[0]).toMatchObject({ month: "2027-12", qty: 3, itemName: "Доска", method: "Не указан", outcomeCategory: "published", managerName: "сотрудник ID 99", planUrl: "https://zakup.gov.kz/plan/1" });
     expect(parsePlanMonth("02", "", "2025-11-03")).toBe("2025-02");
     expect(normalizePlanDeal(raw(1, { UF_CRM_COUNT: "0", UF_CRM_PRICE_PER_UNIT: "n/a" }), options)?.qty).toBe(0);
   });

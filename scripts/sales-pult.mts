@@ -677,7 +677,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
         if (deal && (!deal.contractDate || metric.date < deal.contractDate)) deal.contractDate = metric.date;
       }
     }
-    attachRegisterContracts(payload, registerView, collected.deals, config.register?.managerAliases);
+    attachRegisterContracts(payload, registerView, collected.deals, config.register?.managerAliases, collected.userProfiles);
     for (const closed of Object.values(payload.closedMonths)) {
       if (closed) attachRegisterContracts(closed, registerView, new Map(), config.register?.managerAliases);
     }
@@ -696,7 +696,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
       generatedAt: generatedTimeStr,
       portal: config.portal,
       pultUrl: config.pultUrl,
-      register: registerView
+      register: registerView,
+      reconciliation: payload.contractSource?.reconciliation
     };
     const regHtml = renderRegisterHtml(regPayload);
     fs.writeFileSync(path.join(outDir, "reg.html"), regHtml, "utf8");

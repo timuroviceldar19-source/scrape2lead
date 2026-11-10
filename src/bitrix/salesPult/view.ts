@@ -311,7 +311,7 @@ export function buildPultView(payload: SalesPultPayload): PultView {
   const wdLabel = `Рабочих дней прошло ${passedWd} из ${ctx.monthTotal}`;
   const monthFillPct = (ctx.monthDone / ctx.monthTotal) * 100;
 
-  const { signals, signalsUrgent, signalsMeta } = formatSignals(buildPultSignals(payload));
+  const { signals, signalsUrgent, signalsMeta } = formatSignals(buildPultSignals(payload), payload.outcomeMismatches?.length ?? 0);
 
   const sales = payload.groups.find((g) => g.id === "sales") || payload.groups[0];
   const tenders = payload.groups.find((g) => g.id === "tenders");

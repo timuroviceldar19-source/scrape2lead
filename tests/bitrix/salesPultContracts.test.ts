@@ -55,8 +55,6 @@ describe('contracts from OP', () => {
     f.payload.asOfDate='2026-10-29'; attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
     signals=buildPultView(f.payload).signals;
     expect(signals).toEqual(expect.arrayContaining([
-      expect.objectContaining({color:'gray',text:expect.stringMatching(/Борис.*Закрыто в Битриксе, нет в ОП.*проверить/)}),
-      expect.objectContaining({color:'gray',text:expect.stringMatching(/Неизвестный.*Есть в ОП, нет сделки в Битриксе/)}),
       expect.objectContaining({color:'yellow',text:expect.stringMatching(/Борис.*Сумма сделки 0/)}),
       expect.objectContaining({color:'red',text:expect.stringMatching(/Алия.*Успешна в Битриксе, а на портале договор у другого поставщика/)}),
     ]));
@@ -85,7 +83,7 @@ describe('contracts from OP', () => {
     f.payload.asOfDate='2026-10-29'; attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
     const v=buildPultView(f.payload);
     expect(v.month.awaitingRegister).toBe(2);
-    expect(v.signals.some(s=>s.text.includes('(d6)') && s.text.includes('нет в ОП'))).toBe(true);
+    expect(f.payload.contractSource?.reconciliation.closedNotInRegister.map(d=>d.dealId)).toContain('d6');
   });
   it('marks a deal for a customer already in OP under another manager as a possible duplicate', () => {
     const f=fixture([{ id:'d7', title:'Дельта', amount:200, assignedById:'s', contractDate:'2026-10-23', stageSemanticId:'S' }]);
@@ -94,9 +92,9 @@ describe('contracts from OP', () => {
     expect(v.month.awaitingRegister).toBe(1);
     const texts=v.signals.map(s=>s.text);
     expect(texts.some(t=>t.includes('(d7)') && t.includes('нет в ОП'))).toBe(false);
-    expect(v.signals).toEqual(expect.arrayContaining([
-      expect.objectContaining({color:'gray',text:expect.stringMatching(/Алия.*Возможен дубль.*\(d7\).*менеджер в ОП: Борис/)})
-    ]));
+    expect(f.payload.contractSource?.reconciliation.possibleDuplicates).toEqual([
+      {dealId:'d7',title:'Дельта',manager:'Алия Тестовая',registerManager:'Борис'}
+    ]);
   });
   it('does not call an OP contract missing in CRM when the manager has a deal for that customer', () => {
     const f=fixture([{ id:'d5', title:'Дельта Омега Тау', amount:0, assignedById:'t', stageSemanticId:'S' }]);
@@ -113,14 +111,13 @@ describe('contracts from OP', () => {
     attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
     const signals=buildPultView(f.payload).signals.map(s=>s.text);
     expect(signals.some(t=>t.includes('Есть в ОП, нет сделки в Битриксе — Дельта'))).toBe(false);
-    expect(signals.some(t=>t.includes('Есть в ОП, нет сделки в Битриксе — Эпсилон'))).toBe(true);
+    expect(signals.some(t=>t.includes('Есть в ОП, нет сделки в Битриксе — Эпсилон'))).toBe(false);
   });
-  it('lists urgent signals before quiet reconciliation notes', () => {
+  it('keeps only urgent contract signals on the main page', () => {
     const f=fixture(); f.payload.asOfDate='2026-10-29';
     attachRegisterContracts(f.payload,f.register,f.deals,f.aliases);
     const colors=buildPultView(f.payload).signals.map(s=>s.color);
-    expect(colors.indexOf('gray')).toBeGreaterThan(colors.lastIndexOf('red'));
-    expect(colors.indexOf('gray')).toBeGreaterThan(colors.lastIndexOf('yellow'));
+    expect(colors).toEqual(['red','yellow']);
   });
   it('says the new month OP file is not there yet instead of calling the register unavailable', () => {
     const f=fixture(); f.payload.asOfDate='2026-11-02';

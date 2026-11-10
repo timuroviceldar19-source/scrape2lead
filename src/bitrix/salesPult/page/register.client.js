@@ -68,7 +68,7 @@
     return { ...view, history: R.history, historyError: R.historyError };
   };
 
-  window.__renderRegisterTab = function (R, el) {
+  window.__renderRegisterTab = function (R, el, reconciliation, portal) {
     if (!el) return;
     if (!R || R.error) {
       el.innerHTML = `<section class="block"><p class="lead">${esc(R?.error || "Реестр не подключён: нет данных")}</p></section>`;
@@ -128,12 +128,23 @@
     ${R.channels.map((x) => `<div class="r"><span>${esc(x.name)} <span class="dim">${x.contracts}</span></span><div>${bar(R.channels[0]?.sale ? x.sale / R.channels[0].sale * 100 : 0, "ink")}<span class="dim">${mln(x.sale)} млн</span></div><span class="num">${x.val !== null ? mln(x.val) : "—"}</span><span class="num">${x.val !== null && x.sale ? pct(x.val / x.sale) : "—"}</span></div>`).join("")}</div></div>
   </div></section>`;
 
+  let reconciliationHtml = "";
+  if (reconciliation) {
+    const dealLink = (d) => `<a href="${esc(String(portal || "").replace(/\/+$/, "") + "/crm/deal/details/" + encodeURIComponent(d.dealId) + "/")}" target="_blank" rel="noopener">${esc(d.title)}</a>`;
+    const rows = [
+      ...reconciliation.closedNotInRegister.map(d => `<div class="mismatch-row"><div class="info">${dealLink(d)} · ${esc(d.manager)}</div><div class="meta">${esc(fmt(d.amount) + " ₸")} · ${esc(ddmm(d.date))}</div></div>`),
+      ...reconciliation.possibleDuplicates.map(d => `<div class="mismatch-row"><div class="info">${dealLink(d)} · ${esc(d.manager)}</div><div class="meta">Возможен дубль · в реестре у ${esc(d.registerManager)}</div></div>`)
+    ];
+    reconciliationHtml = `<h3>В CRM «Выигран», в реестре нет</h3><div class="reconciliation mismatches-list">${rows.length ? rows.join("") : "расхождений нет"}</div>`;
+  }
+
   // 04 Нет в CRM
   const missSum = R.missing.reduce((a, x) => a + x.sale, 0);
   s += `<section class="block reveal">${head("04", "В реестре есть, в CRM не «Выигран»", `${plural(R.missing.length, ["договор", "договора", "договоров"])} на ${money(missSum)}`)}
     <p class="lead">Эти договоры подписаны, но в Битрикс24 сделки нет или она не переведена в «Выигран». Пульт их не видит, поэтому выручка в CRM <b>на ${money(missSum)} меньше</b>, чем в реестре. Сверка по названию заказчика и сумме.</p>
     <div class="miss rows"><div class="r head"><span class="label">Дата</span><span class="label">Менеджер</span><span class="label">Заказчик</span><span class="label">Товар</span><span class="label">Сумма</span></div>
-    ${R.missing.map((x) => `<div class="r"><span class="num">${ddmm(x.date)}</span><span class="nm">${esc(x.manager)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 90))}</span><span>${esc(x.products.join(", "))}</span><span class="num">${mln(x.sale)} млн</span></div>`).join("")}</div></section>`;
+    ${R.missing.map((x) => `<div class="r"><span class="num">${ddmm(x.date)}</span><span class="nm">${esc(x.manager)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 90))}</span><span>${esc(x.products.join(", "))}</span><span class="num">${mln(x.sale)} млн</span></div>`).join("")}</div>${reconciliationHtml}</section>`;
+
 
   // 05 Все договоры
   s += `<section class="block reveal">${head("05", "Все договоры месяца", `${R.legacySummary ? "Старый кэш: подробные строки недоступны" : `${R.rows.length} строк реестра`}`)}

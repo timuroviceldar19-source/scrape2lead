@@ -58,6 +58,7 @@ const regPageClientJs = `${registerClientJs}\n${regRunnerClientJs}`;
 const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|\/\*__CLIENT_JS__\*\//g;
 
 export interface RegisterPagePayload {
+  reconciliation?: import("./contracts.js").ContractReconciliation;
   asOfDate: string;
   generatedAt: string;
   portal?: string;
