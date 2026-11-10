@@ -21,8 +21,8 @@ async function run(failures: number, message: string, probeFailures = 0, oldLog 
 n=$(cat "${dir}/calls" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "${dir}/calls"
 if [ "$n" -le ${failures} ]; then
   echo '${message}' >> "$2"
-  echo 'scheduler automation:run status=failed exit=1' >> "$2"
-  exit 1
+  echo 'scheduler automation:run status=failed exit=${extraEnv.TEST_ROBOT_EXIT ?? "1"}' >> "$2"
+  exit ${extraEnv.TEST_ROBOT_EXIT ?? "1"}
 fi
 echo 'scheduler automation:run status=pushed exit=0' >> "$2"
 `);
@@ -61,5 +61,32 @@ describe.skipIf(process.platform === "win32")("scheduler runner handoff (posix)"
     const r = await run(0, TIMEOUT, 0, "", 75, { GZ_SIMULATE_PORTAL_BLOCK: "1" });
     expect(r.code).toBe(1); expect(r.calls).toBe(0); expect(r.probes).toBe(0);
     expect(r.log.match(/portal probe: unreachable: simulated/g)).toHaveLength(3);
+  });
+  it("hands off a simulated block without invoking npx or waiting", async () => {
+    const r = await run(0, TIMEOUT, 0, "", 75, { GZ_PORTAL_HANDOFF: "1", GZ_SIMULATE_PORTAL_BLOCK: "1" });
+    expect(r.code).toBe(76); expect(r.calls).toBe(0); expect(r.probes).toBe(0);
+    expect(r.log.match(/portal probe: unreachable: simulated/g)).toHaveLength(1);
+    expect(r.log).toContain("сбор передан следующей машине");
+    expect(r.state).toMatch(/:handoff\n$/);
+  });
+  it("keys the state by run, attempt and machine number", async () => {
+    const ids = { GZ_PORTAL_HANDOFF: "1", GITHUB_RUN_ID: "777", GITHUB_RUN_ATTEMPT: "4" };
+    const machine = await run(0, TIMEOUT, 99, "", 75, { ...ids, GZ_PORTAL_MACHINE: "2" });
+    expect(machine.state).toBe("777:4:2:handoff\n");
+    // Без номера машины ключ прежний: локальный запуск и старые вызовы не меняются.
+    const plain = await run(0, TIMEOUT, 99, "", 75, { ...ids, GZ_PORTAL_MACHINE: "" });
+    expect(plain.state).toBe("777:4:handoff\n");
+  });
+  // 76 зарезервирован за передачей: шаг workflow делает такой job зелёным и запускает
+  // следующую машину. Робот с тем же кодом должен остаться обычным падением.
+  it("never reports a handoff when automation itself exits 76", async () => {
+    const r = await run(9, "TypeError: x is not a function", 0, "", 75, { GZ_PORTAL_HANDOFF: "1", TEST_ROBOT_EXIT: "76" });
+    expect(r.code).toBe(1); expect(r.calls).toBe(1); expect(r.probes).toBe(1);
+    expect(r.state).toMatch(/:started\n$/); expect(r.log).not.toContain("сбор передан");
+  });
+  it("still retries a network failure on the same machine when automation exits 76", async () => {
+    const r = await run(9, TIMEOUT, 0, "", 75, { GZ_PORTAL_HANDOFF: "1", TEST_ROBOT_EXIT: "76" });
+    expect(r.code).toBe(1); expect(r.calls).toBe(3);
+    expect(r.state).toMatch(/:started\n$/); expect(r.log).not.toContain("сбор передан");
   });
 });
