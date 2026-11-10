@@ -620,9 +620,17 @@
   const validPlanMonth = (tab, month) => window.__planMonths(plansBase(tab)).includes(month) ? month : "all";
   let currentTab = "pult";
   let preTvTab = "pult";
+  // Четыре раздела: «Сегодня», «Выручка» (страница реестра), «Планы» и «Рынок».
+  // Внутри «Планов» и «Рынка» товар (ИП или КТ) выбирается переключателем и сохраняется при переходе между ними.
+  // Адреса вкладок прежние: #ip, #kt, #plans-ip, #plans-kt.
+  let product = "ip";
+  const productSwitch = document.getElementById("productSwitch");
+  const sectionOf = tab => tab === "pult" ? "pult" : isPlansTab(tab) ? "plans" : "market";
+  const productOf = tab => tab === "kt" || tab === "plans-kt" ? "kt" : "ip";
+  const tabFor = (section, prod) => section === "plans" ? "plans-" + prod : section === "market" ? prod : "pult";
 
   function moveSecInd() {
-    const a = tabLinks.find((x) => x.dataset.t === currentTab);
+    const a = tabLinks.find((x) => x.dataset.t === sectionOf(currentTab));
     if (!a || !secInd) return;
     secInd.style.left = a.offsetLeft + 14 + "px";
     secInd.style.width = a.offsetWidth - 28 + "px";
@@ -735,8 +743,10 @@
       selectedMarketMonth[tab] = validMarketMonth(tab, marketMonth !== undefined ? marketMonth : selectedMarketMonth[tab]);
     }
     currentTab = tab;
+    if (tab !== "pult") product = productOf(tab);
     tabLinks.forEach((link) => {
-      const active = link.dataset.t === tab;
+      const active = link.dataset.t === sectionOf(tab);
+      if (link.dataset.t !== "pult") link.setAttribute("href", "#" + tabFor(link.dataset.t, product));
       link.classList.toggle("active", active);
       if (active) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
@@ -747,6 +757,10 @@
     });
     if (periodsNav) {
       periodsNav.hidden = tab !== "pult";
+    }
+    if (productSwitch) {
+      productSwitch.hidden = tab === "pult";
+      productSwitch.querySelectorAll("button[data-product]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.product === product)));
     }
     renderTabContent(tab);
     renderMarketMonths(tab);
@@ -783,8 +797,12 @@
   tabLinks.forEach((link) => {
     link.addEventListener("click", (e) => {
       e.preventDefault();
-      setTab(link.dataset.t, true);
+      setTab(tabFor(link.dataset.t, product), true);
     });
+  });
+  if (productSwitch) productSwitch.addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-product]");
+    if (button && currentTab !== "pult") setTab(tabFor(sectionOf(currentTab), button.dataset.product), true);
   });
 
   window.addEventListener("hashchange", () => {

@@ -164,7 +164,7 @@ describe("переключатель месяцев рынка в браузер
       expect(await page.locator(`#tab-${tab} .mlabels`).textContent()).not.toContain("окт · по");
       await page.locator('.sections [data-t="pult"]').click();
       expect(await page.locator("#marketMonths").isVisible()).toBe(false);
-      await page.locator(`.sections [data-t="${tab}"]`).click();
+      await page.locator('.sections [data-t="market"]').click(); await page.locator(`#productSwitch [data-product="${tab}"]`).click();
       await assertMonth(page, tab, "2026-09");
       expect(errors).toEqual([]);
     } finally { await page.close(); }

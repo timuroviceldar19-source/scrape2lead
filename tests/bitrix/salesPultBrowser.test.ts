@@ -489,7 +489,7 @@ describe("salesPult in-browser Playwright test", () => {
     expect(await page.locator("#month .big").getAttribute("data-count")).not.toBe(septemberFact);
     await page.selectOption("#monthSelect", "2026-09");
     expect(page.url()).toContain("#pult/2026-09");
-    await page.locator('.sections a[data-t="ip"]').click();
+    await page.locator('.sections [data-t="market"]').click(); await page.locator('#productSwitch [data-product="ip"]').click();
     expect(await page.locator("#periodsNav").isVisible()).toBe(false);
     expect(await page.locator("#tab-ip").textContent()).toContain("ИП");
     await page.locator('.sections a[data-t="pult"]').click();

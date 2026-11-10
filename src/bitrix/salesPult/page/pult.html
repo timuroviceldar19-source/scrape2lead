@@ -19,12 +19,10 @@
       <span class="mark-box">F3</span><span class="mark-name">Пульт продаж</span>
     </a>
     <nav class="sections" aria-label="Разделы">
-      <a href="#pult" data-t="pult">Пульт</a>
-      <a href="./reg.html">Реестр ОП</a>
-      <a href="#ip" data-t="ip">Панели и учебное оборудование</a>
-      <a href="#kt" data-t="kt">Рынок КТ</a>
-      <a href="#plans-ip" data-t="plans-ip">Планы ИП</a>
-      <a href="#plans-kt" data-t="plans-kt">Планы КТ</a>
+      <a href="#pult" data-t="pult">Сегодня</a>
+      <a href="./reg.html">Выручка</a>
+      <a href="#plans-ip" data-t="plans">Планы</a>
+      <a href="#ip" data-t="market">Рынок</a>
       <span class="ind" aria-hidden="true"></span>
     </nav>
     <div class="bar-right">
@@ -38,6 +36,10 @@
 <main class="page" id="top">
   <div class="dateline">
     <div class="date-left"><span class="label" id="dateLabel"></span><span class="label" id="wdLabel"></span><span class="label" id="srcLabel"></span></div>
+    <div class="chips product-switch" id="productSwitch" role="group" aria-label="Товар" hidden>
+      <button type="button" data-product="ip" aria-pressed="true">Панели (ИП)</button>
+      <button type="button" data-product="kt" aria-pressed="false">Техника (КТ)</button>
+    </div>
     <nav class="periods" id="periodsNav" aria-label="Период">
       <label class="month-picker">Месяц <select id="monthSelect" aria-label="Выбор месяца"></select></label>
       <button data-p="day">Сегодня<span class="kbd">1</span></button>

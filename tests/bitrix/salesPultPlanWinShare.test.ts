@@ -54,7 +54,7 @@ async function withPage(width: number, run: (page: Page) => Promise<void>, paylo
 it.each([1440, 375])("доля побед менеджеров и итога, смена месяца на обеих страницах, %s px", async width => {
   await withPage(width, async page => {
     for (const tab of ["plans-ip", "plans-kt"]) {
-      await page.locator(`[data-t="${tab}"]`).click();
+      await page.locator('.sections [data-t="plans"]').click(); await page.locator(`#productSwitch [data-product="${tab.slice(6)}"]`).click();
       await page.locator('#planMonths [data-month="2026-11"]').click();
       const pane = page.locator(`#tab-${tab}`);
       const managers = pane.locator(".share");
@@ -116,7 +116,7 @@ it("полоски доли побед имеют одинаковую шири�
   }
   await withPage(1440, async page => {
     for (const tab of ["plans-ip", "plans-kt"]) {
-      await page.locator(`[data-t="${tab}"]`).click();
+      await page.locator('.sections [data-t="plans"]').click(); await page.locator(`#productSwitch [data-product="${tab.slice(6)}"]`).click();
       const shares = page.locator(`#tab-${tab} .share .plan-win-share`);
       expect(await shares.nth(0).textContent()).toBe("9%");
       expect(await shares.nth(1).textContent()).toBe("92%");
