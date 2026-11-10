@@ -220,10 +220,13 @@
   function debtsCell(d) {
     if (!d) return `<div class="cell debts" data-l="Долги"><span class="clean">нет данных</span></div>`;
     const out = [];
-    if (d.wonOnPortalNotClosed) out.push(`<span class="bad">выиграно на портале: ${d.wonOnPortalNotClosed}</span>`);
-    if (d.overdue) out.push(`<span class="bad">${plural(d.overdue, ["дело просрочено", "дела просрочены", "дел просрочено"])}</span>`);
-    if (d.newDeals) out.push(`<span class="warn">${plural(d.newDeals, ["новая", "новые", "новых"])} без звонка</span>`);
-    if (d.readyToCloseDealIds && d.readyToCloseDealIds.length) out.push(`<span class="muted">${fmt(d.readyToCloseDealIds.length)} пора закрыть</span>`);
+    const badge = (key, cls, text) => P.closedMonth
+      ? `<span class="${cls}">${text}</span>`
+      : `<button type="button" class="debt-button ${cls}" data-debt="${key}">${text}</button>`;
+    if (d.wonOnPortalNotClosed) out.push(badge("wonOnPortalNotClosedDeals", "bad", `выиграно на портале: ${fmt(d.wonOnPortalNotClosed)}`));
+    if (d.overdue) out.push(badge("overdueList", "bad", plural(d.overdue, ["дело просрочено", "дела просрочены", "дел просрочено"])));
+    if (d.newDeals) out.push(badge("newDealsList", "warn", `${plural(d.newDeals, ["новая", "новые", "новых"])} без звонка`));
+    if (d.readyToCloseDealIds && d.readyToCloseDealIds.length) out.push(badge("readyToCloseDeals", "muted", `${fmt(d.readyToCloseDealIds.length)} пора закрыть`));
     return `<div class="cell debts" data-l="Долги">${out.length ? out.join("") : `<span class="clean">долгов нет</span>`}</div>`;
   }
 
@@ -243,25 +246,52 @@
       <div class="detail" id="${id}"><div>${managerDetail(m)}</div></div>`;
   }
 
+  function debtList(key, label, items, total) {
+    const old = key === "overdueOverMonthTasks";
+    if (!total || (old ? !items || !items.length : P.closedMonth)) return "";
+    const list = (items || []).slice(0, 50);
+    const rows = list.map((item, index) => {
+      const ct = cleanTitle(item);
+      const url = P.portal + "/crm/deal/details/" + encodeURIComponent(item.dealId) + "/";
+      let note = "";
+      if (key === "newDealsList") note = "без звонка " + plural(item.ageDays || 0, ["день", "дня", "дней"]);
+      if (key === "overdueList" || key === "overdueOverMonthTasks") note = "просрочено " + plural(item.overdueDays || 0, ["день", "дня", "дней"]);
+      if (key === "wonOnPortalNotClosedDeals" && item.portalSignDate) note = "подписан " + ddmm(item.portalSignDate);
+      return `<div class="old-task-item debt-list-item"${index >= 10 ? " hidden" : ""}><a href="${esc(url)}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || item.title || item.dealId)}</a><span class="old-task-meta">${esc(money(item.amount) || "сумма не указана")}${note ? " · " + esc(note) : ""}</span></div>`;
+    }).join("");
+    const remaining = Math.max(0, total - list.length);
+    return `<details class="debt-list${old ? " old-tasks" : ""}" data-debt-list="${key}"><summary class="old-tasks-sum">${old ? "Показать список 30+ дней" : "Показать список: " + esc(label)} (${fmt(total)})</summary><div class="old-tasks-list">${rows}</div>${list.length > 10 ? `<button type="button" class="debt-more">показать ещё ${fmt(list.length - 10)}</button>` : ""}${remaining ? `<div class="muted">и ещё ${fmt(remaining)} в Битриксе</div>` : ""}</details>`;
+  }
+
   function managerDetail(m) {
     const d = m.debts || { overdue: 0, overdueOverMonth: 0, overdueOverMonthTasks: [], newDeals: 0, newOldestAgeDays: 0, readyToCloseDealIds: [] };
-    const oldList = d.overdueOverMonthTasks && d.overdueOverMonthTasks.length ? `<details class="old-tasks" style="grid-column:1/-1"><summary class="old-tasks-sum">Показать список 30+ дней (${fmt(d.overdueOverMonthTasks.length)})</summary><div class="old-tasks-list">${d.overdueOverMonthTasks.map((ot) => { const ct = cleanTitle(ot); const url = P.portal + "/crm/deal/details/" + encodeURIComponent(ot.dealId) + "/"; return `<div class="old-task-item"><a href="${url}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || ot.title || ot.dealId)}</a><span class="old-task-meta">${plural(ot.overdueDays || 0, ["день", "дня", "дней"])} · ${money(ot.amount) || "сумма не указана"}</span></div>`; }).join("")}</div></details>` : "";
+
     const tasks = (m.topTasks || []).map((t) => taskRow(t, m, true)).join("");
     return `<div class="detail-in">
       <div class="dstats">
         ${d.wonOnPortalNotClosed ? `<div style="grid-column:1/-1"><span class="label">Выиграно на портале, не закрыто в CRM</span><span class="num bad">${fmt(d.wonOnPortalNotClosed)}</span></div>` : ""}
         <div><span class="label">Просрочено</span><span class="num ${d.overdue ? "bad" : ""}">${fmt(d.overdue)}</span></div>
         <div><span class="label">30+ дней</span><span class="num">${fmt(d.overdueOverMonth)}</span></div>
-        ${oldList}
         <div><span class="label">Без звонка</span><span class="num ${d.newDeals ? "warn" : ""}">${fmt(d.newDeals)}</span></div>
         <div><span class="label">Самой старой</span><span class="num">${d.newDeals ? fmt(d.newOldestAgeDays) + " дн." : "—"}</span></div>
         <div style="grid-column:1/-1"><span class="label">Пора закрыть</span><span class="num">${fmt(d.readyToCloseDealIds.length)}</span></div>
       </div>
-      <div>${tasks || `<div class="mini-empty">Срочных задач нет.</div>`}</div>
+      <div class="manager-urgent">${tasks || `<div class="mini-empty">Срочных задач нет.</div>`}</div>
+      ${debtList("wonOnPortalNotClosedDeals", "выиграно на портале", d.wonOnPortalNotClosedDeals, d.wonOnPortalNotClosed)}
+      ${debtList("overdueList", "просрочено", d.overdueList, d.overdue)}
+      ${debtList("newDealsList", "без звонка", d.newDealsList, d.newDeals)}
+      ${debtList("readyToCloseDeals", "пора закрыть", d.readyToCloseDeals, d.readyToCloseDealIds.length)}
+      ${debtList("overdueOverMonthTasks", "30+ дней", d.overdueOverMonthTasks, d.overdueOverMonth)}
     </div>`;
   }
 
   function wireRows(root) {
+    root.querySelectorAll(".debt-more").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.closest(".debt-list").querySelectorAll(".old-task-item[hidden]").forEach(item => { item.hidden = false; });
+        button.hidden = true;
+      });
+    });
     root.querySelectorAll(".trow.body").forEach((row) => {
       const toggle = () => {
         const open = row.getAttribute("aria-expanded") !== "true";
@@ -269,8 +299,32 @@
         const target = document.getElementById(row.getAttribute("aria-controls"));
         if (target) target.classList.toggle("open", open);
       };
-      row.addEventListener("click", (e) => { if (!e.target.closest("a")) toggle(); });
-      row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+      row.querySelectorAll("button[data-debt]").forEach((button) => {
+        button.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (row.getAttribute("aria-expanded") !== "true") toggle();
+          const target = document.getElementById(row.getAttribute("aria-controls"));
+          const list = target && target.querySelector(`details[data-debt-list="${button.dataset.debt}"]`);
+          if (list) {
+            list.open = true;
+            // Wait for the detail's grid expansion before measuring the scroll target.
+            requestAnimationFrame(() => {
+              Promise.all(target.getAnimations().map(animation => animation.finished.catch(() => {}))).then(() => {
+                if (row.getAttribute("aria-expanded") === "true" && list.open) {
+                  const headerBottom = document.querySelector(".dateline")?.getBoundingClientRect().bottom || 0;
+                  list.style.scrollMarginTop = Math.max(0, headerBottom) + 8 + "px";
+                  list.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+                }
+              });
+            });
+          }
+        });
+      });
+      row.addEventListener("click", (e) => { if (!e.target.closest("a, button")) toggle(); });
+      row.addEventListener("keydown", (e) => {
+        if (e.target.closest("a, button")) return;
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+      });
     });
   }
 

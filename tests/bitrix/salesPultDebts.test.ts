@@ -482,3 +482,47 @@ describe("passed plan month uses the year the deal was created in", () => {
     expect(top[0].passedPlanMonthNote).toBe("план на март прошёл");
   });
 });
+
+
+describe("debt drill-down lists (synthetic data)", () => {
+  it("keeps one new deal with the oldest activity age and one passed deal", () => {
+    const { debts } = buildManagerDebts([
+      todo({ id: "fresh", dealId: "example-new", created: "2026-10-27T10:00:00+05:00", deadline: "2026-10-27T10:00:00+05:00" }),
+      todo({ id: "old", dealId: "example-new", created: "2026-10-21T10:00:00+05:00", deadline: "2026-10-21T10:00:00+05:00", planNumber: "9000001" }),
+      todo({ id: "passed-1", dealId: "example-passed", outcome: "lost:example" }),
+      todo({ id: "passed-2", dealId: "example-passed", outcome: "lost:example" })
+    ], context);
+    expect(debts.newDealsList).toEqual([expect.objectContaining({ dealId: "example-new", ageDays: 5, planNumber: "9000001" })]);
+    expect(debts.readyToCloseDeals).toHaveLength(1);
+    expect(debts).toMatchObject({ newDeals: 1, newStaleDeals: 1, newOldestAgeDays: 5, overdue: 0, overdueOverMonth: 0, overdueOngoing: 0, readyToCloseDealIds: ["example-passed"], wonOnPortalNotClosed: 0 });
+  });
+
+  it("sorts passed by amount, new by age, and all overdue activities by days including 30+", () => {
+    const { debts } = buildManagerDebts([
+      todo({ id: "p-low", amount: 100, outcome: "lost:example" }),
+      todo({ id: "p-high", amount: 900, outcome: "lost:example" }),
+      todo({ id: "n-young", created: "2026-10-27T10:00:00+05:00", deadline: "2026-10-27T10:00:00+05:00", amount: 900 }),
+      todo({ id: "n-old", created: "2026-10-21T10:00:00+05:00", deadline: "2026-10-21T10:00:00+05:00", amount: 100 }),
+      todo({ id: "o-young", dealId: "same-overdue", deadline: "2026-10-27T10:00:00+05:00", amount: 900 }),
+      todo({ id: "o-old", dealId: "same-overdue", deadline: "2026-09-01T10:00:00+05:00", amount: 100 })
+    ], context);
+    expect(debts.readyToCloseDeals?.map(d => d.dealId)).toEqual(["deal-p-high", "deal-p-low"]);
+    expect(debts.newDealsList?.map(d => d.dealId)).toEqual(["deal-n-old", "deal-n-young"]);
+    expect(debts.overdueList?.map(d => d.overdueDays)).toEqual([57, 1]);
+    expect(debts.overdueList?.map(d => d.dealId)).toEqual(["same-overdue", "same-overdue"]);
+    expect(debts).toMatchObject({ overdue: 2, overdueOverMonth: 1, newDeals: 2, readyToCloseDealIds: ["deal-p-low", "deal-p-high"] });
+  });
+
+  it.each(["passed", "new", "overdue"] as const)("caps %s at 50 after sorting while counting all 60", (kind) => {
+    const candidates = Array.from({ length: 60 }, (_, i) => todo({
+      id: `example-${i}`, amount: i,
+      ...(kind === "passed" ? { outcome: "lost:example" } : {}),
+      ...(kind === "new" ? { created: "2026-10-21T10:00:00+05:00", deadline: "2026-10-21T10:00:00+05:00" } : {})
+    }));
+    const { debts } = buildManagerDebts(candidates, context);
+    const list = kind === "passed" ? debts.readyToCloseDeals : kind === "new" ? debts.newDealsList : debts.overdueList;
+    expect(list).toHaveLength(50);
+    expect(kind === "passed" ? debts.readyToCloseDealIds.length : kind === "new" ? debts.newDeals : debts.overdue).toBe(60);
+    if (kind === "passed") expect(list?.[0].amount).toBe(59);
+  });
+});

@@ -452,6 +452,9 @@ describe("collectPultData portal won contracts and mismatches", () => {
 
     const debts = data.debtsByManager.get("147");
     expect(debts?.wonOnPortalNotClosed).toBe(1);
+    expect(debts?.wonOnPortalNotClosedDeals).toEqual([
+      expect.objectContaining({ dealId: "501", title: "[GZ 1001] Школа 1 - Ноутбуки", amount: 10000000, portalSignDate: "2026-10-14" })
+    ]);
 
     expect(data.outcomeMismatches).toHaveLength(1);
     expect(data.outcomeMismatches[0]).toMatchObject({
@@ -583,5 +586,32 @@ describe("collectPultData outcomes, planMonth, and contactedAfterDeadline via ba
     const t904 = top.find((t) => t.dealId === "904");
     expect(t904?.contactedAfterDeadlineNote).toBeNull();
     expect(t904?.lastComment).toBe("Старый коммент до дедлайна");
+  });
+});
+
+describe("portal debt lists with synthetic deals", () => {
+  it("sorts won and partner by amount, caps at 50, counts 60 and excludes S/F", async () => {
+    const rows = Array.from({ length: 60 }, (_, i) => ({
+      ID: `9900${i}`, TITLE: `Выдуманная сделка ${i}`, OPPORTUNITY: String(i),
+      ASSIGNED_BY_ID: "990", CATEGORY_ID: "9", STAGE_ID: "C9:NEW", STAGE_SEMANTIC_ID: "P",
+      UF_CRM_PLAN_ID: `9000${i}`, UF_CRM_S2L_GZ_OUTCOME: `${i % 2 ? "partner" : "won"}:example`
+    }));
+    const closed = ["S", "F"].map(stage => ({ ...rows[0], ID: `closed-${stage}`, STAGE_SEMANTIC_ID: stage, OPPORTUNITY: "9999" }));
+    const call = vi.fn(async (method: string, body: any) => {
+      if (method !== "batch") return [];
+      const result: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(body.cmd ?? {})) {
+        const command = decodeURIComponent(String(value));
+        result[key] = command.startsWith("crm.deal.list") && (command.includes("won:") || command.includes("partner:"))
+          ? [...rows, ...closed].filter(d => d.UF_CRM_S2L_GZ_OUTCOME.startsWith(command.includes("partner:") ? "partner:" : "won:")) : [];
+      }
+      return { result, result_error: {} };
+    });
+    const data = await collectPultData({ client: new ReadOnlyBitrixClient({ call }), fromDate: "2026-10-01", toDate: "2026-10-29", managerIds: ["990"], proposalStages: [], contractStages: [], nowIso: "2026-10-29T12:00:00+05:00" });
+    const debts = data.debtsByManager.get("990");
+    expect(debts?.wonOnPortalNotClosed).toBe(60);
+    expect(debts?.wonOnPortalNotClosedDeals).toHaveLength(50);
+    expect(debts?.wonOnPortalNotClosedDeals?.map(d => d.amount)).toEqual(Array.from({ length: 50 }, (_, i) => 59 - i));
+    expect(debts?.wonOnPortalNotClosedDeals?.[0]).toMatchObject({ dealId: "990059", title: "Выдуманная сделка 59", planNumber: "900059" });
   });
 });

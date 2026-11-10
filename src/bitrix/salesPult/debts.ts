@@ -98,7 +98,27 @@ export interface OverdueOverMonthTask {
   planNumber?: string | null;
 }
 
+/** Display-only lists are capped independently of the complete debt counters. */
+export const DEBT_LIST_LIMIT = 50;
+
+export interface DebtDeal {
+  dealId: string;
+  title: string;
+  amount: number;
+  planNumber?: string | null;
+}
+
+export interface ReadyToCloseDeal extends DebtDeal { kind: "passed" }
+export interface NewDebtDeal extends DebtDeal { ageDays: number }
+export interface OverdueDebtTask extends DebtDeal { overdueDays: number }
+export interface PortalWonDebtDeal extends DebtDeal { portalSignDate?: string | null }
+
 export interface ManagerDebts {
+  /** Optional for older payloads; collectors always populate these display lists. */
+  readyToCloseDeals?: ReadyToCloseDeal[];
+  newDealsList?: NewDebtDeal[];
+  overdueList?: OverdueDebtTask[];
+  wonOnPortalNotClosedDeals?: PortalWonDebtDeal[];
   /** Overdue activities (all ages), excluding new and passed. */
   overdue: number;
   /** Subset of `overdue` older than the month threshold. */
@@ -136,6 +156,10 @@ export interface DebtContext {
 }
 
 export const EMPTY_DEBTS: ManagerDebts = {
+  readyToCloseDeals: [],
+  newDealsList: [],
+  overdueList: [],
+  wonOnPortalNotClosedDeals: [],
   overdue: 0,
   overdueOverMonth: 0,
   overdueOverMonthTasks: [],
@@ -357,7 +381,38 @@ export function summarizeDebts(classified: readonly ClassifiedTodo[], context: D
   const newTodos = classified.filter((item) => item.kind === "new");
   const dealIds = (items: readonly ClassifiedTodo[]) => [...new Set(items.map((item) => item.candidate.dealId))];
 
+  // Select the oldest new activity before deduplicating by deal. Counters below
+  // deliberately keep using the complete classified input, as before.
+  const uniqueDeals = (items: readonly ClassifiedTodo[]) => {
+    const seen = new Set<string>();
+    return items.filter(item => {
+      if (seen.has(item.candidate.dealId)) return false;
+      seen.add(item.candidate.dealId);
+      return true;
+    });
+  };
+  const dealFields = ({ candidate }: ClassifiedTodo): DebtDeal => ({
+    dealId: candidate.dealId,
+    title: candidate.title,
+    amount: candidate.amount,
+    planNumber: candidate.planNumber ?? null
+  });
+  const readyToCloseDeals = uniqueDeals(classified.filter(item => item.kind === "passed"))
+    .sort((a, b) => b.candidate.amount - a.candidate.amount)
+    .slice(0, DEBT_LIST_LIMIT)
+    .map(item => ({ ...dealFields(item), kind: "passed" as const }));
+  const newDealsList = uniqueDeals([...newTodos].sort((a, b) => b.ageDays - a.ageDays))
+    .slice(0, DEBT_LIST_LIMIT)
+    .map(item => ({ ...dealFields(item), ageDays: Math.floor(item.ageDays) }));
+  const overdueList = [...overdue].sort((a, b) => b.overdueDays - a.overdueDays)
+    .slice(0, DEBT_LIST_LIMIT)
+    .map(item => ({ ...dealFields(item), overdueDays: item.overdueDays }));
+
   return {
+    readyToCloseDeals,
+    newDealsList,
+    overdueList,
+    wonOnPortalNotClosedDeals: [],
     overdue: overdue.length,
     overdueOverMonth: overMonthItems.length,
     overdueOverMonthTasks,

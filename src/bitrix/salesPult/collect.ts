@@ -12,6 +12,7 @@ import {
 import {
   CONTACTED_AFTER_DEADLINE_NOTE,
   EMPTY_DEBTS,
+  DEBT_LIST_LIMIT,
   buildManagerDebts,
   formatResponsibleNote,
   isExcludedProvider,
@@ -766,15 +767,19 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
 
   // 9. Update debts.wonOnPortalNotClosed for each manager
   for (const mId of managerIds) {
-    const debts = debtsByManager.get(mId) || { ...EMPTY_DEBTS };
+    const debts = { ...(debtsByManager.get(mId) || EMPTY_DEBTS) };
     const wonNotClosed = Array.from(deals.values()).filter((d) => {
       if (String(d.assignedById) !== String(mId)) return false;
       const oc = String(d.outcome ?? "");
       const isWon = oc.startsWith("won:") || oc.startsWith("partner:");
       if (!isWon) return false;
       return d.stageSemanticId !== "S" && d.stageSemanticId !== "F";
-    }).length;
-    debts.wonOnPortalNotClosed = wonNotClosed;
+    });
+    debts.wonOnPortalNotClosed = wonNotClosed.length;
+    debts.wonOnPortalNotClosedDeals = wonNotClosed
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, DEBT_LIST_LIMIT)
+      .map(d => ({ dealId: d.id, title: d.title, amount: d.amount, planNumber: d.planNumber ?? null, portalSignDate: d.portalSignDate }));
     debtsByManager.set(mId, debts);
   }
 
