@@ -4,6 +4,8 @@
   const fmt = n => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(n || 0);
   const mln = n => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format((n || 0) / 1e6);
   const money = n => `${mln(n)} млн ₸`;
+  const WIN_SHARE_MIN_DECIDED = 10;
+  const winShare = (won, lost) => won + lost > 0 ? Math.round(won / (won + lost) * 100) : 0;
   const validMonth = m => typeof m === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(m);
   const monthName = m => m === "all" ? "все месяцы" : new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${m}-01T00:00:00Z`));
   window.__planMonths = group => group ? ["all", ...[...new Set((group.months || []).map(m => m.m).filter(validMonth))].sort()] : [];
@@ -109,7 +111,12 @@
     const total = V.total;
     const title = key === "plans-ip" || key === "ИП" ? "интерактивных панелей" : "компьютерной техники";
     const metric = (label, amount, count, cls = "") => `<div class="${cls}"><span class="label">${label}</span><div class="v">${money(amount)}<small> · ${fmt(count)} шт.</small></div></div>`;
-    const managerCells = (m, i) => `<span class="rk">${i + 1}</span><span class="nm"><span>${esc(m.name)}</span></span>${bar(m.sum, V.managers[0]?.sum)}<span class="num">${money(m.sum)}</span><span class="num">${fmt(m.count)} / ${fmt(m.openCount)} / <b class="${m.newCount ? "bad" : ""}">${fmt(m.newCount)}</b></span>`;
+    const decided = total.wonCount + total.lostCount;
+    const totalWinShare = `<div class="plan-win-total"><span class="label">Доля побед</span><div class="v">${decided < WIN_SHARE_MIN_DECIDED ? "мало итогов" : `${fmt(winShare(total.wonCount, total.lostCount))}%`}<small>${decided < WIN_SHARE_MIN_DECIDED || total.wonSum + total.lostSum === 0 ? "" : `по сумме ${fmt(winShare(total.wonSum, total.lostSum))}% · `}из ${fmt(decided)} с итогом</small></div></div>`;
+    const managerCells = (m, i) => {
+      const share = winShare(m.wonCount, m.lostCount);
+      return `<span class="rk">${fmt(i + 1)}</span><span class="nm"><span>${esc(m.name)}</span></span><span class="plan-win-share" data-l="доля побед">${m.wonCount + m.lostCount < WIN_SHARE_MIN_DECIDED ? "мало итогов" : `<span class="hbar"><span style="width:${esc(share)}%"></span></span><span>${fmt(share)}%</span>`}</span><span class="plan-win-counts"><span class="plan-win-desktop">${fmt(m.wonCount)} / ${fmt(m.lostCount)}</span><span class="plan-win-mobile">выиграл ${fmt(m.wonCount)} · проиграл ${fmt(m.lostCount)}</span></span><span class="num">${money(m.sum)}</span><span class="num">${fmt(m.count)} / ${fmt(m.openCount)} / <b class="${m.newCount ? "bad" : ""}">${fmt(m.newCount)}</b></span>`;
+    };
     const maxMonth = Math.max(1, ...base.months.map(m => m.sum));
     const monthAttrs = m => `data-m="${esc(m.m)}" role="button" tabindex="0" aria-label="${esc(monthName(m.m))}" aria-current="${m.m === active}"`;
     el.innerHTML = `
@@ -120,10 +127,11 @@
           <div class="hero-num"><span class="big">${mln(total.sum)}</span><span class="of">млн ₸</span></div>
           <p data-plan-count="${total.count}">${fmt(total.count)} пунктов · ${fmt(total.customers)} заказчиков</p>
           <div class="readout">${metric("В работе", total.openSum, total.openCount)}${metric('Ждут разбора (стадия «Новая»)', total.newSum, total.newCount, total.newCount ? "bad" : "")}${metric("Опубликовано / Договор", total.publishedSum, total.publishedCount)}</div>
-          <div class="readout plans-outcomes">${metric("Забрали мы (F3 + партнёр)", total.wonSum, total.wonCount)}${metric("Ушло конкурентам", total.lostSum, total.lostCount)}${metric("Отменено / изменено", total.cancelledSum, total.cancelledCount)}${metric("Новые за 7 дней", total.createdLast7dSum, total.createdLast7dCount)}</div>
+          <div class="readout plans-outcomes">${metric("Забрали мы (F3 + партнёр)", total.wonSum, total.wonCount)}${metric("Ушло конкурентам", total.lostSum, total.lostCount)}${totalWinShare}${metric("Отменено / изменено", total.cancelledSum, total.cancelledCount)}${metric("Новые за 7 дней", total.createdLast7dSum, total.createdLast7dCount)}</div>
         </div><div class="share rows"><h3>По менеджерам</h3>
-          <div class="r head"><span>Место</span><span>Менеджер</span><span>Объём планов</span><span>Сумма</span><span>Шт. / В работе / Новых</span></div>
+          <div class="r head"><span>Место</span><span>Менеджер</span><span>Доля побед</span><span>Выиграл / Проиграл</span><span>Сумма</span><span>Шт. / В работе / Новых</span></div>
           ${V.managers.map((m, i) => m.planList.length ? `<details class="cust-d"><summary class="r">${managerCells(m, i)}</summary>${list(m.planList)}</details>` : `<div class="r">${managerCells(m, i)}</div>`).join("") || '<p class="muted">Планов нет</p>'}
+          <p class="note-src">Доля побед — выигранные (F3 и партнёр) из закупок с известным итогом; показывается от 10 итогов</p>
         </div></div>
       </section>
       <section class="block plans-months">${head("02", "По планируемым месяцам", "Тёмная часть: в работе + выигранные нами")}
