@@ -276,12 +276,12 @@
         <div><span class="label">Самой старой</span><span class="num">${d.newDeals ? fmt(d.newOldestAgeDays) + " дн." : "—"}</span></div>
         <div style="grid-column:1/-1"><span class="label">Пора закрыть</span><span class="num">${fmt(d.readyToCloseDealIds.length)}</span></div>
       </div>
+      <div class="manager-urgent">${tasks || `<div class="mini-empty">Срочных задач нет.</div>`}</div>
       ${debtList("wonOnPortalNotClosedDeals", "выиграно на портале", d.wonOnPortalNotClosedDeals, d.wonOnPortalNotClosed)}
       ${debtList("overdueList", "просрочено", d.overdueList, d.overdue)}
       ${debtList("newDealsList", "без звонка", d.newDealsList, d.newDeals)}
       ${debtList("readyToCloseDeals", "пора закрыть", d.readyToCloseDeals, d.readyToCloseDealIds.length)}
       ${debtList("overdueOverMonthTasks", "30+ дней", d.overdueOverMonthTasks, d.overdueOverMonth)}
-      <div class="manager-urgent">${tasks || `<div class="mini-empty">Срочных задач нет.</div>`}</div>
     </div>`;
   }
 
@@ -311,6 +311,8 @@
             requestAnimationFrame(() => {
               Promise.all(target.getAnimations().map(animation => animation.finished.catch(() => {}))).then(() => {
                 if (row.getAttribute("aria-expanded") === "true" && list.open) {
+                  const headerBottom = document.querySelector(".dateline")?.getBoundingClientRect().bottom || 0;
+                  list.style.scrollMarginTop = Math.max(0, headerBottom) + 8 + "px";
                   list.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
                 }
               });

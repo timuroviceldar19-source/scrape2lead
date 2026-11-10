@@ -375,7 +375,29 @@ describe("salesPult in-browser Playwright test", () => {
       expect(layout.inStats).toBe(false);
       expect(layout.scrolls).toBe(0);
       expect(await list.locator(".old-task-link").first().evaluate(el => getComputedStyle(el).wordBreak)).toBe("normal");
-      expect((await list.locator(".old-task-meta").first().boundingBox())!.width).toBeCloseTo(200, 0);
+      expect((await list.locator(".old-task-meta").first().boundingBox())!.width).toBeCloseTo(240, 0);
+    }
+    await page.close();
+  });
+
+  it("keeps urgent tasks beside counters and closed lists compact at 1440 px", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+    await page.goto(pathToFileURL(debtLayoutPath).href);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    await row.locator(".who").click();
+    const detail = page.locator("#" + await row.getAttribute("aria-controls"));
+    const stats = (await detail.locator(".dstats").boundingBox())!;
+    const urgent = (await detail.locator(".manager-urgent").boundingBox())!;
+    expect(urgent.y).toBeCloseTo(stats.y, 0);
+    expect(urgent.x).toBeGreaterThan(stats.x + stats.width);
+    const lists = await detail.locator("details").all();
+    const first = (await lists[0].boundingBox())!;
+    expect(first.y - Math.max(stats.y + stats.height, urgent.y + urgent.height)).toBeGreaterThanOrEqual(20);
+    for (let i = 1; i < lists.length; i++) {
+      const prev = (await lists[i - 1].boundingBox())!;
+      const next = (await lists[i].boundingBox())!;
+      expect(next.y - prev.y - prev.height).toBeGreaterThanOrEqual(8);
+      expect(next.y - prev.y - prev.height).toBeLessThanOrEqual(12);
     }
     await page.close();
   });
@@ -416,6 +438,13 @@ describe("salesPult in-browser Playwright test", () => {
     await row.getByRole("button", { name: /пора закрыть/ }).click();
     await page.waitForFunction(() => !!(window as any).debtScroll, undefined, { timeout: 2000 });
     expect(await page.evaluate(() => (window as any).debtScroll)).toMatchObject({ block: "nearest", behavior: reducedMotion === "reduce" ? "instant" : "smooth" });
+    await page.waitForFunction(() => {
+      const summary = document.querySelector('#sales details[data-debt-list="readyToCloseDeals"][open] > summary');
+      const header = document.querySelector(".dateline");
+      if (!summary || !header) return false;
+      const box = summary.getBoundingClientRect();
+      return box.top >= header.getBoundingClientRect().bottom && box.top < innerHeight;
+    }, undefined, { timeout: 2000 });
     await page.close();
   });
 

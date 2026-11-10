@@ -186,7 +186,9 @@ section.block { border-top: 1px solid var(--rule-3); margin-top: 56px; padding-t
 .debt-button::before { content: ""; width: 5px; height: 5px; flex: none; background: currentColor; }
 .debt-button:hover { text-decoration: underline; }
 .debt-button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
-.debt-list, .manager-urgent { grid-column: 1 / -1; min-width: 0; }
+.debt-list { grid-column: 1 / -1; min-width: 0; }
+.manager-urgent { min-width: 0; }
+.manager-urgent + .debt-list { margin-top: 30px; }
 .debt-list [hidden] { display: none; }
 .debt-more { margin: 12px 0; padding: 6px 10px; font: inherit; cursor: pointer; }
 body.tv .debt-button { pointer-events: none; }
@@ -197,7 +199,7 @@ body.tv .debt-button { pointer-events: none; }
 .detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .5s var(--ease); background: var(--sheet); }
 .detail.open { grid-template-rows: 1fr; border-bottom: 1px solid var(--rule-2); }
 .detail > div { overflow: hidden; }
-.detail-in { padding: 6px 12px 24px 62px; display: grid; grid-template-columns: 300px 1fr; gap: 40px; }
+.detail-in { padding: 6px 12px 24px 62px; display: grid; grid-template-columns: 300px 1fr; gap: 10px 40px; }
 .old-tasks, .debt-list { background: var(--sheet); padding: 10px 12px; font-size: 12px; }
 .old-tasks-sum { cursor: pointer; font: 500 11px var(--mono); color: var(--ink-2); letter-spacing: .04em; text-transform: uppercase; user-select: none; }
 .old-tasks-sum:hover { color: var(--ink); }
@@ -207,7 +209,7 @@ body.tv .debt-button { pointer-events: none; }
 .old-task-link { font-weight: 500; font-size: 12px; color: var(--ink); text-decoration: none; line-height: 1.35; word-break: normal; overflow-wrap: normal; }
 .old-task-link:hover { text-decoration: underline; }
 .old-task-meta { font: 400 11px var(--mono); color: var(--ink-3); }
-.debt-list-item { display: grid; grid-template-columns: minmax(0, 1fr) 200px; align-items: baseline; gap: 16px; }
+.debt-list-item { display: grid; grid-template-columns: minmax(0, 1fr) 240px; align-items: baseline; gap: 16px; }
 .debt-list-item .old-task-meta { text-align: right; }
 .debt-list-item .old-task-link { min-width: 0; }
 @media (max-width: 600px) {
@@ -317,7 +319,9 @@ body.tv .tv-cycle { display: block; }
   .trow .who { grid-column: 1 / -1; }
   .trow .chev { position: absolute; right: 4px; top: 22px; }
   .cell[data-l]::before { content: attr(data-l); display: block; font: 500 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
-  .detail-in { grid-template-columns: 1fr; padding: 4px 4px 22px; gap: 20px; }
+  .detail-in { grid-template-columns: 1fr; padding: 4px 4px 22px; gap: 10px; }
+  .manager-urgent { margin-top: 10px; }
+  .manager-urgent + .debt-list { margin-top: 10px; }
   .callstrip { grid-template-columns: 1fr 1fr; }
   .callstrip > div, .callstrip > div + div { padding: 14px 0; border-left: 0; }
   .callstrip > div:nth-child(even) { padding-left: 14px; border-left: 1px solid var(--rule); }
