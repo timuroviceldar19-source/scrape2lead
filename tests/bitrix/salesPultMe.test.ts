@@ -42,10 +42,9 @@ describe('Д7: «Я — …» на «Сегодня»',()=>{
         expect(await names(page)).toEqual(['Алия Тестовая','Борис Тестовый']);
         await select.selectOption('s');
         expect(await names(page)).toEqual(['Алия Тестовая']);
-        // Строка не раскрывается сама: задачи показывает блок 05, долги и списки открываются по нажатию.
+        // Персональный режим 2.0: строка выбранного сотрудника автоматически раскрывается.
         const row=bodyRows(page).first();
-        expect(await row.getAttribute('aria-expanded')).toBe('false');
-        await row.click();
+        expect(await row.getAttribute('aria-expanded')).toBe('true');
         expect(await page.locator(`#${await row.getAttribute('aria-controls')}`).getAttribute('class')).toContain('open');
         expect(await page.locator('#sales .trow.group:visible').count()).toBe(1);
         expect(await page.locator('#sales .team-all').isVisible()).toBe(true);

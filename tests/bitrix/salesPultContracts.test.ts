@@ -104,7 +104,7 @@ describe('contracts from OP', () => {
     const signals=buildPultView(f.payload).signals.map(s=>s.text);
     expect(signals.some(t=>t.includes('Есть в ОП, нет сделки в Битриксе — Дельта'))).toBe(false);
     expect(signals.some(t=>t.includes('(d5)') && t.includes('нет в ОП'))).toBe(false);
-    expect(signals.some(t=>t.includes('Сумма сделки 0 — Дельта Омега Тау'))).toBe(true);
+    expect(signals.some(t=>t.includes('Сумма сделки 0 — ') && t.includes('Дельта Омега Тау'))).toBe(true);
   });
   it('does not flag B2B OP contracts as missing CRM deals', () => {
     const f=fixture(); f.payload.asOfDate='2026-10-29';

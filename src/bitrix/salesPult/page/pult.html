@@ -26,6 +26,7 @@
       <span class="ind" aria-hidden="true"></span>
     </nav>
     <div class="bar-right">
+      <button class="btn search-btn" id="searchBtn" type="button" title="Поиск (/ или ⌘K)">Поиск <span class="kbd">/</span></button>
       <div class="scenes" id="scenes" aria-hidden="true"></div>
       <div class="live" id="live"><i></i><span id="liveText"></span></div>
       <button class="btn tvb" id="tvBtn" title="Клавиша T">ТВ</button>
@@ -72,6 +73,16 @@
   </footer>
 </main>
 <div class="tv-cycle" aria-hidden="true"><span id="tvCycle"></span></div>
+
+<dialog id="searchModal" class="search-modal" aria-label="Быстрый поиск">
+  <div class="search-modal-box">
+    <div class="search-input-wrap">
+      <input type="search" id="quickSearchInput" class="search-input" placeholder="Поиск по сделкам, планам, заказчикам, БИН…" autocomplete="off" spellcheck="false">
+      <span class="search-hint"><kbd>Esc</kbd></span>
+    </div>
+    <div id="searchResults" class="search-results" role="listbox" aria-label="Результаты поиска"></div>
+  </div>
+</dialog>
 
 <script>
 const PAYLOAD = __PAYLOAD__;
