@@ -18,6 +18,7 @@ describe("salesPult in-browser Playwright test", () => {
   let tempDir: string;
   let indexPath: string;
   let regPath: string;
+  let debtLayoutPath: string;
 
   beforeAll(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pult-browser-test-"));
@@ -279,6 +280,23 @@ describe("salesPult in-browser Playwright test", () => {
       m.rollups.month.contracts.totalAmount = 700;
     }));
     basePayload.closedMonths = { "2026-09": closed, "2026-08": null };
+    debtLayoutPath = path.join(tempDir, "debt-layout.html");
+    const layoutPayload = structuredClone(basePayload);
+    const layoutDebts = layoutPayload.groups[0].managers[0].debts!;
+    const examples = Array.from({ length: 26 }, (_, i) => ({
+      dealId: `9990${i}`, title: `Выдуманная образовательная организация номер ${i + 1} — поставка оборудования для учебных кабинетов`, amount: 100000 + i
+    }));
+    layoutDebts.readyToCloseDealIds = examples.map(d => d.dealId);
+    layoutDebts.readyToCloseDeals = examples.map(d => ({ ...d, kind: "passed" }));
+    layoutDebts.newDeals = 26;
+    layoutDebts.newDealsList = examples.map(d => ({ ...d, ageDays: 8 }));
+    layoutDebts.overdue = 26;
+    layoutDebts.overdueList = examples.map(d => ({ ...d, overdueDays: 42 }));
+    layoutDebts.wonOnPortalNotClosed = 26;
+    layoutDebts.wonOnPortalNotClosedDeals = examples.map(d => ({ ...d, portalSignDate: "2026-10-30" }));
+    layoutDebts.overdueOverMonth = 26;
+    layoutDebts.overdueOverMonthTasks = examples.map(d => ({ ...d, overdueDays: 42, deadline: "2026-09-01" }));
+    fs.writeFileSync(debtLayoutPath, renderPultHtml(layoutPayload), "utf8");
     fs.writeFileSync(indexPath, renderPultHtml(basePayload), "utf8");
     fs.writeFileSync(regPath, renderRegisterHtml(regPayload), "utf8");
 
@@ -334,6 +352,70 @@ describe("salesPult in-browser Playwright test", () => {
       expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
       if (key === "newDealsList") expect(await list.textContent()).toContain("и ещё 59 в Битриксе");
     }
+    await page.close();
+  });
+
+  it("uses the full manager detail width for all five lists without nested scrolling at 1440 px", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+    await page.goto(pathToFileURL(debtLayoutPath).href);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    await row.locator(".who").click();
+    const detail = page.locator("#" + await row.getAttribute("aria-controls"));
+    const lists = detail.locator("details");
+    expect(await lists.count()).toBe(5);
+    for (const list of await lists.all()) {
+      await list.locator("summary").click();
+      const layout = await list.evaluate(el => ({
+        width: el.getBoundingClientRect().width,
+        detailWidth: el.closest(".detail-in")!.getBoundingClientRect().width,
+        inStats: !!el.closest(".dstats"),
+        scrolls: [el, ...el.querySelectorAll("*")].filter(node => /^(auto|scroll)$/.test(getComputedStyle(node).overflowY)).length
+      }));
+      expect(layout.width).toBeGreaterThanOrEqual(layout.detailWidth * 0.7);
+      expect(layout.inStats).toBe(false);
+      expect(layout.scrolls).toBe(0);
+      expect(await list.locator(".old-task-link").first().evaluate(el => getComputedStyle(el).wordBreak)).toBe("normal");
+      expect((await list.locator(".old-task-meta").first().boundingBox())!.width).toBeCloseTo(200, 0);
+    }
+    await page.close();
+  });
+
+  it("shows ten of 26 rows on mobile, then expands the other sixteen in every debt list", async () => {
+    const page = await browser.newPage({ viewport: { width: 375, height: 812 }, reducedMotion: "reduce" });
+    await page.goto(pathToFileURL(debtLayoutPath).href);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    await row.locator(".who").click();
+    const detail = page.locator("#" + await row.getAttribute("aria-controls"));
+    for (const list of await detail.locator("details").all()) {
+      await list.locator("summary").click();
+      expect(await list.locator(".old-task-item:visible").count()).toBe(10);
+      const more = list.getByRole("button", { name: "показать ещё 16", exact: true });
+      expect(await more.isVisible()).toBe(true);
+      const title = (await list.locator(".old-task-link").first().boundingBox())!;
+      const meta = (await list.locator(".old-task-meta").first().boundingBox())!;
+      expect(meta.y).toBeGreaterThanOrEqual(title.y + title.height);
+      await more.click();
+      expect(await list.locator(".old-task-item:visible").count()).toBe(26);
+      expect(await more.isVisible()).toBe(false);
+      expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
+    await page.close();
+  });
+
+  it.each(["reduce", "no-preference"] as const)("scrolls the selected list into view with reduced motion %s", async (reducedMotion) => {
+    const page = await browser.newPage({ viewport: { width: 375, height: 812 }, reducedMotion });
+    await page.addInitScript(() => {
+      const original = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = function(options) {
+        if (this.matches("details[data-debt-list]")) (window as any).debtScroll = options;
+        original.call(this, options);
+      };
+    });
+    await page.goto(pathToFileURL(debtLayoutPath).href);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    await row.getByRole("button", { name: /пора закрыть/ }).click();
+    await page.waitForFunction(() => !!(window as any).debtScroll, undefined, { timeout: 2000 });
+    expect(await page.evaluate(() => (window as any).debtScroll)).toMatchObject({ block: "nearest", behavior: reducedMotion === "reduce" ? "instant" : "smooth" });
     await page.close();
   });
 

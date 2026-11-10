@@ -247,44 +247,51 @@
   }
 
   function debtList(key, label, items, total) {
-    if (P.closedMonth || !total) return "";
-    const list = items || [];
-    const rows = list.map((item) => {
+    const old = key === "overdueOverMonthTasks";
+    if (!total || (old ? !items || !items.length : P.closedMonth)) return "";
+    const list = (items || []).slice(0, 50);
+    const rows = list.map((item, index) => {
       const ct = cleanTitle(item);
       const url = P.portal + "/crm/deal/details/" + encodeURIComponent(item.dealId) + "/";
       let note = "";
       if (key === "newDealsList") note = "без звонка " + plural(item.ageDays || 0, ["день", "дня", "дней"]);
-      if (key === "overdueList") note = "просрочено " + plural(item.overdueDays || 0, ["день", "дня", "дней"]);
+      if (key === "overdueList" || key === "overdueOverMonthTasks") note = "просрочено " + plural(item.overdueDays || 0, ["день", "дня", "дней"]);
       if (key === "wonOnPortalNotClosedDeals" && item.portalSignDate) note = "подписан " + ddmm(item.portalSignDate);
-      return `<div class="old-task-item debt-list-item"><a href="${esc(url)}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || item.title || item.dealId)}</a><span class="old-task-meta">${esc(money(item.amount) || "сумма не указана")}${note ? " · " + esc(note) : ""}</span></div>`;
+      return `<div class="old-task-item debt-list-item"${index >= 10 ? " hidden" : ""}><a href="${esc(url)}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || item.title || item.dealId)}</a><span class="old-task-meta">${esc(money(item.amount) || "сумма не указана")}${note ? " · " + esc(note) : ""}</span></div>`;
     }).join("");
     const remaining = Math.max(0, total - list.length);
-    return `<details class="debt-list" data-debt-list="${key}"><summary class="old-tasks-sum">Показать список: ${esc(label)} (${fmt(total)})</summary><div class="old-tasks-list">${rows}${remaining ? `<div class="muted">и ещё ${fmt(remaining)} в Битриксе</div>` : ""}</div></details>`;
+    return `<details class="debt-list${old ? " old-tasks" : ""}" data-debt-list="${key}"><summary class="old-tasks-sum">${old ? "Показать список 30+ дней" : "Показать список: " + esc(label)} (${fmt(total)})</summary><div class="old-tasks-list">${rows}</div>${list.length > 10 ? `<button type="button" class="debt-more">показать ещё ${fmt(list.length - 10)}</button>` : ""}${remaining ? `<div class="muted">и ещё ${fmt(remaining)} в Битриксе</div>` : ""}</details>`;
   }
 
   function managerDetail(m) {
     const d = m.debts || { overdue: 0, overdueOverMonth: 0, overdueOverMonthTasks: [], newDeals: 0, newOldestAgeDays: 0, readyToCloseDealIds: [] };
-    const oldList = d.overdueOverMonthTasks && d.overdueOverMonthTasks.length ? `<details class="old-tasks" style="grid-column:1/-1"><summary class="old-tasks-sum">Показать список 30+ дней (${fmt(d.overdueOverMonthTasks.length)})</summary><div class="old-tasks-list">${d.overdueOverMonthTasks.map((ot) => { const ct = cleanTitle(ot); const url = P.portal + "/crm/deal/details/" + encodeURIComponent(ot.dealId) + "/"; return `<div class="old-task-item"><a href="${url}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || ot.title || ot.dealId)}</a><span class="old-task-meta">${plural(ot.overdueDays || 0, ["день", "дня", "дней"])} · ${money(ot.amount) || "сумма не указана"}</span></div>`; }).join("")}</div></details>` : "";
+
     const tasks = (m.topTasks || []).map((t) => taskRow(t, m, true)).join("");
     return `<div class="detail-in">
       <div class="dstats">
         ${d.wonOnPortalNotClosed ? `<div style="grid-column:1/-1"><span class="label">Выиграно на портале, не закрыто в CRM</span><span class="num bad">${fmt(d.wonOnPortalNotClosed)}</span></div>` : ""}
-        ${debtList("wonOnPortalNotClosedDeals", "выиграно на портале", d.wonOnPortalNotClosedDeals, d.wonOnPortalNotClosed)}
         <div><span class="label">Просрочено</span><span class="num ${d.overdue ? "bad" : ""}">${fmt(d.overdue)}</span></div>
-        ${debtList("overdueList", "просрочено", d.overdueList, d.overdue)}
         <div><span class="label">30+ дней</span><span class="num">${fmt(d.overdueOverMonth)}</span></div>
-        ${oldList}
         <div><span class="label">Без звонка</span><span class="num ${d.newDeals ? "warn" : ""}">${fmt(d.newDeals)}</span></div>
         <div><span class="label">Самой старой</span><span class="num">${d.newDeals ? fmt(d.newOldestAgeDays) + " дн." : "—"}</span></div>
-        ${debtList("newDealsList", "без звонка", d.newDealsList, d.newDeals)}
         <div style="grid-column:1/-1"><span class="label">Пора закрыть</span><span class="num">${fmt(d.readyToCloseDealIds.length)}</span></div>
-        ${debtList("readyToCloseDeals", "пора закрыть", d.readyToCloseDeals, d.readyToCloseDealIds.length)}
       </div>
-      <div>${tasks || `<div class="mini-empty">Срочных задач нет.</div>`}</div>
+      ${debtList("wonOnPortalNotClosedDeals", "выиграно на портале", d.wonOnPortalNotClosedDeals, d.wonOnPortalNotClosed)}
+      ${debtList("overdueList", "просрочено", d.overdueList, d.overdue)}
+      ${debtList("newDealsList", "без звонка", d.newDealsList, d.newDeals)}
+      ${debtList("readyToCloseDeals", "пора закрыть", d.readyToCloseDeals, d.readyToCloseDealIds.length)}
+      ${debtList("overdueOverMonthTasks", "30+ дней", d.overdueOverMonthTasks, d.overdueOverMonth)}
+      <div class="manager-urgent">${tasks || `<div class="mini-empty">Срочных задач нет.</div>`}</div>
     </div>`;
   }
 
   function wireRows(root) {
+    root.querySelectorAll(".debt-more").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.closest(".debt-list").querySelectorAll(".old-task-item[hidden]").forEach(item => { item.hidden = false; });
+        button.hidden = true;
+      });
+    });
     root.querySelectorAll(".trow.body").forEach((row) => {
       const toggle = () => {
         const open = row.getAttribute("aria-expanded") !== "true";
@@ -298,7 +305,17 @@
           if (row.getAttribute("aria-expanded") !== "true") toggle();
           const target = document.getElementById(row.getAttribute("aria-controls"));
           const list = target && target.querySelector(`details[data-debt-list="${button.dataset.debt}"]`);
-          if (list) list.open = true;
+          if (list) {
+            list.open = true;
+            // Wait for the detail's grid expansion before measuring the scroll target.
+            requestAnimationFrame(() => {
+              Promise.all(target.getAnimations().map(animation => animation.finished.catch(() => {}))).then(() => {
+                if (row.getAttribute("aria-expanded") === "true" && list.open) {
+                  list.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+                }
+              });
+            });
+          }
         });
       });
       row.addEventListener("click", (e) => { if (!e.target.closest("a, button")) toggle(); });
