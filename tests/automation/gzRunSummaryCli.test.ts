@@ -16,7 +16,7 @@ function fixture() {
     manifestPath,
     state: (value: string) => fs.writeFileSync(`${log}.portal-probe-state`, value),
     key,
-    summary: () => execFileSync(process.execPath, ["--import", "tsx", "scripts/gz-run-summary.mts", dir, log], { encoding: "utf8" })
+    summary: (env: Record<string, string> = {}) => execFileSync(process.execPath, ["--import", "tsx", "scripts/gz-run-summary.mts", dir, log], { encoding: "utf8", env: { ...process.env, ...env } })
   };
 }
 it("reports a blocked probe instead of a cached manifest", () => {
@@ -45,4 +45,11 @@ it("reports handoff instead of a cached manifest and ignores foreign handoff", (
   expect(f.summary()).not.toContain("OLD-CACHED");
   f.state("other-job:99:handoff\n");
   expect(f.summary()).toContain("OLD-CACHED");
+});
+
+it("matches the handoff marker only for its own machine", () => {
+  const f = fixture(); f.state(`${f.key}:2:handoff\n`);
+  expect(f.summary({ GZ_PORTAL_MACHINE: "2" })).toContain("сбор передан следующей машине");
+  expect(f.summary({ GZ_PORTAL_MACHINE: "3" })).toContain("OLD-CACHED");
+  expect(f.summary({ GZ_PORTAL_MACHINE: "" })).toContain("OLD-CACHED");
 });
