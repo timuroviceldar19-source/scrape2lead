@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  LOT_EXISTING_DEAL_FIELDS,
   evaluateLotDealUpdate,
   updateLotComments,
   type ExistingLotDeal,
@@ -158,5 +159,9 @@ describe("evaluateLotDealUpdate", () => {
     const result = evaluateLotDealUpdate(wonDeal, SAMPLE_ROW, BID_WINDOW, "50");
     expect(result.action).toBe("existing");
     expect(result.updateFields).toBeNull();
+  });
+
+  it("includes ORIGIN_ID in LOT_EXISTING_DEAL_FIELDS for syncOpenLotDeals", () => {
+    expect(LOT_EXISTING_DEAL_FIELDS).toContain("ORIGIN_ID");
   });
 });

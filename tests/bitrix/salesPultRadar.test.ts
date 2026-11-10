@@ -135,6 +135,35 @@ describe("Radar data parsing", () => {
     expect(card).not.toBeNull();
     expect(card?.column).toBe("secondChance");
   });
+
+  it("excludes open lot deals whose bid deadline has already expired", () => {
+    const raw: RadarRawDeal = {
+      ID: "4304",
+      TITLE: "GZ 88881111-ЗЦП1 — Интерактивная панель 75",
+      STAGE_ID: "C43:NEW",
+      STAGE_SEMANTIC_ID: "P",
+      CLOSED: "N",
+      ASSIGNED_BY_ID: "2301",
+      BEGINDATE: "2026-11-01",
+      CLOSEDATE: "2026-11-05",
+      OPPORTUNITY: "5000000",
+      ORIGIN_ID: "gz-lot:88881111-ЗЦП1",
+      COMMENTS: "GZ лот: 88881111-ЗЦП1\nПриём заявок: 2026-11-01 10:00 — 2026-11-05 18:00 (время Алматы)\nСтатус: Опубликован (прием заявок)",
+      UF_CRM_6627AEBD4503E: "ЗЦП",
+      UF_CRM_6627AEBD54B8D: "Интерактивная панель 75",
+      UF_CRM_6627AEBD67FFF: "5",
+      UF_CRM_6627AEBD72587: "КГУ «Школа»",
+      UF_CRM_6627AEBD85B4D: "Опубликован (прием заявок)"
+    };
+
+    const card = parseRadarLotDeal(raw, {
+      asOfDate: AS_OF_DATE,
+      asOfTime: AS_OF_TIME,
+      portal: "https://f3.bitrix24.kz"
+    });
+
+    expect(card).toBeNull();
+  });
 });
 
 describe("buildRadarView and Deduplication", () => {

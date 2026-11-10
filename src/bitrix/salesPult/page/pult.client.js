@@ -1189,6 +1189,7 @@
     try { if (me) localStorage.setItem("pult-me", me); else localStorage.removeItem("pult-me"); } catch (e) {}
     taskFilter = me || "all"; taskAll = false;
     renderMonth(); renderSignals(); renderSales(period); renderTasks();
+    if (isRadarTab(currentTab) || isPlansTab(currentTab)) renderTabContent(currentTab);
     ["month", "signals", "sales", "tasks"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
   });
 

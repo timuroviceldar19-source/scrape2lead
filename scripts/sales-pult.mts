@@ -624,6 +624,25 @@ export async function runSalesPult(args: string[]): Promise<void> {
       todayAlmaty
     });
 
+    let planDealsForRadar: import("../src/bitrix/salesPult/plans/types.js").NormalizedPlanDeal[] = [];
+    const plansView = await collectPlansMonitor({
+      reader,
+      asOfDate: todayAlmaty,
+      portal: config.portal,
+      userProfiles: collected.userProfiles,
+      groups: config.groups,
+      onDeals: (deals) => { planDealsForRadar = deals; }
+    });
+    const radarView = await collectRadarView({
+      reader,
+      asOfDate: todayAlmaty,
+      asOfTime: nowIso,
+      portal: config.portal,
+      userProfiles: collected.userProfiles,
+      groups: config.groups,
+      planDeals: planDealsForRadar
+    });
+
     const payload: SalesPultPayload = {
       asOfDate: todayAlmaty,
       generatedAt: generatedTimeStr,
@@ -637,8 +656,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
       dynamics,
       holidays: config.holidays,
       market: marketView,
-      plans: await collectPlansMonitor({ reader, asOfDate: todayAlmaty, portal: config.portal, userProfiles: collected.userProfiles, groups: config.groups }),
-      radar: await collectRadarView({ reader, asOfDate: todayAlmaty, portal: config.portal, userProfiles: collected.userProfiles, groups: config.groups }),
+      plans: plansView,
+      radar: radarView,
       outcomeMismatches: collected.outcomeMismatches
     };
 

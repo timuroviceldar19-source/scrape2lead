@@ -360,15 +360,21 @@ class BitrixClient {
     const all: T[] = [];
     let start = 0;
     while (true) {
-      const res = await this.call(method, { ...params, start }) as { result?: T[]; total?: number; next?: number } | T[];
-      const items = Array.isArray(res) ? res : ((res as { result?: T[] })?.result ?? []);
+      const response = await fetch(`${this.baseUrl}/${method}.json`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...params, start })
+      });
+      const payload = await response.json() as { result?: T[]; next?: number; error?: string; error_description?: string };
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error_description || payload.error || `HTTP ${response.status}`);
+      }
+      const items = Array.isArray(payload.result) ? payload.result : [];
       all.push(...items);
-      const next = (res as { next?: number })?.next;
-      if (!next || items.length === 0) break;
-      start = next;
+      if (!payload.next || items.length === 0) break;
+      start = payload.next;
     }
     return all;
-  }
   }
 
   async findCompanyByBin(bin: string): Promise<string | null> {

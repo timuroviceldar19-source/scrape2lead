@@ -182,6 +182,8 @@ export function parseRadarLotDeal(raw: RadarRawDeal, options: ParseRadarDealOpti
     column = "secondChance";
   } else if (!isOpen) {
     return null; // Closed won/lost deals don't stay on active radar
+  } else if (hoursLeft !== null && hoursLeft <= 0) {
+    return null; // Expired bid window is no longer active for submission/discussion
   } else if (/прием заявок|прием ценовых|дополнение заявок|ожидание проведения аукциона/i.test(statusLower)) {
     column = "submitToday";
   } else if (/опубликован|изменена документация|предварительное обсуждение/i.test(statusLower)) {

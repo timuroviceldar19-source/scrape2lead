@@ -11,6 +11,7 @@ export const LOT_CATEGORY_ID = 43;
 
 export const LOT_EXISTING_DEAL_FIELDS = [
   "ID",
+  "ORIGIN_ID",
   "COMPANY_ID",
   "STAGE_SEMANTIC_ID",
   "CLOSED",
