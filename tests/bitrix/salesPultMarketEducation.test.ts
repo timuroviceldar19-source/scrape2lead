@@ -25,7 +25,7 @@ describe("понятные суммы рынка и учебные компле�
     const page = await browser.newPage({ viewport: { width, height: 1000 } });
     try {
       await page.setContent(renderPultHtml(p));
-      await page.locator('[data-t="ip"]').click();
+      await page.locator('.sections [data-t="market"]').click(); await page.locator('#productSwitch [data-product="ip"]').click();
       const text = await page.locator("#tab-ip").innerText();
       expect(text).toContain("учебного оборудования");
       expect(text).toContain("Учебные комплекты с подтверждённой панелью, сумма комплектов целиком: 2,0 млн ₸");
@@ -47,7 +47,7 @@ describe("понятные суммы рынка и учебные компле�
       expect(await page.locator('#tab-ip .education-pending a').getAttribute('href')).toContain('/73');
       await page.locator('#marketMonths [data-month="2026-11"]').click();
       expect(await page.locator('#tab-ip .education-pending').count()).toBe(0);
-      await page.locator('[data-t="kt"]').click();
+      await page.locator('.sections [data-t="market"]').click(); await page.locator('#productSwitch [data-product="kt"]').click();
       expect(await page.locator('#tab-kt .education-pending').count()).toBe(0);
       expect(await page.locator('#tab-kt').innerText()).not.toContain('подтверждённой панелью');
     } finally { await page.close(); }

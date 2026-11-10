@@ -78,14 +78,15 @@ describe("salesPult tabs & standalone register page rendering", () => {
     ]
   };
 
-  it("renders header sections navigation with link to reg.html and tabs for pult, ip, kt", () => {
+  it("renders four header sections: today, revenue page, plans and market with a product switch", () => {
     const html = renderPultHtml(basePayload);
 
     expect(html).toContain('nav class="sections" aria-label="Разделы"');
     expect(html).toContain('href="#pult" data-t="pult"');
     expect(html).toContain('href="./reg.html"');
-    expect(html).toContain('href="#ip" data-t="ip"');
-    expect(html).toContain('href="#kt" data-t="kt"');
+    expect(html).toContain('href="#plans-ip" data-t="plans"');
+    expect(html).toContain('href="#ip" data-t="market"');
+    expect(html).toContain('id="productSwitch"');
 
     // Pult page has only pult, ip, kt containers, NO tab-reg container
     expect(html).toContain('id="tab-pult"');
@@ -132,8 +133,8 @@ describe("salesPult tabs & standalone register page rendering", () => {
     expect(regHtml).toContain('id="tab-reg"');
     // Navigation back to pult
     expect(regHtml).toContain('href="./#pult"');
+    expect(regHtml).toContain('href="./#plans-ip"');
     expect(regHtml).toContain('href="./#ip"');
-    expect(regHtml).toContain('href="./#kt"');
     // Footer notice
     expect(regHtml).toContain("Только для руководства · отдельная страница, на ТВ не выводится");
 

@@ -677,3 +677,8 @@ body.tv .outcome-mismatches .mismatch-toggle, body.tv .outcome-mismatches .misma
   .trow .cell.na { display: none; }
   .trow.group { padding: 18px 4px 14px; }
 }
+
+/* ---------- four sections: product switch for «Планы» and «Рынок» ---------- */
+.product-switch { margin-bottom: 0; align-self: center; }
+.product-switch button { font-size: 13px; padding: 6px 12px; }
+body.tv #productSwitch { display: none !important; }

@@ -193,12 +193,12 @@ it.each([1440, 390])("правки ревью: фильтры рядом, пам
     expect(await pane.locator('[data-plan-filter="managerId"][data-value="7"]').getAttribute("aria-pressed")).toBe("true");
     expect(await pane.locator('[data-plan-sort="qty"]').getAttribute("data-direction")).toBe("desc");
     for (const [key, value] of Object.entries(selectedFilters)) expect(await pane.locator(`[data-plan-filter="${key}"][data-value="${value}"]`).getAttribute("aria-pressed")).toBe("true");
-    await page.locator('.sections [data-t="plans-kt"]').click();
+    await page.locator('.sections [data-t="plans"]').click(); await page.locator('#productSwitch [data-product="kt"]').click();
     expect(await page.locator('#tab-plans-kt [data-plan-filter="managerId"][data-value=""]').getAttribute("aria-pressed")).toBe("true");
     await page.locator('#tab-plans-kt [data-plan-filter="managerId"][data-value="8"]').click();
     await page.reload();
     expect(await page.locator('#tab-plans-kt [data-plan-filter="managerId"][data-value="8"]').getAttribute("aria-pressed")).toBe("true");
-    await page.locator('.sections [data-t="plans-ip"]').click();
+    await page.locator('.sections [data-t="plans"]').click(); await page.locator('#productSwitch [data-product="ip"]').click();
     expect(await pane.locator('[data-plan-filter="managerId"][data-value="7"]').getAttribute("aria-pressed")).toBe("true");
 
     for (const key of Object.keys(selectedFilters)) await pane.locator(`[data-plan-filter="${key}"][data-value=""]`).click();

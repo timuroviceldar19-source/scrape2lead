@@ -283,7 +283,7 @@ describe("монитор планов: Chromium", () => {
       await page.locator('#tab-plans-ip .months .col[data-m="2026-12"]').focus();
       await page.keyboard.press("Space");
       await check("plans-ip", "all", 6);
-      await page.locator('.sections [data-t="plans-kt"]').click();
+      await page.locator('.sections [data-t="plans"]').click(); await page.locator('#productSwitch [data-product="kt"]').click();
       await check("plans-kt", "all", 1);
       await page.evaluate(() => { location.hash = "#plans-kt/2026-11"; });
       await check("plans-kt", "2026-11", 1);
