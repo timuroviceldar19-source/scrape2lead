@@ -14,6 +14,12 @@ on:
     - cron: "20 4 * * *"
     - cron: "20 5 * * *"
   workflow_dispatch:
+    inputs:
+      simulate_portal_block:
+        description: Имитация недоступности на первых машинах (без сети)
+        type: choice
+        options: ['0', '1', '2', '3']
+        default: '0'
 
 jobs:
   guard:
@@ -64,6 +70,7 @@ jobs:
       config: config/automation.json
       runs-dir: runs
       log-path: runs/scheduler.log
+      simulate-portal-block: ${{ fromJSON(inputs.simulate_portal_block || '0') }}
       cache-scope: main
     secrets:
       BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}

@@ -38,3 +38,11 @@ it("still exits zero on broken state or corrupt manifest", () => {
   fs.writeFileSync(f.manifestPath, "invalid JSON");
   expect(f.summary()).toContain("Сводку запуска собрать не удалось");
 });
+
+it("reports handoff instead of a cached manifest and ignores foreign handoff", () => {
+  const f = fixture(); f.state(`${f.key}:handoff\n`);
+  expect(f.summary()).toContain("сбор передан следующей машине");
+  expect(f.summary()).not.toContain("OLD-CACHED");
+  f.state("other-job:99:handoff\n");
+  expect(f.summary()).toContain("OLD-CACHED");
+});
