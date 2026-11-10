@@ -142,19 +142,26 @@ export function attachRegisterContracts(
   }
 
   if (payload.closedMonth) return;
+  const portal = (payload.portal || "").replace(/\/+$/, "");
+  const linkDeal = (id: string, title: string) => {
+    const label = `${escapeHtml(title)} (${escapeHtml(id)})`;
+    if (!portal) return label;
+    const href = `${escapeHtml(portal)}/crm/deal/details/${encodeURIComponent(id)}/`;
+    return `<a href="${href}" target="_blank" rel="noopener">${label}</a>`;
+  };
   for (const deal of deals.values()) {
     const manager = managers.find(m => m.id === deal.assignedById)?.name ?? ownerNames.get(deal.assignedById)?.name ?? `сотрудник ID ${deal.assignedById}`;
     if (crmIds.has(deal.id) && deal.amount === 0) {
       source.signals.push({
         color: "yellow",
-        text: `<b>${escapeHtml(manager)}</b>: Сумма сделки 0 — ${escapeHtml(deal.title)} (${escapeHtml(deal.id)})`
+        text: `<b>${escapeHtml(manager)}</b>: Сумма сделки 0 — ${linkDeal(deal.id, deal.title)}`
       });
     }
     const wonInCrm = deal.stageSemanticId === "S" || /(?:^|:)WON$/.test(deal.stageId ?? "");
     if (wonInCrm && deal.outcome?.startsWith("lost:")) {
       source.signals.push({
         color: "red",
-        text: `<b>${escapeHtml(manager)}</b>: Успешна в Битриксе, а на портале договор у другого поставщика — ${escapeHtml(deal.title)} (${escapeHtml(deal.id)})`
+        text: `<b>${escapeHtml(manager)}</b>: Успешна в Битриксе, а на портале договор у другого поставщика — ${linkDeal(deal.id, deal.title)}`
       });
     }
   }

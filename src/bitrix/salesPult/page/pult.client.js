@@ -34,28 +34,44 @@
   const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
   const ddmm = (iso) => { if (!iso) return "—"; const parts = String(iso).slice(0, 10).split("-"); return parts.length === 3 ? `${parts[2]}.${parts[1]}` : iso; };
 
+  const dealUrl = (id) => {
+    const base = String(P.portal || "").replace(/\/+$/, "");
+    return (base ? base : "") + "/crm/deal/details/" + encodeURIComponent(id) + "/";
+  };
+
+  function copyToClipboard(text, btn) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+    const original = btn.textContent;
+    btn.textContent = "Скопировано ✓";
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.disabled = false;
+    }, 2000);
+  }
+
   /* ================= signals ================= */
   function renderSignals() {
-    const s = V.signals;
+    const isTv = document.body.classList.contains("tv");
+    const myMgr = me && !isTv ? P.groups.flatMap(g => g.managers).find(m => m.id === me) : null;
 
-    const body = s.length ? s.map((sig) => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("") : (!V.signalsUrgent ? `<div class="sig s-good"><span>Срочного нет</span></div>` : "");
-
-    let mismatchesHtml = "";
-    if (P.outcomeMismatches && P.outcomeMismatches.length > 0) {
-      const dealUrl = (id) => {
-        const base = String(P.portal || "").replace(/\/+$/, "");
-        return (base ? base : "") + "/crm/deal/details/" + encodeURIComponent(id) + "/";
-      };
-      mismatchesHtml = `
-        <details class="outcome-mismatches">
-          <summary class="sig s-bad"><span>Ошибка в CRM: ${plural(P.outcomeMismatches.length, ["сделка выиграна", "сделки выиграны", "сделок выиграно"])} на портале, но ${P.outcomeMismatches.length % 10 === 1 && P.outcomeMismatches.length % 100 !== 11 ? "закрыта" : "закрыты"} как проигрыш</span><span class="mismatch-toggle">список</span></summary>
+    const buildMismatchesDetails = (mismatches, extraClass = "") => {
+      if (!mismatches || !mismatches.length) return "";
+      return `
+        <details class="outcome-mismatches ${extraClass}">
+          <summary class="sig s-bad"><span>Ошибка в CRM: ${plural(mismatches.length, ["сделка выиграна", "сделки выиграны", "сделок выиграно"])} на портале, но ${mismatches.length % 10 === 1 && mismatches.length % 100 !== 11 ? "закрыта" : "закрыты"} как проигрыш</span><span class="mismatch-toggle">список</span></summary>
           <div class="mismatch-content">
+          <div class="mismatch-actions">
+            <button type="button" class="copy-chat-btn" data-copy-mismatches>Скопировать для чата</button>
+          </div>
           <div class="box-desc">
             По этим сделкам проверка портала зафиксировала действующий договор группы, но в CRM они закрыты со статусом проигрыша. Проверьте и исправьте стадию:
           </div>
           <div class="mismatches-list">
-            ${P.outcomeMismatches.map((m) => `
-              <div class="mismatch-row">
+            ${mismatches.map((m) => `
+              <div class="mismatch-row" data-id="${esc(m.id)}">
                 <div class="info">
                   <a href="${dealUrl(m.id)}" target="_blank" rel="noopener" class="deal-link">${esc(m.title)}</a>
                   <span class="mgr">· Менеджер: ${esc(m.managerName)}</span>
@@ -69,53 +85,188 @@
           </div>
         </details>
       `;
+    };
+
+    let innerHtml = "";
+    if (myMgr) {
+      const myMismatches = (P.outcomeMismatches || []).filter(m => m.managerId === me);
+      const otherMismatches = (P.outcomeMismatches || []).filter(m => m.managerId !== me);
+
+      const mySignals = V.signals.filter(sig => sig.text.includes(myMgr.name) || (first(myMgr.name) && sig.text.includes(first(myMgr.name))));
+      const otherSignals = V.signals.filter(sig => !mySignals.includes(sig));
+
+      const myHtml = [
+        buildMismatchesDetails(myMismatches),
+        mySignals.map(sig => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("")
+      ].filter(Boolean).join("");
+
+      const urgentMe = myMismatches.length + mySignals.length;
+      const headHtml = urgentMe
+        ? myHtml
+        : `<div class="sig s-good"><span>У вас нет срочных пунктов</span></div>`;
+
+      const otherCount = otherMismatches.length + otherSignals.length;
+      const otherHtml = otherCount > 0 ? `
+        <details class="other-team-signals">
+          <summary>У остальных в команде: ${plural(otherCount, ["пункт", "пункта", "пунктов"])}</summary>
+          <div class="other-team-content">
+            ${buildMismatchesDetails(otherMismatches)}
+            ${otherSignals.map(sig => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("")}
+          </div>
+        </details>
+      ` : "";
+
+      innerHtml = headHtml + otherHtml;
+    } else {
+      const mismatchesHtml = buildMismatchesDetails(P.outcomeMismatches);
+      const body = V.signals.length
+        ? V.signals.map(sig => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("")
+        : (!V.signalsUrgent ? `<div class="sig s-good"><span>Срочного нет</span></div>` : "");
+      innerHtml = mismatchesHtml + body;
     }
 
     document.getElementById("signals").innerHTML = `
       <div class="block-head"><h2><span class="idx">02</span>Срочно</h2><span class="meta">${esc(V.signalsMeta)}</span></div>
-      <div class="signals">${mismatchesHtml}${body}</div>`;
-    const errors = document.querySelector("#signals .outcome-mismatches");
-    if (errors) {
-      errors.querySelector("summary").addEventListener("click", e => {
+      <div class="signals">${innerHtml}</div>`;
+
+    document.querySelectorAll("#signals .outcome-mismatches").forEach(errors => {
+      errors.querySelector("summary")?.addEventListener("click", e => {
         if (document.body.classList.contains("tv")) e.preventDefault();
       });
       errors.addEventListener("toggle", () => {
         if (document.body.classList.contains("tv")) errors.open = false;
       });
-    }
+      errors.querySelectorAll("button[data-copy-mismatches]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const ids = new Set([...errors.querySelectorAll(".mismatch-row")].map(r => r.dataset.id));
+          const rootMismatches = (typeof PAYLOAD !== "undefined" && PAYLOAD?.outcomeMismatches) || P.outcomeMismatches || [];
+          const rows = rootMismatches.filter(m => ids.has(String(m.id))).map((m, idx) => {
+            const url = dealUrl(m.id);
+            const amt = money(m.amount) || "сумма не указана";
+            const dateStr = m.portalSignDate ? `от ${ddmm(m.portalSignDate)}` : m.outcome;
+            return `${idx + 1}. ${m.title} (${amt}, ${dateStr}) — Менеджер: ${m.managerName}\n   ${url}`;
+          });
+          const text = `Ошибки в CRM (выиграно на портале, но закрыто как проигрыш):\n` + rows.join("\n");
+          copyToClipboard(text, btn);
+        });
+      });
+    });
   }
 
   /* ================= month hero ================= */
-  function renderMonth() {
+  function renderMonth(keepMoreOpen) {
     const m = V.month;
     const M = m.asOfMonth;
-    const calls = V.periods[P.closedMonth ? "month" : "day"].sales.totals.calls;
+    const activePeriod = P.closedMonth ? "month" : period;
+    const calls = V.periods[activePeriod].sales.totals.calls;
     const need = m.daysLeft > 0 ? m.left / m.daysLeft : 0;
+    const revPct = m.revenuePlan && m.revenuePlan > 0 ? Math.round(m.amount / m.revenuePlan * 100) : 0;
+
+    const allWonPortalDeals = (P.groups || []).flatMap(g => (g.managers || []).flatMap(mgr => mgr.debts?.wonOnPortalNotClosedDeals || []));
+    const wonPortalDealsMap = new Map();
+    for (const d of allWonPortalDeals) {
+      if (d && d.dealId && !wonPortalDealsMap.has(d.dealId)) {
+        wonPortalDealsMap.set(d.dealId, d);
+      }
+    }
+    const wonPortalCount = wonPortalDealsMap.size;
+    const wonPortalAmount = Array.from(wonPortalDealsMap.values()).reduce((sum, d) => sum + (d.amount || 0), 0);
+    const potentialParts = [];
+    if (wonPortalCount > 0) {
+      potentialParts.push(`+ Ещё ${fmt(wonPortalCount)} на ${fmt1(wonPortalAmount / 1e6)} млн ₸ выиграно на портале (не закрыты в CRM)`);
+    }
+    if (m.awaitingRegister && m.awaitingRegister > 0) {
+      potentialParts.push(`ждёт ОП: ${plural(m.awaitingRegister, ["сделка", "сделки", "сделок"])}`);
+    }
+    const potentialHtml = potentialParts.length
+      ? `<div class="tile-potential">${potentialParts.join(" · ")}</div>`
+      : "";
+
+    const callsLabel = P.closedMonth || activePeriod === "month" ? "Дозвоны за месяц" : activePeriod === "week" ? "Дозвоны за неделю" : "Дозвоны сегодня";
+    const callsPct = calls.target > 0 ? Math.round((calls.fact / calls.target) * 100) : 0;
+
+    let meSummaryHtml = "";
+    if (me && !document.body.classList.contains("tv")) {
+      const myMgr = P.groups.flatMap(g => g.managers).find(mgr => mgr.id === me);
+      if (myMgr) {
+        const monthSalesMgr = V.periods.month.sales.managers.find(mgr => mgr.id === me);
+        const monthTenderMgr = V.periods.month.tenders?.managers.find(mgr => mgr.id === me);
+        const monthMgr = monthSalesMgr || monthTenderMgr;
+        const myFact = monthMgr?.contracts?.fact || 0;
+        const myTarget = monthMgr?.contracts?.target || V.month.targetContracts || 0;
+        const myAmount = monthMgr?.contracts?.totalAmount || 0;
+
+        const periodSalesMgr = V.periods[activePeriod].sales.managers.find(mgr => mgr.id === me);
+        const myCalls = periodSalesMgr?.calls;
+        const myCallsFactStr = myCalls ? fmt(myCalls.fact) : "—";
+        const myCallsTargetStr = myCalls && myCalls.target ? `/ ${fmt(myCalls.target)}` : "";
+        const myCallsCls = myCalls?.cls || "";
+        const myCallsSub = myCalls ? (myCalls.text || myCalls.sub || "") : "не звонит через CRM";
+
+        const d = myMgr.debts || {};
+        const dOverdue = d.overdue || 0;
+        const dNew = d.newDeals || 0;
+        const dWon = d.wonOnPortalNotClosed || 0;
+        const totalDebts = dOverdue + dNew + dWon;
+        const debtsBreakdown = [dWon ? `выиграно на портале: ${fmt(dWon)}` : "", dOverdue ? plural(dOverdue, ["дело просрочено", "дела просрочены", "дел просрочено"]) : "", dNew ? `${fmt(dNew)} без звонка` : ""].filter(Boolean).join(" · ") || "долгов нет ✓";
+
+        meSummaryHtml = `
+          <div class="me-summary">
+            <div class="me-summary-head">
+              <div class="me-badge">Мои показатели · ${esc(myMgr.name)}</div>
+              <div class="me-period-note">${P.closedMonth ? "закрытый месяц" : (activePeriod === "day" ? "сегодня" : activePeriod === "week" ? "за неделю" : "за месяц")}</div>
+            </div>
+            <div class="me-summary-grid">
+              <div class="me-stat">
+                <span class="label">Договоры за месяц</span>
+                <div class="stat-v">${fmt(myFact)} <span>/ ${fmt(myTarget)}</span></div>
+                <div class="stat-sub">${money(myAmount) || "0 ₸"}</div>
+              </div>
+              <div class="me-stat">
+                <span class="label">Дозвоны ${activePeriod === "day" ? "сегодня" : activePeriod === "week" ? "за неделю" : "за месяц"}</span>
+                <div class="stat-v ${myCallsCls}">${myCallsFactStr} <span>${myCallsTargetStr}</span></div>
+                <div class="stat-sub">${esc(myCallsSub)}</div>
+              </div>
+              <div class="me-stat">
+                <span class="label">Долги на сегодня</span>
+                <div class="stat-v ${totalDebts > 0 ? "bad" : "good"}">${totalDebts > 0 ? fmt(totalDebts) : "0"}</div>
+                <div class="stat-sub">${esc(debtsBreakdown)}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    const prevMoreOpen = keepMoreOpen && document.querySelector("#month .month-more")?.open;
 
     document.getElementById("month").innerHTML = `
       <div class="block-head"><h2><span class="idx">01</span>${MONTHS[M - 1]}</h2><span class="meta">план ${fmt(m.plan)} · ${m.targetContracts} на менеджера × ${m.totalActiveCount}</span></div>
+      ${meSummaryHtml}
       <div class="month-tiles">
         <div class="month-tile">
           <span class="label">Договоры</span>
           <div class="tile-value">${fmt(m.fact)} <span>/ ${fmt(m.plan)}</span></div>
-          <div class="hbar"><span style="width:${Math.max(0, Math.min(100, m.pct))}%"></span></div>
+          <div class="hbar"><span class="ink" style="width:${Math.max(0, Math.min(100, m.pct))}%"></span></div>
           <p class="tile-note">${P.closedMonth || m.daysLeft <= 0 ? `в среднем ${fmt1(m.pacePerDay)} в день` : `темп ${fmt1(m.pacePerDay)} в день, нужно ${fmt1(need)}`}</p>
         </div>
         <div class="month-tile">
           <span class="label">Выручка</span>
           <div class="tile-value tile-money">${money(m.amount) || "0 ₸"}${m.revenuePlan !== undefined ? ` <span>/ ${money(m.revenuePlan) || "0 ₸"}</span>` : ""}</div>
+          <div class="hbar"><span class="ink" style="width:${Math.max(0, Math.min(100, revPct))}%"></span></div>
           <p class="tile-note">${m.revenuePlan !== undefined ? `без НДС · ${m.revenuePlan > 0 ? Math.round(m.amount / m.revenuePlan * 100) : 0}% плана выручки` : esc(m.sourceLabel)}</p>
+          ${potentialHtml}
         </div>
         <div class="month-tile">
           <span class="label">${P.closedMonth ? "Итог месяца" : `Прогноз к ${m.daysInMonth}.${String(M).padStart(2, "0")}`}</span>
           ${P.closedMonth ? `<div class="tile-value tile-result">Итог: ${m.pct}% плана</div>` : m.hasForecast ? `<div class="tile-value">≈ ${fmt(m.forecast)} <span>/ ${fmt(m.plan)}</span></div><p class="tile-note">${m.fpct}% плана при нынешнем темпе</p>` : `<div class="tile-value tile-result">—, с 3-го дня</div>`}
         </div>
         <div class="month-tile">
-          <span class="label">${P.closedMonth ? "Дозвоны за месяц" : "Дозвоны сегодня"}</span>
-          ${P.callsAvailable ? `<div class="tile-value ${calls.cls}">${fmt(calls.fact)} <span>/ ${fmt(calls.target)}</span></div>` : `<div class="tile-value tile-result muted">нет доступа</div>`}
+          <span class="label">${callsLabel}</span>
+          ${P.callsAvailable ? `<div class="tile-value ${calls.cls}">${fmt(calls.fact)} <span>/ ${fmt(calls.target)}</span></div><div class="hbar"><span class="${calls.cls || ''}" style="width:${Math.max(0, Math.min(100, callsPct))}%"></span></div><p class="tile-note">${esc(calls.text ? `${calls.text}${calls.sub ? ` · ${calls.sub}` : ""}` : (calls.sub || ""))}</p>` : `<div class="tile-value tile-result muted">нет доступа</div><p class="tile-note">нет звонков через Битрикс</p>`}
         </div>
       </div>
-      <details class="month-more" ${document.body.classList.contains("tv") ? "open" : ""}>
+      <details class="month-more" ${document.body.classList.contains("tv") || prevMoreOpen ? "open" : ""}>
       <summary>График и подробности месяца</summary>
       <div class="hero">
         <div>
@@ -278,11 +429,12 @@
 
   function tenderRow(m) {
     const id = "t-" + m.id;
-    return `<div class="trow body tender" role="row" tabindex="0" aria-expanded="false" aria-controls="${id}">
+    const isSingle = !showAllTeam && me === m.id && !document.body.classList.contains("tv");
+    return `<div class="trow body tender" role="row" tabindex="0" aria-expanded="${isSingle ? "true" : "false"}" aria-controls="${id}">
         <div class="who"><span class="mono-av">${esc(m.initials)}</span><div><div class="nm">${esc(m.name)}</div><div class="rl">${m.tasksCountText || ""}</div></div></div>
         ${NA_CELL("Дозвонился")}${NA_CELL("КП")}${miniCell("Подписал", m.contracts)}${debtsCell(m.debts)}
         <span class="chev" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4.5 6 8.5l4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
-      </div><div class="detail" id="${id}"><div>${managerDetail(m)}</div></div>`;
+      </div><div class="detail ${isSingle ? "open" : ""}" id="${id}"><div>${managerDetail(m)}</div></div>`;
   }
 
   function miniCell(label, j) {
@@ -314,12 +466,13 @@
     const kp = miniCell("КП", m.proposals);
     const c = miniCell("Подписал", m.contracts);
     const id = "d-" + m.id;
-    return `<div class="trow body" role="row" tabindex="0" aria-expanded="false" aria-controls="${id}">
+    const isSingle = !showAllTeam && me === m.id && !document.body.classList.contains("tv");
+    return `<div class="trow body" role="row" tabindex="0" aria-expanded="${isSingle ? "true" : "false"}" aria-controls="${id}">
         <div class="who"><span class="mono-av">${esc(m.initials)}</span><div><div class="nm">${esc(m.name)}</div><div class="rl">${m.tasksCountText}</div></div></div>
         ${calls}${kp}${c}${debtsCell(m.debts)}
         <span class="chev" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4.5 6 8.5l4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
       </div>
-      <div class="detail" id="${id}"><div>${managerDetail(m)}</div></div>`;
+      <div class="detail ${isSingle ? "open" : ""}" id="${id}"><div>${managerDetail(m)}</div></div>`;
   }
 
   function debtList(key, label, items, total) {
@@ -345,6 +498,7 @@
     const tasks = (m.topTasks || []).map((t) => taskRow(t, m, true)).join("");
     return `<div class="detail-in">
       <div class="dstats">
+        <div style="grid-column:1/-1" class="dstats-actions"><button type="button" class="copy-chat-btn" data-copy-manager="${esc(m.id)}">Скопировать для чата</button></div>
         ${d.wonOnPortalNotClosed ? `<div style="grid-column:1/-1"><span class="label">Выиграно на портале, не закрыто в CRM</span><span class="num bad">${fmt(d.wonOnPortalNotClosed)}</span></div>` : ""}
         <div><span class="label">Просрочено</span><span class="num ${d.overdue ? "bad" : ""}">${fmt(d.overdue)}</span></div>
         <div><span class="label">30+ дней</span><span class="num">${fmt(d.overdueOverMonth)}</span></div>
@@ -366,6 +520,56 @@
       button.addEventListener("click", () => {
         button.closest(".debt-list").querySelectorAll(".old-task-item[hidden]").forEach(item => { item.hidden = false; });
         button.hidden = true;
+      });
+    });
+    root.querySelectorAll("button[data-copy-manager]").forEach((button) => {
+      button.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const mgrId = button.dataset.copyManager;
+        const allMgrs = P.groups.flatMap(g => g.managers);
+        const mgr = allMgrs.find(x => x.id === mgrId);
+        if (!mgr) return;
+        const d = mgr.debts || {};
+        const lines = [`${mgr.name} — проблемы по сделкам:`];
+        const wonDeals = d.wonOnPortalNotClosedDeals || [];
+        if (wonDeals.length) {
+          lines.push(`\nВыиграно на портале, не закрыто в CRM (${wonDeals.length}):`);
+          wonDeals.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title || item.dealId} (${money(item.amount) || "—"}) — ${dealUrl(item.dealId)}`);
+          });
+        }
+        const overdueDeals = d.overdueList || [];
+        if (overdueDeals.length) {
+          lines.push(`\nПросрочено (${overdueDeals.length}):`);
+          overdueDeals.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title || item.dealId} (${money(item.amount) || "—"}, просрочено ${item.overdueDays || 0} дн.) — ${dealUrl(item.dealId)}`);
+          });
+        }
+        const newDeals = d.newDealsList || [];
+        if (newDeals.length) {
+          lines.push(`\nНовые без звонка (${newDeals.length}):`);
+          newDeals.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title || item.dealId} (${money(item.amount) || "—"}, без звонка ${item.ageDays || 0} дн.) — ${dealUrl(item.dealId)}`);
+          });
+        }
+        const readyDeals = d.readyToCloseDeals || [];
+        if (readyDeals.length) {
+          lines.push(`\nПора закрыть (${readyDeals.length}):`);
+          readyDeals.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title || item.dealId} — ${dealUrl(item.dealId)}`);
+          });
+        }
+        const myMismatches = (P.outcomeMismatches || []).filter(om => om.managerId === mgr.id);
+        if (myMismatches.length) {
+          lines.push(`\nОшибки стадии (выиграно на портале, в CRM проигрыш, ${myMismatches.length}):`);
+          myMismatches.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title} (${money(item.amount) || "—"}) — ${dealUrl(item.id)}`);
+          });
+        }
+        if (lines.length === 1) {
+          lines.push("Проблемных сделок нет ✓");
+        }
+        copyToClipboard(lines.join("\n"), button);
       });
     });
     root.querySelectorAll(".trow.body").forEach((row) => {
@@ -613,13 +817,14 @@
     ind.style.left = b.offsetLeft + 14 + "px";
     ind.style.width = b.offsetWidth - 28 + "px";
   }
-  function setPeriod(p, fromUser) {
+  function setPeriod(p, fromUser, keepMore = true) {
     if (P.closedMonth) p = "month";
     period = p;
     btns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.p === p)));
     moveInd();
+    renderMonth(keepMore);
     renderSales(p); renderCalls(p);
-    ["sales", "calls"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
+    ["month", "sales", "calls"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
     try { if (fromUser) localStorage.setItem("pult-period", p); } catch (e) {}
   }
   btns.forEach((b) => b.addEventListener("click", () => setPeriod(b.dataset.p, true)));
@@ -877,9 +1082,13 @@
     const callsMore = document.querySelector("#calls .calls-more");
     if (callsMore) callsMore.open = on || callsMoreOpen;
     // В ТВ — вся команда, после выхода снова «Я — …».
+    renderMonth();
+    renderSignals();
     renderSales(period);
     const errors = document.querySelector("#signals .outcome-mismatches");
     if (errors) errors.open = false;
+    const searchModal = document.getElementById("searchModal");
+    if (searchModal && searchModal.open) searchModal.close();
     const tvBtn = document.getElementById("tvBtn");
     if (tvBtn) tvBtn.textContent = on ? "Выйти из ТВ" : "Режим ТВ";
     clearInterval(tvTimer);
@@ -934,8 +1143,8 @@
     document.getElementById("signals").hidden = !!P.closedMonth;
     document.getElementById("tasks").hidden = !!P.closedMonth;
     document.getElementById("closedNotice").hidden = !P.closedMonth;
-    renderMonth(); renderSignals(); renderTasks();
-    setPeriod(P.closedMonth ? "month" : period);
+    renderMonth(false); renderSignals(); renderTasks();
+    setPeriod(P.closedMonth ? "month" : period, false, false);
     animate(document.getElementById("month"));
     observe();
   }
@@ -963,12 +1172,237 @@
     showAllTeam = false;
     try { if (me) localStorage.setItem("pult-me", me); else localStorage.removeItem("pult-me"); } catch (e) {}
     taskFilter = me || "all"; taskAll = false;
-    renderSales(period); renderTasks();
-    ["sales", "tasks"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
+    renderMonth(); renderSignals(); renderSales(period); renderTasks();
+    ["month", "signals", "sales", "tasks"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
   });
+
+  /* ================= quick search ================= */
+  function initQuickSearch() {
+    const modal = document.getElementById("searchModal");
+    const input = document.getElementById("quickSearchInput");
+    const results = document.getElementById("searchResults");
+    const searchBtn = document.getElementById("searchBtn");
+    if (!modal || !input || !results) return;
+
+    let selectedIndex = -1;
+    let currentResults = [];
+
+    function buildSearchIndex() {
+      const items = [];
+      const seenDeals = new Set();
+      const root = (typeof PAYLOAD !== "undefined" && PAYLOAD) ? PAYLOAD : P;
+
+      const addDeal = (d, mgrName, context) => {
+        const id = String(d.dealId || d.id || "");
+        if (!id || seenDeals.has(id)) return;
+        seenDeals.add(id);
+        const ct = cleanTitle(d);
+        items.push({
+          type: "deal",
+          id,
+          title: ct.title || d.title || id,
+          planNumber: ct.plan || d.planNumber || "",
+          manager: mgrName || d.managerName || "",
+          amount: d.amount || 0,
+          context: context || "Сделка",
+          url: dealUrl(id)
+        });
+      };
+
+      for (const g of root.groups || []) {
+        for (const m of g.managers || []) {
+          for (const t of m.topTasks || []) addDeal(t, m.name, "Срочная задача");
+          const debts = m.debts || {};
+          for (const d of debts.wonOnPortalNotClosedDeals || []) addDeal(d, m.name, "Выиграно на портале");
+          for (const d of debts.overdueList || []) addDeal(d, m.name, "Просрочено");
+          for (const d of debts.newDealsList || []) addDeal(d, m.name, "Новая без звонка");
+          for (const d of debts.readyToCloseDeals || []) addDeal(d, m.name, "Пора закрыть");
+          for (const d of debts.overdueOverMonthTasks || []) addDeal(d, m.name, "30+ дней");
+        }
+      }
+
+      for (const om of root.outcomeMismatches || []) {
+        addDeal(om, om.managerName, "Ошибка в CRM");
+      }
+
+      for (const group of [root.plans?.ip, root.plans?.kt]) {
+        if (!group) continue;
+        for (const p of group.openPlans || []) {
+          items.push({
+            type: "plan",
+            id: String(p.id || ""),
+            title: `${p.customerName || "Заказчик"} · ${p.itemName || "Товар"}`,
+            planNumber: String(p.planNumber || ""),
+            customerBin: String(p.customerBin || ""),
+            manager: p.managerName || "",
+            sum: p.sum || 0,
+            context: `План ${group.group === "КТ" ? "КТ" : "ИП"} · ${p.portalStatus || "В работе"}`,
+            dealUrl: p.dealUrl || dealUrl(p.id),
+            planUrl: p.planUrl || ""
+          });
+        }
+      }
+
+      for (const [tabKey, group] of [["ip", root.market?.ip], ["kt", root.market?.kt]]) {
+        if (!group) continue;
+        const addCust = (c) => {
+          if (!c || !c.name) return;
+          items.push({
+            type: "market",
+            title: c.name,
+            bin: String(c.bin || ""),
+            manager: "",
+            amount: c.sum || 0,
+            context: `Рынок ${tabKey.toUpperCase()} · Заказчик`,
+            tab: tabKey
+          });
+        };
+        const addSupp = (s) => {
+          if (!s || !s.name) return;
+          items.push({
+            type: "market",
+            title: s.name,
+            bin: String(s.bin || ""),
+            manager: "",
+            amount: s.sum || 0,
+            context: `Рынок ${tabKey.toUpperCase()} · Поставщик${s.us ? " (мы)" : ""}`,
+            tab: tabKey
+          });
+        };
+        (group.customers || []).forEach(addCust);
+        (group.suppliers || []).forEach(addSupp);
+      }
+
+      return items;
+    }
+
+    let searchItems = null;
+
+    function openModal() {
+      if (document.body.classList.contains("tv")) return;
+      if (!searchItems) searchItems = buildSearchIndex();
+      modal.showModal();
+      input.value = "";
+      renderSearchResults("");
+      input.focus();
+    }
+
+    function closeModal() {
+      if (modal.open) modal.close();
+    }
+
+    function renderSearchResults(query) {
+      const q = String(query || "").trim().toLowerCase();
+      if (!q) {
+        currentResults = [];
+        results.innerHTML = `<div class="search-empty">Введите номер сделки, плана, БИН или название…</div>`;
+        selectedIndex = -1;
+        return;
+      }
+
+      currentResults = searchItems.filter(item => {
+        const hay = `${item.title} ${item.id || ""} ${item.planNumber || ""} ${item.customerBin || item.bin || ""} ${item.manager || ""} ${item.context || ""}`.toLowerCase();
+        return hay.includes(q);
+      }).slice(0, 25);
+
+      if (!currentResults.length) {
+        results.innerHTML = `<div class="search-empty">Ничего не найдено по запросу «${esc(query)}»</div>`;
+        selectedIndex = -1;
+        return;
+      }
+
+      selectedIndex = 0;
+      results.innerHTML = currentResults.map((item, idx) => {
+        const meta = [];
+        if (item.context) meta.push(esc(item.context));
+        if (item.amount || item.sum) meta.push(money(item.amount || item.sum));
+        if (item.manager) meta.push(esc(item.manager));
+        if (item.planNumber) meta.push(`план ${esc(item.planNumber)}`);
+        if (item.customerBin || item.bin) meta.push(`БИН ${esc(item.customerBin || item.bin)}`);
+        return `
+          <div class="search-item ${idx === 0 ? "selected" : ""}" role="option" data-idx="${idx}" tabindex="-1">
+            <div class="title">${esc(item.title)}</div>
+            <div class="meta">${meta.join(" · ")}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function selectResult(index) {
+      const all = results.querySelectorAll(".search-item");
+      all.forEach((el, i) => el.classList.toggle("selected", i === index));
+      const target = all[index];
+      if (target) target.scrollIntoView({ block: "nearest" });
+      selectedIndex = index;
+    }
+
+    function activateResult(index) {
+      const item = currentResults[index];
+      if (!item) return;
+      closeModal();
+      if (item.type === "deal" && item.url) {
+        window.open(item.url, "_blank", "noopener");
+      } else if (item.type === "plan") {
+        if (item.dealUrl) window.open(item.dealUrl, "_blank", "noopener");
+      } else if (item.type === "market") {
+        setTab(item.tab, true);
+      }
+    }
+
+    if (searchBtn) searchBtn.addEventListener("click", openModal);
+
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
+
+    input.addEventListener("input", () => {
+      renderSearchResults(input.value);
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (currentResults.length) {
+          selectResult((selectedIndex + 1) % currentResults.length);
+        }
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (currentResults.length) {
+          selectResult((selectedIndex - 1 + currentResults.length) % currentResults.length);
+        }
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (selectedIndex >= 0 && selectedIndex < currentResults.length) {
+          activateResult(selectedIndex);
+        }
+      } else if (e.key === "Escape") {
+        closeModal();
+      }
+    });
+
+    results.addEventListener("click", (e) => {
+      const itemEl = e.target.closest(".search-item");
+      if (itemEl && itemEl.dataset.idx) {
+        activateResult(Number(itemEl.dataset.idx));
+      }
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (document.body.classList.contains("tv")) return;
+      const isInput = e.target.closest("input, textarea, select") || e.target.isContentEditable;
+      if (!isInput && e.key === "/") {
+        e.preventDefault();
+        openModal();
+      } else if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K" || e.key === "л" || e.key === "Л")) {
+        e.preventDefault();
+        openModal();
+      }
+    });
+  }
 
   /* ================= boot ================= */
   renderChrome(); renderSignals(); renderMonth(); renderTasks();
+  initQuickSearch();
   let saved = null; try { saved = localStorage.getItem("pult-period"); } catch (e) {}
   setPeriod(/period=(day|week|month)/.exec(location.search)?.[1] || saved || "day");
   

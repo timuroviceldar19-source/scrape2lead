@@ -714,3 +714,69 @@ body.tv .me-picker, body.tv .team-all { display: none; }
   .me-picker { flex-basis: 100%; }
   .me-picker select { flex: 1; max-width: none; }
 }
+
+/* ---------- wow upgrade: live funnel potential ---------- */
+.tile-potential { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--rule-2); font: 400 11px/1.4 var(--mono); color: var(--good); overflow-wrap: anywhere; }
+
+/* ---------- wow upgrade: me-summary card ---------- */
+.me-summary { margin-bottom: 24px; padding: 18px 20px; background: var(--sheet); border: 1px solid var(--rule-2); border-radius: 8px; }
+.me-summary-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+.me-badge { font: 500 13px var(--mono); color: var(--ink); letter-spacing: .02em; display: flex; align-items: center; gap: 8px; }
+.me-badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; }
+.me-period-note { font: 400 12px var(--mono); color: var(--ink-3); }
+.me-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.me-stat { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.me-stat .stat-v { font: 400 clamp(18px, 1.8vw, 24px)/1.3 var(--mono); }
+.me-stat .stat-v span { font-size: .65em; color: var(--ink-3); }
+.me-stat .stat-sub { font: 400 12px var(--mono); color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
+body.tv .me-summary { display: none !important; }
+@media (max-width: 760px) {
+  .me-summary { padding: 14px; }
+  .me-summary-grid { grid-template-columns: 1fr; gap: 12px; }
+}
+
+/* ---------- wow upgrade: other team signals in 02 ---------- */
+.other-team-signals { grid-column: 1 / -1; margin-top: 14px; border-top: 1px solid var(--rule); }
+.other-team-signals > summary { cursor: pointer; padding: 10px 0; font: 500 13px var(--mono); color: var(--ink-2); list-style: none; display: flex; align-items: center; justify-content: space-between; }
+.other-team-signals > summary::-webkit-details-marker { display: none; }
+.other-team-signals > summary::after { content: "показать"; text-decoration: underline; font-size: 12px; color: var(--ink-3); }
+.other-team-signals[open] > summary::after { content: "скрыть"; }
+.other-team-signals[open] > summary { margin-bottom: 8px; }
+body.tv .other-team-signals { display: none !important; }
+
+/* ---------- wow upgrade: copy for chat button ---------- */
+.copy-chat-btn { border: 1px solid var(--rule-3); background: var(--sheet); padding: 5px 10px; cursor: pointer; font: 500 11px var(--mono); letter-spacing: .02em; border-radius: 4px; color: var(--ink-2); transition: background .15s, color .15s, border-color .15s; }
+.copy-chat-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.mismatch-actions { margin-bottom: 12px; display: flex; justify-content: flex-end; }
+.detail-actions { margin-top: 12px; display: flex; justify-content: flex-end; }
+body.tv .copy-chat-btn, body.tv .mismatch-actions, body.tv .detail-actions { display: none !important; }
+
+/* ---------- wow upgrade: instant search modal & button ---------- */
+.search-btn { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 12px; }
+.search-btn .kbd { font: 500 10px var(--mono); background: rgba(20, 20, 20, 0.08); padding: 1px 5px; border-radius: 3px; }
+body.tv .search-btn, body.tv .search-modal { display: none !important; }
+
+.search-modal { border: 1px solid var(--rule-3); border-radius: 8px; background: var(--sheet); color: var(--ink); padding: 0; max-width: 620px; width: calc(100vw - 32px); box-shadow: 0 16px 48px rgba(20, 20, 20, 0.2); }
+.search-modal::backdrop { background: rgba(20, 20, 20, 0.45); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.search-modal-box { padding: 16px; }
+.search-input-wrap { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--rule-2); padding-bottom: 10px; }
+.search-input { flex: 1; border: 0; background: transparent; font: 400 16px var(--display); color: var(--ink); outline: none; width: 100%; }
+.search-input::-webkit-search-cancel-button { cursor: pointer; }
+.search-hint kbd { font: 500 11px var(--mono); background: var(--paper); border: 1px solid var(--rule-2); padding: 2px 6px; border-radius: 4px; color: var(--ink-3); }
+.search-results { max-height: 380px; overflow-y: auto; margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.search-item { padding: 9px 12px; border-radius: 6px; display: flex; flex-direction: column; gap: 3px; cursor: pointer; text-decoration: none; color: inherit; border-left: 2px solid transparent; }
+.search-item:hover, .search-item.selected { background: rgba(20, 20, 20, 0.05); border-left-color: var(--ink); }
+.search-item .title { font-weight: 500; font-size: 14px; word-break: break-word; }
+.search-item .meta { font: 400 12px var(--mono); color: var(--ink-3); display: flex; gap: 8px; flex-wrap: wrap; }
+.search-empty { padding: 24px 12px; text-align: center; color: var(--ink-3); font: 400 13px var(--mono); }
+
+/* ---------- wow upgrade: plans search input ---------- */
+.plans-open .block-head { margin-bottom: 8px; }
+.plan-search-wrap { margin: 0 0 6px; }
+.plan-search-input { width: 100%; max-width: 480px; height: 28px; padding: 2px 8px; font: 400 12px var(--display); background: var(--sheet); border: 1px solid var(--rule-3); border-radius: 4px; color: var(--ink); box-sizing: border-box; }
+.plan-search-input:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
+body.tv .plan-search-wrap { display: none !important; }
+@media (max-width: 760px) {
+  .plans-open .plan-filters { margin: 6px 0 16px; }
+}
+

@@ -46,30 +46,143 @@
 
   const tableStates = new Map();
   const filterLabels = { managerId: "Менеджер", kind: "Вид товара", portalStatus: "Статус портала", method: "Способ закупки" };
+
+  function buildCustomerIndices(base, market) {
+    const boughtBins = new Set();
+    const boughtNames = new Set();
+    const lostNames = new Set();
+    const norm = s => {
+      let t = " " + String(s || "").toLowerCase().replace(/ё/g, "е").replace(/["«»„“]/g, " ") + " ";
+      t = t.replace(/\s+коммунальное\s+государственное\s+казенное\s+предприятие\s+/g, " кгкп ");
+      t = t.replace(/\s+коммунальное\s+государственное\s+учреждение\s+/g, " кгу ");
+      t = t.replace(/\s+государственное\s+коммунальное\s+казенное\s+предприятие\s+/g, " гккп ");
+      t = t.replace(/\s+государственное\s+коммунальное\s+предприятие\s+/g, " гкп ");
+      t = t.replace(/\s+товарищество\s+с\s+ограниченной\s+ответственностью\s+/g, " тоо ");
+      t = t.replace(/\s+некоммерческое\s+акционерное\s+общество\s+/g, " нао ");
+      return t.replace(/\s+/g, " ").trim();
+    };
+
+    const scanPlansWon = (slice) => {
+      if (!slice) return;
+      for (const c of slice.customers || []) {
+        const hasWon = (c.wonCount && c.wonCount > 0) || (c.planList && c.planList.some(p => p.outcomeCategory === "won"));
+        if (hasWon) {
+          if (c.bin) boughtBins.add(String(c.bin).trim());
+          if (c.name) boughtNames.add(norm(c.name));
+        }
+      }
+      for (const m of slice.managers || []) {
+        for (const p of m.planList || []) {
+          if (p.outcomeCategory === "won") {
+            if (p.customerBin) boughtBins.add(String(p.customerBin).trim());
+            if (p.customerName) boughtNames.add(norm(p.customerName));
+          }
+        }
+      }
+    };
+    scanPlansWon(base);
+    if (base.monthViews) {
+      for (const mv of Object.values(base.monthViews)) scanPlansWon(mv);
+    }
+
+    const mkt = market || (typeof PAYLOAD !== "undefined" ? PAYLOAD?.market : null);
+    if (mkt) {
+      for (const group of [mkt.ip, mkt.kt]) {
+        if (!group) continue;
+        const scanCustomers = (custs) => {
+          for (const c of custs || []) {
+            const hasUs = (c.us && c.us > 0) || (c.contractList && c.contractList.some(item => item.us));
+            if (hasUs) {
+              if (c.bin) boughtBins.add(String(c.bin).trim());
+              if (c.name) boughtNames.add(norm(c.name));
+            }
+          }
+        };
+        scanCustomers(group.customers);
+        if (group.monthViews) {
+          for (const mv of Object.values(group.monthViews)) scanCustomers(mv?.customers);
+        }
+        const scanSuppliers = (supps) => {
+          for (const s of supps || []) {
+            if (s.us) {
+              for (const item of s.contractList || []) {
+                if (item.customer) boughtNames.add(norm(item.customer));
+              }
+            }
+          }
+        };
+        scanSuppliers(group.suppliers);
+        if (group.monthViews) {
+          for (const mv of Object.values(group.monthViews)) scanSuppliers(mv?.suppliers);
+        }
+      }
+    }
+
+    const scanLostTo = (lt) => {
+      if (!lt) return;
+      for (const comp of lt.competitors || []) {
+        for (const deal of comp.deals || []) {
+          if (deal.customerName) lostNames.add(norm(deal.customerName));
+        }
+      }
+    };
+    scanLostTo(base.lostTo);
+    if (base.monthViews) {
+      for (const mv of Object.values(base.monthViews)) scanLostTo(mv?.lostTo);
+    }
+
+    return {
+      isBought: (bin, name) => (bin && boughtBins.has(String(bin).trim())) || (name && boughtNames.has(norm(name))),
+      isLost: (name) => name && lostNames.has(norm(name))
+    };
+  }
+
   function readTableState(key) {
     let saved;
     try { saved = JSON.parse(sessionStorage.getItem(key) || "null"); } catch { /* Хранилище может быть недоступно. */ }
     const filters = {};
     for (const field of Object.keys(filterLabels)) filters[field] = typeof saved?.filters?.[field] === "string" ? saved.filters[field] : "";
     return { filters, sort: ["sum", "month", "qty"].includes(saved?.sort) ? saved.sort : "sum",
-      direction: saved?.direction === "asc" ? "asc" : "desc", limit: 50, storageKey: key };
+      direction: saved?.direction === "asc" ? "asc" : "desc", limit: 50, storageKey: key, manualFilter: !!saved?.manualFilter, searchQuery: "", lastSyncedMe: typeof saved?.lastSyncedMe === "string" ? saved.lastSyncedMe : undefined };
   }
   function saveTableState(state) {
-    try { sessionStorage.setItem(state.storageKey, JSON.stringify({ filters: state.filters, sort: state.sort, direction: state.direction })); }
+    try { sessionStorage.setItem(state.storageKey, JSON.stringify({ filters: state.filters, sort: state.sort, direction: state.direction, manualFilter: state.manualFilter, lastSyncedMe: state.lastSyncedMe })); }
     catch { /* Настройки продолжают работать в памяти. */ }
   }
   function renderOpenPlans(base, el, active, state) {
     const source = base.openPlans || [];
+    let me = "";
+    try { me = localStorage.getItem("pult-me") || ""; } catch (e) {}
+    if (state.lastSyncedMe !== me) {
+      state.lastSyncedMe = me;
+      state.manualFilter = false;
+      state.filters.managerId = me && source.some(d => String(d.managerId) === me) ? me : "";
+    } else if (me && !state.manualFilter && !state.filters.managerId) {
+      if (source.some(d => String(d.managerId) === me)) {
+        state.filters.managerId = me;
+      }
+    }
     const choicesByKey = new Map(Object.keys(filterLabels).map(key => [key,
       new Map(source.map(d => [String(d[key] ?? ""), key === "managerId" ? d.managerName : d[key]]).filter(([value]) => value))]));
     for (const key of Object.keys(filterLabels)) if (!choicesByKey.get(key).has(state.filters[key])) state.filters[key] = "";
     saveTableState(state);
-    const matches = source.filter(d => (active === "all" || d.month === active) &&
-      Object.keys(filterLabels).every(key => !state.filters[key] || String(d[key] ?? "") === state.filters[key]));
+    const q = (state.searchQuery || "").trim().toLowerCase();
+    const matches = source.filter(d => {
+      if (active !== "all" && d.month !== active) return false;
+      for (const key of Object.keys(filterLabels)) {
+        if (state.filters[key] && String(d[key] ?? "") !== state.filters[key]) return false;
+      }
+      if (q) {
+        const hay = `${d.customerName || ""} ${d.customerBin || ""} ${d.planNumber || ""} ${d.id || ""} ${d.itemName || ""} ${d.truCode || ""} ${d.managerName || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
     matches.sort((a, b) => {
       const cmp = state.sort === "month" ? String(a.month).localeCompare(String(b.month)) : (a[state.sort] || 0) - (b[state.sort] || 0);
       return (state.direction === "asc" ? cmp : -cmp) || String(a.id).localeCompare(String(b.id), "ru", { numeric: true });
     });
+    const custIndex = buildCustomerIndices(base, typeof PAYLOAD !== "undefined" ? PAYLOAD?.market : null);
     const sortHead = (key, label) => `<span role="columnheader" aria-sort="${state.sort === key ? state.direction === "asc" ? "ascending" : "descending" : "none"}"><button type="button" data-plan-sort="${key}" data-direction="${state.sort === key ? state.direction : ""}">${label}${state.sort === key ? state.direction === "asc" ? " ↑" : " ↓" : " ↕"}</button></span>`;
     const open = el.querySelector(".plans-open");
     const scrollPositions = [...open.querySelectorAll(".plan-filter-group .chips")].map(row => row.scrollLeft);
@@ -78,22 +191,45 @@
       return `<fieldset class="plan-filter-group"><legend>${label}</legend><div class="chips">${button("", "Все")}${[...choicesByKey.get(key)].sort((a, b) => String(a[1]).localeCompare(String(b[1]), "ru")).map(([value, name]) => button(value, name)).join("")}</div></fieldset>`;
     }).join("");
     open.innerHTML = `${head("05", "Открытые планы", `Показано ${fmt(Math.min(state.limit, matches.length))} из ${fmt(matches.length)}`)}
+      <div class="plan-search-wrap">
+        <input type="search" class="plan-search-input" placeholder="Поиск по заказчику, БИН, номеру плана или товару…" value="${esc(state.searchQuery || "")}">
+      </div>
       <div class="plan-filters" role="group" aria-label="Фильтры открытых планов">${filterHtml}</div>
       <div class="rows plans-table" role="table" aria-label="Открытые планы">
         <div class="r head" role="row">${sortHead("month", "Месяц")}<span role="columnheader">Заказчик</span><span role="columnheader">Товар / вид</span>${sortHead("qty", "Кол-во")}${sortHead("sum", "Сумма")}<span role="columnheader">Статус портала</span><span role="columnheader">Менеджер</span></div>
-        ${matches.slice(0, state.limit).map(d => `<div class="r" role="row" data-plan-id="${esc(d.id)}"><span role="cell">${esc(d.month)}<span class="sub">${link(d.dealUrl, `Сделка ${d.id} ↗`)} · ${link(d.planUrl, `План ${d.planNumber} ↗`)}</span></span><span role="cell">${esc(d.customerName)}<span class="dim sub">${esc(d.customerBin)}</span></span><span role="cell">${esc(d.itemName)}<span class="dim sub">${[d.truCode, d.kind].filter(Boolean).map(esc).join(" · ")}</span></span><span role="cell" data-label="Количество">${fmt(d.qty)} шт.</span><span role="cell" class="num" data-label="Сумма">${money(d.sum)}</span><span role="cell" data-label="Статус портала">${esc(d.portalStatus)}</span><span role="cell" data-label="Менеджер">${esc(d.managerName)}${d.isNewStage ? '<span class="bad sub">Новая · ждёт разбора</span>' : ""}</span></div>`).join("")}
-      </div>${!matches.length ? `<p class="muted" role="status">${Object.values(state.filters).some(Boolean) ? "Ничего не найдено. Измените фильтры или месяц." : "Открытых планов нет"}</p>` : ""}
+        ${matches.slice(0, state.limit).map(d => {
+          const isBought = custIndex.isBought(d.customerBin, d.customerName);
+          const isLost = custIndex.isLost(d.customerName);
+          const boughtTag = isBought ? ' <span class="tag good">покупал у нас</span>' : '';
+          const lostTag = isLost ? ' <span class="tag warn">ранее забрал конкурент</span>' : '';
+          return `<div class="r" role="row" data-plan-id="${esc(d.id)}"><span role="cell">${esc(d.month)}<span class="sub">${link(d.dealUrl, `Сделка ${d.id} ↗`)} · ${link(d.planUrl, `План ${d.planNumber} ↗`)}</span></span><span role="cell">${esc(d.customerName)}${boughtTag}${lostTag}<span class="dim sub">${esc(d.customerBin)}</span></span><span role="cell">${esc(d.itemName)}<span class="dim sub">${[d.truCode, d.kind].filter(Boolean).map(esc).join(" · ")}</span></span><span role="cell" data-label="Количество">${fmt(d.qty)} шт.</span><span role="cell" class="num" data-label="Сумма">${money(d.sum)}</span><span role="cell" data-label="Статус портала">${esc(d.portalStatus)}</span><span role="cell" data-label="Менеджер">${esc(d.managerName)}${d.isNewStage ? '<span class="bad sub">Новая · ждёт разбора</span>' : ""}</span></div>`;
+        }).join("")}
+      </div>${!matches.length ? `<p class="muted" role="status">${Object.values(state.filters).some(Boolean) || state.searchQuery ? "Ничего не найдено. Измените фильтры или месяц." : "Открытых планов нет"}</p>` : ""}
       ${matches.length > state.limit ? '<button type="button" class="btn plans-more" data-plan-more>Показать ещё</button>' : ""}`;
     open.querySelectorAll(".plan-filter-group .chips").forEach((row, i) => {
       row.scrollLeft = scrollPositions[i] || 0;
       if (!scrollPositions.length) window.__scrollPlanSelection(row);
     });
+    const searchInput = open.querySelector(".plan-search-input");
+    if (searchInput) {
+      searchInput.addEventListener("input", () => {
+        state.searchQuery = searchInput.value;
+        state.limit = 50;
+        renderOpenPlans(base, el, active, state);
+        const nextInput = open.querySelector(".plan-search-input");
+        if (nextInput) {
+          nextInput.focus();
+          nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
+        }
+      });
+    }
     open.onclick = event => {
       const button = event.target.closest("button");
       if (!button) return;
       const previousLimit = state.limit;
       if (button.dataset.planFilter) {
         state.filters[button.dataset.planFilter] = button.dataset.value;
+        state.manualFilter = true;
         state.limit = 50;
       } else if (button.hasAttribute("data-plan-more")) state.limit += 50;
       else if (button.dataset.planSort) {
