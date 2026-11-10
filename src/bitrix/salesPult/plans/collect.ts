@@ -2,6 +2,7 @@ import { enrichManagerNames } from "../managerNames.js";
 import { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import { loadMarketConfig } from "../../../kz/market/config.js";
 import { buildPlansMonitorView } from "./aggregate.js";
+import { attachLostWinners } from "./lostTo.js";
 import type { NormalizedPlanDeal, PlanOutcome, PlansMonitorView } from "./types.js";
 
 export const PLAN_DEAL_SELECT_FIELDS = [
@@ -183,6 +184,7 @@ export async function collectPlansMonitor(options: CollectPlansOptions): Promise
       if (!names.has(id) || name !== `сотрудник ID ${id}`) names.set(id, name);
     }
     for (const d of deals) d.managerName = names.get(d.managerId) || `ID ${d.managerId || "—"}`;
+    await attachLostWinners(options.reader, deals);
     const view = buildPlansMonitorView(deals, options);
     console.log(`[Планы] сделок: ${deals.length}, ИП: ${view.ip!.total.count}, КТ: ${view.kt!.total.count} (${Math.round(performance.now() - started)} мс)`);
     return view;

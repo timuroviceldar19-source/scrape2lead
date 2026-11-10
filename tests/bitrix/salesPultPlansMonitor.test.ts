@@ -260,7 +260,8 @@ describe("монитор планов: Chromium", () => {
       await page.goto(pathToFileURL(file).href + "#plans-ip");
       const check = async (tab: string, month: string, count: number) => {
         await page.waitForFunction(({ tab, month }) => document.querySelector(`#tab-${tab}`)?.classList.contains("on") && document.querySelector('#planMonths [aria-pressed="true"]')?.getAttribute("data-month") === month, { tab, month });
-        expect(await page.locator(`#tab-${tab} section.block`).count()).toBe(5);
+        // 01 сводка, 02 месяцы, 03 способы и товары, 04 кому проиграли, 05 открытые планы, 06 заказчики.
+        expect(await page.locator(`#tab-${tab} section.block`).count()).toBe(6);
         expect(await page.locator(`#tab-${tab} [data-plan-count]`).getAttribute("data-plan-count")).toBe(String(count));
         expect(await page.locator("#periodsNav").isVisible()).toBe(false);
       };

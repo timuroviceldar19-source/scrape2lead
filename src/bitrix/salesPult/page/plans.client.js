@@ -22,6 +22,20 @@
     try { const u = new URL(url); valid = u.protocol === "https:" && !u.username && !u.password; } catch {}
     return valid ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>` : esc(label);
   };
+  const pct = (part, whole) => whole > 0 ? Math.round((part / whole - 1) * 100) : null;
+  const signedPct = p => p === null ? "" : p === 0 ? "как в плане" : `${p > 0 ? "+" : "−"}${fmt(Math.abs(p))}%`;
+  const lostList = deals => `<div class="cust-list rows">${deals.map(d => {
+    const diff = d.contractSum === null ? null : pct(d.contractSum, d.planSum);
+    return `<div class="r lost-row"><span>${esc(d.month)}</span><span>${link(d.dealUrl, d.planNumber || d.id)} · ${esc(d.customerName)}<span class="dim sub">${esc(d.itemName)} · ${esc(d.managerName)}</span></span><span class="num">план ${money(d.planSum)}</span><span class="num">${d.contractSum === null ? "сумма договора неизвестна" : `договор ${money(d.contractSum)}${diff === null ? "" : ` · ${signedPct(diff)}`}`}</span></div>`;
+  }).join("")}</div>`;
+  const lostToBlock = (L, idx) => {
+    const rows = L.competitors.map((c, i) => `<details class="cust-d lost-d"><summary class="r"><span class="rk">${fmt(i + 1)}</span><span class="cust">${esc(c.name)}<span class="dim sub">БИН ${esc(c.bin)}</span></span><span data-l="закупок">${fmt(c.count)}</span><span class="num" data-l="по плану">${money(c.planSum)}</span><span class="num" data-l="по договорам">${c.knownSumCount ? money(c.contractSum) : "—"}</span><span data-l="дешевле плана">${c.knownSumCount ? `${fmt(c.cheaperCount)} из ${fmt(c.knownSumCount)}` : "—"}</span></summary>${lostList(c.deals)}${c.count > c.deals.length ? `<p class="muted lost-more">и ещё ${fmt(c.count - c.deals.length)} помельче</p>` : ""}</details>`).join("");
+    const shown = L.competitors.length < L.companies ? ` · показаны ${fmt(L.competitors.length)} с наибольшим числом` : "";
+    return `${head(idx, "Кому проиграли", L.lostCount ? `${fmt(L.lostCount)} закупок · ${fmt(L.companies)} компаний${shown}` : "")}
+      ${L.lostCount ? `<div class="lost-to rows"><div class="r head"><span>Место</span><span>Победитель</span><span>Закупок</span><span>По плану</span><span>По договорам</span><span>Дешевле плана</span></div>${rows}</div>
+      ${L.unknownCount ? `<p class="muted lost-unknown">ещё ${fmt(L.unknownCount)} без данных о победителе</p>` : ""}
+      <p class="note-src">Победитель и сумма договора — из комментария робота «Итог закупки» в сделке. «Дешевле плана» — договор меньше суммы плана больше чем на 0,5%. Если договор закрыл только часть количества, процент по сделке занижен.</p>` : `<p class="muted">Проигранных закупок нет</p>`}`;
+  };
   const list = plans => `<div class="cust-list rows">${plans.map(d => `<div class="r plan-list-row"><span>${esc(d.month)}</span><span>${link(d.dealUrl, d.planNumber || d.id)} · ${esc(d.customerName)}<span class="dim sub">${esc(d.itemName)}</span></span><span>${fmt(d.qty)} шт.</span><span class="num">${money(d.sum)} · ${link(d.planUrl, "План ↗")}</span></div>`).join("")}</div>`;
 
   // Общая прокрутка выбранной кнопки для месяцев и строк фильтров.
@@ -63,7 +77,7 @@
       const button = (value, name) => `<button type="button" data-plan-filter="${key}" data-value="${esc(value)}" aria-pressed="${state.filters[key] === value}">${esc(name)}</button>`;
       return `<fieldset class="plan-filter-group"><legend>${label}</legend><div class="chips">${button("", "Все")}${[...choicesByKey.get(key)].sort((a, b) => String(a[1]).localeCompare(String(b[1]), "ru")).map(([value, name]) => button(value, name)).join("")}</div></fieldset>`;
     }).join("");
-    open.innerHTML = `${head("04", "Открытые планы", `Показано ${fmt(Math.min(state.limit, matches.length))} из ${fmt(matches.length)}`)}
+    open.innerHTML = `${head("05", "Открытые планы", `Показано ${fmt(Math.min(state.limit, matches.length))} из ${fmt(matches.length)}`)}
       <div class="plan-filters" role="group" aria-label="Фильтры открытых планов">${filterHtml}</div>
       <div class="rows plans-table" role="table" aria-label="Открытые планы">
         <div class="r head" role="row">${sortHead("month", "Месяц")}<span role="columnheader">Заказчик</span><span role="columnheader">Товар / вид</span>${sortHead("qty", "Кол-во")}${sortHead("sum", "Сумма")}<span role="columnheader">Статус портала</span><span role="columnheader">Менеджер</span></div>
@@ -146,8 +160,9 @@
           <h3>Статусы на портале</h3><div class="rows plans-statuses">${V.statuses.map(s => `<div class="r"><span>${esc(s.status)}</span><span>${fmt(s.count)} шт.</span><span class="num">${money(s.sum)}</span></div>`).join("")}</div>
         </div></div>
       </section>
+      <section class="block plans-lost" data-slice="${active}">${V.lostTo ? lostToBlock(V.lostTo, "04") : ""}</section>
       <section class="block plans-open" data-slice="${active}"></section>
-      <section class="block plans-customers" data-slice="${active}">${head("05", "Крупнейшие заказчики по планам", "Топ-15")}
+      <section class="block plans-customers" data-slice="${active}">${head("06", "Крупнейшие заказчики по планам", "Топ-15")}
         <div class="cust rows"><div class="r head"><span>Заказчик / БИН</span><span>Сумма планов</span><span>Пунктов</span><span>В работе</span></div>
           ${V.customers.map(c => `<details class="cust-d"><summary class="r"><span class="cust">${esc(c.name)}<span class="dim sub">${esc(c.bin)}</span></span><span class="num">${money(c.sum)}</span><span>${fmt(c.count)}</span><span>${money(c.openSum)} · ${fmt(c.openCount)} шт.${bar(c.openSum, c.sum, "ink")}</span></summary>${list(c.planList)}</details>`).join("")}
         </div>
