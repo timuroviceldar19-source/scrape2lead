@@ -1,4 +1,4 @@
-import type { NormalizedPlanDeal, PlanDealItem, PlansGroupSliceView, PlansGroupView, PlansMonitorView } from "./types.js";
+import type { NormalizedPlanDeal, PlanDealItem, PlanLostToView, PlansGroupSliceView, PlansGroupView, PlansMonitorView } from "./types.js";
 
 const sum = (deals: NormalizedPlanDeal[]) => deals.reduce((s, d) => s + d.sum, 0);
 const largest = <T extends { sum: number }>(items: T[]) => items.sort((a, b) => b.sum - a.sum);
@@ -10,10 +10,32 @@ function buckets(deals: NormalizedPlanDeal[], key: (d: NormalizedPlanDeal) => st
 }
 // В списки UI передаём только поля карточки, без служебных признаков агрегации.
 function planItem(d: NormalizedPlanDeal): PlanDealItem {
-  const { group, managerId, dateCreate, outcomeKey, isOpen, isWonCrm, isLostCrm, ...item } = d;
+  const { group, managerId, dateCreate, outcomeKey, isOpen, isWonCrm, isLostCrm, lostTo, ...item } = d;
   return item;
 }
 const planList = (deals: NormalizedPlanDeal[]) => largest([...deals]).slice(0, 20).map(planItem);
+
+const LOST_TO_TOP = 15;
+// Договор считается дешевле плана, если он меньше суммы плана больше чем на 0,5%.
+const CHEAPER_THAN_PLAN = 0.995;
+function lostToView(lost: NormalizedPlanDeal[]): PlanLostToView {
+  const known = lost.filter((d) => d.lostTo);
+  const competitors = buckets(known, (d) => d.lostTo!.bin).map((ds) => {
+    const withSum = ds.filter((d) => d.lostTo!.contractSum !== null);
+    return {
+      bin: ds[0].lostTo!.bin, name: ds[0].lostTo!.name, count: ds.length, planSum: sum(ds),
+      contractSum: withSum.reduce((s, d) => s + d.lostTo!.contractSum!, 0), knownSumCount: withSum.length,
+      cheaperCount: withSum.filter((d) => d.sum > 0 && d.lostTo!.contractSum! < d.sum * CHEAPER_THAN_PLAN).length,
+      deals: largest([...ds]).slice(0, 20).map((d) => ({
+        id: d.id, dealUrl: d.dealUrl, planNumber: d.planNumber, planUrl: d.planUrl, month: d.month,
+        customerName: d.customerName, itemName: d.itemName, managerName: d.managerName,
+        planSum: d.sum, contractSum: d.lostTo!.contractSum
+      }))
+    };
+  });
+  competitors.sort((a, b) => b.count - a.count || b.planSum - a.planSum || a.bin.localeCompare(b.bin));
+  return { lostCount: lost.length, companies: competitors.length, unknownCount: lost.length - known.length, competitors: competitors.slice(0, LOST_TO_TOP) };
+}
 
 export function buildSingleSliceView(deals: NormalizedPlanDeal[], asOfDate: string): PlansGroupSliceView {
   const open = deals.filter(d => d.isOpen);
@@ -50,7 +72,8 @@ export function buildSingleSliceView(deals: NormalizedPlanDeal[], asOfDate: stri
     customers: largest(buckets(deals, customerKey).map(ds => ({
       bin: ds[0].customerBin, name: ds[0].customerName, sum: sum(ds), count: ds.length,
       openSum: sum(ds.filter(d => d.isOpen)), openCount: ds.filter(d => d.isOpen).length, planList: planList(ds)
-    }))).slice(0, 15)
+    }))).slice(0, 15),
+    lostTo: lostToView(lost)
   };
 }
 

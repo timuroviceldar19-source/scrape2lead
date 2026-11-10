@@ -682,3 +682,25 @@ body.tv .outcome-mismatches .mismatch-toggle, body.tv .outcome-mismatches .misma
 .product-switch { margin-bottom: 0; align-self: center; }
 .product-switch button { font-size: 13px; padding: 6px 12px; }
 body.tv #productSwitch { display: none !important; }
+
+/* ---------- plans: «Кому проиграли» (класс .lost занят блоком рынка) ---------- */
+.plans-lost .lost-to > .r, .plans-lost .lost-to > .lost-d > .r { grid-template-columns: 28px minmax(0, 2.4fr) 70px 110px 120px 110px; gap: 12px; align-items: baseline; }
+.plans-lost .lost-to .r.head { font-size: 10px; }
+.plans-lost .lost-to .cust { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.plans-lost .lost-to .cust .sub { display: block; font-size: 11px; margin: 4px 0 0 16px; }
+.plans-lost .lost-to .cust-list { margin: 0 0 14px 44px; }
+.plans-lost .lost-row { grid-template-columns: 70px minmax(0, 1fr) 130px 270px; gap: 12px; align-items: baseline; font-size: 13px; padding: 9px 0; }
+.plans-lost .lost-row > span { min-width: 0; overflow-wrap: anywhere; }
+.plans-lost .lost-row .sub { display: block; font-size: 11px; margin-top: 5px; }
+.plans-lost .lost-unknown { margin: 12px 0 0; font-size: 13px; }
+.plans-lost .lost-more { margin: 0 0 14px 44px; font-size: 12px; }
+@media (max-width: 760px) {
+  .plans-lost .lost-to > .r, .plans-lost .lost-to > .lost-d > .r { grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr); gap: 6px 12px; align-items: start; }
+  .plans-lost .lost-to > .r.head { display: none; }
+  .plans-lost .lost-to .r .cust { grid-column: 2 / -1; }
+  .plans-lost .lost-to .lost-d > summary > .rk { grid-column: 1; }
+  .plans-lost .lost-to .r > [data-l]::before { content: attr(data-l); display: block; font: 500 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+  .plans-lost .lost-to .r > [data-l]:nth-of-type(3), .plans-lost .lost-to .r > [data-l]:nth-of-type(5) { grid-column: 2; }
+  .plans-lost .lost-to .cust-list { margin-left: 0; }
+  .plans-lost .lost-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
