@@ -81,7 +81,7 @@
       }
     };
     scanPlansWon(base);
-    if (base.monthViews) {
+    if (base?.monthViews) {
       for (const mv of Object.values(base.monthViews)) scanPlansWon(mv);
     }
 
@@ -126,8 +126,8 @@
         }
       }
     };
-    scanLostTo(base.lostTo);
-    if (base.monthViews) {
+    scanLostTo(base?.lostTo);
+    if (base?.monthViews) {
       for (const mv of Object.values(base.monthViews)) scanLostTo(mv?.lostTo);
     }
 
@@ -136,6 +136,7 @@
       isLost: (name) => name && lostNames.has(norm(name))
     };
   }
+  window.__buildCustomerIndices = buildCustomerIndices;
 
   function readTableState(key) {
     let saved;

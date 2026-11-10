@@ -159,6 +159,7 @@ export interface CollectPlansOptions extends NormalizePlanOptions {
   reader: ReadOnlyBitrixClient;
   userProfiles?: ReadonlyMap<string, { name: string }>;
   groups?: Array<{ managers: Array<{ id: string; name: string }> }>;
+  onDeals?: (deals: NormalizedPlanDeal[]) => void;
 }
 export async function collectPlansMonitor(options: CollectPlansOptions): Promise<PlansMonitorView> {
   const started = performance.now();
@@ -185,6 +186,7 @@ export async function collectPlansMonitor(options: CollectPlansOptions): Promise
     }
     for (const d of deals) d.managerName = names.get(d.managerId) || `ID ${d.managerId || "—"}`;
     await attachLostWinners(options.reader, deals);
+    options.onDeals?.(deals);
     const view = buildPlansMonitorView(deals, options);
     console.log(`[Планы] сделок: ${deals.length}, ИП: ${view.ip!.total.count}, КТ: ${view.kt!.total.count} (${Math.round(performance.now() - started)} мс)`);
     return view;

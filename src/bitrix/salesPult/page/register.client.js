@@ -117,11 +117,11 @@
   const g = Object.fromEntries(R.groups.map((x) => [x.g, x]));
   const ipG = g["ИП"] ?? { sale: 0, val: 0 };
   const ktG = g["КТ"] ?? { sale: 0, val: 0 };
-  const ipValText = ipG.val !== null ? `${mln(ipG.val)} <small>млн · маржа ${pct(ipG.sale ? ipG.val / ipG.sale : 0)}</small>` : `<span class="dim">нет в файле</span>`;
-  const ktValText = ktG.val !== null ? `${mln(ktG.val)} <small>млн · маржа ${pct(ktG.sale ? ktG.val / ktG.sale : 0)}</small>` : `<span class="dim">нет в файле</span>`;
+  const ipValText = ipG.val !== null ? `${mln(ipG.sale)} млн <small>(маржа ${mln(ipG.val)} млн · ${pct(ipG.sale ? ipG.val / ipG.sale : 0)})</small>` : `${mln(ipG.sale)} млн <span class="dim">нет в файле</span>`;
+  const ktValText = ktG.val !== null ? `${mln(ktG.sale)} млн <small>(маржа ${mln(ktG.val)} млн · ${pct(ktG.sale ? ktG.val / ktG.sale : 0)})</small>` : `${mln(ktG.sale)} млн <span class="dim">нет в файле</span>`;
   s += `<section class="block reveal">${head("03", "Что и как продаём", "доля в выручке · маржа")}<div class="two"><div>
-    <div class="gsum"><div><span class="label">ИП · интерактивные панели</span><div class="v">${mln(ipG.sale)} ${ipValText}</div></div>
-    <div><span class="label">КТ · компьютерная техника</span><div class="v">${mln(ktG.sale)} ${ktValText}</div></div></div>
+    <div class="gsum"><div><span class="label">ИП · интерактивные панели</span><div class="v">${ipValText}</div></div>
+    <div><span class="label">КТ · компьютерная техника</span><div class="v">${ktValText}</div></div></div>
     <div class="mix rows"><div class="r head"><span class="label">Товар</span><span class="label">Выручка</span><span class="label">Вал</span><span class="label">Маржа</span></div>
     ${R.mix.map((x) => `<div class="r"><span>${esc(x.kind)} <span class="dim">${x.group}</span></span><div>${bar(R.mix[0]?.sale ? x.sale / R.mix[0].sale * 100 : 0, "ink")}<span class="dim">${mln(x.sale)} млн · ${plural(Math.round(x.qty), ["шт", "шт", "шт"])}</span></div><span class="num">${x.val !== null ? mln(x.val) : "—"}</span><span class="num">${x.val !== null && x.sale ? pct(x.val / x.sale) : "—"}</span></div>`).join("")}</div></div>
     <div><div class="mix rows"><div class="r head"><span class="label">Канал</span><span class="label">Выручка</span><span class="label">Вал</span><span class="label">Маржа</span></div>

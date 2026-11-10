@@ -59,6 +59,7 @@ export interface SalesPultPayload {
   holidays?: string[];
   market?: MarketView | null;
   plans?: import("./plans/types.js").PlansMonitorView | null;
+  radar?: import("./radar/types.js").RadarView | null;
   outcomeMismatches?: WonLostMismatchDeal[];
 }
 

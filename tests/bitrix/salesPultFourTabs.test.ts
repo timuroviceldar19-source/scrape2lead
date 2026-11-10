@@ -32,7 +32,7 @@ describe('Д5: четыре вкладки вместо шести',()=>{
       const errors:string[]=[]; page.on('pageerror',e=>errors.push(e.message));
       try{
         await page.setContent(renderPultHtml(payload()));
-        expect(await navTexts(page)).toEqual(['Сегодня','Выручка','Планы','Рынок']);
+        expect(await navTexts(page)).toEqual(['Сегодня','Радар','Выручка','Планы','Рынок']);
         expect(await active(page)).toBe('Сегодня');
         expect(await page.locator('#productSwitch').isVisible()).toBe(false);
         await page.locator('.sections [data-t="plans"]').click();
