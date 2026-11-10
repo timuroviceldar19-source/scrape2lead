@@ -44,6 +44,7 @@ import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
 import { updateMarketWindow } from "../src/kz/market/updateWindow.js";
 import { loadMarketView } from "../src/kz/market/load.js";
 import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
+import { collectRadarView } from "../src/bitrix/salesPult/radar/collect.js";
 import {
   backfillMarketByMonths,
   DEFAULT_MARKET_UNITS_PATH
@@ -637,6 +638,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       holidays: config.holidays,
       market: marketView,
       plans: await collectPlansMonitor({ reader, asOfDate: todayAlmaty, portal: config.portal, userProfiles: collected.userProfiles, groups: config.groups }),
+      radar: await collectRadarView({ reader, asOfDate: todayAlmaty, portal: config.portal, userProfiles: collected.userProfiles, groups: config.groups }),
       outcomeMismatches: collected.outcomeMismatches
     };
 
