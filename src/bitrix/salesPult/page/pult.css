@@ -136,26 +136,6 @@ section.block { border-top: 1px solid var(--rule-3); margin-top: 56px; padding-t
 .tip.on { opacity: 1; }
 .tip b { font-weight: 500; }
 
-/* ---------- instruments ---------- */
-.inst { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule-2); border-bottom: 1px solid var(--rule-2); }
-.inst.one { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
-.inst > div { padding: 22px 28px 24px 0; }
-.inst > div + div { padding-left: 28px; border-left: 1px solid var(--rule); }
-.inst .v { display: flex; align-items: baseline; gap: 10px; margin: 14px 0 4px; }
-.inst .v .n { font-weight: 300; font-size: clamp(48px, 5vw, 68px); line-height: .9; letter-spacing: -0.05em; }
-.inst .v .t { font: 400 15px var(--mono); color: var(--ink-3); }
-.state { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; margin-top: 8px; }
-.state::before { content: ""; width: 6px; height: 6px; background: currentColor; }
-.state.idle { color: var(--ink-3); }
-.gauge { position: relative; height: 6px; background: var(--rule); margin: 18px 0 30px; }
-.gauge .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ink); transition: width 1.4s var(--ease); }
-.gauge .fill.good { background: var(--good); } .gauge .fill.warn { background: var(--warn); } .gauge .fill.bad { background: var(--bad); } .gauge .fill.idle { background: var(--ink-4); }
-.gauge .pace { position: absolute; top: -6px; width: 1px; height: 18px; background: var(--ink); }
-.gauge .pace span { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); font: 400 11px var(--mono); color: var(--ink-2); white-space: nowrap; }
-.gauge .pace.edge-r span { left: auto; right: 0; transform: none; }
-.gauge .pace.edge-l span { left: 0; transform: none; }
-.inst .sub { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
-
 /* ---------- team table ---------- */
 .team { margin-top: 34px; }
 .early { margin: 28px 0 -14px; font-size: 14px; color: var(--ink-2); }
@@ -311,9 +291,6 @@ body.tv .tv-cycle { display: block; }
   .signals { grid-template-columns: 1fr; }
   .readout .v { font-size: 18px; }
   .readout .v small { display: block; margin-top: 4px; }
-  .inst, .inst.one { grid-template-columns: 1fr; }
-  .inst > div, .inst > div + div { padding: 20px 0 22px; border-left: 0; }
-  .inst > div + div { border-top: 1px solid var(--rule); }
   .trow.head { display: none; }
   .trow { grid-template-columns: 1fr 1fr; gap: 14px 18px; padding: 18px 4px; }
   .trow .who { grid-column: 1 / -1; }
@@ -658,9 +635,9 @@ body.tv .plan-filters { display: none !important; }
 .month-tile .hbar { margin-top: 12px; height: 3px; }
 .month-tile .tile-note { margin: 10px 0 0; font: 400 12px/1.5 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
 .month-more { margin-top: 20px; }
-.month-more > summary { cursor: pointer; padding: 12px 0; font: 400 13px var(--mono); color: var(--ink-2); }
+.month-more > summary, .calls-more > summary { cursor: pointer; padding: 12px 0; font: 400 13px var(--mono); color: var(--ink-2); }
 .month-more[open] > summary { margin-bottom: 20px; }
-.month-more > summary:focus-visible, .outcome-mismatches > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.month-more > summary:focus-visible, .calls-more > summary:focus-visible, .outcome-mismatches > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .outcome-mismatches { grid-column: 1 / -1; min-width: 0; }
 .outcome-mismatches > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 6px; color: var(--bad); }
 .outcome-mismatches > summary::-webkit-details-marker { display: none; }
@@ -668,8 +645,10 @@ body.tv .plan-filters { display: none !important; }
 .mismatch-toggle { flex-shrink: 0; text-decoration: underline; font: 400 12px var(--mono); }
 .mismatch-content { padding: 12px 0 16px; }
 .mismatch-content .box-desc { font-size: 13px; line-height: 1.5; color: var(--ink-2); margin-bottom: 12px; }
-body.tv .month-more > summary { display: none; }
-body.tv .month-more { margin-top: 24px; }
+body.tv .month-more > summary, body.tv .calls-more > summary { display: none; }
+body.tv .month-more { margin-top: 0; }
+/* В ТВ большая цифра графика уже показывает договоры, выручку и прогноз — плитки её не повторяют. */
+body.tv .month-tiles { display: none; }
 body.tv .outcome-mismatches > summary { cursor: default; }
 body.tv .outcome-mismatches .mismatch-toggle, body.tv .outcome-mismatches .mismatch-content { display: none; }
 @media (max-width: 760px) {
@@ -679,4 +658,22 @@ body.tv .outcome-mismatches .mismatch-toggle, body.tv .outcome-mismatches .misma
   .month-tile:nth-child(n + 3) { border-top: 1px solid var(--rule-2); }
   .month-tile .tile-value { font-size: 24px; }
   .month-tile .tile-money, .month-tile .tile-result { font-size: 18px; }
+}
+
+/* ---------- team: sales and tenders in one table ---------- */
+#sales .team { margin-top: 0; }
+#sales .early { margin: 0 0 18px; }
+.trow.group { padding-top: 22px; padding-bottom: 14px; border-bottom: 1px solid var(--rule-2); background: rgba(20, 20, 20, .025); }
+.trow.group .nm { font-size: 13px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; }
+.trow.group .rl { font-size: 12px; color: var(--ink-3); line-height: 1.4; margin-top: 2px; }
+.trow.group .cell .sub { line-height: 1.45; }
+.group-state { font-weight: 500; color: var(--ink-2); }
+.group-state.good { color: var(--good); } .group-state.warn { color: var(--warn); } .group-state.bad { color: var(--bad); }
+.cell.na { color: var(--ink-4); }
+.calls-more { margin-top: 20px; }
+.calls-more[open] > summary { margin-bottom: 14px; }
+.calls-more .calls-grid { margin-top: 0; }
+@media (max-width: 760px) {
+  .trow .cell.na { display: none; }
+  .trow.group { padding: 18px 4px 14px; }
 }

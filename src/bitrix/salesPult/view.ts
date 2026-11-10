@@ -93,6 +93,11 @@ export function buildMonthView(
   };
 }
 
+function tasksCountText(m: PultManagerView): string {
+  const tasksCount = (m.topTasks || []).length;
+  return tasksCount ? pluralNbsp(tasksCount, ["срочная задача", "срочные задачи", "срочных задач"]) : "срочных задач нет";
+}
+
 function buildSalesManager(
   m: PultManagerView, period: "day" | "week" | "month", isEarly: boolean,
   ctx: PaceContext, payload: SalesPultPayload
@@ -110,11 +115,8 @@ function buildSalesManager(
     ? `набрал ${fmtNumberNbsp(r.calls.totalAttempts)} · ${fmtNumberNbsp(r.calls.durationMinutes)} мин`
     : "пока не звонил";
   const mContractsSub = r.contracts.uniqueDealsCount ? (formatPultMoney(r.contracts.totalAmount) || "сумма не указана") : "";
-  const tasksCount = (m.topTasks || []).length;
-  const tasksCountText = tasksCount ? pluralNbsp(tasksCount, ["срочная задача", "срочные задачи", "срочных задач"]) : "срочных задач нет";
-
   return {
-    id: m.id, name: m.name, initials: initials(m.name), tasksCountText,
+    id: m.id, name: m.name, initials: initials(m.name), tasksCountText: tasksCountText(m),
     calls: {
       fact: r.calls.successful, target: targetCalls, expected: mjc.expected,
       cls: mjc.cls, label: mjc.text, text: mjc.text, sub: mCallsSub,
@@ -243,11 +245,11 @@ function buildTenderManager(
   const tmJudge = judgeMetricStatus(r.contracts.uniqueDealsCount, targetContracts, period, "contracts", ctx);
   const sub = r.contracts.uniqueDealsCount ? (formatPultMoney(r.contracts.totalAmount) || "сумма не указана") : "";
   return {
-    id: m.id, name: m.name, initials: initials(m.name),
+    id: m.id, name: m.name, initials: initials(m.name), tasksCountText: tasksCountText(m),
     contracts: {
       fact: r.contracts.uniqueDealsCount, target: targetContracts,
       expected: tmJudge.expected, cls: tmJudge.cls, label: tmJudge.text, text: tmJudge.text,
-      sub: `${sub} · ${contractLabel(payload, period)}`, totalAmount: r.contracts.totalAmount,
+      sub: [sub, contractLabel(payload, period)].filter(Boolean).join(" · "), totalAmount: r.contracts.totalAmount,
       isEarlyEmpty: period === "day" && ctx.isEarly && r.contracts.uniqueDealsCount === 0
     },
     debts: m.debts, topTasks: m.topTasks || []

@@ -210,41 +210,49 @@
     });
   }
 
-  /* ================= sales department ================= */
-  function gauge(fact, tgt, j, unit, period) {
-    const w = tgt ? Math.min(100, (fact / tgt) * 100) : 0;
-    const pp = tgt ? Math.min(100, (j.expected / tgt) * 100) : 0;
-    const edge = pp > 82 ? "edge-r" : pp < 12 ? "edge-l" : "";
-    const pace = !P.closedMonth && j.expected >= 0.5 && fact < tgt ? `<span class="pace ${edge}" style="left:${pp}%"><span>${period === "day" ? "к " + V.genLabel + " нужно" : "по темпу нужно"} ${fmt(j.expected)}${unit || ""}</span></span>` : "";
-    return `<div class="gauge"><span class="fill ${j.cls}" data-w="${w}"></span>${pace}</div>`;
+  /* ================= team: sales and tenders in one table ================= */
+  const NA_CELL = (label) => `<div class="cell na" data-l="${label}"><span class="muted">—</span></div>`;
+
+  // Итог группы в тех же колонках, что и строки людей: цифра, полоска с отметкой темпа и оценка темпа.
+  function groupCell(label, j) {
+    if (j.untracked) return `<div class="cell" data-l="${label}"><div class="top"><span class="num muted">${fmt(j.fact)}</span></div><div class="sub">в CRM пока не отмечают</div></div>`;
+    const state = `<span class="group-state ${j.cls === "idle" ? "" : j.cls}">${esc(j.text)}</span>`;
+    return miniCell(label, { ...j, isEarlyEmpty: false, sub: state + (j.sub ? "<br>" + esc(j.sub) : "") });
   }
 
-  function instrument(label, fact, tgt, period, sub, j) {
-    return `<div>
-      <span class="label">${label}</span>
-      <div class="v"><span class="n" data-count="${fact}">0</span><span class="t">из ${fmt(tgt)}</span></div>
-      <span class="state ${j.cls === "idle" ? "idle" : j.cls}">${j.label || j.text}</span>
-      ${gauge(fact, tgt, j, "", period)}
-      <div class="sub">${sub}</div>
-    </div>`;
+  function groupRow(id, name, meta, cells) {
+    return `<div class="trow group" role="row" data-group="${id}">
+        <div class="who"><div><div class="nm">${esc(name)}</div><div class="rl">${esc(meta)}</div></div></div>
+        ${cells}
+      </div>`;
   }
 
   function renderSales(period) {
     const sp = V.periods[period].sales;
+    const tp = V.periods[period].tenders;
     const tc = sp.totals.calls, tk = sp.totals.proposals, tg = sp.totals.contracts;
+    const people = sp.managers.length + (tp ? tp.managers.length : 0);
+    const callsTotal = P.callsAvailable ? groupCell("Дозвонились", tc) : `<div class="cell" data-l="Дозвонились"><span class="muted">нет доступа</span></div>`;
     document.getElementById("sales").innerHTML = `
-      <div class="block-head"><h2><span class="idx">03</span>${esc(sp.name)} ${sp.periodName}</h2><span class="meta">${sp.meta}</span></div>
-      <div class="inst">
-        ${instrument("Дозвонились", tc.fact, tc.target, period, tc.sub, tc)}
-        ${instrument("Отправили КП", tk.fact, tk.target, period, tk.sub, tk)}
-        ${instrument("Подписали договоры", tg.fact, tg.target, period, tg.sub, tg)}
-      </div>
+      <div class="block-head"><h2><span class="idx">03</span>Команда ${sp.periodName}</h2><span class="meta">${plural(people, ["человек", "человека", "человек"])} · строка раскрывает долги и задачи</span></div>
       ${sp.isEarly ? `<p class="early">${sp.earlyText}</p>` : ""}
-      <div class="team" role="table" aria-label="Менеджеры отдела продаж">
+      <div class="team" role="table" aria-label="Команда: отдел продаж и тендерный отдел">
         <div class="trow head label" role="row"><span>Менеджер</span><span>Дозвонился</span><span>КП</span><span>Подписал</span><span>Долги сегодня</span><span></span></div>
+        ${groupRow("sales", sp.name, sp.meta, callsTotal + groupCell("КП", tk) + groupCell("Подписали", tg))}
         ${sp.managers.map((m) => managerRow(m, period)).join("")}
+        ${tp ? groupRow("tenders", tp.name, tp.meta, NA_CELL("Дозвонился") + NA_CELL("КП") + groupCell("Подписали", tp.totals.contracts)) : ""}
+        ${tp ? tp.managers.map(tenderRow).join("") : ""}
       </div>`;
     wireRows(document.getElementById("sales"));
+  }
+
+  function tenderRow(m) {
+    const id = "t-" + m.id;
+    return `<div class="trow body tender" role="row" tabindex="0" aria-expanded="false" aria-controls="${id}">
+        <div class="who"><span class="mono-av">${esc(m.initials)}</span><div><div class="nm">${esc(m.name)}</div><div class="rl">${m.tasksCountText || ""}</div></div></div>
+        ${NA_CELL("Дозвонился")}${NA_CELL("КП")}${miniCell("Подписал", m.contracts)}${debtsCell(m.debts)}
+        <span class="chev" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4.5 6 8.5l4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
+      </div><div class="detail" id="${id}"><div>${managerDetail(m)}</div></div>`;
   }
 
   function miniCell(label, j) {
@@ -367,6 +375,7 @@
   }
 
   /* ================= calls ================= */
+  let callsMoreOpen = false;
   function renderCalls(period) {
     const cp = V.periods[period].calls;
     const st = cp.strip;
@@ -379,6 +388,8 @@
         <div><span class="label">Средний разговор</span><div class="v">${st.calls ? fmt1(st.avg) : "—"}<small>${st.calls ? "мин" : ""}</small></div></div>
         <div><span class="label">${st.normLabel}</span><div class="v">${st.normValue}<small>${st.normSub}</small></div></div>
       </div>
+      <details class="calls-more"${document.body.classList.contains("tv") || callsMoreOpen ? " open" : ""}>
+      <summary>График звонков и кто как звонит</summary>
       <div class="calls-grid">
         <div>
           <div class="sub-h"><h3>Дозвоны по дням, ${MONTHS[V.month.asOfMonth - 1].toLowerCase()}</h3><span class="label">норма ${fmt(st.norm)} в день</span></div>
@@ -393,9 +404,18 @@
         <div class="sub-h"><h3>Кто как звонит</h3><span class="label">■ дозвон  ▨ не дозвонился  ┆ норма</span></div>
         <div class="arow head label"><span>Менеджер</span><span>Наборы</span><span class="astats"><span>Дозвон</span><span>Доля</span><span>Разговор</span><span>Минут</span></span></div>
         ${anatomy(period)}
-      </div>`;
+      </div>
+      </details>`;
     document.getElementById("calls").innerHTML = html;
     wireCallsTip();
+    const more = document.querySelector("#calls .calls-more");
+    // Выбор человека запоминаем по клику на заголовок (Enter и пробел тоже дают click):
+    // программное раскрытие в ТВ и перерисовка при смене периода его не меняют.
+    more.querySelector("summary").addEventListener("click", () => { callsMoreOpen = !more.open; });
+    more.addEventListener("toggle", () => {
+      if (more.open) animate(more);
+      if (document.body.classList.contains("tv")) fitTv();
+    });
   }
 
   function callsChart(norm) {
@@ -456,30 +476,6 @@
     }).join("");
   }
 
-  /* ================= tenders ================= */
-  function renderTenders(period) {
-    const el = document.getElementById("tenders");
-    const tp = V.periods[period].tenders;
-    if (!tp) { if (el) el.remove(); return; }
-    const tg = tp.totals.contracts;
-    const rows = tp.managers.map((m) => {
-      const id = "t-" + m.id;
-      return `<div class="trow body" role="row" tabindex="0" aria-expanded="false" aria-controls="${id}" style="grid-template-columns:minmax(200px,1.5fr) minmax(0,1.5fr) minmax(0,1.5fr) 28px">
-        <div class="who"><span class="mono-av">${esc(m.initials)}</span><div class="nm">${esc(m.name)}</div></div>
-        ${miniCell("Подписал", m.contracts)}
-        ${debtsCell(m.debts)}
-        <span class="chev" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4.5 6 8.5l4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
-      </div><div class="detail" id="${id}"><div>${managerDetail(m)}</div></div>`;
-    }).join("");
-    el.innerHTML = `
-      <div class="block-head"><h2><span class="idx">05</span>${esc(tp.name)} ${tp.periodName}</h2><span class="meta">${tp.meta}</span></div>
-      <div class="inst one">
-        ${instrument("Подписали договоры", tg.fact, tg.target, period, tg.sub, tg)}
-        <div class="team" style="margin:0">${rows}</div>
-      </div>`;
-    wireRows(el);
-  }
-
   /* ================= tasks ================= */
   let taskFilter = "all", taskAll = false;
   function cleanTitle(t) {
@@ -516,13 +512,13 @@
     const all = [];
     for (const g of P.groups) for (const m of g.managers) for (const t of m.topTasks || []) all.push({ t, m });
     const el = document.getElementById("tasks");
-    if (!all.length) { el.innerHTML = `<div class="block-head"><h2><span class="idx">06</span>Что сделать сегодня</h2></div><div class="mini-empty">Срочных задач нет.</div>`; return; }
+    if (!all.length) { el.innerHTML = `<div class="block-head"><h2><span class="idx">05</span>Что сделать сегодня</h2></div><div class="mini-empty">Срочных задач нет.</div>`; return; }
     const owners = [...new Map(all.map((x) => [x.m.id, x.m])).values()];
     const list = all.filter((x) => taskFilter === "all" || x.m.id === taskFilter)
       .sort((a, b) => (a.t.group || 9) - (b.t.group || 9) || (a.t.passedPlanMonthNote ? 1 : 0) - (b.t.passedPlanMonthNote ? 1 : 0) || (b.t.amount || 0) - (a.t.amount || 0) || String(a.t.deadline || "").localeCompare(String(b.t.deadline || "")));
     const sumAmt = list.reduce((s, x) => s + (x.t.amount || 0), 0);
     el.innerHTML = `
-      <div class="block-head"><h2><span class="idx">06</span>Что сделать сегодня</h2><span class="meta">${plural(list.length, ["задача", "задачи", "задач"])} · сделки на ${money(sumAmt)}</span></div>
+      <div class="block-head"><h2><span class="idx">05</span>Что сделать сегодня</h2><span class="meta">${plural(list.length, ["задача", "задачи", "задач"])} · сделки на ${money(sumAmt)}</span></div>
       <div class="filters" role="group" aria-label="Фильтр по менеджеру">
         <button data-f="all" aria-pressed="${taskFilter === "all"}">Все<span class="num">${all.length}</span></button>
         ${owners.map((m) => `<button data-f="${m.id}" aria-pressed="${taskFilter === m.id}">${esc(first(m.name))}<span class="num">${all.filter((x) => x.m.id === m.id).length}</span></button>`).join("")}
@@ -591,8 +587,8 @@
     period = p;
     btns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.p === p)));
     moveInd();
-    renderSales(p); renderCalls(p); renderTenders(p);
-    ["sales", "calls", "tenders"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
+    renderSales(p); renderCalls(p);
+    ["sales", "calls"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
     try { if (fromUser) localStorage.setItem("pult-period", p); } catch (e) {}
   }
   btns.forEach((b) => b.addEventListener("click", () => setPeriod(b.dataset.p, true)));
@@ -803,7 +799,7 @@
 
   /* ================= TV ================= */
   let tvTimer = null;
-  const SCENES = ["month", "sales", "calls", "signals", "tenders"].filter((id) => document.getElementById(id));
+  const SCENES = ["month", "sales", "calls", "signals"].filter((id) => document.getElementById(id));
   function showScene(i) {
     SCENES.forEach((id, k) => document.getElementById(id).classList.toggle("scene", k === i));
     document.getElementById("scenes").innerHTML = SCENES.map((_, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("");
@@ -829,6 +825,8 @@
     const on = document.body.classList.toggle("tv");
     const more = document.querySelector("#month .month-more");
     if (more) more.open = on;
+    const callsMore = document.querySelector("#calls .calls-more");
+    if (callsMore) callsMore.open = on || callsMoreOpen;
     const errors = document.querySelector("#signals .outcome-mismatches");
     if (errors) errors.open = false;
     const tvBtn = document.getElementById("tvBtn");

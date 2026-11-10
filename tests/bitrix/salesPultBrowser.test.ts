@@ -451,15 +451,17 @@ describe("salesPult in-browser Playwright test", () => {
   it.each([1280, 375])("keeps periods visible at tenders on width %i", async (width) => {
     const page = await browser.newPage({ viewport: { width, height: 850 }, reducedMotion: "reduce" });
     await page.goto(`${pathToFileURL(indexPath).href}#pult`);
-    await page.locator("#tenders").scrollIntoViewIfNeeded();
+    const tenders = page.locator('#sales .trow.group[data-group="tenders"]');
+    await tenders.scrollIntoViewIfNeeded();
     const nav = await page.locator("#periodsNav").boundingBox();
     expect(nav).not.toBeNull();
     expect(nav!.y).toBeGreaterThanOrEqual(0);
     expect(nav!.y + nav!.height).toBeLessThan(850);
-    await page.evaluate(() => document.getElementById("tenders")!.scrollIntoView());
-    const heading = await page.locator("#tenders h2").boundingBox();
+    expect((await tenders.boundingBox())!.y).toBeGreaterThanOrEqual(nav!.y + nav!.height);
+    await page.evaluate(() => document.getElementById("sales")!.scrollIntoView());
+    const heading = await page.locator("#sales h2").boundingBox();
     expect(heading!.y).toBeGreaterThanOrEqual(nav!.y + nav!.height);
-    await page.waitForFunction(() => document.getElementById("tenders")!.classList.contains("in"));
+    await page.waitForFunction(() => document.getElementById("sales")!.classList.contains("in"));
     if (process.env.PULT_SCREENSHOT_DIR) {
       fs.mkdirSync(process.env.PULT_SCREENSHOT_DIR, { recursive: true });
       await page.screenshot({ path: path.join(process.env.PULT_SCREENSHOT_DIR, `pult-${width}.png`), animations: "disabled" });
@@ -924,13 +926,13 @@ describe('OP contracts in the pult browser', () => {
       expect(await page.locator('#month').innerText()).toContain('600 ₸');
       expect((await page.locator('#month .awaiting-register').innerText()).replace(/\s+/g,' ')).toContain('ещё 1 сделка');
       expect(await page.locator('#sales').innerText()).toContain('по Битриксу, предварительно');
-      expect(await page.locator('#tenders').innerText()).toContain('по Битриксу, предварительно');
+      expect(await page.locator('#sales .trow.body.tender').innerText()).toContain('по Битриксу, предварительно');
       await page.locator('#month').screenshot({path:path.join(screenshotDir,'current-month.png')});
       await page.locator('[data-p="month"]').click();
       expect(await page.locator('#sales').innerText()).toContain('по реестру ОП');
-      expect(await page.locator('#tenders').innerText()).toContain('по реестру ОП');
-      expect(await page.locator('#tenders .num').first().innerText()).toContain('1');
-      await page.locator('#tenders').screenshot({path:path.join(screenshotDir,'tenders-month.png')});
+      expect(await page.locator('#sales .trow.body.tender').innerText()).toContain('по реестру ОП');
+      expect(await page.locator('#sales .trow.body.tender .cell[data-l="Подписал"] .num').innerText()).toContain('1');
+      await page.locator('#sales').screenshot({path:path.join(screenshotDir,'team-month.png')});
       expect(await page.locator('#signals').innerText()).toContain('Сумма сделки 0');
       expect(await page.locator('#signals').innerText()).toContain('договор у другого поставщика');
       expect(await page.locator('#signals').innerText()).not.toContain('Закрыто в Битриксе, нет в ОП');

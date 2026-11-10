@@ -21,7 +21,7 @@ describe('Д3: urgent and register in browser', () => {
         expect(await page.locator('.mismatch-row .mgr').innerText()).toContain('Тестовый владелец');
         expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
         await page.keyboard.press('t');
-        await expect.poll(()=>page.locator('#scenes i').count()).toBe(5);
+        await expect.poll(()=>page.locator('#scenes i').count()).toBe(4);
         await page.clock.fastForward(15_100);
         await page.clock.fastForward(15_100);
         await page.clock.fastForward(15_100);

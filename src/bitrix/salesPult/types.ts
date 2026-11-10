@@ -158,6 +158,7 @@ export interface PultTenderManagerView {
   id: string;
   name: string;
   initials: string;
+  tasksCountText: string;
   contracts: PultManagerContractsView;
   debts?: ManagerDebts;
   topTasks: TopTask[];
