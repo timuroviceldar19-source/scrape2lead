@@ -7,10 +7,12 @@ import { findLatestManifestPath, renderRunSummary } from "../src/automation/runS
 const runsDir = process.argv[2] ?? "runs";
 try {
   const logPath = process.argv[3];
-  const stateKey = `${process.env.GITHUB_RUN_ID ?? "local"}:${process.env.GITHUB_RUN_ATTEMPT ?? "1"}`;
-  const blocked = logPath && fs.existsSync(`${logPath}.portal-probe-state`)
-    && fs.readFileSync(`${logPath}.portal-probe-state`, "utf8").trim() === `${stateKey}:blocked`;
-  if (blocked) {
+  const stateKey = `${process.env.GITHUB_RUN_ID ?? "local"}:${process.env.GITHUB_RUN_ATTEMPT ?? "1"}${process.env.GZ_PORTAL_MACHINE ? `:${process.env.GZ_PORTAL_MACHINE}` : ""}`;
+  const state = logPath && fs.existsSync(`${logPath}.portal-probe-state`)
+    && fs.readFileSync(`${logPath}.portal-probe-state`, "utf8").trim();
+  if (state === `${stateKey}:handoff`) {
+    console.log("↪ портал недоступен с этой машины GitHub, сбор передан следующей машине.\n");
+  } else if (state === `${stateKey}:blocked`) {
     console.log("❌ портал недоступен с этой машины GitHub, прогон не начинался.\n");
   } else {
     const manifestPath = findLatestManifestPath(runsDir);

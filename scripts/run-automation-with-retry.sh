@@ -8,6 +8,8 @@
 # по UF_CRM_PLAN_ID. Письмо о падении приходит только после последней попытки.
 #
 # Настройка: RETRY_ATTEMPTS (всего попыток, по умолчанию 3),
+# GZ_PORTAL_HANDOFF=1: первый отказ до старта робота возвращает 76 без паузы.
+# GZ_SIMULATE_PORTAL_BLOCK=1: тестовый отказ probe без сети, с явной строкой в логе.
 # RETRY_PAUSE_SECONDS (пауза между попытками, по умолчанию 600).
 set -u
 
@@ -28,14 +30,24 @@ NETWORK_PATTERN='net::ERR_|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED|ERR_TIMED_OUT|pa
 cd -- "$root" || exit 1
 # Отдельно от кэша manifests; ключ не позволяет принять состояние прошлого job/повтора.
 STATE="$LOG.portal-probe-state"
-STATE_KEY="${GITHUB_RUN_ID:-local}:${GITHUB_RUN_ATTEMPT:-1}"
+STATE_KEY="${GITHUB_RUN_ID:-local}:${GITHUB_RUN_ATTEMPT:-1}${GZ_PORTAL_MACHINE:+:$GZ_PORTAL_MACHINE}"
 started=0
 printf '%s:probing\n' "$STATE_KEY" > "$STATE" || exit 1
 attempt=1
 while :; do
-  npx --no-install tsx "$root/scripts/gz-portal-probe.mts" >>"$LOG" 2>&1
-  probe_code=$?
+  if [ "${GZ_SIMULATE_PORTAL_BLOCK:-0}" = "1" ]; then
+    printf '%s\n' 'portal probe: unreachable: simulated' >>"$LOG"
+    probe_code=75
+  else
+    npx --no-install tsx "$root/scripts/gz-portal-probe.mts" >>"$LOG" 2>&1
+    probe_code=$?
+  fi
   if [ "$probe_code" -eq 75 ]; then
+    if [ "${GZ_PORTAL_HANDOFF:-0}" = "1" ] && [ "$attempt" -eq 1 ] && [ "$started" -eq 0 ]; then
+      printf '%s:handoff\n' "$STATE_KEY" > "$STATE" || exit 1
+      printf '%s\n' 'портал недоступен с этой машины GitHub, сбор передан следующей машине' >>"$LOG"
+      exit 76
+    fi
     code=1
   else
     if [ "$probe_code" -ne 0 ]; then
