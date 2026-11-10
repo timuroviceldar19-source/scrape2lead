@@ -704,3 +704,13 @@ body.tv #productSwitch { display: none !important; }
   .plans-lost .lost-to .cust-list { margin-left: 0; }
   .plans-lost .lost-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }
+
+/* ---------- «Я — …» ---------- */
+.me-picker { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.me-picker select { font: inherit; background: var(--sheet); color: var(--ink); border: 1px solid var(--rule-3); padding: 6px; max-width: 220px; }
+.team-all { margin-top: 16px; }
+body.tv .me-picker, body.tv .team-all { display: none; }
+@media (max-width: 760px) {
+  .me-picker { flex-basis: 100%; }
+  .me-picker select { flex: 1; max-width: none; }
+}
