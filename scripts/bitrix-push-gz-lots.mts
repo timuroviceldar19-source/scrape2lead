@@ -3,7 +3,14 @@ import ExcelJS from "exceljs";
 import { chromium, type Browser, type Page } from "playwright";
 import { parseAnnounceCustomer, type AnnounceCustomer } from "../src/kz/goszakupAnnounceCustomer.js";
 import { fetchLotBidWindow, type LotBidWindow } from "../src/kz/goszakupLotWindow.js";
-import { bidWindowComment, bidWindowFields } from "../src/bitrix/gzLotDates.js";
+import { bidWindowComment, bidWindowFields, isPlaceholderWindow } from "../src/bitrix/gzLotDates.js";
+import {
+  LOT_EXISTING_DEAL_FIELDS,
+  evaluateLotDealUpdate,
+  hasBidWindowInComment,
+  syncOpenLotDeals,
+  type ExistingLotDeal
+} from "../src/bitrix/gzLotSync.js";
 import {
   callBitrixBatch,
   chunkBatchCommands,
@@ -32,6 +39,7 @@ interface CliArgs {
   webhookUrl: string | null;
   enrichCompany: boolean;
   delayMs: number;
+  syncOpen: boolean;
 }
 
 interface GzLotRow {
@@ -52,10 +60,7 @@ interface GzLotRow {
   customerUrl: string;
 }
 
-interface ExistingDeal {
-  ID: string;
-  COMPANY_ID: string | null;
-}
+type ExistingDeal = ExistingLotDeal;
 
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
@@ -67,7 +72,8 @@ function parseArgs(argv: string[]): CliArgs {
     assignedById: parseOptionalInt(process.env.BITRIX24_ASSIGNED_BY_ID) ?? DEFAULT_ASSIGNED_BY_ID,
     webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null,
     enrichCompany: true,
-    delayMs: DEFAULT_DELAY_MS
+    delayMs: DEFAULT_DELAY_MS,
+    syncOpen: false
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -81,6 +87,7 @@ function parseArgs(argv: string[]): CliArgs {
     else if (arg === "--webhook-url") args.webhookUrl = argv[++i]?.trim() || null;
     else if (arg === "--no-company") args.enrichCompany = false;
     else if (arg === "--delay-ms") args.delayMs = Number(argv[++i]);
+    else if (arg === "--sync-open") args.syncOpen = true;
   }
 
   return args;
@@ -129,10 +136,35 @@ async function main(): Promise<void> {
         const companyId = customer ? await resolveCompanyId(client, customer, args, args.execute) : null;
 
         if (existingDeal) {
-          if (companyId && !hasCompany(existingDeal) && args.execute) {
-            await client.updateDeal(existingDeal.ID, { COMPANY_ID: companyId });
-            stats.companyLinked += 1;
-            console.log(`[linked] ${dealOriginId} -> deal ${existingDeal.ID} company ${companyId}`);
+          const evalInitial = evaluateLotDealUpdate(existingDeal, row, null, companyId);
+          let bidWindow: LotBidWindow | null = null;
+          if (
+            evalInitial.action === "update" ||
+            isPlaceholderWindow(existingDeal) ||
+            !hasBidWindowInComment(existingDeal.COMMENTS) ||
+            (row.status && (existingDeal.UF_CRM_6627AEBD85B4D || "").trim() !== row.status.trim())
+          ) {
+            bidWindow = await lookupBidWindow(row.lotNumber, goszakupToken, row.announceUrl);
+          }
+          const finalEval = evaluateLotDealUpdate(existingDeal, row, bidWindow, companyId);
+
+          if (finalEval.action === "update" && finalEval.updateFields) {
+            if (args.execute) {
+              await client.updateDeal(existingDeal.ID, finalEval.updateFields);
+              stats.updated += 1;
+              if (finalEval.updateFields.COMPANY_ID) stats.companyLinked += 1;
+              console.log(`[updated] ${dealOriginId} -> deal ${existingDeal.ID}: ${finalEval.reasons.join(", ")}`);
+            } else {
+              console.log(`[dry-run] update ${dealOriginId} -> deal ${existingDeal.ID}: ${finalEval.reasons.join(", ")} | ${JSON.stringify(finalEval.updateFields)}`);
+            }
+          } else if (finalEval.action === "link_company") {
+            if (companyId && args.execute) {
+              await client.updateDeal(existingDeal.ID, { COMPANY_ID: companyId });
+              stats.companyLinked += 1;
+              console.log(`[linked] ${dealOriginId} -> deal ${existingDeal.ID} company ${companyId}`);
+            } else {
+              console.log(`[dry-run] link ${dealOriginId} -> deal ${existingDeal.ID} company ${companyId}`);
+            }
           } else {
             stats.existing += 1;
             console.log(`[existing] ${dealOriginId} -> deal ${existingDeal.ID}${companyId ? ` company ${companyId}` : ""}`);
@@ -161,8 +193,20 @@ async function main(): Promise<void> {
     if (resolver) await resolver.close();
   }
 
+  if (args.syncOpen) {
+    const todayAlmaty = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 10);
+    const knownLotNumbers = new Set(rows.map((r) => r.lotNumber));
+    const syncStats = await syncOpenLotDeals(client, {
+      token: goszakupToken,
+      execute: args.execute,
+      todayAlmaty,
+      knownLotNumbers
+    });
+    stats.updated += syncStats.updated;
+  }
+
   console.log(
-    `done: created=${stats.created} company_linked=${stats.companyLinked} existing=${stats.existing} skipped=${stats.skipped} bin_missing=${stats.binMissing} failed=${stats.failed}`
+    `done: created=${stats.created} updated=${stats.updated} company_linked=${stats.companyLinked} existing=${stats.existing} skipped=${stats.skipped} bin_missing=${stats.binMissing} failed=${stats.failed}`
   );
 }
 
@@ -190,7 +234,7 @@ async function resolveLotExistingDeals(
         method: "crm.deal.list",
         params: {
           filter: { ORIGINATOR_ID, ORIGIN_ID: originId(rows[index]) },
-          select: ["ID", "COMPANY_ID"]
+          select: [...LOT_EXISTING_DEAL_FIELDS]
         }
       }
     });
@@ -212,7 +256,7 @@ async function resolveLotExistingDeals(
         needsSequential.add(entry.index);
         continue;
       }
-      const deals = Array.isArray(outcome.result) ? outcome.result as Array<{ ID?: string | number; COMPANY_ID?: string | number | null }> : [];
+      const deals = Array.isArray(outcome.result) ? outcome.result as Array<Record<string, unknown>> : [];
       existing[entry.index] = mapLotExistingDeal(deals[0]);
     }
   }
@@ -224,9 +268,19 @@ async function resolveLotExistingDeals(
   return existing;
 }
 
-function mapLotExistingDeal(first: { ID?: string | number; COMPANY_ID?: string | number | null } | undefined): ExistingDeal | null {
+function mapLotExistingDeal(first: Record<string, unknown> | undefined): ExistingDeal | null {
   if (!first?.ID) return null;
-  return { ID: String(first.ID), COMPANY_ID: first.COMPANY_ID != null ? String(first.COMPANY_ID) : null };
+  return {
+    ID: String(first.ID),
+    COMPANY_ID: first.COMPANY_ID != null ? String(first.COMPANY_ID) : null,
+    STAGE_SEMANTIC_ID: first.STAGE_SEMANTIC_ID != null ? String(first.STAGE_SEMANTIC_ID) : null,
+    CLOSED: first.CLOSED != null ? String(first.CLOSED) : null,
+    DATE_CREATE: first.DATE_CREATE != null ? String(first.DATE_CREATE) : null,
+    BEGINDATE: first.BEGINDATE != null ? String(first.BEGINDATE) : null,
+    CLOSEDATE: first.CLOSEDATE != null ? String(first.CLOSEDATE) : null,
+    COMMENTS: first.COMMENTS != null ? String(first.COMMENTS) : null,
+    UF_CRM_6627AEBD85B4D: first.UF_CRM_6627AEBD85B4D != null ? String(first.UF_CRM_6627AEBD85B4D) : null
+  };
 }
 
 async function resolveCompanyId(
@@ -293,12 +347,28 @@ class BitrixClient {
   async findDeal(originatorId: string, dealOriginId: string): Promise<ExistingDeal | null> {
     const result = await this.call("crm.deal.list", {
       filter: { ORIGINATOR_ID: originatorId, ORIGIN_ID: dealOriginId },
-      select: ["ID", "COMPANY_ID"]
+      select: [...LOT_EXISTING_DEAL_FIELDS]
     });
-    const rows = Array.isArray(result) ? result as Array<{ ID?: string | number; COMPANY_ID?: string | number | null }> : [];
-    const first = rows[0];
-    if (!first?.ID) return null;
-    return { ID: String(first.ID), COMPANY_ID: first.COMPANY_ID != null ? String(first.COMPANY_ID) : null };
+    const rows = Array.isArray(result) ? result as Array<Record<string, unknown>> : [];
+    return mapLotExistingDeal(rows[0]);
+  }
+
+  async listAllBatched<T extends Record<string, unknown>>(
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<T[]> {
+    const all: T[] = [];
+    let start = 0;
+    while (true) {
+      const res = await this.call(method, { ...params, start }) as { result?: T[]; total?: number; next?: number } | T[];
+      const items = Array.isArray(res) ? res : ((res as { result?: T[] })?.result ?? []);
+      all.push(...items);
+      const next = (res as { next?: number })?.next;
+      if (!next || items.length === 0) break;
+      start = next;
+    }
+    return all;
+  }
   }
 
   async findCompanyByBin(bin: string): Promise<string | null> {
