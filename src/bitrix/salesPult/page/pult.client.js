@@ -37,8 +37,8 @@
   /* ================= signals ================= */
   function renderSignals() {
     const s = V.signals;
-    const urgent = V.signalsUrgent;
-    const body = s.length ? s.map((sig) => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("") : `<div class="sig s-good"><span>Сегодня без происшествий</span></div>`;
+
+    const body = s.length ? s.map((sig) => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("") : (!V.signalsUrgent ? `<div class="sig s-good"><span>Срочного нет</span></div>` : "");
 
     let mismatchesHtml = "";
     if (P.outcomeMismatches && P.outcomeMismatches.length > 0) {
@@ -72,7 +72,7 @@
     }
 
     document.getElementById("signals").innerHTML = `
-      <div class="block-head"><h2><span class="idx">02</span>Требует внимания</h2><span class="meta">${urgent ? plural(urgent, ["срочный пункт", "срочных пункта", "срочных пунктов"]) : "срочного нет"}</span></div>
+      <div class="block-head"><h2><span class="idx">02</span>Срочно</h2><span class="meta">${esc(V.signalsMeta)}</span></div>
       <div class="signals">${body}</div>
       ${mismatchesHtml}`;
   }

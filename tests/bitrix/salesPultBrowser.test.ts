@@ -930,7 +930,7 @@ describe('OP contracts in the pult browser', () => {
       await page.locator('#tenders').screenshot({path:path.join(screenshotDir,'tenders-month.png')});
       expect(await page.locator('#signals').innerText()).toContain('Сумма сделки 0');
       expect(await page.locator('#signals').innerText()).toContain('договор у другого поставщика');
-      expect(await page.locator('#signals').innerText()).toContain('Закрыто в Битриксе, нет в ОП');
+      expect(await page.locator('#signals').innerText()).not.toContain('Закрыто в Битриксе, нет в ОП');
       await page.locator('#signals').screenshot({path:path.join(screenshotDir,'signals.png')});
       await page.locator('#monthSelect').selectOption('2026-09');
       expect(await page.locator('#month').innerText()).toContain('ОП итог тест.xlsx');

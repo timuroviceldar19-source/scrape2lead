@@ -7,7 +7,13 @@ import { escapeHtml, MONTHS } from "./format.js";
 
 type ManagerTotal = Pick<RegisterMonthSummary["byManager"][number], "name" | "contracts" | "sale">;
 
+export interface ContractReconciliation {
+  closedNotInRegister: Array<{ dealId: string; title: string; manager: string; amount: number; date: string }>;
+  possibleDuplicates: Array<{ dealId: string; title: string; manager: string; registerManager: string }>;
+}
+
 export interface PultContractSource {
+  reconciliation: ContractReconciliation;
   available: boolean;
   label: string;
   fact?: number;
@@ -34,7 +40,8 @@ function workingDaysAfter(date: string, asOfDate: string, holidays: Set<string>)
 /** Только нужные пульту данные: без себестоимости, маржи и премий реестра. */
 export function attachRegisterContracts(
   payload: SalesPultPayload, register: RegisterView, deals: Map<string, DealInfo>,
-  aliases: Record<string, string> = {}
+  aliases: Record<string, string> = {},
+  ownerNames: ReadonlyMap<string, { name: string }> = new Map()
 ): void {
   const month = payload.asOfDate.slice(0, 7);
   const managers = payload.groups.flatMap(g => g.managers.map(m => ({ ...m, groupId: g.id })));
@@ -47,7 +54,8 @@ export function attachRegisterContracts(
     byManager: [],
     crmFact: managers.reduce((sum, m) => sum + m.rollups.month.contracts.uniqueDealsCount, 0),
     crmAmount: managers.reduce((sum, m) => sum + m.rollups.month.contracts.totalAmount, 0),
-    signals: []
+    signals: [],
+    reconciliation: { closedNotInRegister: [], possibleDuplicates: [] }
   };
   payload.contractSource = source;
 
@@ -93,7 +101,7 @@ export function attachRegisterContracts(
         if (!deal) return [];
         return [{
           id, title: deal.title, company: companies.get(id) ?? "", amount: deal.amount,
-          manager: managers.find(m => m.id === deal.assignedById)?.name ?? deal.assignedById,
+          manager: managers.find(m => m.id === deal.assignedById)?.name ?? ownerNames.get(deal.assignedById)?.name ?? `сотрудник ID ${deal.assignedById}`,
           // Дата перехода предпочтительнее планового CLOSEDATE.
           date: deal.contractDate || deal.portalSignDate || deal.closeDate?.slice(0, 10)
         }];
@@ -101,29 +109,19 @@ export function attachRegisterContracts(
       const result = matchRegisterWithCrm(contracts, crm, { managerAliases: aliases });
       const settled = settleUnmatched(result, contracts, aliases);
       const pending = settled.extra;
-      // B2B пульт по Битриксу не считает, поэтому его договоры здесь сделок не найдут.
-      const missing = settled.missing.filter(c => c.type.toLowerCase() !== "b2b");
       source.awaiting = pending.length;
       const holidays = new Set(payload.holidays ?? DEFAULT_HOLIDAYS);
       for (const deal of pending) {
         if (!deal.date || !/^\d{4}-\d{2}-\d{2}$/.test(deal.date)) continue;
         if (workingDaysAfter(deal.date, payload.asOfDate, holidays) > 2) {
-          source.signals.push({
-            color: "gray",
-            text: `<b>${escapeHtml(deal.manager)}</b>: Закрыто в Битриксе, нет в ОП — ${escapeHtml(deal.title)} (${escapeHtml(deal.id)}), проверить сопоставление по названию и сумме`
+          source.reconciliation.closedNotInRegister.push({
+            dealId: deal.id, title: deal.title, manager: deal.manager, amount: deal.amount, date: deal.date
           });
         }
       }
       for (const { deal, contract } of settled.repeats) {
-        source.signals.push({
-          color: "gray",
-          text: `<b>${escapeHtml(deal.manager)}</b>: Возможен дубль — ${escapeHtml(deal.title)} (${escapeHtml(deal.id)}): договор с этим заказчиком уже есть в ОП (менеджер в ОП: ${escapeHtml(contract.manager)}), проверить`
-        });
-      }
-      for (const contract of missing) {
-        source.signals.push({
-          color: "gray",
-          text: `<b>${escapeHtml(contract.manager)}</b>: Есть в ОП, нет сделки в Битриксе — ${escapeHtml(contract.customer)}, проверить сопоставление по названию и сумме`
+        source.reconciliation.possibleDuplicates.push({
+          dealId: deal.id, title: deal.title, manager: deal.manager, registerManager: contract.manager
         });
       }
     }
@@ -145,7 +143,7 @@ export function attachRegisterContracts(
 
   if (payload.closedMonth) return;
   for (const deal of deals.values()) {
-    const manager = managers.find(m => m.id === deal.assignedById)?.name ?? deal.assignedById;
+    const manager = managers.find(m => m.id === deal.assignedById)?.name ?? ownerNames.get(deal.assignedById)?.name ?? `сотрудник ID ${deal.assignedById}`;
     if (crmIds.has(deal.id) && deal.amount === 0) {
       source.signals.push({
         color: "yellow",

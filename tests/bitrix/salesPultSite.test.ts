@@ -245,28 +245,8 @@ describe("salesPultSite", () => {
     expect(formatAlmatyTime("2026-10-28T09:00:00Z")).toBe("14:00");
   });
 
-  it("2. uses gender-neutral phrasing in signals and tables", () => {
-    const signals = buildSignals(basePayload);
-
-    // Gender neutral contract signals: "<b>Эльмира</b>: подписано 2 договора на 4,6 млн ₸"
-    const elmira = signals.find((s) => s.text.includes("Эльмира"));
-    expect(elmira?.text).toContain("подписано 2\u00A0договора на 4,6 млн ₸");
-    expect(elmira?.text).not.toContain("подписал");
-    expect(elmira?.text).not.toContain("подписала");
-
-    const turar = signals.find((s) => s.text.includes("Турар"));
-    expect(turar?.text).toContain("подписано 4\u00A0договора на 2,4 млн ₸");
-
-    // Gender neutral zero calls signal: "<b>Бекзат</b>: сегодня ни одного звонка через Битрикс"
-    const bekzat = signals.find((s) => s.text.includes("Бекзат"));
-    expect(bekzat?.text).toContain("сегодня ни одного звонка через Битрикс");
-    expect(bekzat?.text).not.toContain("не звонил через Битрикс");
-    expect(bekzat?.text).not.toContain("не звонила через Битрикс");
-
-    // Low calls signal: "Мало дозвонов к 15:00: <b>Жанат</b> <span class=num>9</span> при норме 15"
-    const lowCalls = signals.find((s) => s.text.includes("Мало дозвонов"));
-    expect(lowCalls?.text).toContain("Жанат");
-    expect(lowCalls?.text).toContain("при норме 15");
+  it("2. leaves call and contract details in tables without repeating signals", () => {
+    expect(buildSignals(basePayload)).toEqual([]);
   });
 
   it("3. correctly pluralizes words and avoids duplicate counters or .replace tricks", () => {
@@ -338,11 +318,8 @@ describe("salesPultSite", () => {
     expect(html).toContain("Аданком");
   });
 
-  it("7. formats contract in signals with zero or missing amount as 'подписан договор'", () => {
-    const signals = buildSignals(basePayload);
-    const nurdaulet = signals.find((s) => s.text.includes("Нурдаулет"));
-    expect(nurdaulet?.text).toContain("подписан договор");
-    expect(nurdaulet?.text).not.toContain("0 ₸");
+  it("7. does not celebrate contracts with zero or missing amount in urgent", () => {
+    expect(buildSignals(basePayload).some(s => s.text.includes("подписан"))).toBe(false);
   });
 
   it("8. safely embeds payload into HTML without raw script injection", () => {
@@ -377,7 +354,7 @@ describe("salesPultSite", () => {
     expect(html).toContain("Тендерный отдел");
   });
 
-  it("does not show low calls signal before 14:00 and shows it after 14:00", () => {
+  it("does not repeat low calls in urgent before or after 14:00", () => {
     const morningPayload: SalesPultPayload = {
       ...basePayload,
       generatedAt: "2026-10-28 11:30 (UTC+5)"
@@ -391,8 +368,7 @@ describe("salesPultSite", () => {
     };
     const afternoonSignals = buildSignals(afternoonPayload);
     const lowSignal = afternoonSignals.find((s) => s.text.includes("Мало дозвонов"));
-    expect(lowSignal).toBeDefined();
-    expect(lowSignal?.text).toContain("Жанат");
+    expect(lowSignal).toBeUndefined();
   });
 
   it("connects Google Fonts (Geologica, JetBrains Mono) per design system and has no external script tags", () => {

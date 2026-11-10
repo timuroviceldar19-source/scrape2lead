@@ -1,3 +1,4 @@
+import { enrichManagerNames } from "../managerNames.js";
 import { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import { loadMarketConfig } from "../../../kz/market/config.js";
 import { buildPlansMonitorView } from "./aggregate.js";
@@ -158,23 +159,6 @@ export interface CollectPlansOptions extends NormalizePlanOptions {
   userProfiles?: ReadonlyMap<string, { name: string }>;
   groups?: Array<{ managers: Array<{ id: string; name: string }> }>;
 }
-async function enrichManagerNames(options: CollectPlansOptions, deals: NormalizedPlanDeal[], names: Map<string, string>): Promise<void> {
-  const missingManagerIds = [...new Set(deals.map(d => d.managerId))].filter(id => id && !options.userProfiles?.has(id));
-  for (const id of missingManagerIds) {
-    try {
-      const user = await options.reader.call("im.user.get", { ID: Number(id) }) as {
-        name?: string; first_name?: string; last_name?: string; active?: boolean;
-      } | null;
-      const name = text(user?.name) || [text(user?.first_name), text(user?.last_name)].filter(Boolean).join(" ");
-      // Неактивный сотрудник остаётся владельцем исторических планов.
-      if (name) names.set(id, name);
-    } catch {
-      // Текст ошибки транспорта может содержать URL вебхука: выводим только безопасный контекст.
-      console.warn(`[Планы] Не удалось загрузить имя менеджера ID ${id} через im.user.get`);
-    }
-  }
-}
-
 export async function collectPlansMonitor(options: CollectPlansOptions): Promise<PlansMonitorView> {
   const started = performance.now();
   try {
@@ -193,7 +177,11 @@ export async function collectPlansMonitor(options: CollectPlansOptions): Promise
     console.log(`[Планы] вне групп: ${withoutDuplicateStages.length - normalized.length}`);
     const deals = dedupePlanDeals(normalized);
     console.log(`[Планы] повторов: ${normalized.length - deals.length}`);
-    await enrichManagerNames(options, deals, names);
+    const loadedNames = new Map([...(options.userProfiles || [])].map(([id, profile]) => [id, profile.name]));
+    await enrichManagerNames(options.reader, deals.map(d => d.managerId), loadedNames);
+    for (const [id, name] of loadedNames) {
+      if (!names.has(id) || name !== `сотрудник ID ${id}`) names.set(id, name);
+    }
     for (const d of deals) d.managerName = names.get(d.managerId) || `ID ${d.managerId || "—"}`;
     const view = buildPlansMonitorView(deals, options);
     console.log(`[Планы] сделок: ${deals.length}, ИП: ${view.ip!.total.count}, КТ: ${view.kt!.total.count} (${Math.round(performance.now() - started)} мс)`);

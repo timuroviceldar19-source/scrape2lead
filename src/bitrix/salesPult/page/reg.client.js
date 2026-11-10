@@ -61,7 +61,7 @@
     rendered = true;
     renderedMonth = selected;
     const activeView = window.__registerViewForMonth(R, selected);
-    window.__renderRegisterTab(activeView, regEl);
+    window.__renderRegisterTab(activeView, regEl, selected === P.asOfDate?.slice(0, 7) ? (P.reconciliation || { closedNotInRegister: [], possibleDuplicates: [] }) : null, P.portal);
     buttons.forEach((button, month) => button.setAttribute("aria-pressed", String(month === selected)));
     const dateLabel = document.getElementById("dateLabel");
     if (dateLabel) dateLabel.textContent = `Данные на ${activeView?.asOf || P.asOfDate || ""}`;
