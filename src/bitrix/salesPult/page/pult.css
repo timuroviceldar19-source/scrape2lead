@@ -575,6 +575,7 @@ body.tv .month-picker { display: none; }
 .plans-summary .share .r.head { font-size: 10px; }
 .plans-summary .plan-win-share { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; }
 .plans-summary .plan-win-share .hbar { flex: 1; }
+.plans-summary .plan-win-share > span:last-child { flex: 0 0 4ch; text-align: right; }
 .plans-summary .plan-win-counts { font: 400 12px var(--mono); }
 .plans-summary .plan-win-mobile { display: none; }
 .plans-breakdown .meth .r { grid-template-columns: minmax(0, 1.5fr) 40px minmax(0, 1fr) 100px 60px; gap: 12px; }

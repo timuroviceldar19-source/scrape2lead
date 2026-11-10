@@ -37,7 +37,7 @@ function fixture() {
   p.plans = buildPlansMonitorView(deals, { asOfDate: "2026-11-10" });
   return p;
 }
-async function withPage(width: number, run: (page: Page) => Promise<void>) {
+async function withPage(width: number, run: (page: Page) => Promise<void>, payload = fixture()) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plan-win-share-"));
   const browser = await chromium.launch({ headless: true });
   try {
@@ -45,7 +45,7 @@ async function withPage(width: number, run: (page: Page) => Promise<void>) {
     page.setDefaultTimeout(5000);
     await page.route("https://fonts.googleapis.com/**", r => r.abort());
     const file = path.join(dir, "index.html");
-    fs.writeFileSync(file, renderPultHtml(fixture()));
+    fs.writeFileSync(file, renderPultHtml(payload));
     await page.goto(pathToFileURL(file).href);
     await run(page);
   } finally { await browser.close(); fs.rmSync(dir, { recursive: true, force: true }); }
@@ -101,9 +101,28 @@ it.each([1440, 375])("доля побед менеджеров и итога, с
       expect(await managers.locator(".plan-win-share .hbar").count()).toBe(0);
       await page.locator('#planMonths [data-month="2026-09"]').click();
       expect(await managers.locator(".plan-win-share").textContent()).toBe("100%");
-      expect(await tile.locator(".v").textContent()).toBe("100%по сумме 0% · из 10 с итогом");
+      expect(await tile.locator(".v").textContent()).toBe("100%из 10 с итогом");
       await page.locator('#planMonths [data-month="all"]').click();
       expect(await tile.locator(".v").textContent()).toBe("42%по сумме 36% · из 57 с итогом");
     }
   });
 }, 60000);
+
+it("полоски доли побед имеют одинаковую ширину при 9% и 92% на 1440 px", async () => {
+  const payload = fixture();
+  for (const group of [payload.plans!.ip!, payload.plans!.kt!]) {
+    Object.assign(group.monthViews.all.managers[0], { wonCount: 9, lostCount: 91 });
+    Object.assign(group.monthViews.all.managers[1], { wonCount: 92, lostCount: 8 });
+  }
+  await withPage(1440, async page => {
+    for (const tab of ["plans-ip", "plans-kt"]) {
+      await page.locator(`[data-t="${tab}"]`).click();
+      const shares = page.locator(`#tab-${tab} .share .plan-win-share`);
+      expect(await shares.nth(0).textContent()).toBe("9%");
+      expect(await shares.nth(1).textContent()).toBe("92%");
+      const widths = await shares.locator(".hbar").evaluateAll(els => els.map(el => el.getBoundingClientRect().width));
+      expect(widths[0]).toBeGreaterThan(0);
+      expect(widths[0]).toBeCloseTo(widths[1], 5);
+    }
+  }, payload);
+});
