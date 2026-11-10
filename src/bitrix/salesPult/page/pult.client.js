@@ -220,10 +220,13 @@
   function debtsCell(d) {
     if (!d) return `<div class="cell debts" data-l="Долги"><span class="clean">нет данных</span></div>`;
     const out = [];
-    if (d.wonOnPortalNotClosed) out.push(`<span class="bad">выиграно на портале: ${d.wonOnPortalNotClosed}</span>`);
-    if (d.overdue) out.push(`<span class="bad">${plural(d.overdue, ["дело просрочено", "дела просрочены", "дел просрочено"])}</span>`);
-    if (d.newDeals) out.push(`<span class="warn">${plural(d.newDeals, ["новая", "новые", "новых"])} без звонка</span>`);
-    if (d.readyToCloseDealIds && d.readyToCloseDealIds.length) out.push(`<span class="muted">${fmt(d.readyToCloseDealIds.length)} пора закрыть</span>`);
+    const badge = (key, cls, text) => P.closedMonth
+      ? `<span class="${cls}">${text}</span>`
+      : `<button type="button" class="debt-button ${cls}" data-debt="${key}">${text}</button>`;
+    if (d.wonOnPortalNotClosed) out.push(badge("wonOnPortalNotClosedDeals", "bad", `выиграно на портале: ${fmt(d.wonOnPortalNotClosed)}`));
+    if (d.overdue) out.push(badge("overdueList", "bad", plural(d.overdue, ["дело просрочено", "дела просрочены", "дел просрочено"])));
+    if (d.newDeals) out.push(badge("newDealsList", "warn", `${plural(d.newDeals, ["новая", "новые", "новых"])} без звонка`));
+    if (d.readyToCloseDealIds && d.readyToCloseDealIds.length) out.push(badge("readyToCloseDeals", "muted", `${fmt(d.readyToCloseDealIds.length)} пора закрыть`));
     return `<div class="cell debts" data-l="Долги">${out.length ? out.join("") : `<span class="clean">долгов нет</span>`}</div>`;
   }
 
@@ -243,6 +246,22 @@
       <div class="detail" id="${id}"><div>${managerDetail(m)}</div></div>`;
   }
 
+  function debtList(key, label, items, total) {
+    if (P.closedMonth || !total) return "";
+    const list = items || [];
+    const rows = list.map((item) => {
+      const ct = cleanTitle(item);
+      const url = P.portal + "/crm/deal/details/" + encodeURIComponent(item.dealId) + "/";
+      let note = "";
+      if (key === "newDealsList") note = "без звонка " + plural(item.ageDays || 0, ["день", "дня", "дней"]);
+      if (key === "overdueList") note = "просрочено " + plural(item.overdueDays || 0, ["день", "дня", "дней"]);
+      if (key === "wonOnPortalNotClosedDeals" && item.portalSignDate) note = "подписан " + ddmm(item.portalSignDate);
+      return `<div class="old-task-item debt-list-item"><a href="${esc(url)}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || item.title || item.dealId)}</a><span class="old-task-meta">${esc(money(item.amount) || "сумма не указана")}${note ? " · " + esc(note) : ""}</span></div>`;
+    }).join("");
+    const remaining = Math.max(0, total - list.length);
+    return `<details class="debt-list" data-debt-list="${key}"><summary class="old-tasks-sum">Показать список: ${esc(label)} (${fmt(total)})</summary><div class="old-tasks-list">${rows}${remaining ? `<div class="muted">и ещё ${fmt(remaining)} в Битриксе</div>` : ""}</div></details>`;
+  }
+
   function managerDetail(m) {
     const d = m.debts || { overdue: 0, overdueOverMonth: 0, overdueOverMonthTasks: [], newDeals: 0, newOldestAgeDays: 0, readyToCloseDealIds: [] };
     const oldList = d.overdueOverMonthTasks && d.overdueOverMonthTasks.length ? `<details class="old-tasks" style="grid-column:1/-1"><summary class="old-tasks-sum">Показать список 30+ дней (${fmt(d.overdueOverMonthTasks.length)})</summary><div class="old-tasks-list">${d.overdueOverMonthTasks.map((ot) => { const ct = cleanTitle(ot); const url = P.portal + "/crm/deal/details/" + encodeURIComponent(ot.dealId) + "/"; return `<div class="old-task-item"><a href="${url}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || ot.title || ot.dealId)}</a><span class="old-task-meta">${plural(ot.overdueDays || 0, ["день", "дня", "дней"])} · ${money(ot.amount) || "сумма не указана"}</span></div>`; }).join("")}</div></details>` : "";
@@ -250,12 +269,16 @@
     return `<div class="detail-in">
       <div class="dstats">
         ${d.wonOnPortalNotClosed ? `<div style="grid-column:1/-1"><span class="label">Выиграно на портале, не закрыто в CRM</span><span class="num bad">${fmt(d.wonOnPortalNotClosed)}</span></div>` : ""}
+        ${debtList("wonOnPortalNotClosedDeals", "выиграно на портале", d.wonOnPortalNotClosedDeals, d.wonOnPortalNotClosed)}
         <div><span class="label">Просрочено</span><span class="num ${d.overdue ? "bad" : ""}">${fmt(d.overdue)}</span></div>
+        ${debtList("overdueList", "просрочено", d.overdueList, d.overdue)}
         <div><span class="label">30+ дней</span><span class="num">${fmt(d.overdueOverMonth)}</span></div>
         ${oldList}
         <div><span class="label">Без звонка</span><span class="num ${d.newDeals ? "warn" : ""}">${fmt(d.newDeals)}</span></div>
         <div><span class="label">Самой старой</span><span class="num">${d.newDeals ? fmt(d.newOldestAgeDays) + " дн." : "—"}</span></div>
+        ${debtList("newDealsList", "без звонка", d.newDealsList, d.newDeals)}
         <div style="grid-column:1/-1"><span class="label">Пора закрыть</span><span class="num">${fmt(d.readyToCloseDealIds.length)}</span></div>
+        ${debtList("readyToCloseDeals", "пора закрыть", d.readyToCloseDeals, d.readyToCloseDealIds.length)}
       </div>
       <div>${tasks || `<div class="mini-empty">Срочных задач нет.</div>`}</div>
     </div>`;
@@ -269,8 +292,20 @@
         const target = document.getElementById(row.getAttribute("aria-controls"));
         if (target) target.classList.toggle("open", open);
       };
-      row.addEventListener("click", (e) => { if (!e.target.closest("a")) toggle(); });
-      row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+      row.querySelectorAll("button[data-debt]").forEach((button) => {
+        button.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (row.getAttribute("aria-expanded") !== "true") toggle();
+          const target = document.getElementById(row.getAttribute("aria-controls"));
+          const list = target && target.querySelector(`details[data-debt-list="${button.dataset.debt}"]`);
+          if (list) list.open = true;
+        });
+      });
+      row.addEventListener("click", (e) => { if (!e.target.closest("a, button")) toggle(); });
+      row.addEventListener("keydown", (e) => {
+        if (e.target.closest("a, button")) return;
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+      });
     });
   }
 

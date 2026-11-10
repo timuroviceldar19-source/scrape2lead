@@ -160,6 +160,14 @@ describe("salesPult in-browser Playwright test", () => {
     }));
     const firstMgr = basePayload.groups[0].managers[0];
     if (firstMgr.debts) {
+      firstMgr.debts.readyToCloseDealIds = ["990001"];
+      firstMgr.debts.readyToCloseDeals = [{ kind: "passed", dealId: "990001", title: '<img src=x onerror="window.debtXss=1"> Выдуманная сделка', amount: 123000 }];
+      firstMgr.debts.newDeals = 60;
+      firstMgr.debts.newDealsList = [{ dealId: "990002", title: "Выдуманная новая сделка", amount: 200, ageDays: 8 }];
+      firstMgr.debts.overdue = 1;
+      firstMgr.debts.overdueList = [{ dealId: "990003", title: "Выдуманная просроченная сделка", amount: 300, overdueDays: 12 }];
+      firstMgr.debts.wonOnPortalNotClosed = 1;
+      firstMgr.debts.wonOnPortalNotClosedDeals = [{ dealId: "990004", title: "Выдуманная победа", amount: 400, portalSignDate: "2026-10-30" }];
       firstMgr.debts.overdueOverMonth = 2;
       firstMgr.debts.overdueOverMonthTasks = [
         {
@@ -282,6 +290,51 @@ describe("salesPult in-browser Playwright test", () => {
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch {}
+  });
+
+  it.each(["click", "Enter", " "])("opens ready-to-close from the debt label using %s and escapes titles", async (action) => {
+    const page = await browser.newPage({ reducedMotion: "reduce" });
+    await page.goto(`${pathToFileURL(indexPath).href}#pult`);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    const button = row.getByRole("button", { name: /пора закрыть/ });
+    expect(await button.count()).toBe(1);
+    if (action === "click") await button.click();
+    else { await button.focus(); await button.press(action); }
+    expect(await row.getAttribute("aria-expanded")).toBe("true");
+    const detail = page.locator("#" + await row.getAttribute("aria-controls"));
+    const list = detail.locator('details[data-debt-list="readyToCloseDeals"]');
+    expect(await list.getAttribute("open")).not.toBeNull();
+    const link = list.locator('a[href$="/crm/deal/details/990001/"]');
+    expect(await link.isVisible()).toBe(true);
+    expect(await link.textContent()).toBe('<img src=x onerror="window.debtXss=1"> Выдуманная сделка');
+    expect(await link.getAttribute("target")).toBe("_blank");
+    expect(await list.locator("img").count()).toBe(0);
+    expect(await page.evaluate(() => (window as any).debtXss)).toBeUndefined();
+    // A repeated activation must keep the row open; a plain row click still toggles it.
+    await button.click();
+    expect(await row.getAttribute("aria-expanded")).toBe("true");
+    await row.locator(".who").click();
+    expect(await row.getAttribute("aria-expanded")).toBe("false");
+    await page.close();
+  });
+
+  it.each([1440, 375])("opens other debt lists with age, sign date and omitted count at width %i", async (width) => {
+    const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+    await page.goto(`${pathToFileURL(indexPath).href}#pult`);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    for (const [label, key, text] of [
+      [/без звонка/, "newDealsList", "без звонка 8 дней"],
+      [/просрочен/, "overdueList", "просрочено 12 дней"],
+      [/выиграно на портале/, "wonOnPortalNotClosedDeals", "подписан 30.10"]
+    ] as const) {
+      await row.getByRole("button", { name: label }).click();
+      const list = page.locator("#" + await row.getAttribute("aria-controls")).locator(`details[data-debt-list="${key}"]`);
+      expect(await list.getAttribute("open")).not.toBeNull();
+      expect((await list.textContent())?.replace(/\u00a0/g, " ")).toContain(text);
+      expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      if (key === "newDealsList") expect(await list.textContent()).toContain("и ещё 59 в Битриксе");
+    }
+    await page.close();
   });
 
   it.each([1280, 375])("keeps periods visible at tenders on width %i", async (width) => {
