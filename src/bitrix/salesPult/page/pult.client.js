@@ -650,6 +650,7 @@
       if (more.open) animate(more);
       if (document.body.classList.contains("tv")) fitTv();
     });
+    animate(document.getElementById("calls"));
   }
 
   function callsChart(norm) {
@@ -842,7 +843,9 @@
     ip: document.getElementById("tab-ip"),
     kt: document.getElementById("tab-kt"),
     "plans-ip": document.getElementById("tab-plans-ip"),
-    "plans-kt": document.getElementById("tab-plans-kt")
+    "plans-kt": document.getElementById("tab-plans-kt"),
+    "radar-ip": document.getElementById("tab-radar-ip"),
+    "radar-kt": document.getElementById("tab-radar-kt")
   };
   const secInd = document.querySelector(".sections .ind");
   const periodsNav = document.getElementById("periodsNav");
@@ -852,18 +855,18 @@
   const planMonths = document.getElementById("planMonths");
   const selectedPlanMonth = { "plans-ip": "all", "plans-kt": "all" };
   const isPlansTab = tab => tab === "plans-ip" || tab === "plans-kt";
+  const isRadarTab = tab => tab === "radar-ip" || tab === "radar-kt";
   const plansBase = tab => tab === "plans-ip" ? PAYLOAD.plans?.ip : PAYLOAD.plans?.kt;
   const validPlanMonth = (tab, month) => window.__planMonths(plansBase(tab)).includes(month) ? month : "all";
   let currentTab = "pult";
   let preTvTab = "pult";
-  // Четыре раздела: «Сегодня», «Выручка» (страница реестра), «Планы» и «Рынок».
-  // Внутри «Планов» и «Рынка» товар (ИП или КТ) выбирается переключателем и сохраняется при переходе между ними.
-  // Адреса вкладок прежние: #ip, #kt, #plans-ip, #plans-kt.
+  // Разделы: «Сегодня», «Радар», «Выручка» (страница реестра), «Планы» и «Рынок».
+  // Внутри «Радара», «Планов» и «Рынка» товар (ИП или КТ) выбирается переключателем и сохраняется при переходе между ними.
   let product = "ip";
   const productSwitch = document.getElementById("productSwitch");
-  const sectionOf = tab => tab === "pult" ? "pult" : isPlansTab(tab) ? "plans" : "market";
-  const productOf = tab => tab === "kt" || tab === "plans-kt" ? "kt" : "ip";
-  const tabFor = (section, prod) => section === "plans" ? "plans-" + prod : section === "market" ? prod : "pult";
+  const sectionOf = tab => tab === "pult" ? "pult" : isRadarTab(tab) ? "radar" : isPlansTab(tab) ? "plans" : "market";
+  const productOf = tab => tab === "kt" || tab === "plans-kt" || tab === "radar-kt" ? "kt" : "ip";
+  const tabFor = (section, prod) => section === "radar" ? "radar-" + prod : section === "plans" ? "plans-" + prod : section === "market" ? prod : "pult";
 
   function moveSecInd() {
     const a = tabLinks.find((x) => x.dataset.t === sectionOf(currentTab));
@@ -893,6 +896,10 @@
     }).join("");
   }
   function renderTabContent(tab) {
+    if (isRadarTab(tab)) {
+      if (window.__renderRadarTab) window.__renderRadarTab(tab, PAYLOAD.radar, tabPanes[tab]);
+      return;
+    }
     if (isPlansTab(tab)) {
       window.__renderPlansTab(tab, PAYLOAD.plans, tabPanes[tab], selectedPlanMonth[tab]);
       return;
@@ -992,7 +999,13 @@
       if (pane) pane.classList.toggle("on", key === tab);
     });
     if (periodsNav) {
-      periodsNav.hidden = tab !== "pult";
+      if (isRadarTab(tab)) {
+        periodsNav.hidden = false;
+        periodsNav.classList.add("radar-mode");
+      } else {
+        periodsNav.classList.remove("radar-mode");
+        periodsNav.hidden = tab !== "pult";
+      }
     }
     if (productSwitch) {
       productSwitch.hidden = tab === "pult";
@@ -1008,6 +1021,9 @@
     if (isPlansTab(tab)) {
       if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · госзакупки";
       if (foot) foot.innerHTML = `<span>Источник: сделки планов в Битрикс24 (scrape2lead-gz-plans) и сверка с zakup.gov.kz</span>`;
+    } else if (isRadarTab(tab)) {
+      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · радар лотов";
+      if (foot) foot.innerHTML = `<span>Источник: сделки лотов (воронка 43) и планов (9, 41, 29) Битрикс24</span>`;
     } else if (tab === "ip" || tab === "kt") {
       if (srcLabel) srcLabel.textContent = "госзакупки · zakup.gov.kz";
       if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
@@ -1023,7 +1039,7 @@
     if (fromUser) {
       try { localStorage.setItem("pult-tab", tab); } catch (e) {}
       if (history.replaceState) {
-        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : tab + "/" + (isPlansTab(tab) ? selectedPlanMonth[tab] : selectedMarketMonth[tab])}`);
+        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : isRadarTab(tab) ? tab : tab + "/" + (isPlansTab(tab) ? selectedPlanMonth[tab] : selectedMarketMonth[tab])}`);
       } else {
         location.hash = tab;
       }
@@ -1043,7 +1059,7 @@
 
   window.addEventListener("hashchange", () => {
     const [tab, month] = location.hash.replace(/^#/, "").split("/");
-    if (tab === "ip" || tab === "kt" || isPlansTab(tab)) {
+    if (tab === "ip" || tab === "kt" || isPlansTab(tab) || isRadarTab(tab)) {
       setTab(tab, false, month || null);
     } else if (tab === "pult" || tab === "reg") {
       selectMonth(tab === "pult" ? month || currentMonth : currentMonth);
@@ -1273,6 +1289,35 @@
         (group.suppliers || []).forEach(addSupp);
       }
 
+      // 5. Radar lots
+      if (root.radar) {
+        for (const prodKey of ["ip", "kt"]) {
+          const rGroup = root.radar[prodKey];
+          if (!rGroup) continue;
+          const allRadarCards = [
+            ...(rGroup.submitToday || []),
+            ...(rGroup.discussion || []),
+            ...(rGroup.secondChance || [])
+          ];
+          for (const card of allRadarCards) {
+            const id = String(card.id || "");
+            const title = card.itemName ? `${card.itemName}${card.qty ? ` (${card.qty} шт.)` : ""}` : (card.title || id);
+            const lotNo = card.lotNumber || card.planNumber || "";
+            items.push({
+              type: "radar",
+              id,
+              title: `${title}${card.customerName ? ` · ${card.customerName}` : ""}`,
+              planNumber: lotNo,
+              bin: String(card.customerBin || ""),
+              manager: card.managerName || "",
+              amount: card.sum || 0,
+              context: `Радар ${prodKey.toUpperCase()} · ${card.method || "Лот"}`,
+              url: card.dealUrl || (id ? dealUrl(id) : card.lotUrl || "")
+            });
+          }
+        }
+      }
+
       return items;
     }
 
@@ -1340,7 +1385,7 @@
       const item = currentResults[index];
       if (!item) return;
       closeModal();
-      if (item.type === "deal" && item.url) {
+      if ((item.type === "deal" || item.type === "radar") && item.url) {
         window.open(item.url, "_blank", "noopener");
       } else if (item.type === "plan") {
         if (item.dealUrl) window.open(item.dealUrl, "_blank", "noopener");
