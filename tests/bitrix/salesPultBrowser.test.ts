@@ -774,7 +774,7 @@ describe("salesPult in-browser Playwright test", () => {
 
     await page.close();
   }, 20_000);
-  it("loads main pult tab: no console errors with outcomeMismatches, renders error box and valid deal URL", async () => {
+  it("loads main pult tab: no console errors with outcomeMismatches, renders collapsed error list and valid deal URL", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const consoleErrors: string[] = [];
     page.on("pageerror", (err) => consoleErrors.push(err.message));
@@ -797,18 +797,20 @@ describe("salesPult in-browser Playwright test", () => {
     // 1. Zero console errors
     expect(consoleErrors).toEqual([]);
 
-    // 2. Mismatches box is rendered with deal title and ddmm date
+    // Д4а: список по умолчанию свёрнут; прежние строки доступны после раскрытия.
+    await page.locator('.outcome-mismatches > summary').click();
+    // 2. Error list preserves the deal title and ddmm date
     const boxText = await page.evaluate(() => {
-      const el = document.querySelector(".mismatches-box");
+      const el = document.querySelector(".outcome-mismatches");
       return el ? el.textContent : "";
     });
-    expect(boxText).toContain("Ошибка в CRM: сделки выиграны на портале, но закрыты как проигрыш");
+    expect(boxText).toContain("Ошибка в CRM: 1 сделка выиграна на портале, но закрыта как проигрыш");
     expect(boxText).toContain("Школа №72");
     expect(boxText).toContain("от 29.09");
 
     // 3. Link has valid single-https URL
     const linkHref = await page.evaluate(() => {
-      const a = document.querySelector(".mismatches-box a") as HTMLAnchorElement | null;
+      const a = document.querySelector(".outcome-mismatches a") as HTMLAnchorElement | null;
       return a ? a.href : "";
     });
     expect(linkHref).toBe("https://ft3.bitrix24.kz/crm/deal/details/45477/");
@@ -820,7 +822,7 @@ describe("salesPult in-browser Playwright test", () => {
       const row = document.querySelector(".mismatch-row") as HTMLElement | null;
       const info = row?.querySelector(".info") as HTMLElement | null;
       const meta = row?.querySelector(".meta") as HTMLElement | null;
-      const box = document.querySelector(".mismatches-box") as HTMLElement | null;
+      const box = document.querySelector(".outcome-mismatches") as HTMLElement | null;
       if (!row || !info || !meta || !box) return null;
       const rowRect = row.getBoundingClientRect();
       const infoRect = info.getBoundingClientRect();
@@ -917,6 +919,7 @@ describe('OP contracts in the pult browser', () => {
     const screenshotDir=path.resolve('exports/pult-contracts-fixture'); fs.mkdirSync(screenshotDir,{recursive:true});
     try {
       await page.setContent(renderPultHtml(f.payload));
+      await page.locator('.month-more > summary').click();
       await page.waitForFunction(()=>document.querySelector('#month .big')?.textContent==='3');
       expect(await page.locator('#month').innerText()).toContain('600 ₸');
       expect((await page.locator('#month .awaiting-register').innerText()).replace(/\s+/g,' ')).toContain('ещё 1 сделка');
@@ -933,6 +936,7 @@ describe('OP contracts in the pult browser', () => {
       expect(await page.locator('#signals').innerText()).not.toContain('Закрыто в Битриксе, нет в ОП');
       await page.locator('#signals').screenshot({path:path.join(screenshotDir,'signals.png')});
       await page.locator('#monthSelect').selectOption('2026-09');
+      await page.locator('.month-more > summary').click();
       expect(await page.locator('#month').innerText()).toContain('ОП итог тест.xlsx');
       expect(await page.locator('#sales').innerText()).toContain('по реестру ОП');
       expect(await page.locator('#month .awaiting-register').count()).toBe(0);
@@ -949,6 +953,7 @@ describe('OP contracts in the pult browser', () => {
     const page=await browser.newPage({viewport:{width:1440,height:1100}, reducedMotion:'reduce'});
     try {
       await page.setContent(renderPultHtml(f.payload));
+      await page.locator('.month-more > summary').click();
       const amount=(await page.locator('#month .hero-amt').innerText()).replace(/\s+/g,' ');
       expect(amount).not.toMatch(/·\s*·/);
       expect(amount).not.toContain('без НДС');

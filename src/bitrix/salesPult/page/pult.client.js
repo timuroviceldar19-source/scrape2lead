@@ -47,10 +47,9 @@
         return (base ? base : "") + "/crm/deal/details/" + encodeURIComponent(id) + "/";
       };
       mismatchesHtml = `
-        <div class="mismatches-box">
-          <div class="box-title">
-            ⚠️ Ошибка в CRM: сделки выиграны на портале, но закрыты как проигрыш (${P.outcomeMismatches.length})
-          </div>
+        <details class="outcome-mismatches">
+          <summary class="sig s-bad"><span>Ошибка в CRM: ${plural(P.outcomeMismatches.length, ["сделка выиграна", "сделки выиграны", "сделок выиграно"])} на портале, но ${P.outcomeMismatches.length % 10 === 1 && P.outcomeMismatches.length % 100 !== 11 ? "закрыта" : "закрыты"} как проигрыш</span><span class="mismatch-toggle">список</span></summary>
+          <div class="mismatch-content">
           <div class="box-desc">
             По этим сделкам проверка портала зафиксировала действующий договор группы, но в CRM они закрыты со статусом проигрыша. Проверьте и исправьте стадию:
           </div>
@@ -67,23 +66,57 @@
               </div>
             `).join("")}
           </div>
-        </div>
+          </div>
+        </details>
       `;
     }
 
     document.getElementById("signals").innerHTML = `
       <div class="block-head"><h2><span class="idx">02</span>Срочно</h2><span class="meta">${esc(V.signalsMeta)}</span></div>
-      <div class="signals">${body}</div>
-      ${mismatchesHtml}`;
+      <div class="signals">${mismatchesHtml}${body}</div>`;
+    const errors = document.querySelector("#signals .outcome-mismatches");
+    if (errors) {
+      errors.querySelector("summary").addEventListener("click", e => {
+        if (document.body.classList.contains("tv")) e.preventDefault();
+      });
+      errors.addEventListener("toggle", () => {
+        if (document.body.classList.contains("tv")) errors.open = false;
+      });
+    }
   }
 
   /* ================= month hero ================= */
   function renderMonth() {
     const m = V.month;
     const M = m.asOfMonth;
+    const calls = V.periods[P.closedMonth ? "month" : "day"].sales.totals.calls;
+    const need = m.daysLeft > 0 ? m.left / m.daysLeft : 0;
 
     document.getElementById("month").innerHTML = `
-      <div class="block-head"><h2><span class="idx">01</span>${MONTHS[M - 1]}: договоры</h2><span class="meta">план ${fmt(m.plan)} · ${m.targetContracts} на менеджера × ${m.totalActiveCount}</span></div>
+      <div class="block-head"><h2><span class="idx">01</span>${MONTHS[M - 1]}</h2><span class="meta">план ${fmt(m.plan)} · ${m.targetContracts} на менеджера × ${m.totalActiveCount}</span></div>
+      <div class="month-tiles">
+        <div class="month-tile">
+          <span class="label">Договоры</span>
+          <div class="tile-value">${fmt(m.fact)} <span>/ ${fmt(m.plan)}</span></div>
+          <div class="hbar"><span style="width:${Math.max(0, Math.min(100, m.pct))}%"></span></div>
+          <p class="tile-note">${P.closedMonth || m.daysLeft <= 0 ? `в среднем ${fmt1(m.pacePerDay)} в день` : `темп ${fmt1(m.pacePerDay)} в день, нужно ${fmt1(need)}`}</p>
+        </div>
+        <div class="month-tile">
+          <span class="label">Выручка</span>
+          <div class="tile-value tile-money">${money(m.amount) || "0 ₸"}${m.revenuePlan !== undefined ? ` <span>/ ${money(m.revenuePlan) || "0 ₸"}</span>` : ""}</div>
+          <p class="tile-note">${m.revenuePlan !== undefined ? `без НДС · ${m.revenuePlan > 0 ? Math.round(m.amount / m.revenuePlan * 100) : 0}% плана выручки` : esc(m.sourceLabel)}</p>
+        </div>
+        <div class="month-tile">
+          <span class="label">${P.closedMonth ? "Итог месяца" : `Прогноз к ${m.daysInMonth}.${String(M).padStart(2, "0")}`}</span>
+          ${P.closedMonth ? `<div class="tile-value tile-result">Итог: ${m.pct}% плана</div>` : m.hasForecast ? `<div class="tile-value">≈ ${fmt(m.forecast)} <span>/ ${fmt(m.plan)}</span></div><p class="tile-note">${m.fpct}% плана при нынешнем темпе</p>` : `<div class="tile-value tile-result">—, с 3-го дня</div>`}
+        </div>
+        <div class="month-tile">
+          <span class="label">${P.closedMonth ? "Дозвоны за месяц" : "Дозвоны сегодня"}</span>
+          ${P.callsAvailable ? `<div class="tile-value ${calls.cls}">${fmt(calls.fact)} <span>/ ${fmt(calls.target)}</span></div>` : `<div class="tile-value tile-result muted">нет доступа</div>`}
+        </div>
+      </div>
+      <details class="month-more" ${document.body.classList.contains("tv") ? "open" : ""}>
+      <summary>График и подробности месяца</summary>
       <div class="hero">
         <div>
           <span class="label">Подписано с 1 ${MONTHS_GEN[M - 1]}</span>
@@ -105,8 +138,13 @@
           <div class="chart-wrap" id="burnWrap">${m.hasContractDynamics ? burnup() : `<p class="muted">Дневная разбивка реестра ОП недоступна</p>`}<div class="tip" id="burnTip"></div></div>
           <div class="legend"><span><i></i>подписано</span><span><i class="dash"></i>${P.closedMonth ? "план" : "темп плана"}</span>${P.closedMonth ? "" : `<span><i class="dot"></i>прогноз</span>`}<span><i class="band"></i>выходные</span></div>
         </div>
-      </div>`;
+      </div></details>`;
     wireBurnTip();
+    const more = document.querySelector("#month .month-more");
+    more.addEventListener("toggle", () => {
+      if (more.open) animate(more);
+      if (document.body.classList.contains("tv")) fitTv();
+    });
   }
 
   function burnup() {
@@ -789,6 +827,10 @@
   addEventListener("resize", fitTv);
   function toggleTv() {
     const on = document.body.classList.toggle("tv");
+    const more = document.querySelector("#month .month-more");
+    if (more) more.open = on;
+    const errors = document.querySelector("#signals .outcome-mismatches");
+    if (errors) errors.open = false;
     const tvBtn = document.getElementById("tvBtn");
     if (tvBtn) tvBtn.textContent = on ? "Выйти из ТВ" : "Режим ТВ";
     clearInterval(tvTimer);
