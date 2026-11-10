@@ -17,6 +17,7 @@ describe('Д3: urgent and register in browser', () => {
         await page.setContent(renderPultHtml(payload));
         await expect.poll(()=>page.locator('#signals h2').textContent()).toBe('02Срочно');
         expect(await page.locator('#signals .block-head .meta').innerText()).toBe('1 срочный пункт');
+        await page.locator('.outcome-mismatches > summary').click();
         expect(await page.locator('.mismatch-row .mgr').innerText()).toContain('Тестовый владелец');
         expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
         await page.keyboard.press('t');
