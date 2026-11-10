@@ -569,10 +569,14 @@ body.tv .month-picker { display: none; }
 .plans-summary .hero-num .of { font-size: 24px; white-space: nowrap; }
 .plans-summary .readout .v { font-size: 18px; }
 .plans-summary .readout small { display: block; margin-top: 5px; }
-.plans-summary .plans-outcomes { grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 0; }
-.plans-summary .plans-outcomes > div:nth-child(3) { padding-left: 0; border-left: 0; }
-.plans-summary .share > .r, .plans-summary .share > .cust-d > .r { grid-template-columns: 28px minmax(90px, 1.3fr) minmax(40px, 1fr) 100px 100px; gap: 12px; }
+.plans-summary .plans-outcomes { grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 0; }
+.plans-summary .plans-outcomes > div:nth-child(3n + 1) { padding-left: 0; border-left: 0; }
+.plans-summary .share > .r, .plans-summary .share > .cust-d > .r { grid-template-columns: 28px minmax(90px, 1.3fr) minmax(100px, 1fr) 74px 100px 100px; gap: 12px; }
 .plans-summary .share .r.head { font-size: 10px; }
+.plans-summary .plan-win-share { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; }
+.plans-summary .plan-win-share .hbar { flex: 1; }
+.plans-summary .plan-win-counts { font: 400 12px var(--mono); }
+.plans-summary .plan-win-mobile { display: none; }
 .plans-breakdown .meth .r { grid-template-columns: minmax(0, 1.5fr) 40px minmax(0, 1fr) 100px 60px; gap: 12px; }
 .plans-kinds .r { grid-template-columns: minmax(0, 2fr) 42px minmax(0, 1fr) 100px; gap: 12px; }
 .plans-statuses .r { grid-template-columns: minmax(0, 1fr) 60px 110px; gap: 12px; }
@@ -632,4 +636,12 @@ body.tv .plan-filters { display: none !important; }
   .plans-table .r.head > span { display: none; grid-column: auto; }
   .plans-table .r.head > span:has([data-plan-sort]) { display: block; }
   .plans-table .r:not(.head) > [data-label]::before { content: attr(data-label); display: block; font: 10px var(--mono); color: var(--ink-2); margin-bottom: 4px; }
+}
+
+@media (max-width: 600px) {
+  .plans-summary .plan-win-share, .plans-summary .plan-win-counts { grid-column: 1 / -1; }
+  .plans-summary .plan-win-share::before { content: attr(data-l); color: var(--ink-3); }
+  .plans-summary .plan-win-share .hbar { flex: 0 1 64px; }
+  .plans-summary .plan-win-desktop { display: none; }
+  .plans-summary .plan-win-mobile { display: inline; }
 }
