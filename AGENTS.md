@@ -39,6 +39,7 @@ npm run cloudflare:check  # wrangler deploy --dry-run
 | `scripts/` | CLI-обёртки (`automation.mts`, `check-gz-deal-outcomes.mts`, `bitrix-*.mts`) |
 | `config/` | конфиги запусков (`automation.json` — main, `automation.pk.json` — PK), ключевые слова, маршрутизация |
 | `infra/cloudflare-github-dispatch/` | Worker, который по cron вызывает `workflow_dispatch` |
+| `functions/_middleware.ts` | проверка входа на пульт (Cloudflare Pages Functions); логика — `src/bitrix/salesPult/gate/` |
 | `.github/workflows/` | `gz-daily-main`, `gz-daily-pk`, `gz-automation` (общее тело), `gz-watchdog`, `gz-probe` |
 | `certs/` | публичный промежуточный сертификат портала (см. ниже) |
 | `docs/testing/*.tdd.md` | журналы TDD по каждой фиче: RED/GREEN, решения |
@@ -66,6 +67,22 @@ npm run cloudflare:check  # wrangler deploy --dry-run
 - В GitHub сбор идёт цепочкой до трёх машин (`gz-automation.yml` → `gz-automation-machine.yml`): машины 1 и 2 при
   недоступном портале сразу передают сбор следующей (код 76 обёртки, job остаётся зелёным), машина 3 работает по схеме
   выше. Запуск зелёный, только если job `collection-result` увидел выполненный сбор; на это опираются guard и watchdog.
+
+## Роли на пульте (f3-pult.pages.dev)
+
+- Сайт закрыт Cloudflare Access; после него каждый запрос проходит `functions/_middleware.ts`. Он проверяет
+  токен Access (`Cf-Access-Jwt-Assertion` или кука `CF_Authorization`, RS256 по ключам команды), берёт почту,
+  находит роль и отдаёт страницу варианта `_r/<вариант>/index.html` или `reg.html`. Напрямую `_r/…` закрыт (404).
+- Список «почта → роль» — секрет репозитория `PULT_ROLES`, **не репозиторий** (он публичный). Формат:
+  `{"team": "<команда Access>", "aud": "<AUD-тег приложения>", "users": {"почта": "all" | "tv" | "manager:<ID Битрикса>"}}`.
+  Шаг выкладки собирает из него `exports/pult-gate/config.json` (`scripts/pult-gate-config.mts`, почты в лог не пишет);
+  ошибка в секрете роняет выкладку.
+- Без секрета проверка выключена: все, кого пускает Access, видят полный пульт (вариант `all`), как раньше.
+- С секретом: почты нет в списке — «Нет доступа» с кнопкой выхода; варианта роли нет в выкладке — «ещё не готов»
+  (полный пульт вместо него не отдаётся); страницы нет в варианте (у `tv` нет «Выручки») — «эта страница вам недоступна».
+- Варианты собираются в шаге выкладки `sales-pult.yml`; сейчас только `all`. Ответы с `cache-control: private, no-store`.
+- Проверить локально: `PULT_ROLES= npx tsx scripts/pult-gate-config.mts exports/pult-gate/config.json`, разложить страницы
+  в `exports/sales-pult-deploy/_r/all/`, затем `npx wrangler pages dev exports/sales-pult-deploy --port 8788`.
 
 ## Подводные камни (выяснено на практике)
 

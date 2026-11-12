@@ -176,6 +176,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Роли пульта «почта → роль»; без секрета проверка входа выключена (см. AGENTS.md).
+          PULT_ROLES: ${{ secrets.PULT_ROLES }}
         run: |
           set -eu
 
@@ -201,10 +203,14 @@ jobs:
           check_access "https://f3-pult.pages.dev"
           check_access "https://f3-pult.pages.dev/reg"
 
-          # 2. Подготовка и деплой
-          mkdir -p exports/sales-pult-deploy
-          cp exports/sales-pult/index.html exports/sales-pult-deploy/index.html
-          cp exports/sales-pult/reg.html exports/sales-pult-deploy/reg.html
+          # 2. Подготовка и деплой. Страницы лежат в вариантах _r/<роль>/, их отдаёт по роли
+          # промежуточный код functions/_middleware.ts; выкладка из корня репозитория, чтобы
+          # wrangler нашёл папку functions.
+          npx tsx scripts/pult-gate-config.mts exports/pult-gate/config.json
+          rm -rf exports/sales-pult-deploy
+          mkdir -p exports/sales-pult-deploy/_r/all
+          cp exports/sales-pult/index.html exports/sales-pult-deploy/_r/all/index.html
+          cp exports/sales-pult/reg.html exports/sales-pult-deploy/_r/all/reg.html
           DEPLOY_OUTPUT=$(npx wrangler pages deploy exports/sales-pult-deploy --project-name f3-pult)
           echo "$DEPLOY_OUTPUT"
 
