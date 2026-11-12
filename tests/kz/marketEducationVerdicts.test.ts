@@ -126,7 +126,8 @@ describe("вердикты учебных комплектов", () => {
     const key = marketConfigKey(loadMarketConfig());
     expect(key).toBe("8828053341ebd421");
     const rows = loadEducationVerdicts();
-    expect(rows).toHaveLength(192);
+    // Новые договоры дописываются по мере проверки (06.11 — 192, 12.11 — ещё 14).
+    expect(rows.length).toBeGreaterThanOrEqual(206);
     expect(new Set(rows.map(r => r.id)).size).toBe(rows.length);
     expect(rows.every(r => Object.keys(r).sort().join(",") === "id,source,verdict")).toBe(true);
     expect(rows.every(r => ["Да", "Нет"].includes(r.verdict) && ["договор", "объявление"].includes(r.source))).toBe(true);
