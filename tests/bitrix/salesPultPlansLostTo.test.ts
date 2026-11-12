@@ -58,6 +58,23 @@ describe('Д6: кому проиграли — загрузка пачками',
     expect(deals[120].lostTo).toBeUndefined();
     expect(deals[121].lostTo).toBeUndefined();
   });
+  it('counts a lost: deal won by a group partner as our win, not a competitor',async()=>{
+    // Закрытые сделки робот не перепроверяет: у них остаётся lost:, хотя победитель — партнёр группы.
+    const deals=[deal(1,{outcome:'lost:1',group:'КТ'}),deal(2,{outcome:'lost:2',group:'КТ'})];
+    const {reader}=fakeReader({'1':[{ID:'5',COMMENT:comment('ТОО Партнёр','333333333333','100')}],'2':[{ID:'6',COMMENT:comment('ТОО Чужой','444444444444','100')}]});
+    await attachLostWinners(reader,deals,new Set(['333333333333']));
+    expect(deals[0]).toMatchObject({outcomeCategory:'won'});
+    expect(deals[0].lostTo).toBeUndefined();
+    expect(deals[1]).toMatchObject({outcomeCategory:'lost',lostTo:{bin:'444444444444'}});
+    const kt=buildPlansMonitorView(deals,{asOfDate:'2026-11-06'}).kt!;
+    expect(kt.lostTo.competitors.map(c=>c.bin)).toEqual(['444444444444']);
+    expect(kt.lostTo.lostCount).toBe(1);
+  });
+  it('reads group partners for the plans page from the outcomes config',async()=>{
+    const {loadOutcomePartnerBins}=await import('../../src/bitrix/salesPult/plans/lostTo.js');
+    expect([...loadOutcomePartnerBins()].sort()).toEqual(['130540000688','170240035230']);
+    expect(loadOutcomePartnerBins('does-not-exist.json').size).toBe(0);
+  });
   it('keeps plans working when the batch fails and does not leak the error text',async()=>{
     const deals=[deal(1,{outcome:'lost:1'})];
     const {reader}=fakeReader({},true);

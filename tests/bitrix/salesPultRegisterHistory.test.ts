@@ -47,6 +47,16 @@ describe("resolveGroupSupplierOrgIds", () => {
     expect(res.f3OrgId).toBe(54283);
     expect(res.partnerOrgIds).toContain(42071);
   });
+
+  it("сверка реестра берёт registerPartnerBins, если он задан, а не все партнёры итогов", async () => {
+    const orgsCache = { "54283": "061140003942", "42071": "130540000688", "77777": "170240035230" };
+    const outcomesConfig = { ourBins: ["061140003942"], partnerBins: ["130540000688", "170240035230"], registerPartnerBins: ["130540000688"] };
+    const res = await resolveGroupSupplierOrgIds(outcomesConfig, orgsCache);
+    expect(res.partnerOrgIds).toEqual([42071]);
+    expect(res.suppliers.map((s) => s.bin)).toEqual(["061140003942", "130540000688"]);
+    const real = JSON.parse(fs.readFileSync("config/gz-deal-outcomes.json", "utf8"));
+    expect(real.registerPartnerBins).toEqual(["130540000688"]);
+  });
 });
 
 describe("loadStoredRegisterHistory and saveRegisterHistory", () => {

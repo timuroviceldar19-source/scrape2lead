@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   buildGzDealOutcomeComment,
@@ -116,6 +117,16 @@ describe("decideGzDealOutcome from contracts", () => {
       contract({ supplierBiin: "190540009117", Supplier: { nameRu: "ТОО \"QTrade Company\"" } })
     ], status("Договор действует"), CONFIG);
     expect(outcome?.kind).toBe("lost");
+  });
+
+  it("считает партнёрами обе компании группы из настоящего конфига", () => {
+    const raw = JSON.parse(readFileSync("config/gz-deal-outcomes.json", "utf8")) as { ourBins: string[]; partnerBins: string[] };
+    const real: GzOutcomeConfig = { ourBins: raw.ourBins, partnerBins: raw.partnerBins, itemFamilies: FAMILIES };
+    // Amanat Asia и «Торговая сеть Казахстана» — партнёры группы F3, как в config/market-monitor.json.
+    for (const bin of ["130540000688", "170240035230"]) {
+      expect(decideGzDealOutcome(REF, [contract({ supplierBiin: bin })], NO_PLAN, real)?.kind).toBe("partner");
+    }
+    expect(decideGzDealOutcome(REF, [contract({ supplierBiin: "999999999999" })], NO_PLAN, real)?.kind).toBe("lost");
   });
 
   it("tells partners apart from competitors", () => {

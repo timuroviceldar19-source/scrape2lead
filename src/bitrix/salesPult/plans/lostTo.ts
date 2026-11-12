@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { flattenBitrixParams, type ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import type { NormalizedPlanDeal, PlanLostTo } from "./types.js";
 
@@ -21,11 +23,30 @@ export function parseLostOutcomeComment(comment: string | null | undefined): Pla
 const BATCH_SIZE = 50;
 
 /**
+ * Партнёры группы F3 из `config/gz-deal-outcomes.json` (`partnerBins`). Новые договоры таких
+ * компаний робот сразу пишет как «partner:», а у закрытых сделок остаётся старый «lost:».
+ */
+export function loadOutcomePartnerBins(configPath = "config/gz-deal-outcomes.json"): Set<string> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.resolve(configPath), "utf8")) as { partnerBins?: unknown };
+    return new Set(Array.isArray(raw.partnerBins) ? raw.partnerBins.map((bin) => String(bin).trim()) : []);
+  } catch {
+    console.warn(`[Планы] партнёры: не удалось прочитать ${configPath}, все победители считаются конкурентами`);
+    return new Set();
+  }
+}
+
+/**
  * Для проигранных сделок по планам читает комментарии ленты (по 50 сделок в одном batch) и
- * записывает победителя из последнего комментария робота об исходе. Сбой не ломает «Планы»:
+ * записывает победителя из последнего комментария робота об исходе. Если победитель — партнёр
+ * группы (`partnerBins`), сделка считается выигранной. Сбой не ломает «Планы»:
  * сделка остаётся без победителя и попадает в «без данных о победителе».
  */
-export async function attachLostWinners(reader: ReadOnlyBitrixClient, deals: NormalizedPlanDeal[]): Promise<void> {
+export async function attachLostWinners(
+  reader: ReadOnlyBitrixClient,
+  deals: NormalizedPlanDeal[],
+  partnerBins: ReadonlySet<string> = new Set()
+): Promise<void> {
   const lost = deals.filter((d) => d.outcomeCategory === "lost");
   let failed = 0;
   for (let i = 0; i < lost.length; i += BATCH_SIZE) {
@@ -49,7 +70,9 @@ export async function attachLostWinners(reader: ReadOnlyBitrixClient, deals: Nor
           const id = Number(c.ID) || 0;
           if (winner && (!latest || id > latest.id)) latest = { id, winner };
         }
-        if (latest) d.lostTo = latest.winner;
+        // Победа партнёра группы — наша победа, даже если у сделки остался старый «lost:».
+        if (latest && partnerBins.has(latest.winner.bin)) d.outcomeCategory = "won";
+        else if (latest) d.lostTo = latest.winner;
       }
     } catch {
       // Текст ошибки транспорта может содержать адрес вебхука — не выводим его.
@@ -58,5 +81,6 @@ export async function attachLostWinners(reader: ReadOnlyBitrixClient, deals: Nor
   }
   if (failed) console.warn(`[Планы] победители: не удалось прочитать комментарии ${failed} проигранных сделок`);
   const found = lost.filter((d) => d.lostTo).length;
-  console.log(`[Планы] победители найдены у ${found} из ${lost.length} проигранных`);
+  const partners = lost.filter((d) => d.outcomeCategory === "won").length;
+  console.log(`[Планы] победители найдены у ${found} из ${lost.length} проигранных${partners ? `, выиграл партнёр группы: ${partners}` : ""}`);
 }
