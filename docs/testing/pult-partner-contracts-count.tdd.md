@@ -40,3 +40,11 @@
 Те же файлы и `salesPultRegisterMonthSwitcher.test.ts`: **59 passed**. `npm run lint` чистый;
 `npx vitest run`: 2047 passed, 1 failed — `kgdReport` (локально нет python с reportlab,
 см. AGENTS.md).
+
+## Попутно: длинная ссылка в комментарии задачи
+
+При проверке на реальных данных главная на 375 px оказалась шире экрана: в последнем
+комментарии одной задачи ссылка без пробелов. `.task .cm` получил `overflow-wrap: anywhere`.
+
+RED: `npx vitest run tests/bitrix/salesPultTaskComment.test.ts` — **1 failed**.
+GREEN: **1 passed**; реальная страница из локальной сборки: ширина 375 при окне 375.

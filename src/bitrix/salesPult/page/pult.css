@@ -241,7 +241,7 @@ body.tv .debt-button { pointer-events: none; }
 .task .ttl { font-size: 16px; font-weight: 400; letter-spacing: -0.01em; margin: 6px 0 0; line-height: 1.4; }
 .task .ttl a { text-decoration: none; background-image: linear-gradient(var(--ink), var(--ink)); background-size: 0 1px; background-repeat: no-repeat; background-position: 0 100%; transition: background-size .35s var(--ease); }
 .task .ttl a:hover { background-size: 100% 1px; }
-.task .cm { margin-top: 8px; font-size: 14px; color: var(--ink-2); font-style: italic; }
+.task .cm { margin-top: 8px; font-size: 14px; color: var(--ink-2); font-style: italic; overflow-wrap: anywhere; }
 .task .cm::before { content: "Последний комментарий: "; font-style: normal; color: var(--ink-3); }
 .task .side { text-align: right; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .task .side .num { font-size: 16px; }
