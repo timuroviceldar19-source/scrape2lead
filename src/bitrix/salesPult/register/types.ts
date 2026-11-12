@@ -140,6 +140,15 @@ export interface RegisterMonthSummary {
   /** Партнёрские продажи месяца, в `sale`, `val`, `contracts` и `byManager` не входят. */
   partnerSale?: number;
   partnerContracts?: number;
+  /**
+   * Число договоров вместе с партнёрскими, для главной: там партнёрские считаются в договорах,
+   * но не в выручке. Есть, только если в месяце были партнёрские строки.
+   */
+  contractsWithPartner?: {
+    total: number;
+    byManager: Record<string, number>;
+    daily: Record<string, number>;
+  };
 }
 
 export interface RegisterPortalMissingContract {

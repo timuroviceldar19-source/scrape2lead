@@ -275,7 +275,7 @@
           <div class="hero-amt">${money(m.amount) || "0 ₸"} <span class="muted">${m.revenuePlan !== undefined ? "без НДС · " : "· "}${m.pct}% плана договоров</span></div>
           <p class="muted contract-source">${esc(m.sourceLabel)}</p>
           ${m.revenuePlan !== undefined ? `<p>План выручки: ${money(m.revenuePlan) || '0 ₸'} без НДС</p>` : ''}
-          ${m.partnerAmount > 0 ? `<p class="muted partner-note">Партнёрские продажи ${money(m.partnerAmount)} без НДС (${plural(m.partnerContracts || 0, ["договор", "договора", "договоров"])}) в выручку и договоры не входят</p>` : ''}
+          ${m.partnerAmount > 0 ? `<p class="muted partner-note">Партнёрские продажи ${money(m.partnerAmount)} без НДС (${plural(m.partnerContracts || 0, ["договор", "договора", "договоров"])}) в выручку не входят, в договорах учтены</p>` : ''}
           ${m.awaitingRegister !== undefined ? `<p class="muted awaiting-register">ещё ${plural(m.awaitingRegister, ["сделка", "сделки", "сделок"])} в Битриксе, ждут ОП</p>` : ''}
           <p class="muted crm-comparison">в Битриксе отмечено ${plural(m.crmFact, ["сделка", "сделки", "сделок"])} на ${fmt1(m.crmAmount / 1e6)} млн</p>
           <div class="readout" ${P.closedMonth ? "hidden" : ""}>
