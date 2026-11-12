@@ -18,6 +18,8 @@ export interface RegisterRow {
   group: ProductGroup;
   kind: string;
   channel: string;
+  /** Партнёрская продажа: в итоги отдела не входит, см. `PARTNER_SALE_KINDS`. */
+  partner?: boolean;
 }
 
 export interface RegisterContract {
@@ -72,6 +74,18 @@ export interface RegisterGroupItem {
   val: number | null;
 }
 
+/** Партнёрские продажи месяца: отдельно от выручки, вала, бонусов и плана отдела. */
+export interface RegisterPartnerSales {
+  sale: number;
+  val: number | null;
+  margin: number | null;
+  bonusMop: number;
+  bonusRop: number;
+  contracts: number;
+  kinds: string[];
+  rows: RegisterRow[];
+}
+
 export interface RegisterDailyPoint {
   d: string;
   sale: number;
@@ -123,6 +137,9 @@ export interface RegisterMonthSummary {
   missingCrm?: RegisterMissingContract[];
   reconciliationPerformed?: boolean;
   crmExtra?: number;
+  /** Партнёрские продажи месяца, в `sale`, `val`, `contracts` и `byManager` не входят. */
+  partnerSale?: number;
+  partnerContracts?: number;
 }
 
 export interface RegisterPortalMissingContract {
@@ -209,8 +226,11 @@ export interface RegisterSuccessView {
   mix: RegisterMixItem[];
   channels: RegisterChannelItem[];
   groups: RegisterGroupItem[];
+  /** Есть, только если в месяце были партнёрские продажи. */
+  partner?: RegisterPartnerSales;
   missing: RegisterMissingContract[];
   crmExtra: number;
+  /** Все строки файла, включая партнёрские (`partner: true`). */
   rows: RegisterRow[];
   history?: RegisterHistoryPayload;
   historyError?: string;
@@ -229,6 +249,7 @@ export interface RegisterErrorView {
   mix?: RegisterMixItem[];
   channels?: RegisterChannelItem[];
   groups?: RegisterGroupItem[];
+  partner?: RegisterPartnerSales;
   missing?: RegisterMissingContract[];
   crmExtra?: number;
   rows?: RegisterRow[];

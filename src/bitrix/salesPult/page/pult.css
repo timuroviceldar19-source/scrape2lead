@@ -381,6 +381,9 @@ body.tv .sections, body.tv #periodsNav { display: none !important; }
 .gsum > div + div { padding-left: 14px; border-left: 1px solid var(--rule); }
 .gsum .v { font-weight: 300; font-size: 34px; letter-spacing: -0.04em; line-height: 1.1; margin-top: 6px; }
 .gsum .v small { font: 400 12px var(--mono); color: var(--ink-3); letter-spacing: 0; }
+.gsum.partner-sum { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.partner-tag { display: inline-block; margin-left: 6px; padding: 0 5px; border: 1px solid var(--rule-2); border-radius: 4px; font: 400 10px/16px var(--mono); color: var(--ink-3); white-space: nowrap; vertical-align: 1px; }
+.partner-sub { display: block; font: 400 11px var(--mono); }
 
 /* реестр: нет в CRM */
 .miss .r { grid-template-columns: 56px 110px minmax(0, 3fr) minmax(0, 1fr) 110px; }
@@ -491,6 +494,8 @@ a.r:focus-visible, .cust-d > summary:focus-visible { outline: 2px solid var(--in
   .share .cust-list .r { grid-template-columns: auto 1fr auto; gap: 4px 12px; }
   .cust .cust-list .r > :nth-child(2), .share .cust-list .r > :nth-child(2) { grid-column: 1 / -1; order: -1; }
   .share .r .rk, .chev { display: none; }
+  .gsum.partner-sum { grid-template-columns: 1fr; }
+  .gsum.partner-sum > div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--rule); }
 }
 @media (max-width: 480px) {
   .sections { gap: 2px; }

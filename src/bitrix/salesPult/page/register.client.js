@@ -76,12 +76,24 @@
     }
 
   const T = R.total;
+  const PS = R.partner;
   const M = Number(R.month.slice(5, 7));
+  // Номера блоков идут подряд: блок партнёрских продаж есть не в каждом месяце.
+  let blockNo = 0;
+  const idx = () => String(++blockNo).padStart(2, "0");
+  const SHORT_CH = {
+    "Электронный магазин": "эл. магазин",
+    "Запрос ценовых предложений": "ЗЦП",
+    "Из одного источника": "из 1 источника",
+    "Открытый конкурс": "конкурс",
+    "B2B, вне портала": "B2B"
+  };
+
   const planPct = T.plan ? T.sale / T.plan : 0;
   const over = T.sale - T.plan;
   const top = R.managers[0] ?? { name: "—", sale: 0 };
 
-  let s = `<section class="block reveal" id="r-month">${head("01", `${MONTHS[M - 1][0].toUpperCase() + MONTHS[M - 1].slice(1)}: выручка отдела`, `файл «${esc(R.file)}» · суммы без НДС`)}
+  let s = `<section class="block reveal" id="r-month">${head(idx(), `${MONTHS[M - 1][0].toUpperCase() + MONTHS[M - 1].slice(1)}: выручка отдела`, `файл «${esc(R.file)}» · суммы без НДС`)}
     <div class="hero"><div>
       <span class="label">Продано с 1 ${["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"][M - 1]}</span>
       <div class="hero-num"><span class="big">${mln(T.sale).split(",")[0]}</span><span class="of">/ ${mln(T.plan).split(",")[0]}</span></div>
@@ -91,11 +103,23 @@
         <div><span class="label">Бонус МОП</span><div class="v">${mln(T.bonusMop)}<small> млн</small></div></div>
         <div><span class="label">Бонус РОП</span><div class="v">${nf0.format(Math.round(T.bonusRop / 1000))}<small> тыс</small></div></div>
       </div>
-      <p class="verdict">${over >= 0 ? `План отдела перевыполнен на <b>${money(over)}</b>.` : `До плана отдела <b>${money(-over)}</b>.`} Больше всех продал ${esc(top.name)}: ${money(top.sale)}. B2B: ${money(T.b2bSale)} из ${money(T.b2bPlan)}.</p>
+      <p class="verdict">${over >= 0 ? `План отдела перевыполнен на <b>${money(over)}</b>.` : `До плана отдела <b>${money(-over)}</b>.`} Больше всех продал ${esc(top.name)}: ${money(top.sale)}. B2B: ${money(T.b2bSale)} из ${money(T.b2bPlan)}.${PS ? ` Партнёрские продажи <b>${money(PS.sale)}</b> в эти суммы не входят, они <a href="#r-partner">отдельным блоком ниже</a>.` : ""}</p>
     </div><div class="chart-wrap" id="regChart"></div></div></section>`;
 
-  // 02 Менеджеры
-  s += `<section class="block reveal">${head("02", "Менеджеры", "выручка против плана в деньгах · вал · бонус")}<div class="mgr rows">
+  // Партнёрские продажи: низкий вал, поэтому отдельно от выручки, вала, бонусов и плана отдела
+  if (PS) {
+    s += `<section class="block reveal" id="r-partner">${head(idx(), "Партнёрские продажи", `${esc(PS.kinds.join(", ").toLowerCase())} · не входят в выручку, вал, бонусы и план отдела`)}
+    <div class="gsum partner-sum">
+      <div><span class="label">Выручка</span><div class="v">${mln(PS.sale)}<small> млн · ${plural(PS.contracts, ["договор", "договора", "договоров"])}</small></div></div>
+      <div><span class="label">Вал · маржа</span><div class="v">${PS.val !== null ? `${mln(PS.val)}<small> млн · ${pct(PS.margin)}</small>` : `<span class="dim">нет в файле</span>`}</div></div>
+      <div><span class="label">Бонус МОП · РОП</span><div class="v">${nf0.format(Math.round(PS.bonusMop / 1000))}<small> тыс · </small>${nf0.format(Math.round(PS.bonusRop / 1000))}<small> тыс</small></div></div>
+    </div>
+    <div class="all partner rows"><div class="r head"><span class="label">Дата</span><span class="label">Менеджер</span><span class="label">Заказчик</span><span class="label">Товар</span><span class="label">Шт</span><span class="label">Сумма</span><span class="label">Вал</span><span class="label">Маржа</span><span class="label">Канал</span></div>
+    ${PS.rows.map((x) => regRow(x, false)).join("")}</div></section>`;
+  }
+
+  // Менеджеры
+  s += `<section class="block reveal">${head(idx(), "Менеджеры", "выручка против плана в деньгах · вал · бонус")}<div class="mgr rows">
     <div class="r head"><span class="label">Менеджер</span><span class="label">Выручка / план</span><span class="label">Вал · маржа</span><span class="label">Бонус</span><span class="label">Дог.</span><span class="label">Сверка с CRM</span><span></span></div>`;
   for (const m of R.managers) {
     const p = m.plan ? m.sale / m.plan : 0;
@@ -113,13 +137,13 @@
   }
   s += `</div><p class="note-src">Шкала — до 300% плана, засечка — 100%. Цвет: зелёный — план выполнен, охра — от 80%, красный — меньше.</p></section>`;
 
-  // 03 Состав
+  // Состав
   const g = Object.fromEntries(R.groups.map((x) => [x.g, x]));
   const ipG = g["ИП"] ?? { sale: 0, val: 0 };
   const ktG = g["КТ"] ?? { sale: 0, val: 0 };
   const ipValText = ipG.val !== null ? `${mln(ipG.sale)} млн <small>(маржа ${mln(ipG.val)} млн · ${pct(ipG.sale ? ipG.val / ipG.sale : 0)})</small>` : `${mln(ipG.sale)} млн <span class="dim">нет в файле</span>`;
   const ktValText = ktG.val !== null ? `${mln(ktG.sale)} млн <small>(маржа ${mln(ktG.val)} млн · ${pct(ktG.sale ? ktG.val / ktG.sale : 0)})</small>` : `${mln(ktG.sale)} млн <span class="dim">нет в файле</span>`;
-  s += `<section class="block reveal">${head("03", "Что и как продаём", "доля в выручке · маржа")}<div class="two"><div>
+  s += `<section class="block reveal">${head(idx(), "Что и как продаём", "доля в выручке · маржа")}<div class="two"><div>
     <div class="gsum"><div><span class="label">ИП · интерактивные панели</span><div class="v">${ipValText}</div></div>
     <div><span class="label">КТ · компьютерная техника</span><div class="v">${ktValText}</div></div></div>
     <div class="mix rows"><div class="r head"><span class="label">Товар</span><span class="label">Выручка</span><span class="label">Вал</span><span class="label">Маржа</span></div>
@@ -138,27 +162,27 @@
     reconciliationHtml = `<h3>В CRM «Выигран», в реестре нет</h3><div class="reconciliation mismatches-list">${rows.length ? rows.join("") : "расхождений нет"}</div>`;
   }
 
-  // 04 Нет в CRM
+  // Нет в CRM
   const missSum = R.missing.reduce((a, x) => a + x.sale, 0);
-  s += `<section class="block reveal">${head("04", "В реестре есть, в CRM не «Выигран»", `${plural(R.missing.length, ["договор", "договора", "договоров"])} на ${money(missSum)}`)}
+  s += `<section class="block reveal">${head(idx(), "В реестре есть, в CRM не «Выигран»", `${plural(R.missing.length, ["договор", "договора", "договоров"])} на ${money(missSum)}`)}
     <p class="lead">Эти договоры подписаны, но в Битрикс24 сделки нет или она не переведена в «Выигран». Пульт их не видит, поэтому выручка в CRM <b>на ${money(missSum)} меньше</b>, чем в реестре. Сверка по названию заказчика и сумме.</p>
     <div class="miss rows"><div class="r head"><span class="label">Дата</span><span class="label">Менеджер</span><span class="label">Заказчик</span><span class="label">Товар</span><span class="label">Сумма</span></div>
     ${R.missing.map((x) => `<div class="r"><span class="num">${ddmm(x.date)}</span><span class="nm">${esc(x.manager)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 90))}</span><span>${esc(x.products.join(", "))}</span><span class="num">${mln(x.sale)} млн</span></div>`).join("")}</div>${reconciliationHtml}</section>`;
 
 
-  // 05 Все договоры
-  s += `<section class="block reveal">${head("05", "Все договоры месяца", `${R.legacySummary ? "Старый кэш: подробные строки недоступны" : `${R.rows.length} строк реестра`}`)}
+  // Все договоры
+  s += `<section class="block reveal">${head(idx(), "Все договоры месяца", `${R.legacySummary ? "Старый кэш: подробные строки недоступны" : `${R.rows.length} строк реестра`}`)}
     <div class="chips" id="regChips"><button aria-pressed="true" data-f="">Все</button>${R.managers.filter((m) => m.contracts).map((m) => `<button aria-pressed="false" data-f="${esc(m.name)}">${esc(m.name)}</button>`).join("")}</div>
     <div class="all rows" id="regAll"></div><button class="btn more" id="regMore"></button></section>`;
 
   // Ошибка загрузки истории
   if (!R.history && R.historyError) {
-    s += `<section class="block reveal" id="r-history-error">${head("06", "История реестра", "")}
+    s += `<section class="block reveal" id="r-history-error">${head(idx(), "История реестра", "")}
       <p class="lead"><span class="flag-miss">${esc(R.historyError)}</span></p>
     </section>`;
   }
 
-  // 06 История по месяцам
+  // История по месяцам
   if (R.historyError) {
     s += `<section class="block reveal"><div class="mismatches-box" style="margin-bottom:20px;"><span class="flag-miss">Внимание:</span> ${esc(R.historyError)}</div></section>`;
   }
@@ -170,7 +194,7 @@
     const histMeta = R.history.cachedAt
       ? `с июля 2026 · ${R.history.months.length} месяцев · кэш от ${esc(formatAlmatyTimeStr(R.history.cachedAt))}`
       : `с июля 2026 · ${R.history.months.length} месяцев`;
-    s += `<section class="block reveal" id="r-history">${head("06", "История по месяцам", histMeta)}
+    s += `<section class="block reveal" id="r-history">${head(idx(), "История по месяцам", histMeta)}
       <div class="hist rows">
         <div class="r head">
           <span class="label">Месяц</span>
@@ -195,7 +219,7 @@
       s += `<div class="r body" role="button" tabindex="0" aria-expanded="false" data-month="${esc(m.month)}" aria-current="${m.month === R.month}">
         <div class="nm"><b>${esc(m.label || formatMonthLabel(m.month))}</b></div>
         <div class="dim" style="font-family:var(--mono); font-size:12px;">${esc(m.fileName)}</div>
-        <div><span class="num">${mln(m.sale)}</span> <span class="dim">млн</span></div>
+        <div><span class="num">${mln(m.sale)}</span> <span class="dim">млн</span>${m.partnerSale ? `<span class="dim partner-sub" title="Партнёрские продажи, в выручку не входят">+ ${mln(m.partnerSale)} партнёрские</span>` : ""}</div>
         <div><span class="num">${valDisplay}</span></div>
         <div><span class="num">${marginDisplay}</span></div>
         <div class="num">${m.contracts}</div>
@@ -235,11 +259,11 @@
     s += `</div><p class="note-src">Источник планов — таблица планов менеджеров из соответствующего файла реестра на конец месяца. В сентябре колонка вала в файле отсутствовала, маржа не вычисляется.</p></section>`;
   }
 
-  // 07 Есть на портале, нет в реестре
+  // Есть на портале, нет в реестре
   if (R.history?.portalMissing) {
     const pm = R.history.portalMissing;
     const missingContracts = pm.missingContracts || [];
-    s += `<section class="block reveal" id="r-portal">${head("07", "Есть на портале, нет в реестре", "текущий и предыдущий месяц · сопоставление 1-к-1")}
+    s += `<section class="block reveal" id="r-portal">${head(idx(), "Есть на портале, нет в реестре", "текущий и предыдущий месяц · сопоставление 1-к-1")}
       <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px;">
         ${Object.entries(pm.monthlyCounts || {}).map(([ym, cnt]) => `
           <div class="pill" style="padding:6px 12px; font-size:12px; border-radius:2px;">
@@ -290,10 +314,10 @@
     s += `</section>`;
   }
 
-  // 08 Дисциплина ведения реестра
+  // Дисциплина ведения реестра
   if (R.history?.discipline) {
     const disc = R.history.discipline;
-    s += `<section class="block reveal" id="r-discipline">${head("08", "Дисциплина ведения реестра", "пропуски дней · задержка внесения · продажи ниже закупа · правки задним числом")}
+    s += `<section class="block reveal" id="r-discipline">${head(idx(), "Дисциплина ведения реестра", "пропуски дней · задержка внесения · продажи ниже закупа · правки задним числом")}
       <div class="gsum" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
         <div>
           <span class="label">Пропущено рабочих дней</span>
@@ -407,13 +431,13 @@
     s += `</section>`;
   }
 
-  // 09 Сверка с CRM за прошлые месяцы
+  // Сверка с CRM за прошлые месяцы
   if (R.history?.months) {
     const pastMonths = R.history.months.filter((m) => m.month !== R.month);
     const unperformed = pastMonths.filter((m) => !m.reconciliationPerformed);
     const performed = pastMonths.filter((m) => m.reconciliationPerformed);
     const pastWithMissing = performed.filter((m) => m.missingCrm && m.missingCrm.length > 0);
-    s += `<section class="block reveal" id="r-crm-history">${head("09", "Сверка с CRM за прошлые месяцы", "договоры реестра прошлых месяцев, не найденные в CRM со статусом «Выигран»")}`;
+    s += `<section class="block reveal" id="r-crm-history">${head(idx(), "Сверка с CRM за прошлые месяцы", "договоры реестра прошлых месяцев, не найденные в CRM со статусом «Выигран»")}`;
 
     if (pastMonths.length === 0) {
       s += `<p class="dim">Нет данных за прошлые месяцы.</p>`;
@@ -452,18 +476,15 @@
 
   el.innerHTML = s;
 
+  function regRow(x, tagPartner) {
+    const tag = tagPartner && x.partner ? ` <span class="partner-tag" title="Партнёрская продажа: в выручку отдела не входит">партнёрская</span>` : "";
+    return `<div class="r"><span class="num">${ddmm(x.date)}</span><span class="nm">${esc(x.manager)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 80))}</span><span>${esc(x.product)}${tag}</span><span class="num">${fmt(x.qty)}</span><span class="num">${mln(x.sale)} млн</span><span class="num">${x.val !== null ? mln(x.val) : "—"}</span><span class="num">${x.val !== null && x.sale ? pct(x.val / x.sale) : "—"}</span><span class="dim">${esc(SHORT_CH[x.channel] ?? x.channel)}</span></div>`;
+  }
+
   function dealRows(rows) {
     return `<div class="r head"><span class="label">Дата</span><span class="label">Заказчик</span><span class="label">Товар</span><span class="label">Шт</span><span class="label">Сумма</span><span class="label">Вал</span><span class="label">Маржа</span></div>` +
       rows.map((x) => `<div class="r"><span class="num">${ddmm(x.date)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 80))}</span><span>${esc(x.product)} <span class="dim">${esc(x.type)}</span></span><span class="num">${fmt(x.qty)}</span><span class="num">${mln(x.sale)} млн</span><span class="num">${x.val !== null ? mln(x.val) : "—"}</span><span class="num">${x.val !== null && x.sale ? pct(x.val / x.sale) : "—"}</span></div>`).join("");
   }
-
-  const SHORT_CH = {
-    "Электронный магазин": "эл. магазин",
-    "Запрос ценовых предложений": "ЗЦП",
-    "Из одного источника": "из 1 источника",
-    "Открытый конкурс": "конкурс",
-    "B2B, вне портала": "B2B"
-  };
 
   let regFilter = "", regShown = 12;
   function updateRegTable() {
@@ -471,7 +492,7 @@
     const regAllEl = document.getElementById("regAll");
     if (!regAllEl) return;
     regAllEl.innerHTML = `<div class="r head"><span class="label">Дата</span><span class="label">Менеджер</span><span class="label">Заказчик</span><span class="label">Товар</span><span class="label">Шт</span><span class="label">Сумма</span><span class="label">Вал</span><span class="label">Маржа</span><span class="label">Канал</span></div>` +
-      rows.slice(0, regShown).map((x) => `<div class="r"><span class="num">${ddmm(x.date)}</span><span class="nm">${esc(x.manager)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 80))}</span><span>${esc(x.product)}</span><span class="num">${fmt(x.qty)}</span><span class="num">${mln(x.sale)} млн</span><span class="num">${x.val !== null ? mln(x.val) : "—"}</span><span class="num">${x.val !== null && x.sale ? pct(x.val / x.sale) : "—"}</span><span class="dim">${esc(SHORT_CH[x.channel] ?? x.channel)}</span></div>`).join("");
+      rows.slice(0, regShown).map((x) => regRow(x, true)).join("");
     const more = document.getElementById("regMore");
     if (more) {
       more.hidden = rows.length <= regShown;

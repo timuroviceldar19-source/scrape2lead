@@ -54,11 +54,14 @@ export function loadMarketView(options: LoadMarketOptions): MarketView {
     updatedAt = maxDate;
   }
 
-  const filtered = applyEducationVerdicts(storedUnits, verdicts);
+  const hiddenKinds = new Set(cfg.hiddenKinds ?? []);
+  const shown = hiddenKinds.size ? storedUnits.filter((u) => !hiddenKinds.has(u.kind)) : storedUnits;
+  const filtered = applyEducationVerdicts(shown, verdicts);
   const view = buildMarketView(filtered.units, todayAlmaty, cfg, undefined, updatedAt, filtered.educationPending);
   // Кэш был прочитан: если отфильтровано всё, показываем нулевой рынок, а не ошибку сбора.
   view.ip ??= buildMarketGroupView("ИП", [], todayAlmaty, cfg);
   view.kt ??= buildMarketGroupView("КТ", [], todayAlmaty, cfg);
   console.log(`[Рынок] Учебные комплекты: исключено договоров: ${filtered.excludedContracts}, на проверке: ${filtered.pendingContracts}`);
+  if (hiddenKinds.size) console.log(`[Рынок] Скрыто позиций (${[...hiddenKinds].join(", ")}): ${storedUnits.length - shown.length}`);
   return view;
 }

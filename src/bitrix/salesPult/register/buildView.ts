@@ -8,8 +8,10 @@ import type {
   RegisterChannelItem,
   RegisterGroupItem,
   RegisterTotal,
-  RegisterHistoryPayload
+  RegisterHistoryPayload,
+  RegisterPartnerSales
 } from "./types.js";
+import { isPartnerSale } from "./parseExcel.js";
 
 function sumBy<T>(items: T[], fn: (item: T) => number | null | undefined): number {
   return items.reduce((s, x) => s + (fn(x) || 0), 0);
@@ -135,6 +137,22 @@ function buildChannelItems(rows: RegisterRow[], hasVal: boolean): RegisterChanne
   return items.sort((a, b) => b.sale - a.sale);
 }
 
+function buildPartnerSales(rows: RegisterRow[], hasVal: boolean): RegisterPartnerSales | undefined {
+  if (!rows.length) return undefined;
+  const sale = sumBy(rows, (r) => r.sale);
+  const val = hasVal ? sumBy(rows, (r) => r.val) : null;
+  return {
+    sale,
+    val,
+    margin: val !== null && sale > 0 ? val / sale : null,
+    bonusMop: sumBy(rows, (r) => r.bonusMop),
+    bonusRop: sumBy(rows, (r) => r.bonusRop),
+    contracts: countUniqueContracts(rows),
+    kinds: [...new Set(rows.map((r) => r.kind))],
+    rows: [...rows].sort((a, b) => b.date.localeCompare(a.date) || b.sale - a.sale)
+  };
+}
+
 export function buildRegisterView(params: {
   rows: RegisterRow[];
   plans: Record<string, number>;
@@ -149,8 +167,11 @@ export function buildRegisterView(params: {
   historyError?: string;
   error?: string;
 }): RegisterView {
-  const { rows, plans, missing, extraDealsCount, fileName, asOf, month, hasValColumn, hiddenManagers, history, historyError, error } = params;
-  const hasVal = hasValColumn ?? (rows.length === 0 || rows.some((r) => r.val !== null));
+  const { rows: allRows, plans, missing, extraDealsCount, fileName, asOf, month, hasValColumn, hiddenManagers, history, historyError, error } = params;
+  const hasVal = hasValColumn ?? (allRows.length === 0 || allRows.some((r) => r.val !== null));
+  // Итоги, план и разбивки отдела — без партнёрских продаж; сверка с CRM и общий список — по всем строкам.
+  const rows = allRows.filter((r) => !isPartnerSale(r));
+  const partner = buildPartnerSales(allRows.filter(isPartnerSale), hasVal);
 
   const totalSale = sumBy(rows, (r) => r.sale);
   const totalVal = hasVal ? sumBy(rows, (r) => r.val) : null;
@@ -207,9 +228,10 @@ export function buildRegisterView(params: {
     mix: buildMixItems(rows, hasVal),
     channels: buildChannelItems(rows, hasVal),
     groups,
+    ...(partner ? { partner } : {}),
     missing: sortedMissing,
     crmExtra: extraDealsCount,
-    rows: [...rows].sort((a, b) => b.date.localeCompare(a.date) || b.sale - a.sale),
+    rows: [...allRows].sort((a, b) => b.date.localeCompare(a.date) || b.sale - a.sale),
     history,
     historyError,
     error

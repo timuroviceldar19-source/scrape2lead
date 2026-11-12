@@ -5,6 +5,7 @@
     { "bin": "170240035230", "name": "Торговая сеть Казахстана" }
   ],
   "minUnitPrice": 10000,
+  "hiddenKinds": ["Мультимедийные системы"],
   "excludedStatuses": [455, 350, 340],
   "allowedStatuses": [190, 390, 375, 450],
   "methods": {

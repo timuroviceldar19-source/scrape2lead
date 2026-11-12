@@ -254,7 +254,7 @@
           <span class="label">Выручка</span>
           <div class="tile-value tile-money">${money(m.amount) || "0 ₸"}${m.revenuePlan !== undefined ? ` <span>/ ${money(m.revenuePlan) || "0 ₸"}</span>` : ""}</div>
           <div class="hbar"><span class="ink" style="width:${Math.max(0, Math.min(100, revPct))}%"></span></div>
-          <p class="tile-note">${m.revenuePlan !== undefined ? `без НДС · ${m.revenuePlan > 0 ? Math.round(m.amount / m.revenuePlan * 100) : 0}% плана выручки` : esc(m.sourceLabel)}</p>
+          <p class="tile-note">${m.revenuePlan !== undefined ? `без НДС · ${m.revenuePlan > 0 ? Math.round(m.amount / m.revenuePlan * 100) : 0}% плана выручки` : esc(m.sourceLabel)}${m.partnerAmount > 0 ? ` · партнёрские ${fmt1(m.partnerAmount / 1e6)} млн отдельно` : ""}</p>
           ${potentialHtml}
         </div>
         <div class="month-tile">
@@ -275,6 +275,7 @@
           <div class="hero-amt">${money(m.amount) || "0 ₸"} <span class="muted">${m.revenuePlan !== undefined ? "без НДС · " : "· "}${m.pct}% плана договоров</span></div>
           <p class="muted contract-source">${esc(m.sourceLabel)}</p>
           ${m.revenuePlan !== undefined ? `<p>План выручки: ${money(m.revenuePlan) || '0 ₸'} без НДС</p>` : ''}
+          ${m.partnerAmount > 0 ? `<p class="muted partner-note">Партнёрские продажи ${money(m.partnerAmount)} без НДС (${plural(m.partnerContracts || 0, ["договор", "договора", "договоров"])}) в выручку и договоры не входят</p>` : ''}
           ${m.awaitingRegister !== undefined ? `<p class="muted awaiting-register">ещё ${plural(m.awaitingRegister, ["сделка", "сделки", "сделок"])} в Битриксе, ждут ОП</p>` : ''}
           <p class="muted crm-comparison">в Битриксе отмечено ${plural(m.crmFact, ["сделка", "сделки", "сделок"])} на ${fmt1(m.crmAmount / 1e6)} млн</p>
           <div class="readout" ${P.closedMonth ? "hidden" : ""}>

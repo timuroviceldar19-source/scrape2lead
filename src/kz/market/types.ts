@@ -26,6 +26,12 @@ export interface MarketConfig {
     "ИП": MarketGroupConfig;
     "КТ": MarketGroupConfig;
   };
+  /**
+   * Виды товара, которые остаются в кэше, но не показываются на «Рынке» (сейчас — мультимедийные
+   * системы, это партнёрские продажи). Применяется при чтении и не входит в `marketConfigKey`,
+   * поэтому смена списка не перезагружает историю рынка.
+   */
+  hiddenKinds?: string[];
 }
 
 export interface MarketUnit {

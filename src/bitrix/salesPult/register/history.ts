@@ -4,7 +4,7 @@ import type { MarketConfig } from "../../../kz/market/types.js";
 import { isExcludedStatus, loadMarketConfig } from "../../../kz/market/config.js";
 import fs from "node:fs";
 import path from "node:path";
-import { parseRegisterExcel } from "./parseExcel.js";
+import { isPartnerSale, parseRegisterExcel } from "./parseExcel.js";
 import { groupRegisterContracts, calculateNameSimilarity, matchRegisterWithCrm } from "./matchCrm.js";
 import { compareRegisterFiles, getFileRevision } from "./diskClient.js";
 import { getNextMonth } from "./fetchCrmWon.js";
@@ -91,9 +91,11 @@ export function buildRegisterMonthSummary(params: {
   hasValColumn?: boolean;
   hiddenManagers?: string[];
 }): RegisterMonthSummary {
-  const { month, fileName, rows, plans, hiddenManagers } = params;
+  const { month, fileName, rows: allRows, plans, hiddenManagers } = params;
   const label = params.label || formatMonthLabel(month);
-  const hasVal = params.hasValColumn ?? (rows.length === 0 || rows.some((r) => r.val !== null));
+  const hasVal = params.hasValColumn ?? (allRows.length === 0 || allRows.some((r) => r.val !== null));
+  const rows = allRows.filter((r) => !isPartnerSale(r));
+  const partnerRows = allRows.filter(isPartnerSale);
 
   const contracts = groupRegisterContracts(rows);
   const totalSale = rows.reduce((s, r) => s + r.sale, 0);
@@ -145,7 +147,11 @@ export function buildRegisterMonthSummary(params: {
     plan,
     planPct,
     hasVal,
-    byManager
+    byManager,
+    ...(partnerRows.length ? {
+      partnerSale: partnerRows.reduce((s, r) => s + r.sale, 0),
+      partnerContracts: groupRegisterContracts(partnerRows).length
+    } : {})
   };
 }
 

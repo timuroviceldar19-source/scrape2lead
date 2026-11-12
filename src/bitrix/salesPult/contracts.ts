@@ -2,6 +2,7 @@ import type { SalesPultPayload, SignalItem } from "./types.js";
 import type { DealInfo } from "./metrics.js";
 import type { RegisterView, RegisterMonthSummary } from "./register/types.js";
 import { groupRegisterContracts, matchRegisterWithCrm, settleUnmatched } from "./register/matchCrm.js";
+import { isPartnerSale } from "./register/parseExcel.js";
 import { isWorkDay, DEFAULT_HOLIDAYS } from "./pace.js";
 import { escapeHtml, MONTHS } from "./format.js";
 
@@ -22,6 +23,9 @@ export interface PultContractSource {
   byManager: Array<ManagerTotal & { id?: string; groupId?: string }>;
   daily?: Array<{ date: string; contracts: number; amount: number }>;
   awaiting?: number;
+  /** Партнёрские продажи по реестру: в `fact`, `amount`, `byManager` и `daily` не входят. */
+  partnerAmount?: number;
+  partnerContracts?: number;
   crmFact: number;
   crmAmount: number;
   signals: SignalItem[];
@@ -76,13 +80,20 @@ export function attachRegisterContracts(
   };
 
   if (!register.error && register.month === month && register.rows) {
-    const rows = register.rows.filter(r => r.date.startsWith(month) && r.date <= payload.asOfDate);
+    const monthRows = register.rows.filter(r => r.date.startsWith(month) && r.date <= payload.asOfDate);
+    // Партнёрские продажи не входят в выручку и договоры отдела, но сделки по ним сверяются с CRM.
+    const rows = monthRows.filter(r => !isPartnerSale(r));
+    const partnerRows = monthRows.filter(isPartnerSale);
     const contracts = groupRegisterContracts(rows);
     source.available = true;
     source.label = `по реестру ОП, файл «${register.file}»`;
     source.fact = contracts.length;
     source.amount = rows.reduce((sum, r) => sum + r.sale, 0);
     source.revenuePlan = register.total!.plan;
+    if (partnerRows.length) {
+      source.partnerAmount = partnerRows.reduce((sum, r) => sum + r.sale, 0);
+      source.partnerContracts = groupRegisterContracts(partnerRows).length;
+    }
     setManagers([...new Set(rows.map(r => r.manager))].map(name => ({
       name,
       contracts: contracts.filter(c => c.manager === name).length,
@@ -106,8 +117,9 @@ export function attachRegisterContracts(
           date: deal.contractDate || deal.portalSignDate || deal.closeDate?.slice(0, 10)
         }];
       });
-      const result = matchRegisterWithCrm(contracts, crm, { managerAliases: aliases });
-      const settled = settleUnmatched(result, contracts, aliases);
+      const allContracts = groupRegisterContracts(monthRows);
+      const result = matchRegisterWithCrm(allContracts, crm, { managerAliases: aliases });
+      const settled = settleUnmatched(result, allContracts, aliases);
       const pending = settled.extra;
       source.awaiting = pending.length;
       const holidays = new Set(payload.holidays ?? DEFAULT_HOLIDAYS);
@@ -133,6 +145,8 @@ export function attachRegisterContracts(
       source.fact = summary.contracts;
       source.amount = summary.sale;
       source.revenuePlan = summary.plan;
+      source.partnerAmount = summary.partnerSale;
+      source.partnerContracts = summary.partnerContracts;
       source.daily = summary.dailyContracts;
       setManagers(summary.byManager.map(({ name, contracts, sale }) => ({ name, contracts, sale })));
     } else if (!register.error && register.month && register.month < month) {

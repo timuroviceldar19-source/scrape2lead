@@ -238,6 +238,9 @@ export interface PultMonthView {
   sourceLabel: string;
   revenuePlan?: number;
   awaitingRegister?: number;
+  /** Партнёрские продажи по реестру, в `fact` и `amount` не входят. */
+  partnerAmount?: number;
+  partnerContracts?: number;
   crmFact: number;
   crmAmount: number;
   plan: number;
