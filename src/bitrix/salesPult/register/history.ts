@@ -869,8 +869,10 @@ export async function resolveGroupSupplierOrgIds(
     }
   }
 
-  // Resolve Partner Bins
-  const partnerBins: string[] = outcomesConfig.partnerBins ? outcomesConfig.partnerBins.map((b: unknown) => String(b).trim()) : [];
+  // Resolve Partner Bins. Сверка с реестром ОП берёт свой список: не все партнёры итогов
+  // закупок проводят продажи через реестр отдела.
+  const registerPartners = outcomesConfig.registerPartnerBins ?? outcomesConfig.partnerBins;
+  const partnerBins: string[] = registerPartners ? registerPartners.map((b: unknown) => String(b).trim()) : [];
   for (const bin of partnerBins) {
     let orgId = binToId.get(bin);
     if (!orgId) {
