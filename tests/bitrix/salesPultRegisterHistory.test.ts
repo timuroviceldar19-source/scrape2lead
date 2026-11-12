@@ -54,8 +54,14 @@ describe("resolveGroupSupplierOrgIds", () => {
     const res = await resolveGroupSupplierOrgIds(outcomesConfig, orgsCache);
     expect(res.partnerOrgIds).toEqual([42071]);
     expect(res.suppliers.map((s) => s.bin)).toEqual(["061140003942", "130540000688"]);
+  });
+
+  it("сверка реестра в боевом конфиге берёт обоих партнёров группы, ТСК тоже", async () => {
     const real = JSON.parse(fs.readFileSync("config/gz-deal-outcomes.json", "utf8"));
-    expect(real.registerPartnerBins).toEqual(["130540000688"]);
+    const orgsCache = { "54283": "061140003942", "42071": "130540000688", "35701": "170240035230" };
+    const res = await resolveGroupSupplierOrgIds(real, orgsCache);
+    expect(res.error).toBeUndefined();
+    expect(res.partnerOrgIds).toEqual([42071, 35701]);
   });
 });
 

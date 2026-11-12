@@ -83,6 +83,20 @@ describe("партнёрские продажи: реестр", () => {
     expect(s.dailyContracts!.map((d) => d.date)).toEqual(["2026-11-05", "2026-11-06"]);
     const plain = buildRegisterMonthSummary({ month: "2026-11", fileName: "ОП 30.11.26.xlsx", rows: own, plans, hasValColumn: true });
     expect(plain.partnerSale).toBeUndefined();
+    expect(plain.contractsWithPartner).toBeUndefined();
+  });
+
+  it("история хранит число договоров вместе с партнёрскими для главной", () => {
+    const s = buildRegisterMonthSummary({ month: "2026-11", fileName: "ОП 30.11.26.xlsx", rows: [...own, partner], plans, hasValColumn: true });
+    expect(s.contractsWithPartner).toEqual({
+      total: 3,
+      byManager: { "Менеджер А": 2, "Менеджер Б": 1 },
+      daily: { "2026-11-05": 1, "2026-11-06": 1, "2026-11-07": 1 }
+    });
+    // Партнёрская строка в том же договоре, что и своя, второй договор не даёт.
+    const mixed = buildRegisterMonthSummary({ month: "2026-11", fileName: "ОП 30.11.26.xlsx", rows: [...own, { ...partner, date: "2026-11-05", customer: "Тестовая школа" }], plans, hasValColumn: true });
+    expect(mixed.contractsWithPartner!.total).toBe(2);
+    expect(mixed.partnerContracts).toBe(1);
   });
 });
 
@@ -97,21 +111,36 @@ describe("партнёрские продажи: главная", () => {
     return { ...f, register };
   };
 
-  it("выручка и договоры месяца без партнёрских, но сделка партнёрской продажи не висит в «ждут ОП»", () => {
+  it("партнёрские договоры считаются в договорах, но не в выручке; сделка партнёрской продажи не висит в «ждут ОП»", () => {
     const f = partnerFixture();
     attachRegisterContracts(f.payload, f.register, f.deals, f.aliases);
     const v = buildPultView(f.payload);
-    expect(v.month).toMatchObject({ fact: 3, amount: 600, revenuePlan: 2500, awaitingRegister: 1, partnerAmount: 2000, partnerContracts: 1 });
-    expect(v.periods.month.sales.managers[0].contracts.totalAmount).toBe(100);
-    expect(v.month.split.map((x) => [x.name, x.c, x.a])).toEqual([["Продажи", 1, 100], ["Тендеры", 1, 200], ["Другие", 1, 300]]);
+    expect(v.month).toMatchObject({ fact: 4, amount: 600, revenuePlan: 2500, awaitingRegister: 1, partnerAmount: 2000, partnerContracts: 1 });
+    expect(v.periods.month.sales.managers[0].contracts).toMatchObject({ fact: 2, totalAmount: 100 });
+    expect(v.month.split.map((x) => [x.name, x.c, x.a])).toEqual([["Продажи", 2, 100], ["Тендеры", 1, 200], ["Другие", 1, 300]]);
+    expect(v.month.points.at(-1)).toBe(4);
+    expect(f.payload.contractSource!.daily!.reduce((s, d) => s + d.amount, 0)).toBe(600);
   });
 
-  it("закрытый месяц из истории тоже без партнёрских", () => {
+  it("закрытый месяц из истории: партнёрские в договорах, но не в выручке", () => {
     const f = fixture();
     const summary = buildRegisterMonthSummary({ month: "2026-10", fileName: "ОП 31.10.26.xlsx", rows: [...f.rows, { ...f.rows[0], customer: "Каппа", sale: 2000, partner: true }], plans: { Алия: 1000 } });
     f.payload.closedMonth = true;
     attachRegisterContracts(f.payload, { error: "нет файла", history: { asOf: "2026-10-31", months: [summary] } }, new Map(), f.aliases);
-    expect(buildPultView(f.payload).month).toMatchObject({ amount: 600, partnerAmount: 2000, partnerContracts: 1 });
+    const v = buildPultView(f.payload);
+    expect(v.month).toMatchObject({ fact: 4, amount: 600, partnerAmount: 2000, partnerContracts: 1 });
+    expect(v.month.split.map((x) => [x.name, x.c, x.a])).toEqual([["Продажи", 2, 100], ["Тендеры", 1, 200], ["Другие", 1, 300]]);
+    expect(f.payload.contractSource!.daily!.reduce((s, d) => s + d.contracts, 0)).toBe(4);
+    expect(f.payload.contractSource!.daily!.reduce((s, d) => s + d.amount, 0)).toBe(600);
+  });
+
+  it("история без нового поля (старый кэш) считает договоры как раньше", () => {
+    const f = fixture();
+    const summary = buildRegisterMonthSummary({ month: "2026-10", fileName: "ОП 31.10.26.xlsx", rows: [...f.rows, { ...f.rows[0], customer: "Каппа", sale: 2000, partner: true }], plans: { Алия: 1000 } });
+    delete summary.contractsWithPartner;
+    f.payload.closedMonth = true;
+    attachRegisterContracts(f.payload, { error: "нет файла", history: { asOf: "2026-10-31", months: [summary] } }, new Map(), f.aliases);
+    expect(buildPultView(f.payload).month).toMatchObject({ fact: 3, amount: 600 });
   });
 });
 
@@ -169,6 +198,8 @@ describe("партнёрские продажи: страницы", () => {
       await page.setContent(renderPultHtml(f.payload));
       const tile = page.locator(".month-tiles > .month-tile").nth(1);
       expect(await tile.locator(".tile-note").textContent()).toContain("партнёрские 2,0 млн отдельно");
+      expect(await page.locator(".month-tiles > .month-tile").first().locator(".tile-value").textContent()).toMatch(/^4\s/);
+      expect(await page.locator(".partner-note").textContent()).toContain("в выручку не входят, в договорах учтены");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     } finally { await page.close(); }
   });

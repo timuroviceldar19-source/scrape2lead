@@ -23,7 +23,10 @@ export interface PultContractSource {
   byManager: Array<ManagerTotal & { id?: string; groupId?: string }>;
   daily?: Array<{ date: string; contracts: number; amount: number }>;
   awaiting?: number;
-  /** Партнёрские продажи по реестру: в `fact`, `amount`, `byManager` и `daily` не входят. */
+  /**
+   * Партнёрские продажи по реестру: в выручку (`amount`, `sale` и `amount` в разбивках) не входят,
+   * в число договоров (`fact`, `contracts` в разбивках) входят.
+   */
   partnerAmount?: number;
   partnerContracts?: number;
   crmFact: number;
@@ -81,10 +84,10 @@ export function attachRegisterContracts(
 
   if (!register.error && register.month === month && register.rows) {
     const monthRows = register.rows.filter(r => r.date.startsWith(month) && r.date <= payload.asOfDate);
-    // Партнёрские продажи не входят в выручку и договоры отдела, но сделки по ним сверяются с CRM.
+    // Партнёрские продажи не входят в выручку отдела, но считаются в договорах и сверяются с CRM.
     const rows = monthRows.filter(r => !isPartnerSale(r));
     const partnerRows = monthRows.filter(isPartnerSale);
-    const contracts = groupRegisterContracts(rows);
+    const contracts = groupRegisterContracts(monthRows);
     source.available = true;
     source.label = `по реестру ОП, файл «${register.file}»`;
     source.fact = contracts.length;
@@ -94,12 +97,12 @@ export function attachRegisterContracts(
       source.partnerAmount = partnerRows.reduce((sum, r) => sum + r.sale, 0);
       source.partnerContracts = groupRegisterContracts(partnerRows).length;
     }
-    setManagers([...new Set(rows.map(r => r.manager))].map(name => ({
+    setManagers([...new Set(monthRows.map(r => r.manager))].map(name => ({
       name,
       contracts: contracts.filter(c => c.manager === name).length,
       sale: rows.filter(r => r.manager === name).reduce((sum, r) => sum + r.sale, 0)
     })));
-    source.daily = [...new Set(rows.map(r => r.date))].sort().map(date => ({
+    source.daily = [...new Set(monthRows.map(r => r.date))].sort().map(date => ({
       date,
       contracts: contracts.filter(c => c.date === date).length,
       amount: rows.filter(r => r.date === date).reduce((sum, r) => sum + r.sale, 0)
@@ -117,9 +120,8 @@ export function attachRegisterContracts(
           date: deal.contractDate || deal.portalSignDate || deal.closeDate?.slice(0, 10)
         }];
       });
-      const allContracts = groupRegisterContracts(monthRows);
-      const result = matchRegisterWithCrm(allContracts, crm, { managerAliases: aliases });
-      const settled = settleUnmatched(result, allContracts, aliases);
+      const result = matchRegisterWithCrm(contracts, crm, { managerAliases: aliases });
+      const settled = settleUnmatched(result, contracts, aliases);
       const pending = settled.extra;
       source.awaiting = pending.length;
       const holidays = new Set(payload.holidays ?? DEFAULT_HOLIDAYS);
@@ -142,13 +144,26 @@ export function attachRegisterContracts(
     if (summary) {
       source.available = true;
       source.label = `по реестру ОП, файл «${summary.fileName}»`;
-      source.fact = summary.contracts;
+      // Старый кэш без `contractsWithPartner` считает договоры без партнёрских, как раньше.
+      const withPartner = summary.contractsWithPartner;
+      source.fact = withPartner?.total ?? summary.contracts;
       source.amount = summary.sale;
       source.revenuePlan = summary.plan;
       source.partnerAmount = summary.partnerSale;
       source.partnerContracts = summary.partnerContracts;
-      source.daily = summary.dailyContracts;
-      setManagers(summary.byManager.map(({ name, contracts, sale }) => ({ name, contracts, sale })));
+      if (withPartner) {
+        const amounts = new Map((summary.dailyContracts ?? []).map(d => [d.date, d.amount]));
+        source.daily = [...new Set([...amounts.keys(), ...Object.keys(withPartner.daily)])].sort().map(date => ({
+          date, contracts: withPartner.daily[date] ?? 0, amount: amounts.get(date) ?? 0
+        }));
+        const sales = new Map(summary.byManager.map(m => [m.name, m.sale]));
+        setManagers([...new Set([...sales.keys(), ...Object.keys(withPartner.byManager)])].map(name => ({
+          name, contracts: withPartner.byManager[name] ?? 0, sale: sales.get(name) ?? 0
+        })));
+      } else {
+        source.daily = summary.dailyContracts;
+        setManagers(summary.byManager.map(({ name, contracts, sale }) => ({ name, contracts, sale })));
+      }
     } else if (!register.error && register.month && register.month < month) {
       // В первые дни месяца последний файл ОП ещё за прошлый месяц — это не сбой.
       source.label = `файла ОП за ${MONTHS[Number(month.slice(5, 7)) - 1].toLocaleLowerCase("ru")} ещё нет, цифры по Битриксу`;

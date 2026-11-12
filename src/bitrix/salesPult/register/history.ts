@@ -83,6 +83,18 @@ export function formatMonthLabel(yearMonth: string): string {
   return `${name} ${y}`;
 }
 
+/** Договоры по всем строкам месяца: партнёрская строка в том же договоре второго договора не даёт. */
+function countContractsWithPartner(rows: RegisterRow[]): NonNullable<RegisterMonthSummary["contractsWithPartner"]> {
+  const contracts = groupRegisterContracts(rows);
+  const byManager: Record<string, number> = {};
+  const daily: Record<string, number> = {};
+  for (const c of contracts) {
+    byManager[c.manager] = (byManager[c.manager] ?? 0) + 1;
+    daily[c.date] = (daily[c.date] ?? 0) + 1;
+  }
+  return { total: contracts.length, byManager, daily };
+}
+
 export function buildRegisterMonthSummary(params: {
   month: string;
   label?: string;
@@ -151,7 +163,8 @@ export function buildRegisterMonthSummary(params: {
     byManager,
     ...(partnerRows.length ? {
       partnerSale: partnerRows.reduce((s, r) => s + r.sale, 0),
-      partnerContracts: groupRegisterContracts(partnerRows).length
+      partnerContracts: groupRegisterContracts(partnerRows).length,
+      contractsWithPartner: countContractsWithPartner(allRows)
     } : {})
   };
 }

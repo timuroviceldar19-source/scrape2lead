@@ -172,7 +172,7 @@ export function loadEncryptedRegisterHistory(
  * (2 — партнёрские продажи отдельно от выручки), чтобы кэш, собранный старым кодом,
  * пересобрался на ближайшем запуске, а не на следующее утро.
  */
-export const REGISTER_HISTORY_VERSION = 2;
+export const REGISTER_HISTORY_VERSION = 3;
 
 export interface ShouldRefreshHistoryOptions {
   cacheFilePath: string;
