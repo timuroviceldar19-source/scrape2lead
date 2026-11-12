@@ -16,6 +16,7 @@ import { fetchCrmWonDealsForRegister, fetchCrmWonDealsForMonths, getNextMonth } 
 import { buildRegisterView } from "./buildView.js";
 import {
   buildFullRegisterHistory,
+  buildRegisterMonthSummary,
   DEFAULT_REGISTER_HISTORY_PATH
 } from "./history.js";
 import {
@@ -316,6 +317,26 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
       const { history, historyError: _historyError, ...snapshot } = view;
       history.monthViews ??= {};
       history.monthViews[view.month] = snapshot;
+      // Строка месяца в «Истории» считается по тому же файлу, что и срез: кэш истории
+      // пересобирается раз в день и без этого расходится с первым блоком страницы.
+      const rowIndex = history.months.findIndex((m) => m.month === view.month);
+      if (rowIndex >= 0) {
+        const cachedRow = history.months[rowIndex];
+        history.months[rowIndex] = {
+          ...buildRegisterMonthSummary({
+            month: view.month,
+            label: cachedRow.label,
+            fileName: registerFileName,
+            rows: parsed.rows,
+            plans: parsed.plans,
+            hasValColumn: parsed.hasValColumn,
+            hiddenManagers
+          }),
+          missingCrm: cachedRow.missingCrm,
+          reconciliationPerformed: cachedRow.reconciliationPerformed,
+          crmExtra: cachedRow.crmExtra
+        };
+      }
       view.crmDeals = wonDeals;
     }
     return view;

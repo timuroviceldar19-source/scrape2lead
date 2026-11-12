@@ -167,6 +167,13 @@ export function loadEncryptedRegisterHistory(
   }
 }
 
+/**
+ * Версия расчёта истории реестра. Повышается, когда меняется подсчёт сумм месяцев
+ * (2 — партнёрские продажи отдельно от выручки), чтобы кэш, собранный старым кодом,
+ * пересобрался на ближайшем запуске, а не на следующее утро.
+ */
+export const REGISTER_HISTORY_VERSION = 2;
+
 export interface ShouldRefreshHistoryOptions {
   cacheFilePath: string;
   attemptFilePath?: string;
@@ -180,6 +187,7 @@ export interface ShouldRefreshHistoryOptions {
  * - forceRefresh is true -> true
  * - last attempt failed < 1 hour ago -> false
  * - cache file doesn't exist -> true
+ * - cache was built by an older calculation (`REGISTER_HISTORY_VERSION`) -> true, at most once an hour
  * - cache file age >= 20 hours -> true
  * - current Almaty time >= 08:00 and cache file was created before 08:00 today (or yesterday) -> true
  * - otherwise -> false (fast 15-min site mode run reads cache)
@@ -208,6 +216,12 @@ export function shouldRefreshRegisterHistory(options: ShouldRefreshHistoryOption
 
   if (options.cachedPayload?.months.length && !options.cachedPayload.monthViews) {
     // Миграция не должна повторно обходить Диск чаще раза в час.
+    if (lastAttempt && nowMs - Date.parse(lastAttempt.timestamp) < 60 * 60 * 1000) return false;
+    return true;
+  }
+
+  if (options.cachedPayload && (options.cachedPayload.version ?? 1) < REGISTER_HISTORY_VERSION) {
+    // Кэш собран старым расчётом; повтор, как и для миграции, не чаще раза в час.
     if (lastAttempt && nowMs - Date.parse(lastAttempt.timestamp) < 60 * 60 * 1000) return false;
     return true;
   }
