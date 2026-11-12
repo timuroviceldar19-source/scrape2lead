@@ -44,3 +44,18 @@
 `npx vitest run tests/bitrix/salesPultPartnerSales.test.ts`: **11 passed**.
 `npm run lint` чистый; `npx vitest run`: 2038 passed, 1 failed — `kgdReport` (локально нет
 python с reportlab, см. AGENTS.md).
+
+## Дополнение: строка месяца в «Истории» (ветка `fix/pult-register-history-refresh`)
+
+После выкладки строка текущего месяца в «Истории по месяцам» показывала прежнюю сумму:
+кэш истории собран утром старым кодом и пересобирается только первым запуском после 08:00.
+
+- `REGISTER_HISTORY_VERSION = 2` в `register/crypto.ts`; `buildFullRegisterHistory` пишет его
+  в кэш. Кэш без версии или со старой версией пересобирается на ближайшем запуске, не чаще раза
+  в час (то же правило, что у миграции на `monthViews`). Кэш новее кода не трогается.
+- `loadRegisterView` пересчитывает строку текущего месяца в `history.months` по тому же файлу,
+  что и срез месяца, сохраняя поля сверки с CRM и подпись месяца. Раньше строка отставала и в
+  течение дня, если на Диске появлялся новый файл.
+
+RED: `npx vitest run tests/bitrix/salesPultRegisterMonthSwitcher.test.ts` — **2 failed, 6 passed**.
+GREEN: 8 passed; `npm run lint` чистый; `npx vitest run`: 2040 passed, 1 failed — `kgdReport`.

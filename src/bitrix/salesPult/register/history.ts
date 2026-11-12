@@ -8,6 +8,7 @@ import { isPartnerSale, parseRegisterExcel } from "./parseExcel.js";
 import { groupRegisterContracts, calculateNameSimilarity, matchRegisterWithCrm } from "./matchCrm.js";
 import { compareRegisterFiles, getFileRevision } from "./diskClient.js";
 import { getNextMonth } from "./fetchCrmWon.js";
+import { REGISTER_HISTORY_VERSION } from "./crypto.js";
 
 interface ZakupDictItem {
   id: number;
@@ -1328,6 +1329,7 @@ export async function buildFullRegisterHistory(
   });
 
   return {
+    version: REGISTER_HISTORY_VERSION,
     asOf: options.todayAlmaty,
     months,
     monthViews,

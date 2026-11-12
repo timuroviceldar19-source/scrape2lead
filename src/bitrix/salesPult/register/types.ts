@@ -205,6 +205,8 @@ export interface RegisterDisciplineView {
 }
 
 export interface RegisterHistoryPayload {
+  /** `REGISTER_HISTORY_VERSION` кода, который собрал кэш; у старых кэшей нет. */
+  version?: number;
   asOf: string;
   cachedAt?: string;
   months: RegisterMonthSummary[];
