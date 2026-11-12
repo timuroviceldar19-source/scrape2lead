@@ -77,6 +77,7 @@ export function buildMonthView(
     hasContractDynamics: !op?.available || op.daily !== undefined,
     sourceLabel: op?.label ?? (payload.closedMonth ? "реестр ОП за месяц недоступен, цифры по Битриксу" : "реестр ОП недоступен, цифры по Битриксу"),
     revenuePlan: op?.revenuePlan, awaitingRegister: op?.awaiting,
+    partnerAmount: op?.partnerAmount, partnerContracts: op?.partnerContracts,
     crmFact: op?.crmFact ?? monthFact, crmAmount: op?.crmAmount ?? monthAmount,
     plan: monthPlan, fact: monthFact, amount: monthAmount,
     pacePerDay: forecastRes.pacePerDay, forecast: forecastRes.forecast,
