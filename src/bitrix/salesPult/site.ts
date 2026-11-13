@@ -59,6 +59,7 @@ const regPageClientJs = `${registerClientJs}\n${regRunnerClientJs}`;
 const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|\/\*__CLIENT_JS__\*\//g;
 
 export interface RegisterPagePayload {
+  viewer?: import("./types.js").PultViewer;
   reconciliation?: import("./contracts.js").ContractReconciliation;
   asOfDate: string;
   generatedAt: string;
@@ -71,14 +72,29 @@ export function buildSignals(payload: SalesPultPayload): SignalItem[] {
   return buildPultSignals(payload);
 }
 
+export type PultPageView = PultView & { closedMonths: Record<string, PultView | null> };
+
+/** Представление главной вместе с закрытыми месяцами — то, что страница получает как VIEW. */
+export function buildPultPageView(payload: SalesPultPayload): PultPageView {
+  return { ...buildPultView(payload), closedMonths: Object.fromEntries(
+    Object.entries(payload.closedMonths || {}).map(([key, month]) => [key, month ? buildPultView(month) : null])
+  ) };
+}
+
 export function renderPultHtml(payload: SalesPultPayload): string {
   const safePayload = { ...payload };
   if ("register" in safePayload) {
     delete (safePayload as Record<string, unknown>).register;
   }
-  const view = { ...buildPultView(safePayload), closedMonths: Object.fromEntries(
-    Object.entries(payload.closedMonths || {}).map(([key, month]) => [key, month ? buildPultView(month) : null])
-  ) };
+  return renderPultHtmlWithView(safePayload, buildPultPageView(safePayload));
+}
+
+/** Страница из готового представления: вариант роли считает его сам из полного пульта. */
+export function renderPultHtmlWithView(payload: SalesPultPayload, view: PultPageView): string {
+  const safePayload = { ...payload };
+  if ("register" in safePayload) {
+    delete (safePayload as Record<string, unknown>).register;
+  }
   const replacements: Record<string, string> = {
     "/*__CSS__*/": pultCss,
     "__PAYLOAD__": safeJson(safePayload),

@@ -710,6 +710,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
     const html = renderPultHtml(payload);
     fs.writeFileSync(path.join(outDir, "index.html"), html, "utf8");
     fs.writeFileSync(path.join(outDir, "payload.json"), JSON.stringify(payload, null, 2), "utf8");
+    // Все сделки «Планов»: из них при выкладке собираются «Планы» в виде менеджера (на сайт файл не идёт).
+    if (!plansView.error) fs.writeFileSync(path.join(outDir, "plan-deals.json"), JSON.stringify(planDealsForRadar), "utf8");
 
     // 2. Standalone register page
     const regPayload: RegisterPagePayload = {

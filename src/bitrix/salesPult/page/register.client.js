@@ -77,6 +77,8 @@
 
   const T = R.total;
   const PS = R.partner;
+  // Вариант для менеджера: в R только его строки, итоги — его, бонуса РОП и B2B-плана отдела нет.
+  const VIEWER = typeof PAYLOAD !== "undefined" && PAYLOAD && PAYLOAD.viewer ? PAYLOAD.viewer : null;
   const M = Number(R.month.slice(5, 7));
   // Номера блоков идут подряд: блок партнёрских продаж есть не в каждом месяце.
   let blockNo = 0;
@@ -93,7 +95,7 @@
   const over = T.sale - T.plan;
   const top = R.managers[0] ?? { name: "—", sale: 0 };
 
-  let s = `<section class="block reveal" id="r-month">${head(idx(), `${MONTHS[M - 1][0].toUpperCase() + MONTHS[M - 1].slice(1)}: выручка отдела`, `файл «${esc(R.file)}» · суммы без НДС`)}
+  let s = `<section class="block reveal" id="r-month">${head(idx(), `${MONTHS[M - 1][0].toUpperCase() + MONTHS[M - 1].slice(1)}: ${VIEWER ? "ваша выручка" : "выручка отдела"}`, `файл «${esc(R.file)}» · суммы без НДС`)}
     <div class="hero"><div>
       <span class="label">Продано с 1 ${["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"][M - 1]}</span>
       <div class="hero-num"><span class="big">${mln(T.sale).split(",")[0]}</span><span class="of">/ ${mln(T.plan).split(",")[0]}</span></div>
@@ -101,9 +103,11 @@
       <div class="readout">
         <div><span class="label">Вал</span><div class="v">${T.hasVal && T.val !== null ? `${mln(T.val)}<small> млн · ${pct(T.sale ? T.val / T.sale : 0)}</small>` : `<span class="dim">нет в файле</span>`}</div></div>
         <div><span class="label">Бонус МОП</span><div class="v">${mln(T.bonusMop)}<small> млн</small></div></div>
-        <div><span class="label">Бонус РОП</span><div class="v">${nf0.format(Math.round(T.bonusRop / 1000))}<small> тыс</small></div></div>
+        ${VIEWER ? "" : `<div><span class="label">Бонус РОП</span><div class="v">${nf0.format(Math.round(T.bonusRop / 1000))}<small> тыс</small></div></div>`}
       </div>
-      <p class="verdict">${over >= 0 ? `План отдела перевыполнен на <b>${money(over)}</b>.` : `До плана отдела <b>${money(-over)}</b>.`} Больше всех продал ${esc(top.name)}: ${money(top.sale)}. B2B: ${money(T.b2bSale)} из ${money(T.b2bPlan)}.${PS ? ` Партнёрские продажи <b>${money(PS.sale)}</b> в эти суммы не входят, они <a href="#r-partner">отдельным блоком ниже</a>.` : ""}</p>
+      <p class="verdict">${VIEWER
+        ? (over >= 0 ? `Ваш план перевыполнен на <b>${money(over)}</b>.` : `До вашего плана <b>${money(-over)}</b>.`)
+        : `${over >= 0 ? `План отдела перевыполнен на <b>${money(over)}</b>.` : `До плана отдела <b>${money(-over)}</b>.`} Больше всех продал ${esc(top.name)}: ${money(top.sale)}. B2B: ${money(T.b2bSale)} из ${money(T.b2bPlan)}.`}${PS ? ` Партнёрские продажи <b>${money(PS.sale)}</b> в эти суммы не входят, они <a href="#r-partner">отдельным блоком ниже</a>.` : ""}</p>
     </div><div class="chart-wrap" id="regChart"></div></div></section>`;
 
   // Партнёрские продажи: низкий вал, поэтому отдельно от выручки, вала, бонусов и плана отдела
@@ -112,7 +116,9 @@
     <div class="gsum partner-sum">
       <div><span class="label">Выручка</span><div class="v">${mln(PS.sale)}<small> млн · ${plural(PS.contracts, ["договор", "договора", "договоров"])}</small></div></div>
       <div><span class="label">Вал · маржа</span><div class="v">${PS.val !== null ? `${mln(PS.val)}<small> млн · ${pct(PS.margin)}</small>` : `<span class="dim">нет в файле</span>`}</div></div>
-      <div><span class="label">Бонус МОП · РОП</span><div class="v">${nf0.format(Math.round(PS.bonusMop / 1000))}<small> тыс · </small>${nf0.format(Math.round(PS.bonusRop / 1000))}<small> тыс</small></div></div>
+      ${VIEWER
+        ? `<div><span class="label">Бонус МОП</span><div class="v">${nf0.format(Math.round(PS.bonusMop / 1000))}<small> тыс</small></div></div>`
+        : `<div><span class="label">Бонус МОП · РОП</span><div class="v">${nf0.format(Math.round(PS.bonusMop / 1000))}<small> тыс · </small>${nf0.format(Math.round(PS.bonusRop / 1000))}<small> тыс</small></div></div>`}
     </div>
     <div class="all partner rows"><div class="r head"><span class="label">Дата</span><span class="label">Менеджер</span><span class="label">Заказчик</span><span class="label">Товар</span><span class="label">Шт</span><span class="label">Сумма</span><span class="label">Вал</span><span class="label">Маржа</span><span class="label">Канал</span></div>
     ${PS.rows.map((x) => regRow(x, false)).join("")}</div></section>`;

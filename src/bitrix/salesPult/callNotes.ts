@@ -121,6 +121,34 @@ export function buildCallNotesForPeriod(
   return notes.slice(0, 5);
 }
 
+/**
+ * Заметки по звонкам без имён: только темп отдела (и строка про прошлый день до начала работы).
+ * Для вида менеджера: чужие имена и цифры ему не показываются.
+ */
+export function buildDepartmentCallNotes(
+  payload: SalesPultPayload,
+  period: "day" | "week" | "month",
+  paceContext?: PaceContext
+): string[] {
+  const ctx = paceContext || calculatePace(payload.asOfDate, payload.generatedAt, payload.holidays);
+  const sales = payload.groups.find((g) => g.id === "sales");
+  const activeSales = sales ? sales.managers.filter((m) => m.active) : [];
+  const dept = (p: "day" | "week" | "month") => buildDeptPaceNote(
+    activeSales.reduce((sum, m) => sum + m.rollups[p].calls.successful, 0),
+    activeSales.length || 1, p, ctx, payload.targets.daily.calls
+  );
+  const notes: string[] = [];
+  if (period === "day" && ctx.isEarly && activeSales.every((m) => !m.rollups.day.calls.totalAttempts)) {
+    notes.push("Рабочий день ещё не начался, звонков пока нет.");
+    const month = dept("month");
+    if (month) notes.push(`За месяц. ${month}`);
+  } else {
+    const note = dept(period);
+    if (note) notes.push(note);
+  }
+  return notes;
+}
+
 export function buildCallNotes(
   payload: SalesPultPayload,
   period: "day" | "week" | "month",

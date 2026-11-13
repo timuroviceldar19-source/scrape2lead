@@ -42,7 +42,16 @@ export interface PultGroupView {
   managers: PultManagerView[];
 }
 
+/** Кто смотрит вариант пульта; нет — полный пульт. */
+export interface PultViewer {
+  kind: "manager";
+  managerId: string;
+  name: string;
+}
+
 export interface SalesPultPayload {
+  /** Вариант для одного человека: страница закрепляет «Я — …» и прячет недоступные разделы. */
+  viewer?: PultViewer;
   contractSource?: import("./contracts.js").PultContractSource;
   closedMonth?: boolean;
   closedMonths?: Record<string, SalesPultPayload | null>;

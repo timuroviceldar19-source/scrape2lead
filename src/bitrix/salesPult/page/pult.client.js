@@ -3,6 +3,8 @@
 
   let P = PAYLOAD;
   let V = VIEW;
+  // Вариант для одного менеджера: «Я — …» закреплено за ним, «Радара» нет (данные уже урезаны при сборке).
+  const VIEWER = PAYLOAD.viewer && PAYLOAD.viewer.kind === "manager" ? PAYLOAD.viewer : null;
   const currentMonth = PAYLOAD.asOfDate.slice(0, 7);
   let selectedMonth = currentMonth;
 
@@ -367,6 +369,7 @@
   let me = "";
   let showAllTeam = false;
   try { me = localStorage.getItem("pult-me") || ""; } catch (e) {}
+  if (VIEWER) me = VIEWER.managerId;
   function teamPeople() {
     const day = VIEW.periods.day;
     const all = [...day.sales.managers, ...(day.tenders ? day.tenders.managers : [])];
@@ -417,9 +420,9 @@
         ${tp && mine !== "sales" ? groupRow("tenders", tp.name, tp.meta, NA_CELL("Дозвонился") + NA_CELL("КП") + groupCell("Подписали", tp.totals.contracts)) : ""}
         ${tenderRows.map(tenderRow).join("")}
       </div>
-      ${mine ? `<button type="button" class="btn team-all">Показать всю команду (${fmt(people)})</button>` : ""}`;
+      ${mine && !VIEWER ? `<button type="button" class="btn team-all">Показать всю команду (${fmt(people)})</button>` : ""}`;
     wireRows(el);
-    if (mine) {
+    if (mine && !VIEWER) {
       el.querySelector(".team-all").addEventListener("click", () => {
         showAllTeam = true;
         renderSales(period);
@@ -838,6 +841,7 @@
   });
 
   /* ================= tabs ================= */
+  if (VIEWER) document.querySelectorAll('.sections a[data-t="radar"]').forEach((a) => a.remove());
   const tabLinks = [...document.querySelectorAll(".sections a[data-t]")];
   const tabPanes = {
     pult: document.getElementById("tab-pult"),
@@ -848,6 +852,7 @@
     "radar-ip": document.getElementById("tab-radar-ip"),
     "radar-kt": document.getElementById("tab-radar-kt")
   };
+  if (VIEWER) { delete tabPanes["radar-ip"]; delete tabPanes["radar-kt"]; }
   const secInd = document.querySelector(".sections .ind");
   const periodsNav = document.getElementById("periodsNav");
   const marketMonths = document.getElementById("marketMonths");
@@ -1179,11 +1184,12 @@
   measureBars();
 
   const meSelect = document.getElementById("meSelect");
-  const people = teamPeople();
+  const people = VIEWER ? [{ id: VIEWER.managerId, name: VIEWER.name }] : teamPeople();
   if (me && !people.some((p) => p.id === me)) me = "";
   if (me) taskFilter = me;
-  meSelect.innerHTML = `<option value="">вся команда</option>` + people.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  meSelect.innerHTML = (VIEWER ? "" : `<option value="">вся команда</option>`) + people.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
   meSelect.value = me;
+  meSelect.disabled = Boolean(VIEWER);
   meSelect.addEventListener("change", () => {
     me = meSelect.value;
     showAllTeam = false;

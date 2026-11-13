@@ -44,6 +44,21 @@ function workingDaysAfter(date: string, asOfDate: string, holidays: Set<string>)
   return count;
 }
 
+/**
+ * Сотрудник Битрикса для имени из реестра ОП: сначала псевдоним из настроек, затем полное
+ * совпадение имени, затем совпадение только имени, если оно однозначно.
+ */
+export function matchRegisterManager<T extends { name: string }>(
+  name: string, managers: readonly T[], aliases: Record<string, string> = {}
+): T | undefined {
+  const normalize = (value: string) => value.trim().toLocaleLowerCase("ru");
+  const full = normalize(aliases[name] ?? name);
+  const exact = managers.find(m => normalize(m.name) === full);
+  if (exact) return exact;
+  const first = managers.filter(m => normalize(m.name).split(/\s+/)[0] === full);
+  return first.length === 1 ? first[0] : undefined;
+}
+
 /** Только нужные пульту данные: без себестоимости, маржи и премий реестра. */
 export function attachRegisterContracts(
   payload: SalesPultPayload, register: RegisterView, deals: Map<string, DealInfo>,
@@ -66,15 +81,7 @@ export function attachRegisterContracts(
   };
   payload.contractSource = source;
 
-  const normalize = (name: string) => name.trim().toLocaleLowerCase("ru");
-  const findManager = (name: string) => {
-    const full = normalize(aliases[name] ?? name);
-    const exact = managers.find(m => normalize(m.name) === full);
-    if (exact) return exact;
-    const first = managers.filter(m => normalize(m.name).split(/\s+/)[0] === full);
-    // Совпадение только имени допустимо, если оно однозначно в настройках.
-    return first.length === 1 ? first[0] : undefined;
-  };
+  const findManager = (name: string) => matchRegisterManager(name, managers, aliases);
   const setManagers = (items: ManagerTotal[]) => {
     source.byManager = items.map(m => {
       const manager = findManager(m.name);

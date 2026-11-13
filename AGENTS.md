@@ -80,9 +80,12 @@ npm run cloudflare:check  # wrangler deploy --dry-run
 - Без секрета проверка выключена: все, кого пускает Access, видят полный пульт (вариант `all`), как раньше.
 - С секретом: почты нет в списке — «Нет доступа» с кнопкой выхода; варианта роли нет в выкладке — «ещё не готов»
   (полный пульт вместо него не отдаётся); страницы нет в варианте (у `tv` нет «Выручки») — «эта страница вам недоступна».
-- Варианты собираются в шаге выкладки `sales-pult.yml`; сейчас только `all`. Ответы с `cache-control: private, no-store`.
-- Проверить локально: `PULT_ROLES= npx tsx scripts/pult-gate-config.mts exports/pult-gate/config.json`, разложить страницы
-  в `exports/sales-pult-deploy/_r/all/`, затем `npx wrangler pages dev exports/sales-pult-deploy --port 8788`.
+- Варианты раскладывает `scripts/pult-variants.mts` в шаге выкладки: `all` и `m<ID>` для каждого `manager:<ID>`.
+  Вид менеджера (`src/bitrix/salesPult/variants/manager.ts`) режет данные при сборке: свои строки, итоги отдела как в полном
+  пульте, «Планы» из его сделок (`exports/sales-pult/plan-deals.json`), без «Радара», «Выручка» из его строк реестра без
+  бонуса РОП и сверки с порталом. Вида `tv` пока нет. Ответы с `cache-control: private, no-store`.
+- Проверить локально: `PULT_ROLES= npx tsx scripts/pult-gate-config.mts exports/pult-gate/config.json`,
+  `npx tsx scripts/pult-variants.mts`, затем `npx wrangler pages dev exports/sales-pult-deploy --port 8788`.
 
 ## Подводные камни (выяснено на практике)
 

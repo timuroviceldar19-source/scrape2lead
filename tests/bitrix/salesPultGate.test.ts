@@ -299,11 +299,12 @@ describe("роли пульта: выкладка", () => {
   const workflow = fs.readFileSync(path.resolve(".github/workflows/sales-pult.yml"), "utf8");
   const deploy = workflow.slice(workflow.indexOf("- name: Deploy to Cloudflare Pages"));
 
-  it("собирает конфиг ролей из секрета и кладёт полный пульт в вариант all", () => {
+  it("собирает конфиг ролей из секрета и раскладывает варианты страниц", () => {
     expect(deploy).toContain("PULT_ROLES: ${{ secrets.PULT_ROLES }}");
     expect(deploy).toContain("npx tsx scripts/pult-gate-config.mts exports/pult-gate/config.json");
-    expect(deploy).toContain("exports/sales-pult-deploy/_r/all/index.html");
-    expect(deploy).toContain("exports/sales-pult-deploy/_r/all/reg.html");
+    expect(deploy).toContain("npx tsx scripts/pult-variants.mts exports/sales-pult exports/sales-pult-deploy exports/pult-gate/config.json");
+    expect(deploy.indexOf("pult-gate-config")).toBeLessThan(deploy.indexOf("pult-variants"));
+    expect(deploy.indexOf("pult-variants")).toBeLessThan(deploy.indexOf("wrangler pages deploy"));
     // Корневых index.html и reg.html больше нет: всё отдаёт проверка входа.
     expect(deploy).not.toMatch(/cp [^\n]*exports\/sales-pult-deploy\/index\.html/);
     // Выкладка идёт из корня репозитория, иначе wrangler не найдёт папку functions.
