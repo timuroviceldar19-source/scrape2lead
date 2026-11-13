@@ -63,8 +63,9 @@ describe("Radar data parsing", () => {
     expect(card?.qty).toBe(10);
     expect(card?.startAt).toBe("2026-11-09 10:00");
     expect(card?.endAt).toBe("2026-11-11 18:00");
-    expect(card?.lotUrl).toBe("https://goszakup.gov.kz/ru/registry/lots/83132229");
-    expect(card?.announceUrl).toBe("https://goszakup.gov.kz/ru/announce/index/12345678");
+    // Портал переехал: ссылки из старых комментариев ведут на новый домен.
+    expect(card?.lotUrl).toBe("https://procurement.gov.kz/ru/registry/lots/83132229");
+    expect(card?.announceUrl).toBe("https://procurement.gov.kz/ru/announce/index/12345678");
     expect(card?.managerName).toBe("Алия Менеджер");
     expect(card?.column).toBe("submitToday");
   });

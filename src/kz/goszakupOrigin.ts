@@ -45,6 +45,26 @@ export function isGzPortalRootHost(hostname: string | null | undefined): boolean
     || host === `www.${LEGACY_HOST}`;
 }
 
+/**
+ * Ссылка для показа людям: старый домен портала (и `www.`) → тот же путь на текущем. Старый
+ * домен больше не открывается. Поддомены (`ows.`, `v3bl.`) и чужие хосты не трогаются. Хранимые
+ * ссылки (SQLite, поля сделок) так не правим: по ним идёт дедупликация.
+ */
+export function toCurrentPortalUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  const host = parsed.hostname.toLocaleLowerCase("en");
+  if (host !== LEGACY_HOST && host !== `www.${LEGACY_HOST}`) return url;
+  const current = new URL(GZ_PORTAL_ORIGIN);
+  parsed.protocol = current.protocol;
+  parsed.host = current.host;
+  return parsed.href;
+}
+
 function normalizeOrigin(value: string | undefined): string | null {
   const raw = value?.trim();
   if (!raw) return null;
