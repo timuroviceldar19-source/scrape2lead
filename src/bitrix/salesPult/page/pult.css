@@ -496,6 +496,12 @@ a.r:focus-visible, .cust-d > summary:focus-visible { outline: 2px solid var(--in
   .share .r .rk, .chev { display: none; }
   .gsum.partner-sum { grid-template-columns: 1fr; }
   .gsum.partner-sum > div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--rule); }
+  /* История по месяцам и дисциплина реестра: колонки строк заданы в разметке, на телефоне — две колонки */
+  #r-history .deals .r, #r-discipline .rows .r { grid-template-columns: 1fr auto !important; gap: 4px 12px; }
+  #r-history .deals .r > :first-child, #r-discipline .rows .r > :nth-child(3) { grid-column: 1 / -1; }
+  #r-history .deals .r > :nth-child(2) { grid-column: auto; order: 0; }
+  #r-history .deals .r.head, #r-discipline .rows .r.head { display: none; }
+  #r-history .deals { padding: 8px 0 14px !important; }
 }
 @media (max-width: 480px) {
   .sections { gap: 2px; }
