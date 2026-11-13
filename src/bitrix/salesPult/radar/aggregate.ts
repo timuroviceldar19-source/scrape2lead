@@ -8,6 +8,7 @@ import type {
 export type { RadarCard, RadarColumnKey, RadarGroupView, RadarKpis, RadarView };
 import type { NormalizedPlanDeal } from "../plans/types.js";
 import { loadMarketConfig } from "../../../kz/market/config.js";
+import { toCurrentPortalUrl } from "../../../kz/goszakupOrigin.js";
 
 export interface RadarRawDeal {
   ID: string | number;
@@ -87,7 +88,8 @@ function parseNumber(value: unknown): number {
 function httpsUrl(url: string | null | undefined): string {
   if (!url) return "";
   try {
-    const u = new URL(url);
+    // Старые комментарии ссылаются на goszakup.gov.kz: домен не открывается, показываем новый.
+    const u = new URL(toCurrentPortalUrl(url));
     return u.protocol === "https:" || u.protocol === "http:" ? u.href : "";
   } catch {
     return "";
@@ -236,7 +238,7 @@ export function parseRadarPlanDeal(plan: NormalizedPlanDeal, options: ParseRadar
     sourceType: "plan",
     planNumber: plan.planNumber,
     lotUrl: "",
-    announceUrl: plan.planUrl,
+    announceUrl: httpsUrl(plan.planUrl),
     title: plan.itemName,
     itemName: plan.itemName,
     qty: plan.qty,

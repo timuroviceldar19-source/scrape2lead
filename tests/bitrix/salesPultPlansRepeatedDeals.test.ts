@@ -109,3 +109,10 @@ it("все срезы и openPlans используют один список п
     expect(log.mock.calls.every(args => args.length === 1 && !/сумм|₸/.test(String(args[0])))).toBe(true);
   } finally { log.mockRestore(); }
 });
+
+it("ссылка на план со старого домена портала ведёт на procurement.gov.kz", () => {
+  const old = normalizePlanDeal(raw(1, { UF_CRM_PLAN_LINK: "https://goszakup.gov.kz/ru/registry/show_plan/84671831/4573761" }), options)!;
+  expect(old.planUrl).toBe("https://procurement.gov.kz/ru/registry/show_plan/84671831/4573761");
+  const fresh = normalizePlanDeal(raw(2, { UF_CRM_PLAN_LINK: "https://procurement.gov.kz/ru/registry/show_plan/1/2" }), options)!;
+  expect(fresh.planUrl).toBe("https://procurement.gov.kz/ru/registry/show_plan/1/2");
+});

@@ -1,4 +1,5 @@
 import { enrichManagerNames } from "../managerNames.js";
+import { toCurrentPortalUrl } from "../../../kz/goszakupOrigin.js";
 import { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import { loadMarketConfig } from "../../../kz/market/config.js";
 import { buildPlansMonitorView } from "./aggregate.js";
@@ -125,7 +126,8 @@ export function normalizePlanDeal(d: Record<string, unknown>, options: Normalize
   return {
     id, group, managerId, managerName: options.managerNames?.get(managerId) || `ID ${managerId || "—"}`,
     dealUrl: https(`${(options.portal || "").replace(/\/+$/, "")}/crm/deal/details/${encodeURIComponent(id)}/`),
-    planNumber, planUrl: https(field(d, "UF_CRM_PLAN_LINK", "UF_CRM_1782386571874_IU_XLS")),
+    // В старых сделках ссылка на goszakup.gov.kz: домен не открывается, показываем новый.
+    planNumber, planUrl: https(toCurrentPortalUrl(field(d, "UF_CRM_PLAN_LINK", "UF_CRM_1782386571874_IU_XLS"))),
     dateCreate: text(d.DATE_CREATE), month: parsePlanMonth(field(d, "UF_CRM_1715597726664", "UF_CRM_MONTH", "UF_CRM_1782386433277_IU_XLS", "UF_CRM_S2L_GZ_MONTH"), text(d.DATE_CREATE), options.asOfDate),
     customerBin, customerName: field(d, "UF_CRM_6627AEBD72587", "UF_CRM_1713874888434") || title.split("—").slice(1).join("—").trim() || customerBin || "Не указан",
     itemName, truCode, kind: kind(group, truCode, itemName),
