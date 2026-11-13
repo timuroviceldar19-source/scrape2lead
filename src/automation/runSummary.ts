@@ -72,7 +72,8 @@ function dealsLine(manifest: AutomationManifest): string {
     `обновлено ${total("update")}`,
     `пересмотрено ${total("revise")}`,
     `уже были ${total("existing")}`,
-    `дубликаты ${total("duplicate")}`
+    `дубликаты ${total("duplicate")}`,
+    `не заведено по количеству ${total("filtered")}`
   ];
   return `**Сделки:** ${parts.join(", ")}`;
 }
