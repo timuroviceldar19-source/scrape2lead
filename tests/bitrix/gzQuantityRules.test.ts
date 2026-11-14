@@ -7,11 +7,14 @@ import {
   classifyGzItem,
   gzQuantityRulesSchema,
   loadGzQuantityRules,
+  parseGzAmount,
   parseGzQuantity
 } from "../../src/bitrix/gzQuantityRules.js";
 
 const rules = loadGzQuantityRules("config/gz-quantity-rules.json");
-const check = (name: string, quantity: string, truCode = "") => checkGzQuantityRules({ name, quantity, truCode }, rules);
+// Сумма по умолчанию ниже порога keepFromAmount (2 млн ₸), чтобы проверять именно количество.
+const check = (name: string, quantity: string, truCode = "", amount: string | number = "900 000") =>
+  checkGzQuantityRules({ name, quantity, truCode, amount }, rules);
 const ruleOf = (name: string, truCode = "") => classifyGzItem({ name, truCode }, rules)?.name ?? null;
 
 describe("parseGzQuantity", () => {
@@ -30,6 +33,21 @@ describe("parseGzQuantity", () => {
     expect(parseGzQuantity(null)).toBeNull();
     expect(parseGzQuantity(undefined)).toBeNull();
     expect(parseGzQuantity("не указано")).toBeNull();
+  });
+});
+
+describe("parseGzAmount", () => {
+  it("reads plan and lot sums", () => {
+    expect(parseGzAmount("4 482 758.60")).toBe(4482758.6);
+    expect(parseGzAmount("4\u00a0482\u00a0758,60")).toBe(4482758.6);
+    expect(parseGzAmount("2000000")).toBe(2000000);
+    expect(parseGzAmount(1500000)).toBe(1500000);
+  });
+
+  it("returns null for an empty or broken sum", () => {
+    expect(parseGzAmount("")).toBeNull();
+    expect(parseGzAmount(null)).toBeNull();
+    expect(parseGzAmount("около миллиона")).toBeNull();
   });
 });
 
@@ -78,7 +96,7 @@ describe("shipped GZ quantity rules: classification", () => {
 describe("shipped GZ quantity rules: decisions", () => {
   it("creates PC deals only from 3 pcs", () => {
     expect(check("Компьютер", "2", "262013.000.000011")).toMatchObject({
-      allowed: false, ruleName: "pc", quantity: 2, reason: "pc: количество 2, нужно не меньше 3"
+      allowed: false, ruleName: "pc", quantity: 2, reason: "pc: количество 2, нужно не меньше 3 или сумма от 2 000 000 ₸"
     });
     expect(check("Ноутбук", "1").allowed).toBe(false);
     expect(check("Моноблок", "3").allowed).toBe(true);
@@ -93,9 +111,26 @@ describe("shipped GZ quantity rules: decisions", () => {
 
   it("creates MFU and printer deals only above 10 pcs", () => {
     expect(check("Устройство многофункциональное", "10", "262018.900.000001")).toMatchObject({
-      allowed: false, ruleName: "mfu-printers", reason: "mfu-printers: количество 10, нужно не меньше 11"
+      allowed: false, ruleName: "mfu-printers", reason: "mfu-printers: количество 10, нужно не меньше 11 или сумма от 2 000 000 ₸"
     });
     expect(check("Принтер", "11").allowed).toBe(true);
+  });
+
+  it("creates small but expensive PC and MFU deals from 2 mln tenge", () => {
+    // Сделка 48719: «Станция рабочая», 2 шт на 14,1 млн.
+    expect(check("Станция рабочая", "2", "", "14 100 000")).toMatchObject({ allowed: true, ruleName: "pc", keptByAmount: true, reason: null });
+    expect(check("Ноутбук", "1", "", "2 000 000").allowed).toBe(true);
+    expect(check("Ноутбук", "1", "", "1 999 999.99").allowed).toBe(false);
+    expect(check("Устройство многофункциональное", "8", "", 2_400_000)).toMatchObject({ allowed: true, keptByAmount: true });
+  });
+
+  it("does not let monitors in even when the sum is large", () => {
+    // Сделка 48955: «Монитор», 60 шт на 5,1 млн.
+    expect(check("Монитор", "60", "262017.100.000000", "5 100 000")).toMatchObject({ allowed: false, keptByAmount: false });
+  });
+
+  it("falls back to the quantity rule when the sum cannot be read", () => {
+    expect(check("Компьютер", "2", "", "")).toMatchObject({ allowed: false, keptByAmount: false });
   });
 
   it("leaves panels and unclassified items without a quantity limit", () => {
@@ -109,12 +144,24 @@ describe("shipped GZ quantity rules: decisions", () => {
       warning: "pc: количество не прочитано (пусто), сделка заводится"
     });
   });
+
+  it("treats a zero quantity as unknown, not as zero pieces", () => {
+    // Сделка 41533: «Компьютер», 0 шт на 500 млн.
+    expect(check("Компьютер", "0")).toMatchObject({
+      allowed: true, ruleName: "pc", warning: "pc: количество не прочитано (0), сделка заводится"
+    });
+  });
 });
 
 describe("gzQuantityRulesSchema", () => {
   it("rejects a rule without a matcher", () => {
     expect(() => gzQuantityRulesSchema.parse({ rules: [{ name: "bad", minQuantity: 3 }] }))
       .toThrow(/truCodePrefixes and\/or namePatterns/);
+  });
+
+  it("rejects keepFromAmount without minQuantity", () => {
+    expect(() => gzQuantityRulesSchema.parse({ rules: [{ name: "bad", namePatterns: ["x"], exclude: true, keepFromAmount: 1 }] }))
+      .toThrow(/keepFromAmount works only together with minQuantity/);
   });
 
   it("rejects a broken regular expression", () => {
@@ -154,6 +201,7 @@ describe("push scripts apply the quantity rules only to new deals", () => {
     const source = fs.readFileSync("scripts/bitrix-push-gz-deals.mts", "utf8");
     expect(source).toContain("loadGzQuantityRules(args.quantityRulesPath)");
     expect(source).toMatch(/baseAction === "create"\s*\?\s*checkGzQuantityRules/);
+    expect(source).toContain("quantity: row.quantity, amount: row.amount }");
     expect(source).toContain("filtered=${count(\"filtered\")}");
   });
 
@@ -161,6 +209,7 @@ describe("push scripts apply the quantity rules only to new deals", () => {
     const source = fs.readFileSync("scripts/bitrix-push-gz-lots.mts", "utf8");
     expect(source).toContain("loadGzQuantityRules(args.quantityRulesPath)");
     expect(source).toMatch(/if \(!existingDeals\[rowIndex\]\) \{\s*const quantity = checkGzQuantityRules/);
+    expect(source).toContain("quantity: row.quantity, amount: row.amount }");
     expect(source).toContain("filtered=${stats.filtered}");
   });
 });

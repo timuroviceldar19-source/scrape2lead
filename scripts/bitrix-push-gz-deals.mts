@@ -231,7 +231,7 @@ async function main(): Promise<void> {
     const revision = knownDeal ? detectGzPlanRevision(toRevisionRow(row), knownDeal, ORIGINATOR_ID) : null;
     // Правила количества касаются только новых сделок: заведённые карточки обновляются как раньше.
     const quantity = baseAction === "create"
-      ? checkGzQuantityRules({ truCode: row.truCode, name: row.itemName || row.keyword, quantity: row.quantity }, quantityRules)
+      ? checkGzQuantityRules({ truCode: row.truCode, name: row.itemName || row.keyword, quantity: row.quantity, amount: row.amount }, quantityRules)
       : null;
     if (quantity?.warning) warnings.push(quantity.warning);
     const filterReason = quantity && !quantity.allowed ? quantity.reason : null;

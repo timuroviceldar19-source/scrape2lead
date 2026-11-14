@@ -14,7 +14,8 @@
       "name": "mfu-printers",
       "truCodePrefixes": ["262018.900.", "262016.300."],
       "namePatterns": ["мфу", "многофункциональн", "принтер"],
-      "minQuantity": 11
+      "minQuantity": 11,
+      "keepFromAmount": 2000000
     },
     {
       "name": "pc",
@@ -28,7 +29,8 @@
         "рабоч[а-я]* станц",
         "станци[а-я]* рабоч"
       ],
-      "minQuantity": 3
+      "minQuantity": 3,
+      "keepFromAmount": 2000000
     }
   ]
 }

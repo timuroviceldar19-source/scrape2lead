@@ -135,7 +135,7 @@ async function main(): Promise<void> {
 
       // Правила количества касаются только новых сделок: заведённые карточки обновляются как раньше.
       if (!existingDeals[rowIndex]) {
-        const quantity = checkGzQuantityRules({ truCode: lotTruCode(row), name: row.lotName, quantity: row.quantity }, quantityRules);
+        const quantity = checkGzQuantityRules({ truCode: lotTruCode(row), name: row.lotName, quantity: row.quantity, amount: row.amount }, quantityRules);
         if (quantity.warning) console.warn(`[quantity-warning] ${originId(row)}: ${quantity.warning}`);
         if (!quantity.allowed) {
           stats.filtered += 1;
