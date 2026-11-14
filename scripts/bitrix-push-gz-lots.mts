@@ -12,6 +12,11 @@ import {
   type ExistingLotDeal
 } from "../src/bitrix/gzLotSync.js";
 import {
+  checkGzQuantityRules,
+  DEFAULT_GZ_QUANTITY_RULES_PATH,
+  loadGzQuantityRules
+} from "../src/bitrix/gzQuantityRules.js";
+import {
   callBitrixBatch,
   chunkBatchCommands,
   type BitrixBatchCommand
@@ -40,6 +45,7 @@ interface CliArgs {
   enrichCompany: boolean;
   delayMs: number;
   syncOpen: boolean;
+  quantityRulesPath: string;
 }
 
 interface GzLotRow {
@@ -73,7 +79,8 @@ function parseArgs(argv: string[]): CliArgs {
     webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null,
     enrichCompany: true,
     delayMs: DEFAULT_DELAY_MS,
-    syncOpen: false
+    syncOpen: false,
+    quantityRulesPath: DEFAULT_GZ_QUANTITY_RULES_PATH
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -88,6 +95,7 @@ function parseArgs(argv: string[]): CliArgs {
     else if (arg === "--no-company") args.enrichCompany = false;
     else if (arg === "--delay-ms") args.delayMs = Number(argv[++i]);
     else if (arg === "--sync-open") args.syncOpen = true;
+    else if (arg === "--quantity-rules") args.quantityRulesPath = argv[++i] ?? DEFAULT_GZ_QUANTITY_RULES_PATH;
   }
 
   return args;
@@ -100,6 +108,7 @@ async function main(): Promise<void> {
   const client = new BitrixClient(args.webhookUrl);
   const goszakupToken = process.env.GOSZAKUP_TOKEN?.trim() || null;
   if (!goszakupToken) console.warn("GOSZAKUP_TOKEN не задан: сроки приёма заявок в новые сделки не попадут");
+  const quantityRules = loadGzQuantityRules(args.quantityRulesPath);
   const allRows = await readGzLotRows(args.inputPath);
   const rows = args.limit ? allRows.slice(0, args.limit) : allRows;
 
@@ -107,7 +116,7 @@ async function main(): Promise<void> {
   console.log(`input=${args.inputPath} rows_total=${allRows.length} rows_checked=${rows.length}`);
 
   const resolver = args.enrichCompany ? new CustomerResolver(args.delayMs) : null;
-  const stats = { created: 0, updated: 0, companyLinked: 0, existing: 0, skipped: 0, failed: 0, binMissing: 0 };
+  const stats = { created: 0, updated: 0, companyLinked: 0, existing: 0, skipped: 0, filtered: 0, failed: 0, binMissing: 0 };
 
   // Batch the existing-deal lookups (1 crm.deal.list per row → 50 per request)
   // before the sequential enrichment loop. Company/browser enrichment and the
@@ -122,6 +131,17 @@ async function main(): Promise<void> {
         stats.skipped += 1;
         console.warn(`[skipped] row ${row.rowNumber} ${row.lotNumber || "?"}: ${issues.join("; ")}`);
         continue;
+      }
+
+      // Правила количества касаются только новых сделок: заведённые карточки обновляются как раньше.
+      if (!existingDeals[rowIndex]) {
+        const quantity = checkGzQuantityRules({ truCode: lotTruCode(row), name: row.lotName, quantity: row.quantity, amount: row.amount }, quantityRules);
+        if (quantity.warning) console.warn(`[quantity-warning] ${originId(row)}: ${quantity.warning}`);
+        if (!quantity.allowed) {
+          stats.filtered += 1;
+          console.log(`[filtered] ${originId(row)}: ${quantity.reason} | ${buildTitle(row)}`);
+          continue;
+        }
       }
 
       const dealOriginId = originId(row);
@@ -206,7 +226,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `done: created=${stats.created} updated=${stats.updated} company_linked=${stats.companyLinked} existing=${stats.existing} skipped=${stats.skipped} bin_missing=${stats.binMissing} failed=${stats.failed}`
+    `done: created=${stats.created} updated=${stats.updated} company_linked=${stats.companyLinked} existing=${stats.existing} filtered=${stats.filtered} skipped=${stats.skipped} bin_missing=${stats.binMissing} failed=${stats.failed}`
   );
 }
 
@@ -531,6 +551,11 @@ function buildComments(row: GzLotRow, bidWindow: LotBidWindow | null): string {
 
 function buildTitle(row: GzLotRow): string {
   return `[GZ лот ${row.lotNumber}] ${row.customer} — ${row.lotName}`.slice(0, 250);
+}
+
+/** Код ЕНС ТРУ, если лот нашёлся по коду; для поиска по слову в колонке запроса стоит само слово. */
+function lotTruCode(row: GzLotRow): string {
+  return /^\d{6}\.\d{3}\.\d{6}$/.test(row.query.trim()) ? row.query.trim() : "";
 }
 
 function originId(row: GzLotRow): string {

@@ -9,6 +9,11 @@ import {
   type GzRoutingConfig
 } from "../src/bitrix/gzDealRouting.js";
 import {
+  checkGzQuantityRules,
+  DEFAULT_GZ_QUANTITY_RULES_PATH,
+  loadGzQuantityRules
+} from "../src/bitrix/gzQuantityRules.js";
+import {
   getGzPlanDealIdentity,
   legacyDealMatchesRow
 } from "../src/bitrix/gzPlanDealIdentity.js";
@@ -43,6 +48,7 @@ interface CliArgs {
   stageId: string;
   webhookUrl: string | null;
   routingPath: string;
+  quantityRulesPath: string;
   minAmount: number;
 }
 
@@ -106,8 +112,10 @@ interface PreflightItem {
   duplicateDealId: string | null;
   duplicateReason: string | null;
   route: GzRoute;
-  action: "create" | "update" | "revise" | "existing" | "duplicate" | "skip";
+  action: "create" | "update" | "revise" | "existing" | "duplicate" | "skip" | "filtered";
   revision: GzPlanRevision | null;
+  /** Почему новая сделка не заводится по правилам количества (config/gz-quantity-rules.json). */
+  filterReason: string | null;
   issues: string[];
   warnings: string[];
 }
@@ -137,6 +145,7 @@ function parseArgs(argv: string[]): CliArgs {
     stageId: "NEW",
     webhookUrl: process.env.BITRIX24_WEBHOOK_URL?.trim() || null,
     routingPath: DEFAULT_ROUTING_CONFIG,
+    quantityRulesPath: DEFAULT_GZ_QUANTITY_RULES_PATH,
     minAmount: DEFAULT_MIN_AMOUNT
   };
 
@@ -152,6 +161,7 @@ function parseArgs(argv: string[]): CliArgs {
     else if (arg === "--webhook-url") args.webhookUrl = argv[++i]?.trim() || null;
     else if (arg === "--routing") args.routingPath = argv[++i] ?? DEFAULT_ROUTING_CONFIG;
     else if (arg === "--min-amount") args.minAmount = Number(argv[++i]);
+    else if (arg === "--quantity-rules") args.quantityRulesPath = argv[++i] ?? DEFAULT_GZ_QUANTITY_RULES_PATH;
   }
 
   return args;
@@ -192,6 +202,7 @@ async function main(): Promise<void> {
   }
 
   const routing = loadRoutingOrFallback(args);
+  const quantityRules = loadGzQuantityRules(args.quantityRulesPath);
   const allRows = await readGzPlanRows(args.inputPath);
   const rows = args.limit ? allRows.slice(0, args.limit) : allRows;
   const preflight: PreflightItem[] = [];
@@ -218,6 +229,12 @@ async function main(): Promise<void> {
         : "create";
     const knownDeal = baseAction === "existing" ? existingDeal : baseAction === "duplicate" ? duplicateDeal?.deal : null;
     const revision = knownDeal ? detectGzPlanRevision(toRevisionRow(row), knownDeal, ORIGINATOR_ID) : null;
+    // Правила количества касаются только новых сделок: заведённые карточки обновляются как раньше.
+    const quantity = baseAction === "create"
+      ? checkGzQuantityRules({ truCode: row.truCode, name: row.itemName || row.keyword, quantity: row.quantity, amount: row.amount }, quantityRules)
+      : null;
+    if (quantity?.warning) warnings.push(quantity.warning);
+    const filterReason = quantity && !quantity.allowed ? quantity.reason : null;
     preflight.push({
       row,
       originId: identity.originId,
@@ -225,8 +242,9 @@ async function main(): Promise<void> {
       duplicateDealId: duplicateDeal ? String(duplicateDeal.deal.ID ?? "") : null,
       duplicateReason: duplicateDeal?.reason ?? null,
       route: resolveGzRoute(row, routing),
-      action: revision ? "revise" : baseAction,
+      action: revision ? "revise" : filterReason ? "filtered" : baseAction,
       revision,
+      filterReason,
       issues,
       warnings
     });
@@ -238,6 +256,10 @@ async function main(): Promise<void> {
   for (const item of preflight) {
     if (item.action === "skip") {
       console.warn(`[skipped] ${item.originId}: ${item.issues.join("; ")}`);
+      continue;
+    }
+    if (item.action === "filtered") {
+      console.log(`[filtered] ${item.originId}: ${item.filterReason} | ${buildTitle(item.row)}`);
       continue;
     }
     if (item.action === "existing") {
@@ -849,7 +871,7 @@ function printPreflight(args: CliArgs, totalRows: number, items: PreflightItem[]
   const issueCount = items.reduce((sum, item) => sum + item.issues.length, 0);
   console.log(`bitrix gz deals: mode=${args.execute ? "execute" : "dry-run"} update_existing=${args.updateExisting}`);
   console.log(`input=${path.normalize(args.inputPath)} rows_total=${totalRows} rows_checked=${items.length}`);
-  console.log(`preflight: create=${count("create")} update=${count("update")} revise=${count("revise")} existing=${count("existing")} duplicate=${count("duplicate")} skipped=${count("skip")} issues=${issueCount} warnings=${warningCount}`);
+  console.log(`preflight: create=${count("create")} update=${count("update")} revise=${count("revise")} existing=${count("existing")} duplicate=${count("duplicate")} filtered=${count("filtered")} skipped=${count("skip")} issues=${issueCount} warnings=${warningCount}`);
   const routeCounts = new Map<string, number>();
   for (const item of items) {
     const key = `cat ${item.route.categoryId} (${item.route.ruleName})`;
