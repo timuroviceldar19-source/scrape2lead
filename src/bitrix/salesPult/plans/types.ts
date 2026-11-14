@@ -63,9 +63,13 @@ export interface PlanTotals {
   publishedSum: number; publishedCount: number; createdLast7dCount: number; createdLast7dSum: number;
   wonSum: number; wonCount: number; lostSum: number; lostCount: number; cancelledSum: number; cancelledCount: number;
 }
+/** Закупки ушедших сотрудников: в таблице менеджеров их строк нет, в итогах страницы они есть. */
+export interface PlanFormerManagersItem { people: number; count: number; sum: number; openCount: number; openSum: number }
 export interface PlansGroupSliceView {
   total: PlanTotals;
   managers: PlanManagerItem[];
+  /** Есть, только если в срезе есть закупки ушедших сотрудников. */
+  formerManagers?: PlanFormerManagersItem;
   methods: PlanMethodItem[];
   kinds: PlanKindItem[];
   statuses: PlanStatusItem[];

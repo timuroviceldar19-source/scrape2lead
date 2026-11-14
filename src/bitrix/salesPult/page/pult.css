@@ -468,6 +468,7 @@ a.r:focus-visible, .cust-d > summary:focus-visible { outline: 2px solid var(--in
 .share .cust-list .sub { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 11px; margin-top: 2px; }
 .share .cust-list .more { padding: 9px 0; font: 400 12px var(--mono); color: var(--ink-3); }
 .note-src { margin-top: 18px; font: 400 12px/1.6 var(--mono); color: var(--ink-3); max-width: 110ch; }
+.plan-former + .note-src { margin-top: 6px; }
 .note-warn { margin: 12px 0 18px; padding: 8px 12px; background: var(--warn-t); border-left: 3px solid var(--warn); font: 500 13px var(--mono); color: var(--ink); }
 
 /* responsive extensions */

@@ -4,6 +4,10 @@
   const fmt = n => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(n || 0);
   const mln = n => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format((n || 0) / 1e6);
   const money = n => `${mln(n)} млн ₸`;
+  const plural = (n, f) => {
+    const a = Math.abs(n) % 100, b = a % 10;
+    return `${fmt(n)} ${a > 10 && a < 20 ? f[2] : b === 1 ? f[0] : b > 1 && b < 5 ? f[1] : f[2]}`;
+  };
   const WIN_SHARE_MIN_DECIDED = 10;
   const winShare = (won, lost) => won + lost > 0 ? Math.round(won / (won + lost) * 100) : 0;
   const validMonth = m => typeof m === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(m);
@@ -268,6 +272,9 @@
       const share = winShare(m.wonCount, m.lostCount);
       return `<span class="rk">${fmt(i + 1)}</span><span class="nm"><span>${esc(m.name)}</span></span><span class="plan-win-share" data-l="доля побед">${m.wonCount + m.lostCount < WIN_SHARE_MIN_DECIDED ? "мало итогов" : `<span class="hbar"><span style="width:${esc(share)}%"></span></span><span>${fmt(share)}%</span>`}</span><span class="plan-win-counts"><span class="plan-win-desktop">${fmt(m.wonCount)} / ${fmt(m.lostCount)}</span><span class="plan-win-mobile">выиграл ${fmt(m.wonCount)} · проиграл ${fmt(m.lostCount)}</span></span><span class="num">${money(m.sum)}</span><span class="num">${fmt(m.count)} / ${fmt(m.openCount)} / <b class="${m.newCount ? "bad" : ""}">${fmt(m.newCount)}</b></span>`;
     };
+    // Закупки ушедших сотрудников остаются в итогах, но своей строки в таблице не получают.
+    const F = V.formerManagers;
+    const formerNote = F ? `<p class="note-src plan-former">Ушедшие сотрудники в таблице не показаны (${fmt(F.people)} чел.): ${plural(F.count, ["закупка", "закупки", "закупок"])} на ${money(F.sum)}, из них ${F.openCount ? `<b class="bad">в работе ${fmt(F.openCount)}</b> на ${money(F.openSum)}` : "в работе нет"}. В итогах страницы они учтены.</p>` : "";
     const maxMonth = Math.max(1, ...base.months.map(m => m.sum));
     const monthAttrs = m => `data-m="${esc(m.m)}" role="button" tabindex="0" aria-label="${esc(monthName(m.m))}" aria-current="${m.m === active}"`;
     el.innerHTML = `
@@ -282,7 +289,7 @@
         </div><div class="share rows"><h3>По менеджерам</h3>
           <div class="r head"><span>Место</span><span>Менеджер</span><span>Доля побед</span><span>Выиграл / Проиграл</span><span>Сумма</span><span>Шт. / В работе / Новых</span></div>
           ${V.managers.map((m, i) => m.planList.length ? `<details class="cust-d"><summary class="r">${managerCells(m, i)}</summary>${list(m.planList)}</details>` : `<div class="r">${managerCells(m, i)}</div>`).join("") || '<p class="muted">Планов нет</p>'}
-          <p class="note-src">Доля побед — выигранные (F3 и партнёр) из закупок с известным итогом; показывается от 10 итогов</p>
+          ${formerNote}<p class="note-src">Доля побед — выигранные (F3 и партнёр) из закупок с известным итогом; показывается от 10 итогов</p>
         </div></div>
       </section>
       <section class="block plans-months">${head("02", "По планируемым месяцам", "Тёмная часть: в работе + выигранные нами")}
