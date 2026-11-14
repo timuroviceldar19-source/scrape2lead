@@ -159,8 +159,10 @@ export function dedupePlanDeals(deals: readonly NormalizedPlanDeal[]): Normalize
 
 export interface CollectPlansOptions extends NormalizePlanOptions {
   reader: ReadOnlyBitrixClient;
-  userProfiles?: ReadonlyMap<string, { name: string }>;
+  userProfiles?: ReadonlyMap<string, { name: string; active?: boolean }>;
   groups?: Array<{ managers: Array<{ id: string; name: string }> }>;
+  /** `formerManagers` из config/sales-pult.json: ушедшие, которые в Битриксе ещё активны. */
+  formerManagerIds?: Iterable<string>;
   onDeals?: (deals: NormalizedPlanDeal[]) => void;
 }
 export async function collectPlansMonitor(options: CollectPlansOptions): Promise<PlansMonitorView> {
@@ -182,14 +184,20 @@ export async function collectPlansMonitor(options: CollectPlansOptions): Promise
     const deals = dedupePlanDeals(normalized);
     console.log(`[Планы] повторов: ${normalized.length - deals.length}`);
     const loadedNames = new Map([...(options.userProfiles || [])].map(([id, profile]) => [id, profile.name]));
-    await enrichManagerNames(options.reader, deals.map(d => d.managerId), loadedNames);
+    // Ушедшие = список из конфига + неактивные в Битриксе. Действующие группы пульта не скрываются никогда.
+    const former = new Set([...(options.formerManagerIds || [])].map(String));
+    for (const [id, profile] of options.userProfiles || []) if (profile.active === false) former.add(String(id));
+    await enrichManagerNames(options.reader, deals.map(d => d.managerId), loadedNames, former);
+    for (const g of options.groups || []) for (const m of g.managers) former.delete(String(m.id));
     for (const [id, name] of loadedNames) {
       if (!names.has(id) || name !== `сотрудник ID ${id}`) names.set(id, name);
     }
     for (const d of deals) d.managerName = names.get(d.managerId) || `ID ${d.managerId || "—"}`;
     await attachLostWinners(options.reader, deals, loadOutcomePartnerBins());
     options.onDeals?.(deals);
-    const view = buildPlansMonitorView(deals, options);
+    const view = buildPlansMonitorView(deals, { asOfDate: options.asOfDate, formerManagerIds: former });
+    const hidden = [...former].filter(id => deals.some(d => d.managerId === id));
+    if (hidden.length) console.log(`[Планы] ушедшие сотрудники вне таблицы менеджеров: ${hidden.length}`);
     console.log(`[Планы] сделок: ${deals.length}, ИП: ${view.ip!.total.count}, КТ: ${view.kt!.total.count} (${Math.round(performance.now() - started)} мс)`);
     return view;
   } catch {

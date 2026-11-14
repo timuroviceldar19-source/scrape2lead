@@ -752,9 +752,10 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     return (lostInCrm && /^(won|partner):/.test(outcome)) || (wonInCrm && outcome.startsWith("lost:"));
   }).map(d => String(d.assignedById));
   const names = new Map([...userProfiles].map(([id, profile]) => [id, profile.name]));
-  await enrichManagerNames(client, urgentOwners, names);
+  const inactiveOwners = new Set<string>();
+  await enrichManagerNames(client, urgentOwners, names, inactiveOwners);
   for (const id of new Set(urgentOwners)) {
-    if (!userProfiles.has(id)) userProfiles.set(id, { id, name: names.get(id)!, active: true });
+    if (!userProfiles.has(id)) userProfiles.set(id, { id, name: names.get(id)!, active: !inactiveOwners.has(id) });
   }
 
   // 8. Identify outcome mismatches (won on portal, but stage is lost in CRM; duplicates are excluded)

@@ -75,6 +75,8 @@ export interface PultConfig {
     trackedMetrics: string[];
     managers: Array<{ id: string; name: string }>;
   }>;
+  /** Ушедшие, которые в Битриксе ещё активны: на «Планах» не получают строки менеджера. Неактивных пульт скрывает сам. */
+  formerManagers?: Array<{ id: string; name: string }>;
   register?: {
     diskFolderId?: number;
     managerAliases?: Record<string, string>;
@@ -631,6 +633,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       portal: config.portal,
       userProfiles: collected.userProfiles,
       groups: config.groups,
+      formerManagerIds: config.formerManagers?.map((m) => m.id),
       onDeals: (deals) => { planDealsForRadar = deals; }
     });
     const radarView = await collectRadarView({

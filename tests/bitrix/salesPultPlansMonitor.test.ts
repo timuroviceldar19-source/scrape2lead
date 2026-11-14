@@ -133,7 +133,10 @@ describe("монитор планов: модель", () => {
       return { result: { p0: [raw(1, { ASSIGNED_BY_ID: "8" })] } };
     } });
     const v = await collectPlansMonitor({ reader, ...options });
-    expect(v.ip!.managers[0].name).toBe("Иван Иванов");
+    // Неактивный в Битриксе: имя у закупки есть, строки в таблице менеджеров нет.
+    expect(v.ip!.openPlans[0].managerName).toBe("Иван Иванов");
+    expect(v.ip!.managers).toEqual([]);
+    expect(v.ip!.formerManagers).toMatchObject({ people: 1, count: 1 });
     expect(calls).toContain("im.user.get");
     const broken = new ReadOnlyBitrixClient({ async call() { throw new Error("failed"); } });
     expect(await collectPlansMonitor({ reader: broken, ...options })).toEqual({ asOf: "2026-11-03", error: expect.any(String) });
@@ -173,7 +176,8 @@ describe("монитор планов: модель", () => {
     try {
       const view = await collectPlansMonitor({ reader, ...options, userProfiles: new Map([["7", { name: "Анна" }]]) });
       expect(users.mock.calls).toEqual([["im.user.get", { ID: 8 }], ["im.user.get", { ID: 9 }]]);
-      expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe("Иван Иванов");
+      expect(view.ip!.openPlans.find(d => d.managerId === "8")?.managerName).toBe("Иван Иванов");
+      expect(view.ip!.managers.some(m => m.id === "8")).toBe(false);
       expect(view.kt!.managers[0].name).toBe("Мария Петрова");
       expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[Планы\] сделок: 5, ИП: 4, КТ: 1 \(\d+ мс\)$/));
     } finally { log.mockRestore(); }
@@ -205,7 +209,7 @@ describe("монитор планов: модель", () => {
       const view = await collectPlansMonitor({ ...options, reader });
       expect(view.error).toBeUndefined();
       expect(view.ip!.managers.find(m => m.id === "8")?.name).toBe("сотрудник ID 8");
-      expect(view.ip!.managers.find(m => m.id === "9")?.name).toBe("Тестовый Менеджер");
+      expect(view.ip!.openPlans.find(d => d.managerId === "9")?.managerName).toBe("Тестовый Менеджер");
       expect(warn).toHaveBeenCalledExactlyOnceWith("[Пульт] Не удалось загрузить имя сотрудника ID 8 через im.user.get");
       expect(JSON.stringify(warn.mock.calls)).not.toMatch(/https:|fake-secret|requires higher privileges/);
     } finally { warn.mockRestore(); }
