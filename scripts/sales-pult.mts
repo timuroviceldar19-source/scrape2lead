@@ -43,6 +43,8 @@ import {
 import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
 import { updateMarketWindow } from "../src/kz/market/updateWindow.js";
 import { loadMarketView } from "../src/kz/market/load.js";
+import { backfillCompetitors } from "../src/kz/competitors/collector.js";
+import { updateCompetitorsWindow, loadCompetitorsView } from "../src/kz/competitors/load.js";
 import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
 import { collectRadarView } from "../src/bitrix/salesPult/radar/collect.js";
 import {
@@ -195,6 +197,9 @@ export async function runSalesPult(args: string[]): Promise<void> {
   const backfillIdx = args.indexOf("--market-backfill-from");
   const backfillFromDate = backfillIdx !== -1 && args[backfillIdx + 1] ? args[backfillIdx + 1] : undefined;
   const marketUpdate = args.includes("--market-update");
+  const compBackfillIdx = args.indexOf("--competitors-backfill-from");
+  const compBackfillFrom = compBackfillIdx !== -1 && args[compBackfillIdx + 1] ? args[compBackfillIdx + 1] : undefined;
+  const compUpdate = args.includes("--competitors-update");
 
   const config = loadConfig();
   const webhookUrl = process.env.BITRIX24_WEBHOOK_URL?.trim();
@@ -226,6 +231,23 @@ export async function runSalesPult(args: string[]): Promise<void> {
     } catch (err: any) {
       console.warn(`::warning::[Рынок] Ошибка при докачке рынка: ${err?.message || err}`);
     }
+    if (args.length <= 2 && !compBackfillFrom) return;
+  }
+
+  if (compBackfillFrom) {
+    console.log(`[Конкуренты] Полная докачка с ${compBackfillFrom} по ${todayAlmaty}...`);
+    try {
+      const stats = await backfillCompetitors({
+        fromDate: compBackfillFrom,
+        toDate: todayAlmaty,
+        onProgress: (stage, detail) => {
+          console.log(`[Конкуренты] ${stage}: ${detail}`);
+        }
+      });
+      console.log(`[Конкуренты] Докачка завершена: лотов ${stats.lotsCount}, заявок ${stats.bidsCount}, ТС ${stats.specsCount}, ошибок ${stats.errors.length}`);
+    } catch (err: any) {
+      console.warn(`::warning::[Конкуренты] Ошибка при докачке: ${err?.message || err}`);
+    }
     if (args.length <= 2) return;
   }
 
@@ -238,6 +260,13 @@ export async function runSalesPult(args: string[]): Promise<void> {
     if (process.env.MARKET_RESEED === "true" && total !== undefined) {
       console.log(`[Рынок] Восстановление: в копии ${process.env.MARKET_SEED_COUNT}, после импорта комплектов ${process.env.MARKET_EDUCATION_COUNT}, после обновления окна ${total}`);
     }
+  }
+
+  if (mode === "morning" || compUpdate) {
+    await updateCompetitorsWindow({
+      todayAlmaty,
+      strict: args.includes("--competitors-update-strict")
+    });
   }
 
   // Weekend and holiday check for scheduled reporting modes
@@ -625,6 +654,9 @@ export async function runSalesPult(args: string[]): Promise<void> {
     const marketView = loadMarketView({
       todayAlmaty
     });
+    const competitorsView = loadCompetitorsView({
+      todayAlmaty
+    });
 
     let planDealsForRadar: import("../src/bitrix/salesPult/plans/types.js").NormalizedPlanDeal[] = [];
     const plansView = await collectPlansMonitor({
@@ -659,6 +691,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       dynamics,
       holidays: config.holidays,
       market: marketView,
+      competitors: competitorsView,
       plans: plansView,
       radar: radarView,
       outcomeMismatches: collected.outcomeMismatches

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -100,4 +101,78 @@ it("records all three counts and emits one restoration summary", () => {
   const script = fs.readFileSync("scripts/sales-pult.mts", "utf8");
   expect(script.match(/Восстановление:/g)).toHaveLength(1);
   expect(script).toContain("в копии ${process.env.MARKET_SEED_COUNT}, после импорта комплектов ${process.env.MARKET_EDUCATION_COUNT}, после обновления окна ${total}");
+});
+
+describe("Sales pult workflow competitors cache and backfill", () => {
+  it("caches data/competitors, sets NODE_EXTRA_CA_CERTS, and supports competitors_backfill_from", () => {
+    expect(workflow).toMatch(/competitors_backfill_from:[\s\S]*?required:\s*false[\s\S]*?type:\s*string/);
+    const cache = workflow.indexOf("- name: Cache competitors data");
+    const run = workflow.indexOf("- name: Run Sales Pult");
+    expect(cache).toBeGreaterThan(-1);
+    expect(cache).toBeLessThan(run);
+    expect(workflow.slice(cache, run)).toContain("path: data/competitors");
+    expect(workflow.slice(cache, run)).toContain("key: gz-competitors-v1-${{ github.run_id }}");
+
+    const runStep = workflow.slice(run, workflow.indexOf("- name: Deploy"));
+    expect(workflow).toContain("timeout-minutes:");
+    expect(runStep).toContain("NODE_EXTRA_CA_CERTS: certs/rapidssl-tls-rsa-ca-g1.crt");
+    expect(runStep).toContain("--competitors-backfill-from");
+  });
+});
+
+describe("Sales pult workflow spec templates secret", () => {
+  const start = workflow.indexOf("- name: Spec templates from secret");
+  const end = workflow.indexOf("- name:", start + 10);
+  const step = workflow.slice(start, end);
+  const script = step
+    .slice(step.indexOf("run: |") + "run: |".length)
+    .split("\n")
+    .map((line) => line.replace(/^ {10}/, ""))
+    .join("\n");
+
+  function runStep(secret: string): { code: number | null; out: string; file: string | null } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-tpl-step-"));
+    try {
+      const res = spawnSync("bash", ["-c", script], {
+        cwd: dir,
+        env: { ...process.env, SPEC_TEMPLATES: secret },
+        encoding: "utf8"
+      });
+      const target = path.join(dir, "data/spec-templates.json");
+      return {
+        code: res.status,
+        out: `${res.stdout}${res.stderr}`,
+        file: fs.existsSync(target) ? fs.readFileSync(target, "utf8") : null
+      };
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("writes the SPEC_TEMPLATES secret to data/ before the pult run", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(start).toBeLessThan(workflow.indexOf("- name: Run Sales Pult"));
+    expect(step).toContain("SPEC_TEMPLATES: ${{ secrets.SPEC_TEMPLATES }}");
+    expect(step).toContain("data/spec-templates.json");
+  });
+
+  it("keeps the build green and never prints the template text", () => {
+    const secretText = "секретная фраза из ТС заказчика";
+    const ok = runStep(JSON.stringify({ templates: [{ id: "a", name: "A", text: secretText }] }));
+    expect(ok.code).toBe(0);
+    expect(ok.file).toContain(secretText);
+    expect(ok.out).toContain("шаблонов 1");
+    expect(ok.out).not.toContain(secretText);
+
+    const missing = runStep("");
+    expect(missing.code).toBe(0);
+    expect(missing.file).toBeNull();
+    expect(missing.out).toContain("::warning::");
+
+    const broken = runStep(`{"templates": [${secretText}`);
+    expect(broken.code).toBe(0);
+    expect(broken.file).toBeNull();
+    expect(broken.out).toContain("::warning::");
+    expect(broken.out).not.toContain(secretText);
+  });
 });

@@ -26,6 +26,10 @@ on:
         description: "Initial market backfill start date (YYYY-MM-DD, e.g. 2026-01-01)"
         required: false
         type: string
+      competitors_backfill_from:
+        description: "Initial competitors backfill start date (YYYY-MM-DD, e.g. 2026-01-01)"
+        required: false
+        type: string
 
 concurrency:
   group: sales-pult-${{ github.event.inputs.mode || 'site' }}
@@ -34,6 +38,7 @@ concurrency:
 jobs:
   run-pult:
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ (github.event.inputs.competitors_backfill_from || '') != '' && 240 || 35 }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -82,6 +87,34 @@ jobs:
           key: gz-market-v1-${{ github.run_id }}
           restore-keys: |
             gz-market-v1-
+
+      - name: Cache competitors data
+        uses: actions/cache@v4
+        with:
+          path: data/competitors
+          key: gz-competitors-v1-${{ github.run_id }}
+          restore-keys: |
+            gz-competitors-v1-
+
+      # Шаблоны ТС — куски текста ТС заказчиков, в публичный репозиторий их не кладём.
+      # Секрет SPEC_TEMPLATES (JSON, тексты внутри поля text) пишется в data/, содержимое в лог не попадает.
+      - name: Spec templates from secret
+        env:
+          SPEC_TEMPLATES: ${{ secrets.SPEC_TEMPLATES }}
+        run: |
+          set -eu
+          if [ -z "${SPEC_TEMPLATES:-}" ]; then
+            echo "::warning::Шаблоны ТС: секрет SPEC_TEMPLATES не задан, блок «Шаблоны ТС» будет пустым"
+            exit 0
+          fi
+          mkdir -p data
+          printf '%s' "$SPEC_TEMPLATES" > data/spec-templates.json
+          if COUNT=$(node -e 'const c=JSON.parse(require("fs").readFileSync("data/spec-templates.json","utf8"));if(!Array.isArray(c.templates))throw 0;console.log(c.templates.length)' 2>/dev/null); then
+            echo "Шаблоны ТС: из секрета, шаблонов $COUNT"
+          else
+            rm -f data/spec-templates.json
+            echo "::warning::Шаблоны ТС: секрет SPEC_TEMPLATES не читается как JSON с полем templates, блок будет пустым"
+          fi
 
       - name: Reset market history
         if: ${{ inputs.market_reseed == true }}
@@ -139,7 +172,9 @@ jobs:
           MARKET_RESEED: ${{ inputs.market_reseed }}
           MODE: ${{ github.event.inputs.mode || 'site' }}
           MARKET_BACKFILL: ${{ github.event.inputs.market_backfill_from || '' }}
+          COMPETITORS_BACKFILL: ${{ github.event.inputs.competitors_backfill_from || '' }}
           PULT_CHAT_ENABLED: ${{ vars.PULT_CHAT_ENABLED }}
+          NODE_EXTRA_CA_CERTS: certs/rapidssl-tls-rsa-ca-g1.crt
         run: |
           set -eu
           echo "Running sales pult in mode: $MODE"
@@ -147,12 +182,16 @@ jobs:
           if [ -n "$MARKET_BACKFILL" ]; then
             BACKFILL_FLAG="--market-backfill-from $MARKET_BACKFILL"
           fi
+          COMP_BACKFILL_FLAG=""
+          if [ -n "${COMPETITORS_BACKFILL:-}" ]; then
+            COMP_BACKFILL_FLAG="--competitors-backfill-from $COMPETITORS_BACKFILL"
+          fi
           if [ "$MODE" = "site" ]; then
             RESEED_FLAGS=""
             if [ "$MARKET_RESEED" = "true" ]; then
               RESEED_FLAGS="--market-update --market-update-strict"
             fi
-            npm run bitrix:sales-pult -- --mode site $BACKFILL_FLAG $RESEED_FLAGS
+            npm run bitrix:sales-pult -- --mode site $BACKFILL_FLAG $RESEED_FLAGS $COMP_BACKFILL_FLAG
           else
             EXECUTE_FLAG=""
             if [ "${PULT_CHAT_ENABLED:-}" = "true" ]; then

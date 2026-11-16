@@ -68,14 +68,15 @@ function filterContractSource(cs: PultContractSource, viewer: PultViewer): PultC
 }
 
 function filterPultPayload(p: SalesPultPayload, viewer: PultViewer): SalesPultPayload {
-  const { closedMonths: _closed, plans: _plans, radar: _radar, ...rest } = p;
+  const { closedMonths: _closed, plans: _plans, radar: _radar, competitors: _competitors, ...rest } = p;
   return {
     ...rest,
     viewer,
     groups: p.groups.map((g) => ({ ...g, managers: g.managers.filter((m) => m.id === viewer.managerId) })),
     outcomeMismatches: (p.outcomeMismatches ?? []).filter((m) => m.managerId === viewer.managerId),
     ...(p.contractSource ? { contractSource: filterContractSource(p.contractSource, viewer) } : {}),
-    radar: null
+    radar: null,
+    competitors: null
   };
 }
 
