@@ -6,6 +6,21 @@ import { loadCompetitorsConfig } from "./config.js";
 import { CompetitorsStorage, DEFAULT_COMPETITORS_DB_PATH } from "./storage.js";
 import type { CompetitorsConfig, CompetitorsView } from "./types.js";
 
+/**
+ * Лимит полного сбора (`--competitors-backfill-from`) в минутах. Задача GitHub с полным сбором живёт 240 минут,
+ * и при таймауте кэш не сохраняется вовсе. Поэтому сбор останавливается сам раньше: собранное остаётся в базе,
+ * пульт успевает собраться, кэш сохраняется, а следующий запуск продолжает с того же места.
+ * Другое значение — `--competitors-budget-min N`.
+ */
+export const DEFAULT_BACKFILL_BUDGET_MIN = 200;
+
+export function resolveBackfillBudgetMs(args: readonly string[]): number {
+  const idx = args.indexOf("--competitors-budget-min");
+  const minutes = idx !== -1 ? Number(args[idx + 1]) : NaN;
+  const value = Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_BACKFILL_BUDGET_MIN;
+  return value * 60 * 1000;
+}
+
 export interface UpdateCompetitorsWindowOptions extends Omit<CollectCompetitorsOptions, "fromDate" | "toDate" | "incremental"> {
   todayAlmaty: string;
   strict?: boolean;

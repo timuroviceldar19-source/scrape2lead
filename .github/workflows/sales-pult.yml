@@ -30,13 +30,61 @@ on:
         description: "Initial competitors backfill start date (YYYY-MM-DD, e.g. 2026-01-01)"
         required: false
         type: string
+      competitors_seed:
+        description: "Load the competitors database from the encrypted competitors-seed draft release into the cache"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: sales-pult-${{ github.event.inputs.mode || 'site' }}
   cancel-in-progress: false
 
 jobs:
+  # Первая заливка базы конкурентов: полный сбор с IP GitHub не укладывается в лимит задачи,
+  # поэтому базу собирают локально и кладут зашифрованной в черновик релиза competitors-seed
+  # (scripts/competitors-seed.mjs). Черновик виден только с правом записи, поэтому у этой задачи
+  # contents: write; npm-пакеты она не ставит и других секретов, кроме ключа копии, не получает.
+  seed-competitors:
+    if: ${{ inputs.competitors_seed == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download and decrypt competitors seed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPETITORS_SEED_KEY: ${{ secrets.COMPETITORS_SEED_KEY }}
+        run: |
+          set -eu
+          if [ -z "${COMPETITORS_SEED_KEY:-}" ]; then
+            echo "::error::Копия базы конкурентов: не задан секрет COMPETITORS_SEED_KEY"
+            exit 1
+          fi
+          SEED_DIR="${RUNNER_TEMP:-/tmp}/competitors-seed"
+          mkdir -p "$SEED_DIR" data/competitors
+          gh release download competitors-seed --repo "${GITHUB_REPOSITORY:-timuroviceldar19-source/scrape2lead}" --pattern competitors.db.enc --dir "$SEED_DIR" --clobber
+          node scripts/competitors-seed.mjs unpack "$SEED_DIR/competitors.db.enc" data/competitors/competitors.db --expect-sqlite
+
+      - name: Save competitors seed to cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/competitors
+          key: gz-competitors-v1-seed-${{ github.run_id }}
+
   run-pult:
+    needs: seed-competitors
+    # Без заливки seed-competitors пропускается, а пульт собирается как обычно.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ (github.event.inputs.competitors_backfill_from || '') != '' && 240 || 35 }}
     steps:
