@@ -44,7 +44,7 @@ import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
 import { updateMarketWindow } from "../src/kz/market/updateWindow.js";
 import { loadMarketView } from "../src/kz/market/load.js";
 import { backfillCompetitors } from "../src/kz/competitors/collector.js";
-import { updateCompetitorsWindow, loadCompetitorsView } from "../src/kz/competitors/load.js";
+import { updateCompetitorsWindow, loadCompetitorsView, resolveBackfillBudgetMs } from "../src/kz/competitors/load.js";
 import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
 import { collectRadarView } from "../src/bitrix/salesPult/radar/collect.js";
 import {
@@ -240,6 +240,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       const stats = await backfillCompetitors({
         fromDate: compBackfillFrom,
         toDate: todayAlmaty,
+        maxDurationMs: resolveBackfillBudgetMs(args),
         onProgress: (stage, detail) => {
           console.log(`[Конкуренты] ${stage}: ${detail}`);
         }

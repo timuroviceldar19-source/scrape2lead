@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -174,5 +175,95 @@ describe("Sales pult workflow spec templates secret", () => {
     expect(broken.file).toBeNull();
     expect(broken.out).toContain("::warning::");
     expect(broken.out).not.toContain(secretText);
+  });
+});
+
+describe("Sales pult workflow competitors seed from the encrypted draft release", () => {
+  const jobStart = workflow.indexOf("  seed-competitors:");
+  const jobEnd = workflow.indexOf("  run-pult:");
+  const job = workflow.slice(jobStart, jobEnd);
+  const stepStart = job.indexOf("- name: Download and decrypt competitors seed");
+  const stepEnd = job.indexOf("- name:", stepStart + 10);
+  const step = job.slice(stepStart, stepEnd);
+  const script = step
+    .slice(step.indexOf("run: |") + "run: |".length)
+    .split("\n")
+    .map((line) => line.replace(/^ {10}/, ""))
+    .join("\n");
+
+  it("runs only on request, with write access but without npm packages or other secrets", () => {
+    expect(workflow).toMatch(/competitors_seed:[\s\S]*?default:\s*false[\s\S]*?type:\s*boolean/);
+    expect(jobStart).toBeGreaterThan(-1);
+    expect(jobStart).toBeLessThan(jobEnd);
+    expect(job).toContain("if: ${{ inputs.competitors_seed == true }}");
+    expect(job).toMatch(/permissions:\s*\n\s*contents: write/);
+    expect(job).not.toContain("npm ci");
+    expect(job.match(/secrets\.[A-Z_]+/g)).toEqual(["secrets.COMPETITORS_SEED_KEY"]);
+    expect(job).toContain("uses: actions/cache/save@v4");
+    expect(job).toContain("key: gz-competitors-v1-seed-${{ github.run_id }}");
+
+    const pult = workflow.slice(jobEnd);
+    expect(pult).toMatch(/needs: seed-competitors/);
+    expect(pult).toContain("if: ${{ !cancelled() }}");
+    // Пульт берёт самый свежий кэш по префиксу, то есть только что залитую копию.
+    expect(pult).toContain("gz-competitors-v1-");
+    expect(workflow.slice(0, jobEnd)).not.toMatch(/^permissions:/m);
+  });
+
+  function runSeedStep(env: Record<string, string>, seedFile: string | null) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "comp-seed-step-"));
+    const bin = path.join(dir, "bin");
+    fs.mkdirSync(bin);
+    fs.mkdirSync(path.join(dir, "scripts"));
+    fs.copyFileSync(path.resolve("scripts/competitors-seed.mjs"), path.join(dir, "scripts/competitors-seed.mjs"));
+    // Подставной gh: кладёт подготовленный файл туда, куда просит --dir.
+    fs.writeFileSync(
+      path.join(bin, "gh"),
+      `#!/usr/bin/env bash\nwhile [ $# -gt 0 ]; do if [ "$1" = "--dir" ]; then D="$2"; fi; shift; done\n` +
+        (seedFile ? `cp "${seedFile}" "$D/competitors.db.enc"\n` : "exit 1\n"),
+      { mode: 0o755 }
+    );
+    const res = spawnSync("bash", ["-c", script], {
+      cwd: dir,
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: path.join(dir, "tmp"), ...env },
+      encoding: "utf8"
+    });
+    const dbPath = path.join(dir, "data/competitors/competitors.db");
+    const restored = fs.existsSync(dbPath) ? fs.readFileSync(dbPath) : null;
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { code: res.status, out: `${res.stdout}${res.stderr}`, restored };
+  }
+
+  it("restores the database with the right key and fails loudly otherwise", async () => {
+    // @ts-expect-error -- plain ESM script without types
+    const { packSeed } = await import("../../scripts/competitors-seed.mjs");
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), "comp-seed-src-"));
+    try {
+      const db = path.join(work, "competitors.db");
+      fs.writeFileSync(db, Buffer.from("SQLite format 3\u0000" + "строка\n".repeat(1000), "utf8"));
+      const key = crypto.randomBytes(32).toString("base64");
+      const enc = path.join(work, "competitors.db.enc");
+      await packSeed(db, enc, key);
+
+      const ok = runSeedStep({ COMPETITORS_SEED_KEY: key }, enc);
+      expect(ok.code).toBe(0);
+      expect(ok.restored?.equals(fs.readFileSync(db))).toBe(true);
+      expect(ok.out).not.toContain(key);
+
+      const noKey = runSeedStep({ COMPETITORS_SEED_KEY: "" }, enc);
+      expect(noKey.code).not.toBe(0);
+      expect(noKey.out).toContain("::error::");
+      expect(noKey.restored).toBeNull();
+
+      const wrongKey = runSeedStep({ COMPETITORS_SEED_KEY: crypto.randomBytes(32).toString("base64") }, enc);
+      expect(wrongKey.code).not.toBe(0);
+      expect(wrongKey.restored).toBeNull();
+
+      const noRelease = runSeedStep({ COMPETITORS_SEED_KEY: key }, null);
+      expect(noRelease.code).not.toBe(0);
+      expect(noRelease.restored).toBeNull();
+    } finally {
+      fs.rmSync(work, { recursive: true, force: true });
+    }
   });
 });
