@@ -841,7 +841,7 @@
   });
 
   /* ================= tabs ================= */
-  if (VIEWER) document.querySelectorAll('.sections a[data-t="radar"]').forEach((a) => a.remove());
+  if (VIEWER) document.querySelectorAll('.sections a[data-t="radar"], .sections a[data-t="competitors"]').forEach((a) => a.remove());
   const tabLinks = [...document.querySelectorAll(".sections a[data-t]")];
   const tabPanes = {
     pult: document.getElementById("tab-pult"),
@@ -850,9 +850,16 @@
     "plans-ip": document.getElementById("tab-plans-ip"),
     "plans-kt": document.getElementById("tab-plans-kt"),
     "radar-ip": document.getElementById("tab-radar-ip"),
-    "radar-kt": document.getElementById("tab-radar-kt")
+    "radar-kt": document.getElementById("tab-radar-kt"),
+    "competitors-ip": document.getElementById("tab-competitors-ip"),
+    "competitors-kt": document.getElementById("tab-competitors-kt")
   };
-  if (VIEWER) { delete tabPanes["radar-ip"]; delete tabPanes["radar-kt"]; }
+  if (VIEWER) {
+    delete tabPanes["radar-ip"];
+    delete tabPanes["radar-kt"];
+    delete tabPanes["competitors-ip"];
+    delete tabPanes["competitors-kt"];
+  }
   const secInd = document.querySelector(".sections .ind");
   const periodsNav = document.getElementById("periodsNav");
   const marketMonths = document.getElementById("marketMonths");
@@ -860,19 +867,24 @@
   const renderedMarketMonth = { ip: null, kt: null };
   const planMonths = document.getElementById("planMonths");
   const selectedPlanMonth = { "plans-ip": "all", "plans-kt": "all" };
+  const competitorsMonths = document.getElementById("competitorsMonths");
+  const selectedCompetitorsPeriod = { "competitors-ip": "all", "competitors-kt": "all" };
   const isPlansTab = tab => tab === "plans-ip" || tab === "plans-kt";
   const isRadarTab = tab => tab === "radar-ip" || tab === "radar-kt";
+  const isCompetitorsTab = tab => tab === "competitors-ip" || tab === "competitors-kt";
   const plansBase = tab => tab === "plans-ip" ? PAYLOAD.plans?.ip : PAYLOAD.plans?.kt;
+  const competitorsBase = tab => tab === "competitors-ip" ? PAYLOAD.competitors?.ip : PAYLOAD.competitors?.kt;
   const validPlanMonth = (tab, month) => window.__planMonths(plansBase(tab)).includes(month) ? month : "all";
+  const validCompetitorsPeriod = (tab, period) => window.__competitorsMonths ? (window.__competitorsMonths(competitorsBase(tab)).includes(period) ? period : "all") : "all";
   let currentTab = "pult";
   let preTvTab = "pult";
-  // Разделы: «Сегодня», «Радар», «Выручка» (страница реестра), «Планы» и «Рынок».
-  // Внутри «Радара», «Планов» и «Рынка» товар (ИП или КТ) выбирается переключателем и сохраняется при переходе между ними.
+  // Разделы: «Сегодня», «Радар», «Выручка» (страница реестра), «Планы», «Рынок» и «Конкуренты».
+  // Внутри «Радара», «Планов», «Рынка» и «Конкурентов» товар (ИП или КТ) выбирается переключателем и сохраняется при переходе между ними.
   let product = "ip";
   const productSwitch = document.getElementById("productSwitch");
-  const sectionOf = tab => tab === "pult" ? "pult" : isRadarTab(tab) ? "radar" : isPlansTab(tab) ? "plans" : "market";
-  const productOf = tab => tab === "kt" || tab === "plans-kt" || tab === "radar-kt" ? "kt" : "ip";
-  const tabFor = (section, prod) => section === "radar" ? "radar-" + prod : section === "plans" ? "plans-" + prod : section === "market" ? prod : "pult";
+  const sectionOf = tab => tab === "pult" ? "pult" : isRadarTab(tab) ? "radar" : isPlansTab(tab) ? "plans" : isCompetitorsTab(tab) ? "competitors" : "market";
+  const productOf = tab => tab === "kt" || tab === "plans-kt" || tab === "radar-kt" || tab === "competitors-kt" ? "kt" : "ip";
+  const tabFor = (section, prod) => section === "radar" ? "radar-" + prod : section === "plans" ? "plans-" + prod : section === "competitors" ? "competitors-" + prod : section === "market" ? prod : "pult";
 
   function moveSecInd() {
     const a = tabLinks.find((x) => x.dataset.t === sectionOf(currentTab));
@@ -902,6 +914,10 @@
     }).join("");
   }
   function renderTabContent(tab) {
+    if (isCompetitorsTab(tab)) {
+      if (window.__renderCompetitorsTab) window.__renderCompetitorsTab(tab, PAYLOAD.competitors, tabPanes[tab], selectedCompetitorsPeriod[tab]);
+      return;
+    }
     if (isRadarTab(tab)) {
       if (window.__renderRadarTab) window.__renderRadarTab(tab, PAYLOAD.radar, tabPanes[tab]);
       return;
@@ -985,9 +1001,49 @@
     });
   });
 
+  function renderCompetitorsMonths(tab) {
+    if (!competitorsMonths) return;
+    competitorsMonths.hidden = !isCompetitorsTab(tab);
+    competitorsMonths.innerHTML = isCompetitorsTab(tab) && window.__competitorsMonths
+      ? window.__competitorsMonths(competitorsBase(tab)).map(period =>
+          `<button type="button" data-month="${period}" aria-pressed="${period === selectedCompetitorsPeriod[tab]}">${period === "all" ? "Весь год" : MONTHS[Number(period.slice(5)) - 1] + " " + period.slice(0, 4)}</button>`
+        ).join("")
+      : "";
+    if (window.__scrollPlanSelection) window.__scrollPlanSelection(competitorsMonths);
+  }
+  function selectCompetitorsPeriod(period, toggle) {
+    if (!isCompetitorsTab(currentTab)) return;
+    period = validCompetitorsPeriod(currentTab, period);
+    if (toggle && selectedCompetitorsPeriod[currentTab] === period) period = "all";
+    selectedCompetitorsPeriod[currentTab] = period;
+    renderTabContent(currentTab);
+    renderCompetitorsMonths(currentTab);
+    observe();
+    history.replaceState(null, "", `#${currentTab}/${period}`);
+  }
+  if (competitorsMonths) competitorsMonths.addEventListener("click", e => {
+    const button = e.target.closest("button[data-month]");
+    if (button) selectCompetitorsPeriod(button.dataset.month, false);
+  });
+  ["competitors-ip", "competitors-kt"].forEach(tab => {
+    const pane = tabPanes[tab];
+    if (!pane) return;
+    pane.addEventListener("click", e => {
+      const month = e.target.closest(".months .col[data-m], .mlabels > span[data-m]");
+      if (month) selectCompetitorsPeriod(month.dataset.m, true);
+    });
+    pane.addEventListener("keydown", e => {
+      if ((e.key === "Enter" || e.key === " ") && e.target.matches(".months .col[data-m], .mlabels > span[data-m]")) {
+        e.preventDefault();
+        selectCompetitorsPeriod(e.target.dataset.m, true);
+      }
+    });
+  });
+
   function setTab(tab, fromUser, marketMonth) {
     if (!Object.prototype.hasOwnProperty.call(tabPanes, tab)) tab = "pult";
     if (isPlansTab(tab)) selectedPlanMonth[tab] = validPlanMonth(tab, marketMonth !== undefined ? marketMonth : selectedPlanMonth[tab]);
+    if (isCompetitorsTab(tab)) selectedCompetitorsPeriod[tab] = validCompetitorsPeriod(tab, marketMonth !== undefined ? marketMonth : selectedCompetitorsPeriod[tab]);
     if (tab === "ip" || tab === "kt") {
       selectedMarketMonth[tab] = validMarketMonth(tab, marketMonth !== undefined ? marketMonth : selectedMarketMonth[tab]);
     }
@@ -1020,11 +1076,15 @@
     renderTabContent(tab);
     renderMarketMonths(tab);
     renderPlanMonths(tab);
+    renderCompetitorsMonths(tab);
     moveSecInd();
 
     const srcLabel = document.getElementById("srcLabel");
     const foot = document.getElementById("foot");
-    if (isPlansTab(tab)) {
+    if (isCompetitorsTab(tab)) {
+      if (srcLabel) srcLabel.textContent = "госзакупки · открытые конкурсы";
+      if (foot) foot.innerHTML = `<span>Источник: открытые конкурсы procurement.gov.kz, протоколы итогов и ТС заказчиков</span><span>Обновляется раз в день, утром</span>`;
+    } else if (isPlansTab(tab)) {
       if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · госзакупки";
       if (foot) foot.innerHTML = `<span>Источник: сделки планов в Битрикс24 (scrape2lead-gz-plans) и сверка с zakup.gov.kz</span>`;
     } else if (isRadarTab(tab)) {
@@ -1045,7 +1105,7 @@
     if (fromUser) {
       try { localStorage.setItem("pult-tab", tab); } catch (e) {}
       if (history.replaceState) {
-        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : isRadarTab(tab) ? tab : tab + "/" + (isPlansTab(tab) ? selectedPlanMonth[tab] : selectedMarketMonth[tab])}`);
+        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : isRadarTab(tab) ? tab : tab + "/" + (isPlansTab(tab) ? selectedPlanMonth[tab] : isCompetitorsTab(tab) ? selectedCompetitorsPeriod[tab] : selectedMarketMonth[tab])}`);
       } else {
         location.hash = tab;
       }
@@ -1065,7 +1125,7 @@
 
   window.addEventListener("hashchange", () => {
     const [tab, month] = location.hash.replace(/^#/, "").split("/");
-    if (tab === "ip" || tab === "kt" || isPlansTab(tab) || isRadarTab(tab)) {
+    if (tab === "ip" || tab === "kt" || isPlansTab(tab) || isRadarTab(tab) || isCompetitorsTab(tab)) {
       setTab(tab, false, month || null);
     } else if (tab === "pult" || tab === "reg") {
       selectMonth(tab === "pult" ? month || currentMonth : currentMonth);

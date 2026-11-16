@@ -53,7 +53,8 @@ const marketClientJs = fs.readFileSync(new URL("./page/market.client.js", import
 
 const plansClientJs = fs.readFileSync(new URL("./page/plans.client.js", import.meta.url), "utf8");
 const radarClientJs = fs.readFileSync(new URL("./page/radar.client.js", import.meta.url), "utf8");
-const pultPageClientJs = `${marketClientJs}\n${plansClientJs}\n${radarClientJs}\n${pultClientJs}`;
+const competitorsClientJs = fs.readFileSync(new URL("./page/competitors.client.js", import.meta.url), "utf8");
+const pultPageClientJs = `${marketClientJs}\n${plansClientJs}\n${radarClientJs}\n${competitorsClientJs}\n${pultClientJs}`;
 const regPageClientJs = `${registerClientJs}\n${regRunnerClientJs}`;
 
 const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|\/\*__CLIENT_JS__\*\//g;

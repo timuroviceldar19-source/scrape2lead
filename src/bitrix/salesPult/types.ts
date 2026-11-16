@@ -1,6 +1,7 @@
 import type { TargetsConfig, ManagerRollups, TopTask } from "./metrics.js";
 import type { ManagerDebts } from "./debts.js";
 import type { MarketView } from "../../kz/market/types.js";
+import type { CompetitorsView } from "../../kz/competitors/types.js";
 
 
 export interface WonLostMismatchDeal {
@@ -67,6 +68,7 @@ export interface SalesPultPayload {
   dynamics: DayDynamic[];
   holidays?: string[];
   market?: MarketView | null;
+  competitors?: CompetitorsView | null;
   plans?: import("./plans/types.js").PlansMonitorView | null;
   radar?: import("./radar/types.js").RadarView | null;
   outcomeMismatches?: WonLostMismatchDeal[];

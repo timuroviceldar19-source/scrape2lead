@@ -4,8 +4,8 @@
 
   const P = typeof PAYLOAD !== "undefined" ? PAYLOAD : {};
   const R = P.register;
-  // Менеджеру «Радар» не показывается: в его варианте пульта этой вкладки нет.
-  if (P.viewer) document.querySelectorAll('a[href="./#radar-ip"]').forEach((a) => a.remove());
+  // Менеджеру «Радар» и «Конкуренты» не показываются: в его варианте пульта этих вкладок нет.
+  if (P.viewer) document.querySelectorAll('a[href="./#radar-ip"], a[href="./#competitors-ip"]').forEach((a) => a.remove());
   const regEl = document.getElementById("tab-reg");
 
   function animate(root) {
