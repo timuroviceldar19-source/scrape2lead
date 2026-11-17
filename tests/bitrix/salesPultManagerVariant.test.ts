@@ -250,6 +250,7 @@ describe("вид менеджера: сборка вариантов при вы
     const src = path.join(dir, "src"); const out = path.join(dir, "out"); fs.mkdirSync(src);
     fs.writeFileSync(path.join(src, "index.html"), "ПОЛНЫЙ ПУЛЬТ");
     fs.writeFileSync(path.join(src, "reg.html"), "ПОЛНАЯ ВЫРУЧКА");
+    fs.writeFileSync(path.join(src, "fin.html"), "ПОЛНЫЕ ФИНАНСЫ");
     fs.writeFileSync(path.join(src, "payload.json"), JSON.stringify(s.payload));
     fs.writeFileSync(path.join(src, "payload-reg.json"), JSON.stringify(s.reg));
     fs.writeFileSync(path.join(src, "plan-deals.json"), JSON.stringify(s.planDeals));
@@ -262,7 +263,7 @@ describe("вид менеджера: сборка вариантов при вы
   it("без ролей кладёт только полный вариант", () => {
     const { res, out } = run(null);
     expect(res.status, res.stderr).toBe(0);
-    expect(ls(out)).toEqual(["_r/all/index.html", "_r/all/reg.html"]);
+    expect(ls(out)).toEqual(["_r/all/fin.html", "_r/all/index.html", "_r/all/reg.html"]);
     expect(fs.readFileSync(path.join(out, "_r/all/index.html"), "utf8")).toBe("ПОЛНЫЙ ПУЛЬТ");
   }, 30000);
 
@@ -273,7 +274,8 @@ describe("вид менеджера: сборка вариантов при вы
     } };
     const { res, out } = run(config);
     expect(res.status, res.stderr).toBe(0);
-    expect(ls(out)).toEqual(["_r/all/index.html", "_r/all/reg.html", "_r/ms/index.html", "_r/ms/reg.html"]);
+    // «Финансы» — только в полном виде, менеджеру не собираются
+    expect(ls(out)).toEqual(["_r/all/fin.html", "_r/all/index.html", "_r/all/reg.html", "_r/ms/index.html", "_r/ms/reg.html"]);
     const html = fs.readFileSync(path.join(out, "_r/ms/index.html"), "utf8");
     expect(html).toContain("Задача Алии");
     expect(html).not.toContain("Борис");

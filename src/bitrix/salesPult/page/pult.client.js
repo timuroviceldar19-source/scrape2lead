@@ -841,7 +841,8 @@
   });
 
   /* ================= tabs ================= */
-  if (VIEWER) document.querySelectorAll('.sections a[data-t="radar"], .sections a[data-t="competitors"]').forEach((a) => a.remove());
+  // «Финансы» в вид менеджера не собираются (scripts/pult-variants.mts), ссылку тоже убираем.
+  if (VIEWER) document.querySelectorAll('.sections a[data-t="radar"], .sections a[data-t="competitors"], .sections a[href="./fin.html"]').forEach((a) => a.remove());
   const tabLinks = [...document.querySelectorAll(".sections a[data-t]")];
   const tabPanes = {
     pult: document.getElementById("tab-pult"),

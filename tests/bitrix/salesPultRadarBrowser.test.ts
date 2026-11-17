@@ -240,12 +240,13 @@ describe("Sales Pult Radar Browser UI", () => {
       await page.goto(url);
 
       const navLinks = await page.locator("nav.sections a").allTextContents();
-      // Should have: Сегодня · Радар · Выручка · Планы · Рынок
+      // Should have: Сегодня · Радар · Выручка · Финансы · Планы · Рынок
       expect(navLinks[0]).toContain("Сегодня");
       expect(navLinks[1]).toContain("Радар");
       expect(navLinks[2]).toContain("Выручка");
-      expect(navLinks[3]).toContain("Планы");
-      expect(navLinks[4]).toContain("Рынок");
+      expect(navLinks[3]).toContain("Финансы");
+      expect(navLinks[4]).toContain("Планы");
+      expect(navLinks[5]).toContain("Рынок");
     } finally {
       await page.close();
     }

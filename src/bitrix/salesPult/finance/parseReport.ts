@@ -1,0 +1,605 @@
+// Разбор ежедневного финансового отчёта (лист «Ежед.»).
+//
+// Файл собран руками: список дебиторов каждый день разной длины, и всё, что ниже, сдвигается.
+// Поэтому блоки ищутся по подписям («Дебиторы», «Календарь», «Поступления», «Всего | ТМЦ»,
+// шапка с компаниями и «ИТОГО»), а не по адресам ячеек. Итоги сверяются: расхождение идёт
+// в `warnings` и показывается на странице, а пропавший блок останавливает разбор —
+// лучше показать вчерашний отчёт, чем неверные цифры.
+//
+// В сообщениях об ошибках нет сумм и названий из файла: они попадают в публичный лог Actions.
+
+import type ExcelJS from "exceljs";
+import type {
+  FinanceBalanceLine,
+  FinanceCash,
+  FinanceCashFlow,
+  FinanceCompanyValues,
+  FinanceDebtor,
+  FinanceDebtors,
+  FinanceIncoming,
+  FinanceLiability,
+  FinancePayment,
+  FinancePaymentList,
+  FinancePnl,
+  FinanceRate,
+  FinanceReport,
+  FinanceSnapshot,
+  FinanceTax
+} from "./types.js";
+
+export class FinanceParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FinanceParseError";
+  }
+}
+
+type Cell = number | string | Date | null;
+
+const DAY_MS = 86_400_000;
+
+function normalizeValue(v: unknown): Cell {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const t = v.replace(/\s+/g, " ").trim();
+    return t ? t : null;
+  }
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    if ("result" in o || "formula" in o || "sharedFormula" in o) return normalizeValue(o.result);
+    if (Array.isArray(o.richText)) {
+      return normalizeValue((o.richText as Array<{ text?: string }>).map((t) => t.text ?? "").join(""));
+    }
+    if ("text" in o) return normalizeValue(o.text);
+  }
+  return null;
+}
+
+/** Подпись для сравнения: регистр, «ё», точки, двоеточия и лишние пробелы не важны. */
+export function labelKey(s: string | null | undefined): string {
+  return String(s ?? "").toLowerCase().replace(/ё/g, "е").replace(/[\s.:]+/g, " ").trim();
+}
+
+function isoDay(d: Date): string | null {
+  const rounded = new Date(Math.round(d.getTime() / DAY_MS) * DAY_MS);
+  return rounded.getUTCFullYear() >= 2000 ? rounded.toISOString().slice(0, 10) : null;
+}
+
+class Grid {
+  constructor(private readonly cells: Cell[][], readonly maxRow: number, readonly maxCol: number) {}
+
+  get(r: number, c: number): Cell {
+    if (r < 1 || c < 1) return null;
+    return this.cells[r]?.[c] ?? null;
+  }
+
+  text(r: number, c: number): string | null {
+    const v = this.get(r, c);
+    return typeof v === "string" ? v : null;
+  }
+
+  num(r: number, c: number): number | null {
+    const v = this.get(r, c);
+    return typeof v === "number" ? v : null;
+  }
+
+  date(r: number, c: number): string | null {
+    const v = this.get(r, c);
+    return v instanceof Date ? isoDay(v) : null;
+  }
+
+  key(r: number, c: number): string {
+    return labelKey(this.text(r, c));
+  }
+
+  /** Первая ячейка, чья подпись проходит проверку (по строкам сверху вниз). */
+  find(test: (key: string) => boolean, fromRow = 1): { r: number; c: number } | null {
+    for (let r = fromRow; r <= this.maxRow; r++) {
+      for (let c = 1; c <= this.maxCol; c++) {
+        const t = this.text(r, c);
+        if (t && test(labelKey(t))) return { r, c };
+      }
+    }
+    return null;
+  }
+}
+
+function gridFromSheet(ws: ExcelJS.Worksheet): Grid {
+  const maxRow = ws.rowCount;
+  const maxCol = ws.columnCount;
+  const cells: Cell[][] = [];
+  for (let r = 1; r <= maxRow; r++) {
+    const row = ws.getRow(r);
+    const out: Cell[] = [];
+    for (let c = 1; c <= maxCol; c++) out[c] = normalizeValue(row.getCell(c).value);
+    cells[r] = out;
+  }
+  return new Grid(cells, maxRow, maxCol);
+}
+
+const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+const differs = (a: number, b: number) => Math.abs(a - b) > 1;
+const nf = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
+const fmt = (n: number) => `${nf.format(Math.round(n))} ₸`;
+
+/* ---------- блоки счетов: шапка «дата | компании… | ИТОГО» ---------- */
+
+interface CompanyHeader {
+  keyCol: number;
+  cols: number[];
+  totalCol: number;
+  names: string[];
+}
+
+interface AccountRow {
+  row: number;
+  /** Дата шапки блока или null, если в шапке подпись (например «Вал.При»). */
+  date: string | null;
+  code?: string;
+  label?: string;
+  values: number[];
+  total: number;
+}
+
+function findCompanyHeader(g: Grid): CompanyHeader {
+  for (let r = 1; r <= g.maxRow; r++) {
+    for (let c = 2; c <= g.maxCol; c++) {
+      if (g.key(r, c) !== "итого") continue;
+      const names: string[] = [];
+      let k = c - 1;
+      while (k >= 1 && g.text(r, k)) {
+        names.unshift(g.text(r, k)!);
+        k--;
+      }
+      if (names.length >= 2 && k >= 1 && g.date(r, k) && new Set(names.map(labelKey)).size === names.length) {
+        return { keyCol: k, cols: names.map((_, i) => k + 1 + i), totalCol: c, names };
+      }
+    }
+  }
+  throw new FinanceParseError("не найдена шапка блоков счетов (дата, компании, «ИТОГО»)");
+}
+
+function readAccountRows(g: Grid, h: CompanyHeader): AccountRow[] {
+  const headerKeys = h.names.map(labelKey);
+  const isHeader = (r: number) => g.key(r, h.totalCol) === "итого" && h.cols.every((c, i) => g.key(r, c) === headerKeys[i]);
+  const rows: AccountRow[] = [];
+  let current: { date: string | null } | null = null;
+  for (let r = 1; r <= g.maxRow; r++) {
+    if (isHeader(r)) {
+      current = { date: g.date(r, h.keyCol) };
+      continue;
+    }
+    if (!current) continue;
+    const keyCell = g.get(r, h.keyCol);
+    let code: string | undefined;
+    let label: string | undefined;
+    if (typeof keyCell === "number" && Number.isInteger(keyCell) && keyCell >= 1000 && keyCell <= 9999) code = String(keyCell);
+    else if (typeof keyCell === "string" && /^\d{4}$/.test(keyCell)) code = keyCell;
+    else if (typeof keyCell === "string") label = keyCell;
+    else continue;
+    const values = h.cols.map((c) => g.num(r, c) ?? 0);
+    rows.push({ row: r, date: current.date, code, label, values, total: g.num(r, h.totalCol) ?? sum(values) });
+  }
+  return rows;
+}
+
+function companyValues(values: number[]): FinanceCompanyValues {
+  return { values, total: sum(values) };
+}
+
+function pnlFor(rows: AccountRow[], date: string, size: number): FinancePnl | undefined {
+  const own = rows.filter((x) => x.date === date && x.code);
+  const pick = (test: (code: number) => boolean) => {
+    const out = new Array<number>(size).fill(0);
+    for (const x of own) if (test(Number(x.code))) x.values.forEach((v, i) => (out[i] += v));
+    return out;
+  };
+  if (!own.some((x) => Number(x.code) >= 6000 && Number(x.code) < 7000)) return undefined;
+  const revenue = pick((c) => c >= 6000 && c < 7000);
+  const cost = pick((c) => c === 7000);
+  const expenses = pick((c) => c > 7000 && c < 9000);
+  const profit = revenue.map((v, i) => v - cost[i] - expenses[i]);
+  return { date, revenue: companyValues(revenue), cost: companyValues(cost), expenses: companyValues(expenses), profit: companyValues(profit) };
+}
+
+const BALANCE_LABELS: Record<string, string> = {
+  "1210": "Дебиторка покупателей",
+  "1710": "Долгосрочная дебиторка",
+  "3310": "Долги поставщикам",
+  "3510": "Авансы полученные"
+};
+
+/* ---------- деньги: «Всего | ТМЦ» ---------- */
+
+function parseCash(g: Grid, warnings: string[]): FinanceCash {
+  for (let r = 1; r <= g.maxRow; r++) {
+    for (let c = 3; c <= g.maxCol; c++) {
+      if (g.key(r, c) !== "тмц" || g.key(r, c - 1) !== "всего") continue;
+      const totalCol = c - 1;
+      const bankCols: number[] = [];
+      for (let k = totalCol - 1; k >= 1 && g.text(r, k); k--) bankCols.unshift(k);
+      if (!bankCols.length || bankCols.every((k) => g.key(r, k) === "дс")) continue;
+      const companyCol = bankCols[0] - 1;
+      if (companyCol < 1) continue;
+      const banks = bankCols.map((k) => g.text(r, k)!);
+      const rows: FinanceCash["rows"] = [];
+      let totalsRow: number | null = null;
+      for (let rr = r + 1; rr <= Math.min(g.maxRow, r + 40); rr++) {
+        const company = g.text(rr, companyCol);
+        if (!company) break;
+        if (labelKey(company) === "итого") {
+          totalsRow = rr;
+          break;
+        }
+        const byBank = bankCols.map((k) => g.num(rr, k) ?? 0);
+        rows.push({ company, byBank, total: g.num(rr, totalCol) ?? sum(byBank), inventory: g.num(rr, c) ?? 0 });
+      }
+      if (!rows.length) throw new FinanceParseError("в блоке денег нет строк по компаниям");
+      const rowsTotal = sum(rows.map((x) => x.total));
+      const rowsInventory = sum(rows.map((x) => x.inventory));
+      let byBank = banks.map((_, i) => sum(rows.map((x) => x.byBank[i])));
+      let total = rowsTotal;
+      let inventory = rowsInventory;
+      if (totalsRow) {
+        byBank = bankCols.map((k, i) => g.num(totalsRow!, k) ?? byBank[i]);
+        total = g.num(totalsRow, totalCol) ?? rowsTotal;
+        inventory = g.num(totalsRow, c) ?? rowsInventory;
+        if (differs(total, rowsTotal)) warnings.push(`Деньги: итог в файле ${fmt(total)}, сумма строк ${fmt(rowsTotal)}`);
+        if (differs(inventory, rowsInventory)) warnings.push(`ТМЦ: итог в файле ${fmt(inventory)}, сумма строк ${fmt(rowsInventory)}`);
+      } else {
+        warnings.push("Деньги: в файле нет строки «Итого», итог посчитан по строкам");
+      }
+      return { banks, rows, byBank, total, inventory };
+    }
+  }
+  throw new FinanceParseError("не найден блок денег (шапка «Всего | ТМЦ» с банками)");
+}
+
+/* ---------- движение денег за день ---------- */
+
+function parseCashFlow(accountRows: AccountRow[], g: Grid, h: CompanyHeader, cash: FinanceCash, warnings: string[]): FinanceCashFlow | undefined {
+  const noIncoming = accountRows.find((x) => x.label && labelKey(x.label).startsWith("без поступлен"));
+  if (!noIncoming) return undefined;
+  const firstCol = h.cols[0];
+  const dated = [noIncoming.row - 2, noIncoming.row - 1].map((r) => ({ r, date: g.date(r, h.keyCol), value: g.num(r, firstCol) }));
+  if (dated.some((d) => !d.date || d.value === null)) return undefined;
+  const [prev, today] = dated;
+  if (differs(today.value!, cash.total)) {
+    warnings.push(`Движение денег за день: остаток ${fmt(today.value!)} не равен деньгам на счетах ${fmt(cash.total)}, блок не показан`);
+    return undefined;
+  }
+  const spentRow = accountRows.find((x) => x.label && labelKey(x.label).startsWith("потрачено"));
+  return {
+    prevDate: prev.date!,
+    prev: prev.value!,
+    today: today.value!,
+    withoutIncoming: g.num(noIncoming.row, firstCol) ?? undefined,
+    spent: spentRow ? g.num(spentRow.row, firstCol) ?? undefined : undefined
+  };
+}
+
+/* ---------- поступления за день ---------- */
+
+function parseIncoming(g: Grid, warnings: string[]): { items: FinanceIncoming[]; total: number } {
+  const start = g.find((k) => k === "поступления");
+  if (!start) {
+    warnings.push("Не найден блок «Поступления»");
+    return { items: [], total: 0 };
+  }
+  const { r, c } = start;
+  let totalCol = 0;
+  for (const rr of [r, r + 1]) {
+    for (let k = c + 1; k <= g.maxCol && !totalCol; k++) if (g.key(rr, k) === "всего") totalCol = k;
+  }
+  if (!totalCol) {
+    warnings.push("В блоке «Поступления» нет колонки «Всего»");
+    return { items: [], total: 0 };
+  }
+  const companyCol = c - 1;
+  const payerCols = Array.from({ length: totalCol - c }, (_, i) => c + i);
+  const items: FinanceIncoming[] = [];
+  let fileTotal: number | null = null;
+  for (let rr = r + 2; rr <= Math.min(g.maxRow, r + 40); rr++) {
+    const company = g.text(rr, companyCol);
+    if (!company) break;
+    if (labelKey(company) === "итого") {
+      fileTotal = g.num(rr, totalCol);
+      break;
+    }
+    for (const k of payerCols) {
+      const amount = g.num(rr, k);
+      if (amount) items.push({ payer: g.text(r + 1, k) ?? "без названия", company, amount });
+    }
+  }
+  const total = sum(items.map((x) => x.amount));
+  if (fileTotal !== null && differs(fileTotal, total)) warnings.push(`Поступления: итог в файле ${fmt(fileTotal)}, сумма строк ${fmt(total)}`);
+  return { items, total };
+}
+
+/* ---------- дебиторы и проблемные долги ---------- */
+
+interface DebtorLayout {
+  nameCol: number;
+  companyCols: number[];
+  companies: string[];
+  dateCol: number;
+  totalCol: number;
+}
+
+function readDebtorRows(g: Grid, layout: DebtorLayout, headerRow: number, title: string, warnings: string[]): { list: FinanceDebtors; endRow: number } {
+  const totalsRow = headerRow + 1;
+  const rows: FinanceDebtor[] = [];
+  let r = headerRow + 2;
+  for (; r <= g.maxRow; r++) {
+    const name = g.text(r, layout.nameCol);
+    if (!name) break;
+    const saleDate = g.date(r, layout.dateCol) ?? undefined;
+    const note = g.text(r, layout.totalCol) ?? undefined;
+    layout.companyCols.forEach((col, i) => {
+      const amount = g.num(r, col);
+      if (amount) rows.push({ name, company: layout.companies[i], amount, ...(saleDate ? { saleDate } : {}), ...(note ? { note } : {}) });
+    });
+  }
+  const totals = layout.companies.map((company) => sum(rows.filter((x) => x.company === company).map((x) => x.amount)));
+  layout.companyCols.forEach((col, i) => {
+    const fileTotal = g.num(totalsRow, col);
+    if (fileTotal !== null && differs(fileTotal, totals[i])) {
+      warnings.push(`${title}, ${layout.companies[i]}: итог в файле ${fmt(fileTotal)}, сумма строк ${fmt(totals[i])}`);
+    }
+  });
+  return { list: { companies: layout.companies, rows, totals, total: sum(totals) }, endRow: r };
+}
+
+function parseDebtors(g: Grid, warnings: string[]): { debtors: FinanceDebtors; problem?: FinanceDebtors; layout: DebtorLayout } {
+  const start = g.find((k) => k === "дебиторы");
+  if (!start) throw new FinanceParseError("не найден блок «Дебиторы»");
+  const { r, c } = start;
+  const companyCols: number[] = [];
+  let k = c + 1;
+  for (; k <= g.maxCol && g.text(r, k) && !g.key(r, k).startsWith("дата"); k++) companyCols.push(k);
+  if (!companyCols.length || !g.key(r, k).startsWith("дата")) throw new FinanceParseError("в шапке «Дебиторы» нет компаний и «Даты реализации»");
+  const dateCol = k;
+  let totalCol = 0;
+  for (let t = dateCol + 1; t <= Math.min(g.maxCol, dateCol + 3) && !totalCol; t++) if (g.key(r, t) === "итого") totalCol = t;
+  if (!totalCol) throw new FinanceParseError("в шапке «Дебиторы» нет «ИТОГО»");
+  const layout: DebtorLayout = { nameCol: c, companyCols, companies: companyCols.map((col) => g.text(r, col)!), dateCol, totalCol };
+
+  const main = readDebtorRows(g, layout, r, "Дебиторы", warnings);
+  if (!main.list.rows.length) throw new FinanceParseError("в блоке «Дебиторы» нет строк");
+
+  // Ниже, без подписи слева, — второй список с той же шапкой: долги в суде и у юристов.
+  const companyKeys = layout.companies.map(labelKey);
+  let problem: FinanceDebtors | undefined;
+  for (let rr = main.endRow; rr <= Math.min(g.maxRow, main.endRow + 6); rr++) {
+    const same = g.key(rr, totalCol) === "итого" && companyCols.every((col, i) => g.key(rr, col) === companyKeys[i]);
+    if (same) {
+      problem = readDebtorRows(g, layout, rr, "Проблемные долги", warnings).list;
+      break;
+    }
+  }
+  return { debtors: main.list, problem, layout };
+}
+
+function parseLiabilities(g: Grid, layout: DebtorLayout): FinanceLiability[] {
+  const out: FinanceLiability[] = [];
+  for (let r = 1; r <= g.maxRow; r++) {
+    const label = g.text(r, layout.nameCol);
+    if (!label || !labelKey(label).startsWith("кредит")) continue;
+    const values = layout.companyCols.map((col) => g.num(r, col) ?? 0);
+    if (values.every((v) => v === 0) && g.num(r, layout.totalCol) === null) continue;
+    out.push({ label, values, total: g.num(r, layout.totalCol) ?? sum(values) });
+  }
+  return out;
+}
+
+/* ---------- платёжный календарь ---------- */
+
+function parsePayments(g: Grid, warnings: string[]): FinancePaymentList[] {
+  const start = g.find((k) => k === "календарь");
+  if (!start) {
+    warnings.push("Не найден блок «Календарь»");
+    return [];
+  }
+  const payeeCol = start.c;
+  const amountCol = payeeCol + 1;
+  const basisCol = payeeCol + 2;
+  const tagCol = payeeCol - 1;
+  const item = (r: number): FinancePayment => {
+    const tag = g.text(r, tagCol) ?? undefined;
+    const basis = g.text(r, basisCol) ?? undefined;
+    return { ...(tag ? { tag } : {}), payee: g.text(r, payeeCol)!, amount: g.num(r, amountCol)!, ...(basis ? { basis } : {}) };
+  };
+  const finish = (list: FinancePaymentList, fileTotal: number | null) => {
+    const total = sum(list.items.map((x) => x.amount));
+    if (fileTotal !== null && differs(fileTotal, total)) warnings.push(`${list.label}: итог в файле ${fmt(fileTotal)}, сумма строк ${fmt(total)}`);
+    list.total = total;
+    return list;
+  };
+
+  const lists: FinancePaymentList[] = [];
+  const main: FinancePaymentList = { label: "Календарь платежей", items: [], total: 0 };
+  let r = start.r + 1;
+  let mainTotal: number | null = null;
+  for (; r <= g.maxRow; r++) {
+    const payee = g.text(r, payeeCol);
+    const amount = g.num(r, amountCol);
+    if (!payee && amount !== null) {
+      mainTotal = amount;
+      r++;
+      break;
+    }
+    if (!payee && amount === null) {
+      if (main.items.length) break;
+      continue;
+    }
+    if (payee && amount !== null) main.items.push(item(r));
+  }
+  lists.push(finish(main, mainTotal));
+
+  // Ниже в тех же колонках: блок «КПН к оплате» (его берём из блока счетов), прочие платежи
+  // и список «Топ-… расходов» со своим «Итого».
+  let current: FinancePaymentList = { label: "Прочие платежи", items: [], total: 0 };
+  let skipping = false;
+  const flush = (fileTotal: number | null) => {
+    if (current.items.length) lists.push(finish(current, fileTotal));
+  };
+  for (; r <= g.maxRow; r++) {
+    const payee = g.text(r, payeeCol);
+    const amount = g.num(r, amountCol);
+    const key = labelKey(payee);
+    if (skipping) {
+      if (!payee && amount !== null) skipping = false;
+      continue;
+    }
+    if (!payee) continue;
+    if (key.startsWith("кпн")) {
+      skipping = true;
+      continue;
+    }
+    if (key.startsWith("топ")) {
+      flush(null);
+      current = { label: payee, items: [], total: 0 };
+      continue;
+    }
+    if (key === "итого") {
+      flush(amount);
+      current = { label: "Прочие платежи", items: [], total: 0 };
+      continue;
+    }
+    if (amount !== null && amount !== 0) current.items.push(item(r));
+  }
+  flush(null);
+  return lists;
+}
+
+/* ---------- мелочи ---------- */
+
+function parseRates(g: Grid): FinanceRate[] {
+  const out: FinanceRate[] = [];
+  for (let r = 1; r <= g.maxRow; r++) {
+    for (let c = 1; c < g.maxCol; c++) {
+      const label = g.text(r, c);
+      const value = g.num(r, c + 1);
+      if (label && value !== null && labelKey(label).startsWith("курс")) out.push({ label, value });
+    }
+  }
+  return out;
+}
+
+function parsePeriodLabel(g: Grid): string | undefined {
+  for (let r = 1; r <= g.maxRow; r++) {
+    for (let c = 1; c <= g.maxCol; c++) {
+      const t = g.text(r, c);
+      if (t && /^\d{1,2}\.\d{1,2}\.?\s*[-–—]\s*\d{1,2}\.\d{1,2}\.\d{4}$/.test(t)) return t;
+    }
+  }
+  return undefined;
+}
+
+/** Сводка вверху листа («Выручка» | прошлый месяц | текущий период): сверка с расчётом по счетам. */
+function checkSummary(g: Grid, h: CompanyHeader, pnl: FinanceReport["pnl"], warnings: string[]): void {
+  const at = g.find((k) => k === "выручка");
+  if (!at || at.c >= h.keyCol) return;
+  const nums: number[] = [];
+  for (let c = at.c + 1; c < h.keyCol; c++) {
+    const v = g.num(at.r, c);
+    if (v !== null) nums.push(v);
+  }
+  if (pnl.previous && nums.length >= 1 && differs(nums[0], pnl.previous.revenue.total)) {
+    warnings.push(`Выручка прошлого периода: по счетам ${fmt(pnl.previous.revenue.total)}, в сводке файла ${fmt(nums[0])}`);
+  }
+  if (pnl.current && nums.length >= 2 && differs(sum(nums.slice(1)), pnl.current.revenue.total)) {
+    warnings.push(`Выручка текущего периода: по счетам ${fmt(pnl.current.revenue.total)}, в сводке файла ${fmt(sum(nums.slice(1)))}`);
+  }
+}
+
+function pickSheet(workbook: ExcelJS.Workbook): ExcelJS.Worksheet {
+  const byName = workbook.worksheets.find((ws) => labelKey(ws.name).startsWith("ежед"));
+  if (byName) return byName;
+  throw new FinanceParseError("нет листа «Ежед.»");
+}
+
+export function parseFinanceWorkbook(workbook: ExcelJS.Workbook): FinanceReport {
+  const g = gridFromSheet(pickSheet(workbook));
+  const warnings: string[] = [];
+
+  const header = findCompanyHeader(g);
+  const accountRows = readAccountRows(g, header);
+  const size = header.names.length;
+  const pnlDates = [...new Set(accountRows.filter((x) => x.date && x.code && x.code.startsWith("6")).map((x) => x.date!))].sort();
+  if (!pnlDates.length) throw new FinanceParseError("в блоках счетов нет выручки (счета 6xxx) с датой");
+  const dataDate = pnlDates[pnlDates.length - 1];
+  const monthStart = `${dataDate.slice(0, 7)}-01`;
+  const previousDate = pnlDates.filter((d) => d < monthStart).pop();
+  const pnl: FinanceReport["pnl"] = {
+    current: pnlFor(accountRows, dataDate, size),
+    ...(previousDate ? { previous: pnlFor(accountRows, previousDate, size) } : {})
+  };
+
+  const balances: FinanceBalanceLine[] = accountRows
+    .filter((x) => x.date === dataDate && x.code && Number(x.code) < 6000)
+    .map((x) => ({ code: x.code!, label: BALANCE_LABELS[x.code!] ?? `Счёт ${x.code}`, values: x.values, total: x.total }));
+
+  const taxRow = [...accountRows].reverse().find((x) => x.label && labelKey(x.label) === "кпн");
+  const tax: FinanceTax | undefined = taxRow
+    ? { date: taxRow.date ?? dataDate, label: taxRow.label!, values: taxRow.values, total: taxRow.total }
+    : undefined;
+
+  const cash = parseCash(g, warnings);
+  const cashFlow = parseCashFlow(accountRows, g, header, cash, warnings);
+  const incoming = parseIncoming(g, warnings);
+  const { debtors, problem, layout } = parseDebtors(g, warnings);
+  const liabilities = parseLiabilities(g, layout);
+  const payments = parsePayments(g, warnings);
+  checkSummary(g, header, pnl, warnings);
+
+  return {
+    dataDate,
+    periodLabel: parsePeriodLabel(g),
+    companies: header.names,
+    pnl,
+    balances,
+    ...(tax ? { tax } : {}),
+    cash,
+    ...(cashFlow ? { cashFlow } : {}),
+    incoming: incoming.items,
+    incomingTotal: incoming.total,
+    debtors,
+    ...(problem ? { problemDebts: problem } : {}),
+    liabilities,
+    payments,
+    rates: parseRates(g),
+    warnings
+  };
+}
+
+export async function parseFinanceExcel(buffer: Buffer): Promise<FinanceReport> {
+  const ExcelJS = await import("exceljs");
+  const workbook = new ExcelJS.default.Workbook();
+  try {
+    await workbook.xlsx.load(buffer as any);
+  } catch {
+    throw new FinanceParseError("файл не читается как .xlsx");
+  }
+  return parseFinanceWorkbook(workbook);
+}
+
+/** Короткая запись дня для истории. */
+export function financeSnapshot(report: FinanceReport): FinanceSnapshot {
+  const isLoan = (label: string) => /^кредит(?!ор)/.test(labelKey(label));
+  const payablesLine = report.liabilities.find((x) => labelKey(x.label).startsWith("кредитор"));
+  const payables = payablesLine?.total ?? report.balances.find((x) => x.code === "3310")?.total;
+  return {
+    dataDate: report.dataDate,
+    cash: report.cash.total,
+    inventory: report.cash.inventory,
+    debtors: report.debtors.total,
+    problemDebts: report.problemDebts?.total ?? 0,
+    ...(payables !== undefined ? { payables } : {}),
+    loans: sum(report.liabilities.filter((x) => isLoan(x.label)).map((x) => x.total)),
+    paymentsDue: report.payments[0]?.total ?? 0,
+    ...(report.pnl.current ? { revenue: report.pnl.current.revenue.total, profit: report.pnl.current.profit.total } : {})
+  };
+}

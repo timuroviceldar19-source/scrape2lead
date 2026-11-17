@@ -35,12 +35,15 @@ import {
 import {
   renderPultHtml,
   renderRegisterHtml,
+  renderFinanceHtml,
   type SalesPultPayload,
   type RegisterPagePayload,
+  type FinancePagePayload,
   type PultGroupView,
   type DayDynamic
 } from "../src/bitrix/salesPult/site.js";
 import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
+import { loadFinanceView } from "../src/bitrix/salesPult/finance/load.js";
 import { updateMarketWindow } from "../src/kz/market/updateWindow.js";
 import { loadMarketView } from "../src/kz/market/load.js";
 import { backfillCompetitors } from "../src/kz/competitors/collector.js";
@@ -83,6 +86,10 @@ export interface PultConfig {
     diskFolderId?: number;
     managerAliases?: Record<string, string>;
     hiddenManagers?: string[];
+  };
+  /** Ежедневный отчёт финансиста: папка файлов чата «Финансовый отчет» на Диске Битрикс24. */
+  finance?: {
+    diskFolderId?: number;
   };
 }
 
@@ -191,6 +198,8 @@ export async function runSalesPult(args: string[]): Promise<void> {
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
   const registerFileIdx = args.indexOf("--register-file");
   const registerFilePath = registerFileIdx !== -1 && args[registerFileIdx + 1] ? args[registerFileIdx + 1] : undefined;
+  const financeFileIdx = args.indexOf("--finance-file");
+  const financeFilePath = financeFileIdx !== -1 && args[financeFileIdx + 1] ? args[financeFileIdx + 1] : undefined;
   const refreshHistory = args.includes("--refresh-history");
   const historyCacheIdx = args.indexOf("--history-cache");
   const historyCachePath = historyCacheIdx !== -1 && args[historyCacheIdx + 1] ? args[historyCacheIdx + 1] : undefined;
@@ -651,6 +660,16 @@ export async function runSalesPult(args: string[]): Promise<void> {
       holidays: config.holidays
     });
 
+    // Финансы: отчёт финансиста из чата, отдельная страница fin.html. Сбой здесь не должен ронять пульт.
+    const financeView = await loadFinanceView({
+      reader,
+      folderId: config.finance?.diskFolderId,
+      localFile: financeFilePath
+    }).catch((err: unknown) => {
+      console.warn(`[Финансы] Не загрузились (${(err as Error)?.name || "Error"})`);
+      return { snapshots: [], error: "Финансовый отчёт не загрузился при сборке пульта, попробуем на следующем обновлении." };
+    });
+
     // Market
     const marketView = loadMarketView({
       todayAlmaty
@@ -763,7 +782,12 @@ export async function runSalesPult(args: string[]): Promise<void> {
     fs.writeFileSync(path.join(outDir, "reg.html"), regHtml, "utf8");
     fs.writeFileSync(path.join(outDir, "payload-reg.json"), JSON.stringify(regPayload, null, 2), "utf8");
 
-    console.log(`[Sales Pult] Готово: index.html, reg.html и payload.json`);
+    // 3. Финансы: только в полный вариант (pult-variants.mts), менеджеру и на ТВ не идёт
+    const finPayload: FinancePagePayload = { asOfDate: todayAlmaty, generatedAt: generatedTimeStr, finance: financeView };
+    fs.writeFileSync(path.join(outDir, "fin.html"), renderFinanceHtml(finPayload), "utf8");
+    fs.writeFileSync(path.join(outDir, "payload-fin.json"), JSON.stringify(finPayload, null, 2), "utf8");
+
+    console.log(`[Sales Pult] Готово: index.html, reg.html, fin.html и payload.json`);
     if (hasTaskErrors) {
       process.exitCode = 1;
     }

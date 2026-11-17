@@ -1,5 +1,5 @@
 // Проверка входа на пульт: кто пришёл (токен Cloudflare Access) → роль → вариант сайта.
-// Варианты лежат в статике Pages как _r/<вариант>/index.html и reg.html; напрямую по этим
+// Варианты лежат в статике Pages как _r/<вариант>/index.html, reg.html и fin.html (только all); напрямую по этим
 // адресам их не отдаём, иначе роль можно было бы обойти.
 
 import { variantOf, type PultGateConfig } from "./config.js";
@@ -17,14 +17,17 @@ export interface GateDeps {
   now?: () => number;
 }
 
-type Page = "index" | "reg";
+type Page = "index" | "reg" | "fin";
 
 const PAGES: Record<string, Page> = {
   "/": "index",
   "/index.html": "index",
   "/reg": "reg",
   "/reg/": "reg",
-  "/reg.html": "reg"
+  "/reg.html": "reg",
+  "/fin": "fin",
+  "/fin/": "fin",
+  "/fin.html": "fin"
 };
 
 const SECURITY_HEADERS: Record<string, string> = {
@@ -111,7 +114,7 @@ export async function handleGateRequest(request: Request, deps: GateDeps): Promi
     variant = variantOf(role);
   }
 
-  const asset = await fetchAsset(deps.assets, url.origin, page === "index" ? `/_r/${variant}/` : `/_r/${variant}/reg`);
+  const asset = await fetchAsset(deps.assets, url.origin, page === "index" ? `/_r/${variant}/` : `/_r/${variant}/${page}`);
   if (asset.status === 404) {
     if (page === "index") return notReady();
     const index = await fetchAsset(deps.assets, url.origin, `/_r/${variant}/`);
