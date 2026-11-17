@@ -70,11 +70,71 @@ describe("страница «Финансы»", () => {
     }, 20000);
   }
 
+  it("платежи: все списки, и календарь тоже, свёрнуты и раскрываются по клику", async () => {
+    const v = view();
+    const { page, errors } = await open(renderFinanceHtml(payload(v)), 1440);
+    try {
+      const boxes = page.locator("#f-payments details.fin-more");
+      expect(await boxes.count()).toBe(v.report!.payments.length);
+      expect(await boxes.evaluateAll((es) => es.map((e) => (e as HTMLDetailsElement).open))).toEqual(v.report!.payments.map(() => false));
+      expect(await page.locator("#f-payments h3").count()).toBe(0);
+      const cal = boxes.first();
+      expect((await cal.locator("summary").innerText()).replace(/\s/g, " ")).toMatch(/^Календарь платежей \d+ платеж\S* · [\d ,]+ (млн|тыс) ₸$/);
+      expect(await cal.locator(".r.body").first().isVisible()).toBe(false);
+      await cal.locator("summary").click();
+      expect(await cal.locator(".r.body").first().isVisible()).toBe(true);
+      expect(await page.locator("#f-payments .lead").isVisible()).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  });
+
+  it("дебиторы: свёрнуты, сортировка по «Сумма» и «Прошло» не закрывает список", async () => {
+    const v = view();
+    // долг без даты реализации — при сортировке по дням всегда внизу
+    v.report!.debtors.rows.push({ name: "Без даты", company: "Альфа", amount: 9_000_000 });
+    for (const width of [1440, 375]) {
+      const { page, errors } = await open(renderFinanceHtml(payload(v)), width);
+      try {
+        const box = page.locator("#debtMainBox");
+        expect(await box.evaluate((e) => (e as HTMLDetailsElement).open)).toBe(false);
+        expect((await box.locator("summary").innerText()).replace(/\s/g, " ")).toMatch(/^Список дебиторов 4 долга · /);
+        expect(await page.locator("#debtProblemBox").evaluate((e) => (e as HTMLDetailsElement).open)).toBe(false);
+        await box.locator("summary").click();
+        const names = () => box.locator(".fin-debt .r.body .nm").evaluateAll((es) => es.map((e) => e.getAttribute("title")));
+        const sortState = () => box.locator('[role="columnheader"]').evaluateAll((es) => es.map((e) => `${e.textContent!.trim()}=${e.getAttribute("aria-sort")}`));
+        // по умолчанию — сумма от большей к меньшей
+        expect(await names()).toEqual(["Без даты", "Школа Тест №1", "Колледж Пример", "Учреждение Образец"]);
+        expect(await sortState()).toEqual(["Сумма ↓=descending", "Прошло ↕=none"]);
+        await box.locator('.fin-sort[data-sort="days"]').click();
+        expect(await names()).toEqual(["Учреждение Образец", "Колледж Пример", "Школа Тест №1", "Без даты"]);
+        expect(await sortState()).toEqual(["Сумма ↕=none", "Прошло ↓=descending"]);
+        expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.sort)).toBe("days");
+        await box.locator('.fin-sort[data-sort="days"]').click();
+        expect(await names()).toEqual(["Школа Тест №1", "Колледж Пример", "Учреждение Образец", "Без даты"]);
+        expect(await sortState()).toEqual(["Сумма ↕=none", "Прошло ↑=ascending"]);
+        await box.locator('.fin-sort[data-sort="amount"]').click();
+        expect(await names()).toEqual(["Без даты", "Школа Тест №1", "Колледж Пример", "Учреждение Образец"]);
+        await box.locator('.fin-sort[data-sort="amount"]').click();
+        expect(await names()).toEqual(["Учреждение Образец", "Колледж Пример", "Школа Тест №1", "Без даты"]);
+        expect(await box.evaluate((e) => (e as HTMLDetailsElement).open)).toBe(true);
+        // проблемные долги сортируются так же, фильтр компании их не трогает
+        await page.locator('#debtChips button[data-c="Бета"]').click();
+        expect(await names()).toEqual(["Учреждение Образец"]);
+        const problem = page.locator("#debtProblemBox");
+        await problem.locator("summary").click();
+        expect(await problem.locator(".fin-debt .r.body .nm").evaluateAll((es) => es.map((e) => e.getAttribute("title")))).toEqual(["ИП Пропавший", "ТОО Должник"]);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        expect(errors).toEqual([]);
+      } finally { await page.close(); }
+    }
+  }, 20000);
+
   it("дебиторы: фильтр по компании, «показать все», давность цветом", async () => {
     const many = Array.from({ length: 20 }, (_, i) => ({ name: `Должник ${i + 1}`, company: 0 as const, amount: 10_000 + i, date: "2026-10-01" }));
     const { page, errors } = await open(renderFinanceHtml(payload(view({ debtors: [...DEFAULT_DEBTORS, ...many] }))), 1440);
     try {
       const rows = () => page.locator("#f-debtors .fin-debt").first().locator(".r.body").count();
+      await page.locator("#debtMainBox summary").click();
       expect(await rows()).toBe(12);
       await page.locator("#debtAll").click();
       expect(await rows()).toBe(23);
