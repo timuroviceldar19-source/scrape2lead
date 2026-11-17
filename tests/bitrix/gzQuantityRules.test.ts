@@ -83,6 +83,13 @@ describe("shipped GZ quantity rules: classification", () => {
     expect(ruleOf("Устройство многофункциональное", "262018.900.000001")).toBe("mfu-printers");
     expect(ruleOf("МФУ лазерное A4")).toBe("mfu-printers");
     expect(ruleOf("Принтер", "262016.300.000003")).toBe("mfu-printers");
+    expect(ruleOf("Многофункциональное устройство")).toBe("mfu-printers");
+  });
+
+  it("keeps a PC bundled with a printer under the PC rule", () => {
+    // МФУ и принтеры теперь не заводятся совсем, поэтому слово «принтер» в середине названия не должно уводить ПК в исключение.
+    expect(ruleOf("Компьютер в комплекте с принтером", "262013.000.000011")).toBe("pc");
+    expect(ruleOf("Ноутбук и МФУ")).toBe("pc");
   });
 
   it("keeps interactive panels out of every quantity rule", () => {
@@ -109,19 +116,21 @@ describe("shipped GZ quantity rules: decisions", () => {
     });
   });
 
-  it("creates MFU and printer deals only above 10 pcs", () => {
-    expect(check("Устройство многофункциональное", "10", "262018.900.000001")).toMatchObject({
-      allowed: false, ruleName: "mfu-printers", reason: "mfu-printers: количество 10, нужно не меньше 11 или сумма от 2 000 000 ₸"
+  it("never creates MFU and printer deals, whatever the quantity or sum", () => {
+    // 17.11.2026: партнёрскую карточку по принтерам и МФУ сняли, отрабатывать их больше некому.
+    expect(check("Устройство многофункциональное", "190", "262018.900.000006")).toMatchObject({
+      allowed: false, ruleName: "mfu-printers", reason: "mfu-printers: такие позиции не заводим"
     });
-    expect(check("Принтер", "11").allowed).toBe(true);
+    // Сделка 57625: «Принтер», 50 шт на 8,75 млн — теперь тоже не заводится.
+    expect(check("Принтер", "50", "262016.300.000016", "8 750 000")).toMatchObject({ allowed: false, keptByAmount: false });
+    expect(check("МФУ лазерное A4", "20").allowed).toBe(false);
   });
 
-  it("creates small but expensive PC and MFU deals from 2 mln tenge", () => {
+  it("creates small but expensive PC deals from 2 mln tenge", () => {
     // Сделка 48719: «Станция рабочая», 2 шт на 14,1 млн.
     expect(check("Станция рабочая", "2", "", "14 100 000")).toMatchObject({ allowed: true, ruleName: "pc", keptByAmount: true, reason: null });
     expect(check("Ноутбук", "1", "", "2 000 000").allowed).toBe(true);
     expect(check("Ноутбук", "1", "", "1 999 999.99").allowed).toBe(false);
-    expect(check("Устройство многофункциональное", "8", "", 2_400_000)).toMatchObject({ allowed: true, keptByAmount: true });
   });
 
   it("does not let monitors in even when the sum is large", () => {
@@ -179,10 +188,8 @@ describe("gzQuantityRulesSchema", () => {
 describe("shipped collectors and quantity rules agree", () => {
   const keywordsOf = (file: string) => (JSON.parse(fs.readFileSync(file, "utf8")) as { keywords: string[] }).keywords;
 
-  it("puts every PK plan keyword under the PC or MFU/printer limit, never under monitors", () => {
-    for (const keyword of keywordsOf("config/gz-plans.pk.json")) {
-      expect(["pc", "mfu-printers"]).toContain(ruleOf(keyword));
-    }
+  it("puts every PK plan keyword under the PC limit, never under an excluded rule", () => {
+    for (const keyword of keywordsOf("config/gz-plans.pk.json")) expect(ruleOf(keyword)).toBe("pc");
   });
 
   it("keeps the panel plan keywords free of any limit", () => {
