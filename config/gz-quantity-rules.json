@@ -13,9 +13,8 @@
     {
       "name": "mfu-printers",
       "truCodePrefixes": ["262018.900.", "262016.300."],
-      "namePatterns": ["мфу", "многофункциональн", "принтер"],
-      "minQuantity": 11,
-      "keepFromAmount": 2000000
+      "namePatterns": ["^мфу", "^многофункциональн", "^устройство многофункциональн", "^принтер"],
+      "exclude": true
     },
     {
       "name": "pc",
