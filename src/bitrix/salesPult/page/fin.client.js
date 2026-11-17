@@ -145,13 +145,14 @@
   }
 
   /* ---------- 03: платежи ---------- */
-  function payList(list, open) {
+  // Все списки свёрнуты, как просили: сверху итог, раскрывается по клику.
+  function payList(list, isCalendar) {
     const rows = [...list.items].sort((a, b) => b.amount - a.amount);
-    const body = `<div class="rows fin-pay"><div class="r head"><span class="label">Кому</span><span class="label">За что</span><span class="label n">Сумма</span></div>
+    const word = isCalendar ? ["платёж", "платежа", "платежей"] : ["строка", "строки", "строк"];
+    return `<details class="fin-more"><summary>${esc(list.label)} <span class="dim">${plural(rows.length, word)} · ${money(list.total)}</span></summary>
+      <div class="rows fin-pay"><div class="r head"><span class="label">Кому</span><span class="label">За что</span><span class="label n">Сумма</span></div>
       ${rows.map((x) => `<div class="r body"><span class="nm" title="${esc(x.payee)}">${esc(short(x.payee, 90))}${x.tag ? ` <span class="partner-tag">${esc(x.tag)}</span>` : ""}</span><span class="dim">${esc(x.basis || "")}</span><span class="num">${esc(amt(x.amount))}</span></div>`).join("")}
-      <div class="r body total"><span class="nm">Итого</span><span></span><span class="num">${esc(amt(list.total))}</span></div></div>`;
-    if (open) return `<h3 class="fin-sub">${esc(list.label)} <span class="dim">${plural(rows.length, ["платёж", "платежа", "платежей"])} · ${money(list.total)}</span></h3>${body}`;
-    return `<details class="fin-more"><summary>${esc(list.label)} <span class="dim">${plural(rows.length, ["строка", "строки", "строк"])} · ${money(list.total)}</span></summary>${body}</details>`;
+      <div class="r body total"><span class="nm">Итого</span><span></span><span class="num">${esc(amt(list.total))}</span></div></div></details>`;
   }
 
   function payments() {
@@ -169,14 +170,31 @@
   /* ---------- 04: дебиторы ---------- */
   let debtFilter = "";
   let debtAll = false;
+  // Сортировка по клику на «Сумма» или «Прошло»: сначала от большего к меньшему, повторный клик — наоборот.
+  let debtSort = { key: "amount", dir: -1 };
   function ageCls(days) {
     return days > 60 ? "bad" : days > 30 ? "warn" : "";
   }
-  function debtRows(list, limit) {
-    const rows = list.rows.filter((x) => !debtFilter || x.company === debtFilter).sort((a, b) => b.amount - a.amount);
+  const debtDays = (x) => (x.saleDate ? daysBetween(x.saleDate, today) : null);
+  function debtCompare(a, b) {
+    if (debtSort.key === "days") {
+      const da = debtDays(a), db = debtDays(b);
+      // без даты реализации — всегда в конце
+      if (da !== db) {
+        if (da === null) return 1;
+        if (db === null) return -1;
+        return (da - db) * debtSort.dir;
+      }
+      return b.amount - a.amount;
+    }
+    return (a.amount - b.amount) * debtSort.dir;
+  }
+  // Фильтр по компании — только для основного списка: кнопки компаний стоят внутри него.
+  function debtRows(list, limit, byCompany) {
+    const rows = list.rows.filter((x) => !byCompany || !debtFilter || x.company === debtFilter).sort(debtCompare);
     const shown = limit ? rows.slice(0, limit) : rows;
     const html = shown.map((x) => {
-      const days = x.saleDate ? daysBetween(x.saleDate, today) : null;
+      const days = debtDays(x);
       return `<div class="r body"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 80))}${x.note ? `<span class="fin-debt-note">${esc(x.note)}</span>` : ""}</span>
         <span class="dim">${esc(x.company)}</span><span class="num">${esc(amt(x.amount))}</span>
         <span class="num dim">${x.saleDate ? ddmm(x.saleDate) + (x.saleDate.slice(0, 4) !== today.slice(0, 4) ? "." + x.saleDate.slice(2, 4) : "") : "—"}</span>
@@ -184,25 +202,43 @@
     }).join("");
     return { html, total: rows.length, sum: rows.reduce((s, x) => s + x.amount, 0) };
   }
-  const debtHead = `<div class="r head"><span class="label">Должник</span><span class="label">Компания</span><span class="label n">Сумма</span><span class="label n">Реализация</span><span class="label n">Прошло</span></div>`;
+  // Как сортировка на «Планах»: заголовок колонки с aria-sort, внутри кнопка, стрелки ↓ ↑ ↕.
+  function sortBtn(key, label, what) {
+    const on = debtSort.key === key;
+    const ariaSort = on ? (debtSort.dir > 0 ? "ascending" : "descending") : "none";
+    const arrow = on ? (debtSort.dir > 0 ? "↑" : "↓") : "↕";
+    const next = on && debtSort.dir < 0 ? "от меньшего к большему" : "от большего к меньшему";
+    return `<span class="label n" role="columnheader" aria-sort="${ariaSort}"><button type="button" class="fin-sort" data-sort="${key}" title="Сортировать ${what}: ${next}">${label} <span class="ar" aria-hidden="true">${arrow}</span></button></span>`;
+  }
+  const debtHead = () => `<div class="r head fin-sortable"><span class="label">Должник</span><span class="label">Компания</span>${sortBtn("amount", "Сумма", "по сумме")}<span class="label n">Реализация</span>${sortBtn("days", "Прошло", "по дням с реализации")}</div>`;
 
-  function debtorsBlock() {
+  function debtMainHtml() {
     const D = R.debtors;
     const chips = D.companies.length > 1
       ? `<div class="chips" id="debtChips" role="group" aria-label="Компания">${["", ...D.companies].map((c) => `<button type="button" data-c="${esc(c)}" aria-pressed="${String(c === debtFilter)}">${c ? esc(c) : "Все"}</button>`).join("")}</div>`
       : "";
-    const main = debtRows(D, debtAll ? 0 : 12);
-    const byCompany = D.companies.map((c, i) => `${esc(c)} ${money(D.totals[i])}`).join(" · ");
-    let s = `${head("Дебиторы", `${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}`)}
-      <p class="lead">${byCompany}. Цвет — сколько дней прошло с реализации: больше 30 — жёлтый, больше 60 — красный.</p>
-      ${chips}<div class="rows fin-debt">${debtHead}${main.html}</div>`;
+    const main = debtRows(D, debtAll ? 0 : 12, true);
+    let s = `${chips}<div class="rows fin-debt">${debtHead()}${main.html}</div>`;
     if (main.total > 12) {
       s += `<button type="button" class="btn fin-showall" id="debtAll">${debtAll ? "Свернуть" : `Показать все ${main.total} на ${money(main.sum)}`}</button>`;
     }
+    return s;
+  }
+  const debtProblemHtml = () => `<div class="rows fin-debt">${debtHead()}${debtRows(R.problemDebts, 0).html}</div>`;
+
+  // Как в «Платежах»: шапка с итогом, списки свёрнуты. Перерисовывается только содержимое,
+  // поэтому раскрытый блок не закрывается от фильтра или сортировки.
+  function debtorsBlock() {
+    const D = R.debtors;
+    const byCompany = D.companies.map((c, i) => `${esc(c)} ${money(D.totals[i])}`).join(" · ");
+    let s = `${head("Дебиторы", `${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}`)}
+      <p class="lead">${byCompany}. Цвет — сколько дней прошло с реализации: больше 30 — жёлтый, больше 60 — красный.</p>
+      <details class="fin-more" id="debtMainBox"><summary>Список дебиторов <span class="dim">${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}</span></summary>
+        <div id="debtMain">${debtMainHtml()}</div></details>`;
     if (R.problemDebts && R.problemDebts.rows.length) {
-      const pd = debtRows(R.problemDebts, 0);
-      s += `<h3 class="fin-sub">Проблемные долги <span class="dim">${plural(pd.total, ["долг", "долга", "долгов"])} · ${money(pd.sum)} · суды, исполнительные листы, списания</span></h3>
-        <div class="rows fin-debt">${debtHead}${pd.html}</div>`;
+      const pd = R.problemDebts.rows;
+      s += `<details class="fin-more" id="debtProblemBox"><summary>Проблемные долги <span class="dim">${plural(pd.length, ["долг", "долга", "долгов"])} · ${money(pd.reduce((a, x) => a + x.amount, 0))} · суды, исполнительные листы, списания</span></summary>
+        <div id="debtProblem">${debtProblemHtml()}</div></details>`;
     }
     return s;
   }
@@ -273,12 +309,10 @@
   }
 
   function rerenderDebtors() {
-    const box = document.getElementById("f-debtors");
-    if (!box) return;
-    const keep = blockNo;
-    blockNo = Number(box.querySelector(".idx")?.textContent || "1") - 1;
-    box.innerHTML = debtorsBlock();
-    blockNo = keep;
+    const main = document.getElementById("debtMain");
+    if (main) main.innerHTML = debtMainHtml();
+    const problem = document.getElementById("debtProblem");
+    if (problem) problem.innerHTML = debtProblemHtml();
   }
 
   el?.addEventListener("click", (e) => {
@@ -288,10 +322,20 @@
       rerenderDebtors();
       return;
     }
+    const sort = e.target.closest(".fin-sort");
+    if (sort) {
+      const key = sort.dataset.sort;
+      debtSort = debtSort.key === key ? { key, dir: -debtSort.dir } : { key, dir: -1 };
+      const box = sort.closest("#debtMain, #debtProblem");
+      rerenderDebtors();
+      // кнопку перерисовали — фокус возвращаем на новую, чтобы клавиатура не теряла место
+      box?.querySelector(`.fin-sort[data-sort="${key}"]`)?.focus();
+      return;
+    }
     if (e.target.closest("#debtAll")) {
       debtAll = !debtAll;
       rerenderDebtors();
-      if (!debtAll) document.getElementById("f-debtors")?.scrollIntoView({ block: "start" });
+      if (!debtAll) document.getElementById("debtMainBox")?.scrollIntoView({ block: "start" });
     }
   });
 

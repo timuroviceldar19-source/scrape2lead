@@ -26,6 +26,13 @@
 .fin-debt .r { grid-template-columns: minmax(0, 3fr) minmax(90px, .8fr) 100px 96px 90px; }
 .fin-debt .r .nm { white-space: normal; }
 .fin-debt-note { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--ink-3); }
+.fin-sort { border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; padding: 2px 0; white-space: nowrap; }
+.fin-sort:hover, [aria-sort="ascending"] > .fin-sort, [aria-sort="descending"] > .fin-sort { color: var(--ink); }
+.fin-sort .ar { display: inline-block; min-width: 1ch; }
+[aria-sort="none"] > .fin-sort .ar { opacity: .4; }
+.fin-sort:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
+.fin-more > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
+#debtMain > .chips { margin-top: 8px; }
 .fin-cash { min-width: 640px; }
 .fin-in .r { grid-template-columns: minmax(0, 3fr) minmax(90px, 1fr) 140px; }
 .fin-bal .r { grid-template-columns: minmax(0, 1.3fr) minmax(0, 2fr) 110px; }
@@ -44,6 +51,11 @@
   .fin-debt .r > :nth-child(4) { display: none; }
   .fin-debt .r > :nth-child(5) { grid-column: 2; grid-row: 2; font-size: 12px; }
   .fin-pay .r.total > :nth-child(2) { display: none; }
+  /* на телефоне шапка дебиторов — только кнопки сортировки */
+  .fin-debt .r.head.fin-sortable { display: flex; justify-content: flex-end; align-items: center; gap: 18px; padding-bottom: 8px; }
+  .fin-debt .r.head.fin-sortable > span:not([role="columnheader"]) { display: none; }
+  .fin-debt .r.head.fin-sortable::before { content: "Сортировка"; margin-right: auto; font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+  .fin-sort { padding: 6px 0; }
 }
 @media (max-width: 480px) {
   .fin-tile { padding: 12px 12px 14px; }
