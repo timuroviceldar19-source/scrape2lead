@@ -1,5 +1,5 @@
 // Раскладывает страницы пульта по вариантам ролей для выкладки на Cloudflare Pages:
-// _r/all — полный пульт, _r/m<ID> — вид каждого менеджера из конфига ролей.
+// _r/all — полный пульт (с «Финансами»), _r/m<ID> — вид каждого менеджера из конфига ролей (без них).
 // Почты не печатает: лог workflow публичный.
 //
 //   npx tsx scripts/pult-variants.mts exports/sales-pult exports/sales-pult-deploy exports/pult-gate/config.json
@@ -24,6 +24,8 @@ const write = (variant: string, name: string, html: string) => {
 fs.rmSync(outDir, { recursive: true, force: true });
 write("all", "index.html", fs.readFileSync(path.join(srcDir, "index.html"), "utf8"));
 write("all", "reg.html", fs.readFileSync(path.join(srcDir, "reg.html"), "utf8"));
+// «Финансы» — только полный вариант: виду менеджера и ТВ их не собираем, проверка входа ответит «недоступна».
+if (fs.existsSync(path.join(srcDir, "fin.html"))) write("all", "fin.html", fs.readFileSync(path.join(srcDir, "fin.html"), "utf8"));
 const built = ["all"];
 
 const config = readJson<PultGateConfig | null>(configPath);

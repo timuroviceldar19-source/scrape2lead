@@ -172,6 +172,7 @@ describe("роли пульта: выдача страниц", () => {
   const site = {
     "/_r/all/index.html": "ПОЛНЫЙ ПУЛЬТ",
     "/_r/all/reg.html": "ПОЛНАЯ ВЫРУЧКА",
+    "/_r/all/fin.html": "ПОЛНЫЕ ФИНАНСЫ",
     "/_r/tv/index.html": "ПУЛЬТ ДЛЯ ТЕЛЕВИЗОРА"
   };
   const config = parseGateConfig(JSON.stringify({
@@ -183,7 +184,7 @@ describe("роли пульта: выдача страниц", () => {
 
   it("без секрета все, кого пустил Access, видят полный пульт, как раньше", async () => {
     const a = assets(site);
-    for (const [p, text] of [["/", "ПОЛНЫЙ ПУЛЬТ"], ["/index.html", "ПОЛНЫЙ ПУЛЬТ"], ["/reg", "ПОЛНАЯ ВЫРУЧКА"], ["/reg.html", "ПОЛНАЯ ВЫРУЧКА"]]) {
+    for (const [p, text] of [["/", "ПОЛНЫЙ ПУЛЬТ"], ["/index.html", "ПОЛНЫЙ ПУЛЬТ"], ["/reg", "ПОЛНАЯ ВЫРУЧКА"], ["/reg.html", "ПОЛНАЯ ВЫРУЧКА"], ["/fin", "ПОЛНЫЕ ФИНАНСЫ"], ["/fin.html", "ПОЛНЫЕ ФИНАНСЫ"]]) {
       const res = await handleGateRequest(req(p), { config: null, assets: a });
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(text);
@@ -194,7 +195,7 @@ describe("роли пульта: выдача страниц", () => {
 
   it("закрывает прямые адреса вариантов и всё лишнее", async () => {
     const a = assets(site);
-    for (const p of ["/_r/all/", "/_r/all/index.html", "/_r/all/reg", "/_r/tv/", "/payload.json", "/favicon.ico", "/reg/../_r/all/"]) {
+    for (const p of ["/_r/all/", "/_r/all/index.html", "/_r/all/reg", "/_r/all/fin", "/_r/tv/", "/payload.json", "/payload-fin.json", "/favicon.ico", "/reg/../_r/all/"]) {
       const res = await handleGateRequest(req(p), { config, assets: a });
       expect(res.status, p).toBe(404);
       expect(await res.text()).not.toContain("ПОЛН");
@@ -255,6 +256,17 @@ describe("роли пульта: выдача страниц", () => {
     expect(html).not.toContain("ПОЛН");
   });
 
+  it("«Финансы» есть только в полном виде: директору открыты, телевизору — «недоступна»", async () => {
+    const boss = await asUser("boss@example.test", "/fin");
+    expect(boss.status).toBe(200);
+    expect(await boss.text()).toBe("ПОЛНЫЕ ФИНАНСЫ");
+    const tv = await asUser("tv@example.test", "/fin.html");
+    expect(tv.status).toBe(403);
+    const html = await tv.text();
+    expect(html).toContain("недоступна");
+    expect(html).not.toContain("ФИНАНСЫ");
+  });
+
   it("страницы нет в виде роли — «эта страница вам недоступна» со ссылкой на пульт", async () => {
     const res = await asUser("tv@example.test", "/reg");
     expect(res.status).toBe(403);
@@ -309,6 +321,9 @@ describe("роли пульта: выкладка", () => {
     expect(deploy).not.toMatch(/cp [^\n]*exports\/sales-pult-deploy\/index\.html/);
     // Выкладка идёт из корня репозитория, иначе wrangler не найдёт папку functions.
     expect(deploy).toContain("npx wrangler pages deploy exports/sales-pult-deploy --project-name f3-pult");
+    // «Финансы» закрыты Access так же, как главная и «Выручка»: до и после выкладки.
+    expect(deploy.match(/check_access "https:\/\/f3-pult\.pages\.dev\/fin"/g)).toHaveLength(2);
+    expect(deploy).toContain('check_access "$DEPLOY_URL/fin"');
     expect(deploy.indexOf("pult-gate-config")).toBeLessThan(deploy.indexOf("wrangler pages deploy"));
   });
 

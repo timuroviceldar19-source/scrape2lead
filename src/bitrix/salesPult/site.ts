@@ -42,9 +42,13 @@ import {
 } from "./pace.js";
 
 import type { RegisterView } from "./register/types.js";
+import type { FinanceView } from "./finance/types.js";
 
 const pultHtml = fs.readFileSync(new URL("./page/pult.html", import.meta.url), "utf8");
 const regHtml = fs.readFileSync(new URL("./page/reg.html", import.meta.url), "utf8");
+const finHtml = fs.readFileSync(new URL("./page/fin.html", import.meta.url), "utf8");
+const finCss = fs.readFileSync(new URL("./page/fin.css", import.meta.url), "utf8");
+const finClientJs = fs.readFileSync(new URL("./page/fin.client.js", import.meta.url), "utf8");
 const pultCss = fs.readFileSync(new URL("./page/pult.css", import.meta.url), "utf8");
 const pultClientJs = fs.readFileSync(new URL("./page/pult.client.js", import.meta.url), "utf8");
 const registerClientJs = fs.readFileSync(new URL("./page/register.client.js", import.meta.url), "utf8");
@@ -67,6 +71,13 @@ export interface RegisterPagePayload {
   portal?: string;
   pultUrl?: string;
   register: RegisterView;
+}
+
+/** Страница «Финансы»: только полный вариант пульта, менеджеру и на ТВ не собирается. */
+export interface FinancePagePayload {
+  asOfDate: string;
+  generatedAt: string;
+  finance: FinanceView;
 }
 
 export function buildSignals(payload: SalesPultPayload): SignalItem[] {
@@ -114,6 +125,16 @@ export function renderRegisterHtml(payload: RegisterPagePayload): string {
   };
 
   return regHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
+}
+
+export function renderFinanceHtml(payload: FinancePagePayload): string {
+  const replacements: Record<string, string> = {
+    "/*__CSS__*/": `${pultCss}\n${finCss}`,
+    "__PAYLOAD__": safeJson(payload),
+    "/*__CLIENT_JS__*/": finClientJs
+  };
+
+  return finHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
 }
 
 export {
