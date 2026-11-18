@@ -16,7 +16,8 @@ import type { FinanceFileInfo, FinanceReport, FinanceSnapshot, FinanceView } fro
 export const DEFAULT_FINANCE_CACHE_PATH = "data/register/finance.json";
 
 /** Повышать, когда меняется разбор: файлы из кэша тогда разбираются заново. */
-export const FINANCE_PARSE_VERSION = 1;
+// 2 — скрытые пустые колонки между банками и листы материальных ведомостей.
+export const FINANCE_PARSE_VERSION = 2;
 
 const DEFAULT_MAX_DOWNLOADS = 20;
 const MAX_SNAPSHOTS = 400;

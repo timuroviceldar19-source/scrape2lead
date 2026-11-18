@@ -40,6 +40,47 @@ describe("финансы: разбор ежедневного отчёта", () 
     expect(r.cashFlow).toEqual({ prevDate: "2026-11-16", prev: 2_000_000, today: 1_550_000.27, withoutIncoming: 700_000.27, spent: 1_299_999.73 });
   });
 
+  it("пустые скрытые колонки между банками пропускаются (так пришёл файл 18.11)", () => {
+    const r = parseFinanceWorkbook(financeWorkbook({ cashGap: true }));
+    expect(r.cash.banks).toEqual(["Банк Один", "Банк Два", "Касса"]);
+    expect(r.cash.rows.map((x) => x.company)).toEqual(["Альфа", "Бета", "Гамма"]);
+    expect(r.cash.rows[1].byBank).toEqual([0, 300_000, 0.27]);
+    expect(r.cash.total).toBeCloseTo(1_550_000.27, 2);
+    expect(r.cash.inventory).toBe(10_000_000);
+    expect(r.warnings).toEqual([]);
+  });
+
+  it("материальные ведомости: компании, склады, товары; приход и расход — если есть в выгрузке", () => {
+    const r = parseFinanceWorkbook(financeWorkbook({ stockSheets: true }));
+    expect(r.warnings).toEqual([]);
+    // скрытый лист и лист без остатков не читаются; порядок — как листы в файле
+    expect(r.stock!.map((s) => s.company)).toEqual(["Бета", "Альфа"]);
+    const [beta, alpha] = r.stock!;
+    expect(alpha).toMatchObject({ company: "Альфа", period: "Ноябрь 2026", hasMoves: true, total: { start: 805_250, in: 600_000, out: 450_000, end: 955_250 } });
+    expect(alpha.warehouses.map((w) => [w.name, w.items.length, w.sums.end])).toEqual([["Склад Один", 3, 805_250], ["Склад Два", 1, 150_000]]);
+    expect(alpha.warehouses[0].items[0]).toEqual({ name: "Ноутбук Тест 15", startQty: 2, startSum: 400_000, inQty: 3, inSum: 600_000, outQty: 1, outSum: 200_000, endQty: 4, endSum: 800_000 });
+    // «шт» не хранится, другие единицы — да; дробное количество сохраняется
+    expect(alpha.warehouses[0].items[2]).toMatchObject({ name: "Кабель тестовый", unit: "м", startQty: 10.5, endQty: 10.5 });
+    expect(alpha.warehouses[0].items[1]).toMatchObject({ name: "Монитор Пример 24", endQty: 0, endSum: 0, outQty: 5 });
+    // без колонок прихода и расхода: полей нет, «Итого» нет — итог по складам
+    expect(beta).toEqual({
+      company: "Бета", period: "Ноябрь 2026", hasMoves: false,
+      warehouses: [{ name: "Витрина", sums: { start: 100_000, end: 200_000 }, items: [{ name: "Ноутбук Демо", startQty: 1, startSum: 100_000, endQty: 2, endSum: 200_000 }] }],
+      total: { start: 100_000, end: 200_000 }
+    });
+    expect(parseFinanceWorkbook(financeWorkbook()).stock).toBeUndefined();
+  });
+
+  it("материальная ведомость: итог склада не сходится с товарами — предупреждение, отчёт разбирается", () => {
+    const r = parseFinanceWorkbook(financeWorkbook({ stockSheets: true, stockMismatch: true }));
+    // склад не сходится с товарами, и поэтому «Итого» не сходится со складами
+    expect(r.warnings).toEqual([
+      expect.stringMatching(/^Склад Альфа, «Склад Один»: остаток на конец в файле 806\s250 ₸, сумма товаров 805\s250 ₸$/),
+      expect.stringMatching(/^Склад Альфа: «Итого» на конец в файле 955\s250 ₸, сумма складов 956\s250 ₸$/)
+    ]);
+    expect(r.stock).toHaveLength(2);
+  });
+
   it("поступления: плательщики в колонках, компании в строках", () => {
     const r = parseFinanceWorkbook(financeWorkbook());
     expect(r.incoming).toEqual([

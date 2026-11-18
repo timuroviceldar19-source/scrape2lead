@@ -24,6 +24,10 @@ import type {
   FinanceRate,
   FinanceReport,
   FinanceSnapshot,
+  FinanceStock,
+  FinanceStockItem,
+  FinanceStockSums,
+  FinanceStockWarehouse,
   FinanceTax
 } from "./types.js";
 
@@ -218,11 +222,14 @@ function parseCash(g: Grid, warnings: string[]): FinanceCash {
     for (let c = 3; c <= g.maxCol; c++) {
       if (g.key(r, c) !== "тмц" || g.key(r, c - 1) !== "всего") continue;
       const totalCol = c - 1;
+      // Компании — ближайшая слева колонка, где под шапкой текст (названия), у банков там числа.
+      // Между ней и «Всего» — банки; пустые колонки (финансист скрывает ненужные банки) пропускаются.
+      let companyCol = 0;
+      for (let k = totalCol - 1; k >= 1 && !companyCol; k--) if (g.text(r + 1, k)) companyCol = k;
+      if (!companyCol) continue;
       const bankCols: number[] = [];
-      for (let k = totalCol - 1; k >= 1 && g.text(r, k); k--) bankCols.unshift(k);
+      for (let k = companyCol + 1; k < totalCol; k++) if (g.text(r, k)) bankCols.push(k);
       if (!bankCols.length || bankCols.every((k) => g.key(r, k) === "дс")) continue;
-      const companyCol = bankCols[0] - 1;
-      if (companyCol < 1) continue;
       const banks = bankCols.map((k) => g.text(r, k)!);
       const rows: FinanceCash["rows"] = [];
       let totalsRow: number | null = null;
@@ -247,6 +254,8 @@ function parseCash(g: Grid, warnings: string[]): FinanceCash {
         total = g.num(totalsRow, totalCol) ?? rowsTotal;
         inventory = g.num(totalsRow, c) ?? rowsInventory;
         if (differs(total, rowsTotal)) warnings.push(`Деньги: итог в файле ${fmt(total)}, сумма строк ${fmt(rowsTotal)}`);
+        // деньги в колонке без названия банка не попадут в таблицу — сверка по банкам это покажет
+        if (differs(total, sum(byBank))) warnings.push(`Деньги: «Всего» ${fmt(total)}, сумма по банкам ${fmt(sum(byBank))}`);
         if (differs(inventory, rowsInventory)) warnings.push(`ТМЦ: итог в файле ${fmt(inventory)}, сумма строк ${fmt(rowsInventory)}`);
       } else {
         warnings.push("Деньги: в файле нет строки «Итого», итог посчитан по строкам");
@@ -515,6 +524,160 @@ function checkSummary(g: Grid, h: CompanyHeader, pnl: FinanceReport["pnl"], warn
   }
 }
 
+/* ---------- материальные ведомости 1С (отдельные листы, по компании на лист) ---------- */
+//
+// Выгрузка 1С «Материальная ведомость»: в первой строке компания, ниже «…за Ноябрь 2026 г.»,
+// шапка в две строки — группы («Склад», «Начальный остаток», «Итого приход», «Итого расход»,
+// «Конечный остаток») и под ними «№ п/п | Номенклатура | … | Количество | Сумма». Колонки
+// прихода и расхода бывают не у всех компаний — зависят от настроек выгрузки, поэтому всё
+// ищется по подписям. Строка, где в «№ п/п» текст, — склад с итогами; с числом — товар.
+
+type StockSlot = "start" | "in" | "out" | "end";
+const STOCK_GROUPS: Record<string, StockSlot> = {
+  "начальный остаток": "start",
+  "итого приход": "in",
+  "итого расход": "out",
+  "конечный остаток": "end"
+};
+const roundSum = (n: number) => Math.round(n);
+const roundQty = (n: number) => Math.round(n * 1000) / 1000;
+
+function stockCompany(g: Grid, beforeRow: number): string {
+  for (let r = 1; r < beforeRow; r++) {
+    for (let c = 1; c <= Math.min(g.maxCol, 8); c++) {
+      const t = g.text(r, c)?.replace(/\s+/g, " ").trim();
+      if (!t || labelKey(t).startsWith("материальная ведомость")) continue;
+      return t.replace(/^(тоо|ип|ао)\s+/i, "").replace(/^["«]+|["»]+$/g, "").trim() || t;
+    }
+  }
+  return "";
+}
+
+function parseStockSheet(ws: ExcelJS.Worksheet, warnings: string[]): FinanceStock | null {
+  const g = gridFromSheet(ws);
+  const nameHead = g.find((k) => k === "номенклатура");
+  if (!nameHead || nameHead.r < 2) return null;
+  const hr = nameHead.r;
+  const cols: Partial<Record<StockSlot, { qty?: number; sum?: number }>> = {};
+  for (let c = 1; c <= g.maxCol; c++) {
+    const slot = STOCK_GROUPS[g.key(hr - 1, c)];
+    if (!slot) continue;
+    const at = (cols[slot] ??= {});
+    const sub = g.key(hr, c);
+    if (sub === "количество" && !at.qty) at.qty = c;
+    if (sub === "сумма" && !at.sum) at.sum = c;
+  }
+  // без начального и конечного остатка это не ведомость (другой лист с «Номенклатурой»)
+  if (!cols.start?.sum || !cols.end?.sum) return null;
+  const hasMoves = Boolean(cols.in?.sum && cols.out?.sum);
+  let numCol = 1;
+  let unitCol = 0;
+  for (let c = 1; c <= g.maxCol; c++) {
+    const k = g.key(hr, c);
+    if (k === "№ п/п") numCol = c;
+    if (k === "ед изм" && !unitCol) unitCol = c;
+  }
+  const company = stockCompany(g, hr - 1) || ws.name;
+  const title = g.find((k) => k.startsWith("материальная ведомость"));
+  const period = title ? /за\s+(\S+\s+\d{4})/i.exec(g.text(title.r, title.c)!.replace(/\s+/g, " "))?.[1] : undefined;
+
+  const sums = (r: number): FinanceStockSums => ({
+    start: g.num(r, cols.start!.sum!) ?? 0,
+    ...(hasMoves ? { in: g.num(r, cols.in!.sum!) ?? 0, out: g.num(r, cols.out!.sum!) ?? 0 } : {}),
+    end: g.num(r, cols.end!.sum!) ?? 0
+  });
+  const val = (r: number, c: number | undefined) => (c ? g.num(r, c) ?? 0 : 0);
+  const warehouses: FinanceStockWarehouse[] = [];
+  let fileTotal: FinanceStockSums | null = null;
+  let current: FinanceStockWarehouse | null = null;
+  for (let r = hr + 1; r <= g.maxRow; r++) {
+    const label = g.text(r, numCol);
+    if (label && g.num(r, numCol) === null) {
+      if (labelKey(label) === "итого") {
+        fileTotal = sums(r);
+        break;
+      }
+      current = { name: label.replace(/\s+/g, " ").trim(), sums: sums(r), items: [] };
+      warehouses.push(current);
+      continue;
+    }
+    const name = g.text(r, nameHead.c);
+    if (g.num(r, numCol) === null || !name) continue;
+    if (!current) {
+      current = { name: "Без склада", sums: { start: 0, ...(hasMoves ? { in: 0, out: 0 } : {}), end: 0 }, items: [] };
+      warehouses.push(current);
+    }
+    const unit = unitCol ? g.text(r, unitCol)?.trim() : undefined;
+    const item: FinanceStockItem = {
+      name: name.replace(/\s+/g, " ").trim().slice(0, 160),
+      ...(unit && labelKey(unit) !== "шт" ? { unit } : {}),
+      startQty: roundQty(val(r, cols.start.qty)),
+      startSum: val(r, cols.start.sum),
+      ...(hasMoves
+        ? { inQty: roundQty(val(r, cols.in!.qty)), inSum: val(r, cols.in!.sum), outQty: roundQty(val(r, cols.out!.qty)), outSum: val(r, cols.out!.sum) }
+        : {}),
+      endQty: roundQty(val(r, cols.end.qty)),
+      endSum: val(r, cols.end.sum)
+    };
+    current.items.push(item);
+  }
+  if (!warehouses.length) return null;
+
+  // Сверка: склад — с суммой своих товаров, «Итого» — с суммой складов. Склад без строк-товаров
+  // («Без склада» мы создали сами) берёт итог из товаров.
+  for (const w of warehouses) {
+    const itemsEnd = sum(w.items.map((x) => x.endSum));
+    if (w.name === "Без склада") {
+      w.sums = {
+        start: sum(w.items.map((x) => x.startSum)),
+        ...(hasMoves ? { in: sum(w.items.map((x) => x.inSum ?? 0)), out: sum(w.items.map((x) => x.outSum ?? 0)) } : {}),
+        end: itemsEnd
+      };
+    } else if (differs(w.sums.end, itemsEnd)) {
+      warnings.push(`Склад ${company}, «${w.name}»: остаток на конец в файле ${fmt(w.sums.end)}, сумма товаров ${fmt(itemsEnd)}`);
+    }
+  }
+  const whTotal: FinanceStockSums = {
+    start: sum(warehouses.map((w) => w.sums.start)),
+    ...(hasMoves ? { in: sum(warehouses.map((w) => w.sums.in ?? 0)), out: sum(warehouses.map((w) => w.sums.out ?? 0)) } : {}),
+    end: sum(warehouses.map((w) => w.sums.end))
+  };
+  if (fileTotal && differs(fileTotal.end, whTotal.end)) {
+    warnings.push(`Склад ${company}: «Итого» на конец в файле ${fmt(fileTotal.end)}, сумма складов ${fmt(whTotal.end)}`);
+  }
+  const round = (s: FinanceStockSums): FinanceStockSums => ({
+    start: roundSum(s.start),
+    ...(s.in !== undefined ? { in: roundSum(s.in) } : {}),
+    ...(s.out !== undefined ? { out: roundSum(s.out) } : {}),
+    end: roundSum(s.end)
+  });
+  for (const w of warehouses) {
+    w.sums = round(w.sums);
+    for (const x of w.items) {
+      x.startSum = roundSum(x.startSum);
+      x.endSum = roundSum(x.endSum);
+      if (x.inSum !== undefined) x.inSum = roundSum(x.inSum);
+      if (x.outSum !== undefined) x.outSum = roundSum(x.outSum);
+    }
+  }
+  return { company, ...(period ? { period } : {}), hasMoves, warehouses, total: round(fileTotal ?? whTotal) };
+}
+
+/** Все листы-ведомости файла. Сломанный лист не роняет отчёт: он уходит в предупреждения. */
+function parseStockSheets(workbook: ExcelJS.Workbook, mainSheet: ExcelJS.Worksheet, warnings: string[]): FinanceStock[] {
+  const out: FinanceStock[] = [];
+  for (const ws of workbook.worksheets) {
+    if (ws === mainSheet || ws.state === "hidden" || ws.state === "veryHidden") continue;
+    try {
+      const stock = parseStockSheet(ws, warnings);
+      if (stock) out.push(stock);
+    } catch (e) {
+      warnings.push(`Лист «${ws.name}» похож на материальную ведомость, но не разобран: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return out;
+}
+
 function pickSheet(workbook: ExcelJS.Workbook): ExcelJS.Worksheet {
   const byName = workbook.worksheets.find((ws) => labelKey(ws.name).startsWith("ежед"));
   if (byName) return byName;
@@ -522,7 +685,8 @@ function pickSheet(workbook: ExcelJS.Workbook): ExcelJS.Worksheet {
 }
 
 export function parseFinanceWorkbook(workbook: ExcelJS.Workbook): FinanceReport {
-  const g = gridFromSheet(pickSheet(workbook));
+  const mainSheet = pickSheet(workbook);
+  const g = gridFromSheet(mainSheet);
   const warnings: string[] = [];
 
   const header = findCompanyHeader(g);
@@ -554,6 +718,7 @@ export function parseFinanceWorkbook(workbook: ExcelJS.Workbook): FinanceReport 
   const liabilities = parseLiabilities(g, layout);
   const payments = parsePayments(g, warnings);
   checkSummary(g, header, pnl, warnings);
+  const stock = parseStockSheets(workbook, mainSheet, warnings);
 
   return {
     dataDate,
@@ -571,6 +736,7 @@ export function parseFinanceWorkbook(workbook: ExcelJS.Workbook): FinanceReport 
     liabilities,
     payments,
     rates: parseRates(g),
+    ...(stock.length ? { stock } : {}),
     warnings
   };
 }

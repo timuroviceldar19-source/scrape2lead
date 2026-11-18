@@ -148,6 +148,58 @@ describe("страница «Финансы»", () => {
     } finally { await page.close(); }
   }, 20000);
 
+  it("склад: ведомости по компаниям, склады свёрнуты, поиск раскрывает найденное", async () => {
+    for (const width of [1440, 375]) {
+      const { page, errors } = await open(renderFinanceHtml(payload(view({ stockSheets: true }))), width);
+      try {
+        const stock = page.locator("#f-stock");
+        expect(await stock.locator(".block-head .meta").innerText()).toMatch(/материальная ведомость 1С за ноябрь 2026/i);
+        // компания с большим остатком — первой
+        expect((await stock.locator("#stockChips button").allTextContents()).map((t) => t.trim())).toEqual(["Альфа", "Бета"]);
+        const summaries = () => stock.locator("details.fin-wh summary").evaluateAll((es) => es.map((e) => e.textContent!.replace(/\s+/g, " ").trim()));
+        expect(await summaries()).toEqual(["Склад Один 3 позиции · 805 тыс ₸", "Склад Два 1 позиция · 150 тыс ₸"]);
+        expect(await stock.locator("details.fin-wh[open]").count()).toBe(0);
+        // внутри склада: дороже — выше, проданное в ноль — внизу и серым
+        await stock.locator("details.fin-wh summary").first().click();
+        const first = stock.locator("details.fin-wh").first();
+        expect(await first.locator(".r.body .nm").evaluateAll((es) => es.map((e) => e.getAttribute("title")))).toEqual(["Ноутбук Тест 15", "Кабель тестовый", "Монитор Пример 24"]);
+        expect(await first.locator(".r.body.is-gone").count()).toBe(1);
+        if (width === 1440) {
+          expect((await first.locator(".r.head .label").allTextContents()).map((t) => t.trim())).toEqual(["Товар", "На начало", "Приход", "Расход", "На конец", "Сумма"]);
+        } else {
+          expect((await first.locator(".fin-stock-m").first().innerText()).replace(/\s/g, " ")).toBe("остаток 2 → 4 · приход 3 · расход 1");
+        }
+        await stock.locator("details.fin-wh summary").first().click();
+        // поиск: раскрывает склады с найденным, считает по компаниям, очистка закрывает раскрытое поиском
+        await page.locator("#stockQ").fill("ноутбук");
+        expect(await page.locator("#stockFound").innerText()).toBe("найдено: 2 позиции");
+        expect(await stock.locator("details.fin-wh[open]").count()).toBe(2);
+        expect(await stock.locator(".r.body:not([hidden])").count()).toBe(2);
+        expect((await stock.locator("#stockChips button").allTextContents()).map((t) => t.trim())).toEqual(["Альфа · 2", "Бета · 1"]);
+        await page.locator("#stockQ").fill("кабель тест");
+        expect(await stock.locator("details.fin-wh:not([hidden])").count()).toBe(1);
+        await page.locator("#stockQ").fill("");
+        expect(await stock.locator("details.fin-wh[open]").count()).toBe(0);
+        expect(await stock.locator("details.fin-wh[hidden], .r.body[hidden]").count()).toBe(0);
+        expect((await stock.locator("#stockChips button").allTextContents()).map((t) => t.trim())).toEqual(["Альфа", "Бета"]);
+        // у второй компании прихода и расхода в выгрузке нет — и колонок нет
+        await stock.locator('#stockChips button[data-c="Бета"]').click();
+        expect(await stock.locator("details.fin-wh").count()).toBe(1);
+        expect(await stock.locator(".fin-note").first().innerText()).toMatch(/Прихода и расхода в выгрузке этой компании нет/);
+        expect(await stock.locator(".fin-stock.moves").count()).toBe(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        expect(errors).toEqual([]);
+      } finally { await page.close(); }
+    }
+  }, 20000);
+
+  it("нет листов ведомости — нет и раздела «Склад»", async () => {
+    const { page } = await open(renderFinanceHtml(payload(view())), 1440);
+    try {
+      expect(await page.locator("#f-stock").count()).toBe(0);
+    } finally { await page.close(); }
+  });
+
   it("одна запись в истории — без графиков, с пояснением", async () => {
     const { page } = await open(renderFinanceHtml(payload(view())), 1440);
     try {
