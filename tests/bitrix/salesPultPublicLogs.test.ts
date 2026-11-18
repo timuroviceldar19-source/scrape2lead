@@ -141,7 +141,7 @@ function createFakeBitrixFetch(opts: MockBitrixOptions = {}) {
       if (opts.failBatchWithSensitiveText) {
         return jsonResponse(
           {
-            error: "INTERNAL_ERROR",
+            error: "INTERNAL_SERVER_ERROR",
             error_description: `Batch failure with ${MGR_1.name} and ${COMPANY_1} sum ${AMOUNT_1}`
           },
           500
@@ -439,7 +439,7 @@ describe("Sales Pult public logs redaction (morning / evening / dry-run / delive
         if (echoed.includes(MGR_1.id)) {
           return jsonResponse(
             {
-              error: "DELIVERY_REJECTED",
+              error: "INTERNAL_SERVER_ERROR",
               error_description: `Cannot deliver report: ${echoed}`
             },
             500
@@ -470,10 +470,64 @@ describe("Sales Pult public logs redaction (morning / evening / dry-run / delive
 
     expect(process.exitCode).toBe(1);
     expect(out.stderr).toContain("HTTP 500");
-    expect(out.stderr).toContain("code=DELIVERY_REJECTED");
+    expect(out.stderr).toContain("code=INTERNAL_SERVER_ERROR");
     expect(out.stderr).toContain("HTTP 502");
     expect(out.stderr).toContain("[ОШИБКА ДОСТАВКИ]");
     expect(out.stdout).toContain("ошибок_доставки=2");
+    expectNoSensitiveLeaks(out.combined);
+  });
+
+  it("drops fictional private values from Bitrix error field so they never reach stdout or stderr", async () => {
+    const privateDeliveryErrorCode = "PRIVATE_CLIENT_SECRET_TAG_999";
+    const privateRecheckErrorCode = "PRIVATE_MANAGER_TOKEN_XYZ";
+    let getMessagesCalls = 0;
+
+    const { fetchImpl } = createFakeBitrixFetch({
+      onGetMessages: () => {
+        getMessagesCalls++;
+        if (getMessagesCalls === 1) {
+          return jsonResponse({ result: { messages: [] } });
+        }
+        return jsonResponse(
+          {
+            error: privateRecheckErrorCode,
+            error_description: `Private recheck failure for ${MGR_1.name}`
+          },
+          400
+        );
+      },
+      onSendMessage: () =>
+        jsonResponse(
+          {
+            error: privateDeliveryErrorCode,
+            error_description: `Rejected for ${MGR_1.name} ${COMPANY_1} ${AMOUNT_1}`
+          },
+          400
+        )
+    });
+
+    const rawClient = new BitrixClient(FICTIONAL_WEBHOOK, {
+      fetchImpl,
+      requestDelayMs: 0,
+      retryBaseDelayMs: 0
+    });
+
+    const out = await captureOutput(() =>
+      runSalesPult(["--mode", "morning", "--execute"], {
+        config: createFictionalConfig(),
+        rawClient,
+        webhookUrl: FICTIONAL_WEBHOOK,
+        nowIso: FICTIONAL_NOW_ISO,
+        skipUpdates: true
+      })
+    );
+
+    expect(process.exitCode).toBe(1);
+    expect(out.stderr).toContain("BitrixApiError, HTTP 400");
+    expect(out.stdout).not.toContain(privateDeliveryErrorCode);
+    expect(out.stderr).not.toContain(privateDeliveryErrorCode);
+    expect(out.stdout).not.toContain(privateRecheckErrorCode);
+    expect(out.stderr).not.toContain(privateRecheckErrorCode);
     expectNoSensitiveLeaks(out.combined);
   });
 
@@ -530,7 +584,7 @@ describe("Sales Pult public logs redaction (morning / evening / dry-run / delive
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(out.stderr).toContain("Sales Pult Error:");
     expect(out.stderr).toContain("HTTP 500");
-    expect(out.stderr).toContain("code=INTERNAL_ERROR");
+    expect(out.stderr).toContain("code=INTERNAL_SERVER_ERROR");
     expectNoSensitiveLeaks(out.combined);
   });
 
@@ -592,7 +646,7 @@ describe("Sales Pult public logs redaction (morning / evening / dry-run / delive
         deliveredAfterError.push({ id: deliveredAfterError.length + 100, text: msg });
         return jsonResponse(
           {
-            error: "GATEWAY_TIMEOUT",
+            error: "OPERATION_TIME_LIMIT",
             error_description: `Timed out after accepting ${msg}`
           },
           504
@@ -619,24 +673,36 @@ describe("Sales Pult public logs redaction (morning / evening / dry-run / delive
     expect(process.exitCode).toBeUndefined();
     expect(deliveredAfterError).toHaveLength(2);
     expect(out.stderr).toContain("HTTP 504");
-    expect(out.stderr).toContain("code=GATEWAY_TIMEOUT");
+    expect(out.stderr).toContain("code=OPERATION_TIME_LIMIT");
     expect(out.stdout).toContain("подтверждено_после_сбоя=2");
     expect(out.stdout).toContain("ошибок_доставки=0");
     expectNoSensitiveLeaks(out.combined);
   });
 
-  it("formatSafeErrorStatus drops sensitive messages, Cyrillic codes, and numeric-only codes", () => {
-    const errWithMessage = Object.assign(new Error("Арман Тестовый 12 345 678 ₸"), {
-      status: 502,
-      code: "GATEWAY_ERROR"
+  it("formatSafeErrorStatus allows only fixed known error classes and codes and falls back to Error + numeric HTTP status", () => {
+    const knownWithCode = Object.assign(new Error("Арман Тестовый 12 345 678 ₸"), {
+      status: 429,
+      code: "QUERY_LIMIT_EXCEEDED"
     });
-    expect(formatSafeErrorStatus(errWithMessage)).toBe("Error, HTTP 502, code=GATEWAY_ERROR");
+    expect(formatSafeErrorStatus(knownWithCode)).toBe("Error, HTTP 429, code=QUERY_LIMIT_EXCEEDED");
 
-    const errWithUnsafeCode = Object.assign(new Error("secret body"), {
-      status: 400,
-      code: "12345678"
+    const knownCauseCode = Object.assign(new TypeError("fetch failed with secret"), {
+      cause: { code: "UND_ERR_CONNECT_TIMEOUT" }
     });
-    expect(formatSafeErrorStatus(errWithUnsafeCode)).toBe("Error, HTTP 400");
+    expect(formatSafeErrorStatus(knownCauseCode)).toBe("TypeError, code=UND_ERR_CONNECT_TIMEOUT");
+
+    const unknownClassAndPrivateCode = Object.assign(new Error("secret body"), {
+      name: "PrivateClientError",
+      status: 503,
+      code: "PRIVATE_ASCII_VALUE"
+    });
+    expect(formatSafeErrorStatus(unknownClassAndPrivateCode)).toBe("Error, HTTP 503");
+
+    const unknownCodeWithoutStatus = Object.assign(new Error("secret body"), {
+      name: "CustomTenantLeakError",
+      code: "CUSTOM_SECRET_CODE"
+    });
+    expect(formatSafeErrorStatus(unknownCodeWithoutStatus)).toBe("Error");
 
     expect(formatSafeErrorStatus("Арман Тестовый 12 345 678")).toBe("Error");
   });

@@ -14,7 +14,7 @@
 
 ## Решения
 
-- **Общий санитайзер ошибок (`src/bitrix/salesPult/safeLog.ts`).** Добавлен хелпер `formatSafeErrorStatus(err)`: выводит только безопасные метаданные диагностики (`Error.name` / `BitrixApiError`, `HTTP <status>`, короткий ASCII-код ошибки из `err.code` или `err.cause.code`), никогда не печатает `err.message`, стек, тело ответа или payload.
+- **Общий санитайзер ошибок (`src/bitrix/salesPult/safeLog.ts`).** Добавлен хелпер `formatSafeErrorStatus(err)`: выводит класс и код ошибки только из фиксированных списков известных значений (`KNOWN_ERROR_NAMES`, `KNOWN_ERROR_CODES`) и числовой `HTTP <status>`, а для неизвестных классов/кодов оставляет общее `"Error"` (и числовой HTTP-статус, если он есть). Никогда не печатает `err.message`, стек, тело ответа, payload или произвольные значения поля `error` из ответа Битрикса.
 - **Обезличенный вывод в `morning`/`evening` (`scripts/sales-pult.mts`).**
   - Удалены печать `managerName`, `m.id`, `config.chatDialogId` и `console.log(reportText)`.
   - Оставлены порядковые слоты `[#i/n]`, длина сформированного сообщения в символах, статус отправки/пропуска/dry-run и итоговая строка счётчиков (`всего`, `отправлено`, `подтверждено_после_сбоя`, `пропущено_идемпотентно`, `dry_run`, `ошибок_доставки`).
