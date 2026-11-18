@@ -12,6 +12,10 @@ import {
 export const DEFAULT_GZ_PLANS_CONFIG_PATH = "config/gz-plans.json";
 
 const GzPlansConfigSchema = z.object({
+  // "zakup" — открытый API zakup.gov.kz; "portal" — прежний поиск procurement.gov.kz (реестр планов там с 13.11.2026 не пополняется).
+  source: z.enum(["portal", "zakup"]).default("portal"),
+  // Для source=zakup: брать пункты с номером не меньше этого (0 — все). См. GzPlanCollectOptions.minPlanPointId.
+  zakupMinPlanPointId: z.coerce.number().int().nonnegative().default(0),
   keywords: z.array(z.string().min(1)).min(1).default([...DEFAULT_GZ_PLAN_KEYWORDS]),
   year: z.coerce.number().int().min(2000).max(2100).default(2026),
   months: z.array(z.coerce.number().int().min(1).max(12)).default([6, 7, 8]),
@@ -79,6 +83,8 @@ export function mergeGzPlansExportOptions(
     : (fileConfig.outPath ?? undefined);
 
   return {
+    source: merged.source,
+    minPlanPointId: merged.zakupMinPlanPointId || undefined,
     keywords: merged.keywords,
     year: merged.year,
     months: merged.months,

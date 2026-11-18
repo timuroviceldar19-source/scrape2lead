@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { attachRegisterContracts } from "../src/bitrix/salesPult/contracts.js";
 import { loadClosedMonths } from "../src/bitrix/salesPult/months.js";
+import { formatSafeErrorStatus } from "../src/bitrix/salesPult/safeLog.js";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -236,10 +237,27 @@ export function writeMarketMonthContractFiles(options: {
   };
 }
 
-export async function runSalesPult(args: string[]): Promise<void> {
+export class SalesPultCliError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SalesPultCliError";
+  }
+}
+
+export interface SalesPultRunOptions {
+  config?: PultConfig;
+  rawClient?: Pick<BitrixClient, "call">;
+  reader?: ReadOnlyBitrixClient;
+  nowIso?: string;
+  webhookUrl?: string;
+  skipUpdates?: boolean;
+}
+
+export async function runSalesPult(args: string[], options?: SalesPultRunOptions): Promise<void> {
   const modeIdx = args.indexOf("--mode");
   const mode = modeIdx !== -1 && args[modeIdx + 1] ? args[modeIdx + 1] : "site";
-  const execute = args.includes("--execute");
+  const dryRun = args.includes("--dry-run");
+  const execute = args.includes("--execute") && !dryRun;
   const compareManual = args.includes("--compare-manual");
   const daysIdx = args.indexOf("--days");
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
@@ -257,16 +275,16 @@ export async function runSalesPult(args: string[]): Promise<void> {
   const compBackfillFrom = compBackfillIdx !== -1 && args[compBackfillIdx + 1] ? args[compBackfillIdx + 1] : undefined;
   const compUpdate = args.includes("--competitors-update");
 
-  const config = loadConfig();
-  const webhookUrl = process.env.BITRIX24_WEBHOOK_URL?.trim();
+  const config = options?.config ?? loadConfig();
+  const webhookUrl = options?.webhookUrl ?? process.env.BITRIX24_WEBHOOK_URL?.trim();
   if (!webhookUrl) {
-    throw new Error("Missing BITRIX24_WEBHOOK_URL in environment (.env)");
+    throw new SalesPultCliError("Missing BITRIX24_WEBHOOK_URL in environment (.env)");
   }
 
-  const rawClient = new BitrixClient(webhookUrl);
-  const reader = new ReadOnlyBitrixClient(rawClient);
+  const rawClient = options?.rawClient ?? new BitrixClient(webhookUrl);
+  const reader = options?.reader ?? new ReadOnlyBitrixClient(rawClient as BitrixClient);
 
-  const nowIso = new Date().toISOString();
+  const nowIso = options?.nowIso ?? new Date().toISOString();
   const todayAlmaty = toAlmatyDate(nowIso);
 
   if (backfillFromDate) {
@@ -308,7 +326,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
     if (args.length <= 2) return;
   }
 
-  if (mode === "morning" || marketUpdate) {
+  if (!options?.skipUpdates && (mode === "morning" || marketUpdate)) {
     const total = await updateMarketWindow({
       todayAlmaty,
       token: process.env.GOSZAKUP_TOKEN?.trim() || null,
@@ -319,7 +337,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
     }
   }
 
-  if (mode === "morning" || compUpdate) {
+  if (!options?.skipUpdates && (mode === "morning" || compUpdate)) {
     await updateCompetitorsWindow({
       todayAlmaty,
       strict: args.includes("--competitors-update-strict")
@@ -609,13 +627,13 @@ export async function runSalesPult(args: string[]): Promise<void> {
     webhookUserId
   });
 
-  // Check and report activity loading errors
+  // Check and report activity loading errors (anonymized count only)
   let hasTaskErrors = false;
   if (collected.taskErrorsByManager && collected.taskErrorsByManager.size > 0) {
     hasTaskErrors = true;
-    for (const [mId, err] of collected.taskErrorsByManager.entries()) {
-      console.error(`[ОШИБКА] Не удалось загрузить задачи для менеджера ${mId}: ${err}`);
-    }
+    console.error(
+      `[ОШИБКА] Не удалось загрузить задачи: затронуто менеджеров ${collected.taskErrorsByManager.size}.`
+    );
   }
 
   const allDates = getDateRange(startDate, todayAlmaty);
@@ -854,10 +872,17 @@ export async function runSalesPult(args: string[]): Promise<void> {
 
     const salesGroup = config.groups.find((g) => g.id === "sales");
     const managersToReport = salesGroup ? salesGroup.managers : config.groups[0].managers;
+    const totalCount = managersToReport.length;
 
-    const failedManagers: Array<{ id: string; name: string }> = [];
+    let sentCount = 0;
+    let verifiedDeliveredAfterErrorCount = 0;
+    let skippedAlreadySentCount = 0;
+    let dryRunCount = 0;
+    let failedCount = 0;
 
-    for (const m of managersToReport) {
+    for (let idx = 0; idx < managersToReport.length; idx++) {
+      const m = managersToReport[idx];
+      const slotLabel = `[#${idx + 1}/${totalCount}]`;
       const rollups = rollupsByManager.get(m.id)!;
       const topTasks = topTasksByManager.get(m.id) || [];
       const managerName = collected.userProfiles.get(m.id)?.name || m.name;
@@ -888,17 +913,14 @@ export async function runSalesPult(args: string[]): Promise<void> {
       const modeRu = mode === "morning" ? "утро" : "вечер";
       const alreadySent = isReportAlreadySent(chatMessages, todayAlmaty, modeRu, m.id);
 
-      console.log(`----------------------------------------`);
-      console.log(`Менеджер: ${managerName} (${m.id})`);
       if (alreadySent) {
-        console.log(`[ИДЕМПОТЕНТНОСТЬ] Отчет уже присутствует в чате, пропуск.`);
+        skippedAlreadySentCount++;
+        console.log(`${slotLabel} [ИДЕМПОТЕНТНОСТЬ] Отчёт уже присутствует в чате, пропуск.`);
         continue;
       }
 
-      console.log(reportText);
-
       if (execute) {
-        console.log(`[ОТПРАВКА] Отправка в ${config.chatDialogId}...`);
+        console.log(`${slotLabel} [ОТПРАВКА] Отправка отчёта в чат (длина ${reportText.length} симв.)...`);
         try {
           await rawClient.call(
             "im.message.add",
@@ -909,32 +931,51 @@ export async function runSalesPult(args: string[]): Promise<void> {
             },
             { maxRetries: 0 }
           );
-          console.log(`[ОТПРАВЛЕНО] Успешно.`);
+          sentCount++;
+          console.log(`${slotLabel} [ОТПРАВЛЕНО] Успешно (длина ${reportText.length} симв.).`);
         } catch (sendErr) {
           console.warn(
-            `[ВНИМАНИЕ] Ошибка при отправке отчета для ${managerName}: ${sendErr instanceof Error ? sendErr.message : String(sendErr)}. Перечитываем чат...`
+            `${slotLabel} [ВНИМАНИЕ] Ошибка при отправке отчёта (${formatSafeErrorStatus(sendErr)}). Перечитываем чат...`
           );
-          // Re-read chat and verify marker before proceeding to next manager
-          chatMessages = await fetchRecentChatMessages(reader, config.chatDialogId, 200);
-          const sentAfterAll = isReportAlreadySent(chatMessages, todayAlmaty, modeRu, m.id);
-          if (sentAfterAll) {
-            console.log(`[ИДЕМПОТЕНТНОСТЬ] Маркер обнаружен в чате после сбоя запроса — сообщение доставлено.`);
+          let sentAfterAll = false;
+          let recheckFailed = false;
+          try {
+            // Re-read chat and verify marker before proceeding to next manager
+            chatMessages = await fetchRecentChatMessages(reader, config.chatDialogId, 200);
+            sentAfterAll = isReportAlreadySent(chatMessages, todayAlmaty, modeRu, m.id);
+          } catch (recheckErr) {
+            recheckFailed = true;
+            console.error(
+              `${slotLabel} [ОШИБКА] Не удалось перечитать чат после сбоя отправки (${formatSafeErrorStatus(recheckErr)}). Повторная отправка отменена во избежание дублей.`
+            );
+          }
+          if (!recheckFailed && sentAfterAll) {
+            verifiedDeliveredAfterErrorCount++;
+            console.log(`${slotLabel} [ИДЕМПОТЕНТНОСТЬ] Маркер обнаружен в чате после сбоя запроса — сообщение доставлено.`);
           } else {
-            console.error(`[ОШИБКА] Маркер не обнаружен. Сообщение не отправлено, но повторная отправка отменена во избежание дублей.`);
-            failedManagers.push({ id: m.id, name: managerName });
+            if (!recheckFailed) {
+              console.error(
+                `${slotLabel} [ОШИБКА] Маркер не обнаружен. Сообщение не отправлено, но повторная отправка отменена во избежание дублей.`
+              );
+            }
+            failedCount++;
           }
         }
       } else {
-        console.log(`[DRY-RUN] Сообщение не отправлено (добавьте --execute для отправки).`);
+        dryRunCount++;
+        console.log(
+          `${slotLabel} [DRY-RUN] Отчёт сформирован (длина ${reportText.length} симв.), отправка в чат отключена (добавьте --execute для отправки).`
+        );
       }
     }
 
-    if (failedManagers.length > 0) {
+    console.log(
+      `[Sales Pult] Итог (${mode}): всего=${totalCount}, отправлено=${sentCount}, подтверждено_после_сбоя=${verifiedDeliveredAfterErrorCount}, пропущено_идемпотентно=${skippedAlreadySentCount}, dry_run=${dryRunCount}, ошибок_доставки=${failedCount}.`
+    );
+
+    if (failedCount > 0) {
       process.exitCode = 1;
-      console.error(`\n[ОШИБКА ДОСТАВКИ] Отчёт не дошёл следующим менеджерам (${failedManagers.length}):`);
-      for (const fm of failedManagers) {
-        console.error(`• ${fm.name} (${fm.id})`);
-      }
+      console.error(`[ОШИБКА ДОСТАВКИ] Отчёт не доставлен (${failedCount} из ${totalCount}).`);
     }
 
     if (hasTaskErrors) {
@@ -943,15 +984,18 @@ export async function runSalesPult(args: string[]): Promise<void> {
     return;
   }
 
-  throw new Error(`Unknown mode: ${mode}`);
+  throw new SalesPultCliError(`Unknown mode: ${mode}`);
 }
 
-export async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+export async function main(
+  args: string[] = process.argv.slice(2),
+  options?: SalesPultRunOptions
+): Promise<void> {
   try {
-    await runSalesPult(args);
+    await runSalesPult(args, options);
   } catch (err) {
-    console.error("Sales Pult Error:", err);
+    const detail = err instanceof SalesPultCliError ? err.message : formatSafeErrorStatus(err);
+    console.error(`Sales Pult Error: ${detail}`);
     process.exit(1);
   }
 }

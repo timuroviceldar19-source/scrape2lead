@@ -1,4 +1,5 @@
 import type { GzCollectionReport } from "./gzCollection.js";
+import type { ZakupApiOptions } from "./zakupPublicApi.js";
 
 export interface GoszakupPlanListItem {
   plan_point_id: string;
@@ -81,6 +82,11 @@ export interface GzPlanCollectOptions {
   pageLoadRetries?: number;
   keepDuplicates?: boolean;
   token?: string | null;
+  /**
+   * Только для сборщика zakup: брать пункты с номером не меньше этого. Пункты до 88654473 были в реестре портала,
+   * и номер исходного пункта (связь версии со сделкой) для них знал только портал.
+   */
+  minPlanPointId?: number;
   /** Drop plan rows with planned amount below this value (KZT). 0 disables. */
   minAmount?: number;
   /** Stop-list: drop plan rows whose item name matches any of these. */
@@ -113,7 +119,14 @@ export interface GzPlanCollectResult extends GzCollectionReport {
   cacheStats?: PlanDetailCacheStats;
 }
 
+/** Откуда брать список планов: прежний поиск procurement.gov.kz или открытый API zakup.gov.kz. */
+export type GzPlanSource = "portal" | "zakup";
+
 export interface GzPlanExportOptions extends GzPlanCollectOptions {
+  /** По умолчанию "portal". С 13.11.2026 реестр планов портала не пополняется, ежедневные конфиги берут "zakup". */
+  source?: GzPlanSource;
+  /** Только для тестов и ручных запусков: параметры запросов к zakup.gov.kz. */
+  zakup?: ZakupApiOptions;
   outPath?: string;
   skipRegistry?: boolean;
   forceRegistryRefresh?: boolean;

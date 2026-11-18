@@ -27,6 +27,7 @@ import {
   buildGzPlanRevisionFields,
   detectGzPlanRevision,
   findAmbiguousRevisionDealIds,
+  findOutdatedRevisionIndexes,
   type GzPlanRevision,
   type GzPlanRevisionRow
 } from "../src/bitrix/gzPlanRevision.js";
@@ -35,6 +36,13 @@ import {
   chunkBatchCommands,
   type BitrixBatchCommand
 } from "../src/bitrix/batch.js";
+import {
+  findZakupRevisionDeal,
+  GZ_PLAN_POINT_FIELD,
+  isZakupPlanUrl,
+  type ZakupPlanChainLookup
+} from "../src/bitrix/gzZakupRevisionLink.js";
+import { zakupListAll } from "../src/kz/zakupPublicApi.js";
 
 dotenv.config();
 
@@ -217,6 +225,8 @@ async function main(): Promise<void> {
     const duplicateDeal = existingDeal?.ID ? null : lookups[rowIndex].duplicateDeal;
     const issues = validateRequired(row, args.minAmount);
     const warnings = validateWarnings(row);
+    if (lookups[rowIndex].issue) issues.push(lookups[rowIndex].issue!);
+    warnings.push(...(lookups[rowIndex].warnings ?? []));
     if (duplicateDeal && !duplicateDeal.blocking) {
       warnings.push(`possible duplicate of deal ${duplicateDeal.deal.ID} (${duplicateDeal.reason})`);
     }
@@ -318,6 +328,17 @@ function toRevisionRow(row: GzPlanRow): GzPlanRevisionRow {
 
 /** Falls back to the pre-revision action for deals that two rows want to rewrite. */
 function holdAmbiguousRevisions(items: PreflightItem[]): void {
+  const outdated = findOutdatedRevisionIndexes(items.map((item) => ({
+    dealId: item.existingDealId ?? item.duplicateDealId,
+    planPointId: canonicalPlanId(item.row),
+    revises: Boolean(item.revision)
+  })));
+  items.forEach((item, index) => {
+    if (!outdated.has(index) || !item.revision) return;
+    item.warnings.push(`a newer plan point of deal ${item.revision.dealId} is in this run; left unchanged`);
+    item.action = item.existingDealId ? "existing" : "duplicate";
+    item.revision = null;
+  });
   const ambiguous = findAmbiguousRevisionDealIds(
     items.flatMap((item) => (item.revision ? [item.revision.dealId] : []))
   );
@@ -340,6 +361,9 @@ function describeRevision(revision: GzPlanRevision): string {
 interface RowLookup {
   existingDeal: ExistingDeal | null;
   duplicateDeal: DuplicateMatch | null;
+  /** Проверка версии пункта zakup: предупреждение или причина отложить строку до следующего прогона. */
+  warnings?: string[];
+  issue?: string;
 }
 
 interface RowIdentity {
@@ -483,7 +507,73 @@ async function resolveRowLookups(
     lookups[index] = await sequentialRowLookup(client, rows[index], identities[index]);
   }
 
+  await linkZakupRevisions(rows, lookups, runBatches);
   return lookups;
+}
+
+/**
+ * Пункт с zakup.gov.kz не несёт номера исходного пункта. Если для него не нашлось ни сделки, ни
+ * блокирующего дубля, ищем сделки того же заказчика с тем же кодом ЕНС ТРУ и спрашиваем zakup,
+ * не версия ли это одной из них (см. src/bitrix/gzZakupRevisionLink.ts).
+ */
+async function linkZakupRevisions(
+  rows: GzPlanRow[],
+  lookups: RowLookup[],
+  runBatches: (entries: Array<{ command: BitrixBatchCommand; onResult: (deals: ExistingDeal[]) => void; onError: () => void }>) => Promise<void>
+): Promise<void> {
+  const indexes = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row, index }) => isZakupPlanUrl(row.planUrl) && !lookups[index].existingDeal?.ID
+      && !lookups[index].duplicateDeal?.blocking && normalizeBin(row.bin) && row.truCode.trim())
+    .map(({ index }) => index);
+  if (!indexes.length) return;
+
+  const candidates = new Map<number, ExistingDeal[]>();
+  const failed = new Set<number>();
+  await runBatches(indexes.map((index) => ({
+    command: {
+      key: `revision_${index}`,
+      method: "crm.deal.list",
+      params: {
+        filter: { UF_CRM_6627AEBD7C2D2: normalizeBin(rows[index].bin), UF_CRM_REF_ENSTRU_CODE: rows[index].truCode.trim() },
+        select: [...DEAL_SELECT_FIELDS, GZ_PLAN_POINT_FIELD]
+      }
+    },
+    onResult: (deals) => candidates.set(index, deals),
+    onError: () => failed.add(index)
+  })));
+
+  const chains = new Map<string, Promise<string[]>>();
+  const chain: ZakupPlanChainLookup = (number) => {
+    let pending = chains.get(number);
+    if (!pending) {
+      pending = zakupListAll<{ external_id?: string | number }>("/public/plan-items/", { q: number, system_id: 1 }, { pauseMs: 200 })
+        .then((items) => items.map((item) => String(item.external_id ?? "")));
+      chains.set(number, pending);
+    }
+    return pending;
+  };
+
+  for (const index of indexes) {
+    const row = rows[index];
+    if (failed.has(index)) {
+      lookups[index].issue = "zakup revision check failed: Bitrix lookup error";
+      continue;
+    }
+    try {
+      const link = await findZakupRevisionDeal(row.planId.trim(), candidates.get(index) ?? [], chain, { amount: parseMoney(row.amount) });
+      if (link.duplicate) {
+        lookups[index].duplicateDeal = link.duplicate;
+        continue;
+      }
+      if (link.unverified.length) {
+        lookups[index].warnings = [`possible revision of deal ${link.unverified.join(", ")}: zakup cannot confirm`];
+      }
+    } catch (error) {
+      // Без проверки не заводим: иначе новая версия пункта может стать второй сделкой. Повторим в следующий прогон.
+      lookups[index].issue = `zakup revision check failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
 }
 
 /** Original per-row lookup path, kept as the fallback for failed batch commands. */

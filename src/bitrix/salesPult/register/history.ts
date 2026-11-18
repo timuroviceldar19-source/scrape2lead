@@ -9,6 +9,7 @@ import { groupRegisterContracts, calculateNameSimilarity, matchRegisterWithCrm }
 import { compareRegisterFiles, getFileRevision } from "./diskClient.js";
 import { getNextMonth } from "./fetchCrmWon.js";
 import { REGISTER_HISTORY_VERSION } from "./crypto.js";
+import { formatSafeErrorStatus } from "../safeLog.js";
 
 interface ZakupDictItem {
   id: number;
@@ -803,7 +804,7 @@ export async function searchOrganizationByBin(
     }
     return null;
   } catch (err) {
-    console.warn(`[Портал] Ошибка поиска организации по БИН ${bin}:`, err);
+    console.warn(`[Портал] Ошибка поиска организации по БИН ${bin} (${formatSafeErrorStatus(err)})`);
     return null;
   }
 }
@@ -1139,7 +1140,7 @@ export async function buildFullRegisterHistory(
         hasValColumn: p.hasValColumn
       });
     } catch (err) {
-      console.warn(`[Реестр История] Не удалось разобрать ${f.fileName}:`, err);
+      console.warn(`[Реестр История] Не удалось разобрать файл реестра (${formatSafeErrorStatus(err)})`);
     }
   }
 
@@ -1321,7 +1322,7 @@ export async function buildFullRegisterHistory(
         };
       }
     } catch (err) {
-      console.warn(`[Реестр История] Ошибка сверки с порталом:`, err);
+      console.warn(`[Реестр История] Ошибка сверки с порталом (${formatSafeErrorStatus(err)})`);
       portalMissing = {
         currentMonth: sortedMonths[sortedMonths.length - 1] || "",
         previousMonth: sortedMonths[sortedMonths.length - 2] || "",

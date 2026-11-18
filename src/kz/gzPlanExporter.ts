@@ -5,6 +5,7 @@ import { isValidBin } from "./csv.js";
 import { filterGzItems } from "./gzItemFilter.js";
 import { collectGoszakupRegistryForBins } from "./goszakupRegistryCollector.js";
 import { collectGzPlans } from "./goszakupPlanCollector.js";
+import { collectGzPlansFromZakup } from "./zakupGzPlanCollector.js";
 import type { GoszakupRegistryRecord } from "./registryTypes.js";
 import { KzStorage } from "./kzStorage.js";
 import type {
@@ -57,7 +58,9 @@ const HYPERLINK_KEYS = new Set<keyof GzPlanExportRow>(["item_link", "customer_li
 export async function exportGzPlansReport(options: GzPlanExportOptions = {}): Promise<GzPlanExportResult> {
   // Safe because exportCollectedPlans re-applies the same minAmount/excludeKeywords
   // filters post-detail (filterPlanRowsWithStats), so the final rows are identical.
-  const collectResult = await collectGzPlans({ ...options, prefilterDetails: true });
+  const collectResult = options.source === "zakup"
+    ? await collectGzPlansFromZakup({ ...options, prefilterDetails: true })
+    : await collectGzPlans({ ...options, prefilterDetails: true });
   if (options.partialCollection && collectResult.successfulQueries === 0 && collectResult.skippedQueries?.length
     && !collectResult.items.some(item => item.detail?.customer_bin && isValidBin(item.detail.customer_bin))) {
     throw new GzSourceUnavailableError(collectResult.skippedQueries);

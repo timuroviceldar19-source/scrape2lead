@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import type { StageTransition } from "../metrics.js";
 import { toAlmatyDate } from "../metrics.js";
+import { formatSafeErrorStatus } from "../safeLog.js";
 import type { UserProfileInfo } from "../collect.js";
 import type { RegisterView, RegisterHistoryPayload, RegisterContract, CrmWonDeal } from "./types.js";
 import {
@@ -60,7 +61,7 @@ export async function loadRegisterView(options: LoadRegisterOptions): Promise<Re
     view = { error: `Реестр не подключён: ${err instanceof Error ? err.message : String(err)}` };
   }
   if (view.error) {
-    console.warn(`[Пульт] Реестр ОП недоступен: ${view.error}`);
+    console.warn("[Пульт] Реестр ОП недоступен (подробности в карточке реестра)");
     // Закрытые месяцы остаются доступны из кэша даже при сбое текущего файла.
     const cached = loadEncryptedRegisterHistory(
       options.historyCachePath || options.cachePath || DEFAULT_REGISTER_HISTORY_PATH,
@@ -166,7 +167,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
         ));
       } catch (err) {
         console.warn(
-          `[Реестр] Сделки CRM за ${fileMonth} не загрузились, сверка по сделкам пульта: ${err instanceof Error ? err.message : String(err)}`
+          `[Реестр] Сделки CRM за ${fileMonth} не загрузились, сверка по сделкам пульта (${formatSafeErrorStatus(err)})`
         );
       }
     }
@@ -248,7 +249,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
             historyError = loaded.error;
           }
         } catch (histErr) {
-          console.warn("[Реестр] Ошибка построения истории:", histErr);
+          console.warn(`[Реестр] Ошибка построения истории (${formatSafeErrorStatus(histErr)})`);
           const errMsg = histErr instanceof Error ? histErr.message : String(histErr);
           recordRegisterHistoryAttempt(attemptPath, { success: false, error: errMsg });
           const loaded = cachedHistory;
@@ -345,7 +346,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
     }
     return view;
   } catch (err) {
-    console.error("[Реестр] Ошибка обработки реестра:", err);
+    console.error(`[Реестр] Ошибка обработки реестра (${formatSafeErrorStatus(err)})`);
     return {
       error: `Реестр не подключён: ${err instanceof Error ? err.message : String(err)}`
     };
