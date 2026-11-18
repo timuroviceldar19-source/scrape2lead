@@ -34,6 +34,18 @@
 .fin-more > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
 #debtMain > .chips { margin-top: 8px; }
 .fin-cash { min-width: 640px; }
+/* склад: материальные ведомости */
+.fin-stock-search { display: flex; align-items: center; gap: 12px; margin: 4px 0; }
+.fin-stock-search > .dim { font: 400 12px var(--mono); color: var(--ink-3); white-space: nowrap; }
+#f-stock .chips { margin-bottom: 10px; }
+.fin-wh > .fin-note { margin: 2px 0 6px; }
+.fin-stock .r { grid-template-columns: minmax(0, 3fr) 90px 90px 110px; }
+.fin-stock.moves .r { grid-template-columns: minmax(0, 3fr) 84px 84px 84px 84px 110px; }
+.fin-stock .r .nm { white-space: normal; }
+.fin-stock .r.is-gone .nm, .fin-stock .r.is-gone .num { color: var(--ink-3); }
+.fin-stock-m { display: none; }
+/* у .r свой display: grid, без этого атрибут hidden не прячет строку */
+.fin-stock .r[hidden], .fin-wh[hidden] { display: none; }
 .fin-in .r { grid-template-columns: minmax(0, 3fr) minmax(90px, 1fr) 140px; }
 .fin-bal .r { grid-template-columns: minmax(0, 1.3fr) minmax(0, 2fr) 110px; }
 .page > .tab > .note-warn { margin-top: 0; }
@@ -56,6 +68,14 @@
   .fin-debt .r.head.fin-sortable > span:not([role="columnheader"]) { display: none; }
   .fin-debt .r.head.fin-sortable::before { content: "Сортировка"; margin-right: auto; font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
   .fin-sort { padding: 6px 0; }
+  /* склад на телефоне: название и сумма, количество строкой ниже */
+  .fin-stock .r.head { display: none; }
+  .fin-stock .r, .fin-stock.moves .r { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
+  .fin-stock .r > .num { display: none; }
+  .fin-stock .r > .num:last-child { display: block; grid-column: 2; grid-row: 1; }
+  .fin-stock-m { display: block; margin-top: 2px; font: 400 12px var(--mono); color: var(--ink-3); }
+  .fin-stock-search { flex-wrap: wrap; gap: 4px 12px; }
+  #stockQ { font-size: 16px; max-width: none; }
 }
 @media (max-width: 480px) {
   .fin-tile { padding: 12px 12px 14px; }

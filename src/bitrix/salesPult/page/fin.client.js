@@ -262,7 +262,87 @@
     return s + `</section>`;
   }
 
-  /* ---------- 06: поступления ---------- */
+  /* ---------- 06: склад по материальным ведомостям 1С ---------- */
+  // Листы «Мат вед …» из того же файла: компания — кнопкой, склады — свёрнутыми списками,
+  // поиск по названию товара раскрывает склады, где он есть.
+  const nfq = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 });
+  let stockPick = "";
+  let stockQuery = "";
+  const stockList = () => [...(R.stock || [])].sort((a, b) => b.total.end - a.total.end);
+  const qty = (n, unit) => (n ? `${nfq.format(n)}${unit ? NB + esc(unit) : ""}` : "—");
+  const searchKey = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+  function stockSums(x, moves) {
+    return `на начало ${money(x.start)}${moves ? ` · приход ${money(x.in || 0)} · расход ${money(x.out || 0)}` : ""} · на конец <b>${money(x.end)}</b>`;
+  }
+
+  function stockBodyHtml() {
+    const S = stockList().find((x) => x.company === stockPick);
+    if (!S) return "";
+    const moves = S.hasMoves;
+    const cls = `rows fin-stock${moves ? " moves" : ""}`;
+    const headRow = `<div class="r head"><span class="label">Товар</span><span class="label n">На начало</span>${moves ? `<span class="label n">Приход</span><span class="label n">Расход</span>` : ""}<span class="label n">На конец</span><span class="label n">Сумма</span></div>`;
+    const whs = [...S.warehouses].sort((a, b) => b.sums.end - a.sums.end || b.sums.start - a.sums.start);
+    let s = `<p class="fin-note">${esc(S.company)}: ${stockSums(S.total, moves)}.${moves ? "" : " Прихода и расхода в выгрузке этой компании нет."}</p>`;
+    s += whs.map((w) => {
+      const items = [...w.items].sort((a, b) => b.endSum - a.endSum || b.startSum - a.startSum);
+      const rows = items.map((x) => {
+        const gone = !x.endQty && !x.endSum;
+        const q0 = (n) => `${nfq.format(n || 0)}${x.unit ? NB + esc(x.unit) : ""}`;
+        const mob = `остаток ${nfq.format(x.startQty || 0)} → ${q0(x.endQty)}${x.inQty ? ` · приход ${nfq.format(x.inQty)}` : ""}${x.outQty ? ` · расход ${nfq.format(x.outQty)}` : ""}`;
+        return `<div class="r body${gone ? " is-gone" : ""}" data-n="${esc(searchKey(x.name))}"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 110))}<span class="fin-stock-m">${mob}</span></span>
+          <span class="num dim">${qty(x.startQty, x.unit)}</span>${moves ? `<span class="num dim">${qty(x.inQty)}</span><span class="num dim">${qty(x.outQty)}</span>` : ""}<span class="num">${qty(x.endQty, x.unit)}</span><span class="num">${has(x.endSum) ? esc(amt(x.endSum)) : "—"}</span></div>`;
+      }).join("");
+      return `<details class="fin-more fin-wh"><summary>${esc(w.name)} <span class="dim">${plural(items.length, ["позиция", "позиции", "позиций"])} · ${money(w.sums.end)}</span></summary>
+        <p class="fin-note">${stockSums(w.sums, moves)}</p><div class="${cls}">${headRow}${rows}</div></details>`;
+    }).join("");
+    return s;
+  }
+
+  function stockBlock() {
+    const list = stockList();
+    if (!list.length) return "";
+    if (!list.some((x) => x.company === stockPick)) stockPick = list[0].company;
+    const period = list[0].period ? ` за ${esc(list[0].period.toLowerCase())}` : "";
+    const chips = list.length > 1
+      ? `<div class="chips" id="stockChips" role="group" aria-label="Компания">${list.map((x) => `<button type="button" data-c="${esc(x.company)}" aria-pressed="${String(x.company === stockPick)}">${esc(x.company)}</button>`).join("")}</div>`
+      : "";
+    return `<section class="block" id="f-stock">${head("Склад", `материальная ведомость 1С${period}`)}
+      <p class="lead">Остаток на конец периода: ${list.map((x) => `${esc(x.company)} <b>${money(x.total.end)}</b>`).join(" · ")}. Склады свёрнуты, поиск раскрывает те, где есть товар.</p>
+      ${chips}<div class="fin-stock-search"><input type="search" id="stockQ" class="plan-search-input" placeholder="Найти товар: ноутбук, монитор, RTX…" aria-label="Найти товар на складе" value="${esc(stockQuery)}" autocomplete="off"><span id="stockFound" class="dim" aria-live="polite"></span></div>
+      <div id="stockBody">${stockBodyHtml()}</div></section>`;
+  }
+
+  // Поиск без перерисовки: прячем строки и склады, раскрываем склады с найденным,
+  // а при пустом запросе закрываем то, что раскрыл поиск (раскрытое руками не трогаем).
+  function applyStockSearch() {
+    const body = document.getElementById("stockBody");
+    const found = document.getElementById("stockFound");
+    if (!body) return;
+    const words = searchKey(stockQuery).split(" ").filter(Boolean);
+    let hits = 0;
+    for (const box of body.querySelectorAll("details.fin-wh")) {
+      let boxHits = 0;
+      for (const row of box.querySelectorAll(".r.body")) {
+        const ok = !words.length || words.every((w) => row.dataset.n.includes(w));
+        row.hidden = !ok;
+        if (ok) boxHits++;
+      }
+      box.hidden = words.length > 0 && !boxHits;
+      if (words.length && boxHits && !box.open) { box.open = true; box.dataset.auto = "1"; }
+      if (!words.length && box.dataset.auto) { box.open = false; delete box.dataset.auto; }
+      hits += words.length ? boxHits : 0;
+    }
+    if (found) found.textContent = words.length ? (hits ? `найдено: ${plural(hits, ["позиция", "позиции", "позиций"])}` : "ничего не найдено") : "";
+    // на кнопках компаний — сколько найдено у каждой, чтобы не переключать вслепую
+    for (const b of document.querySelectorAll("#stockChips button")) {
+      const S = stockList().find((x) => x.company === b.dataset.c);
+      if (!S) continue;
+      const n = words.length ? S.warehouses.reduce((a, w) => a + w.items.filter((x) => words.every((wd) => searchKey(x.name).includes(wd))).length, 0) : null;
+      b.textContent = n === null ? S.company : `${S.company} · ${n}`;
+    }
+  }
+
+  /* ---------- 07: поступления ---------- */
   function incomingBlock() {
     let s = `<section class="block" id="f-incoming">${head("Поступления за день", money(R.incomingTotal))}`;
     if (!R.incoming.length) return s + `<p class="lead">Поступлений в отчёте нет.</p></section>`;
@@ -271,7 +351,7 @@
     return s + `</section>`;
   }
 
-  /* ---------- 07: счета и курсы ---------- */
+  /* ---------- 08: счета и курсы ---------- */
   function balanceBlock() {
     const lines = R.balances.filter((x) => x.total);
     if (!lines.length && !R.rates.length) return "";
@@ -304,8 +384,9 @@
     if (stale) s += `<div class="note-warn">Отчёт старый: данные на ${ddmm(R.dataDate)}. Свежего файла в чате нет.</div>`;
     s += overview() + pnl() + payments();
     s += `<section class="block" id="f-debtors">${debtorsBlock()}</section>`;
-    s += cashBlock() + incomingBlock() + balanceBlock() + warningsBlock();
+    s += cashBlock() + stockBlock() + incomingBlock() + balanceBlock() + warningsBlock();
     el.innerHTML = s;
+    if (stockQuery) applyStockSearch();
   }
 
   function rerenderDebtors() {
@@ -315,7 +396,22 @@
     if (problem) problem.innerHTML = debtProblemHtml();
   }
 
+  el?.addEventListener("input", (e) => {
+    if (e.target.id !== "stockQ") return;
+    stockQuery = e.target.value;
+    applyStockSearch();
+  });
+
   el?.addEventListener("click", (e) => {
+    const stockChip = e.target.closest("#stockChips button");
+    if (stockChip) {
+      stockPick = stockChip.dataset.c || "";
+      for (const b of document.querySelectorAll("#stockChips button")) b.setAttribute("aria-pressed", String(b === stockChip));
+      const body = document.getElementById("stockBody");
+      if (body) body.innerHTML = stockBodyHtml();
+      applyStockSearch();
+      return;
+    }
     const chip = e.target.closest("#debtChips button");
     if (chip) {
       debtFilter = chip.dataset.c || "";

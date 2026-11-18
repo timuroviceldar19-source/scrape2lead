@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { loadFinanceView } from "../../src/bitrix/salesPult/finance/load.js";
+import { FINANCE_PARSE_VERSION, loadFinanceView } from "../../src/bitrix/salesPult/finance/load.js";
+import { decryptPayload, encryptPayload } from "../../src/bitrix/salesPult/register/crypto.js";
 import { financeWorkbookBuffer } from "../fixtures/sales-pult/financeWorkbook.js";
 
 // Все данные выдуманные. Папка чата и скачивание файлов подменены.
@@ -96,6 +97,23 @@ describe("финансы: загрузка из папки чата", () => {
     // битый файл не скачивается на каждом запуске
     await loadFinanceView({ reader: s.reader, folderId: 1, cachePath: s.cachePath, secretKey: KEY, fetchFn: s.fetchFn });
     expect(s.asked.filter((u) => u.endsWith("/2"))).toHaveLength(1);
+  });
+
+  it("после смены версии разбора файл, который раньше не разобрался, разбирается заново", async () => {
+    const listing = [file(1, "2026-11-16T10:00:00+03:00"), file(2, "2026-11-17T10:00:00+03:00")];
+    const bodies: Record<string, Buffer | number> = { "https://disk.example.test/1": good, "https://disk.example.test/2": Buffer.from("not xlsx") };
+    const s = setup(listing, bodies);
+    await loadFinanceView({ reader: s.reader, folderId: 1, cachePath: s.cachePath, secretKey: KEY, fetchFn: s.fetchFn });
+    // кэш от прошлой версии разбора, а файл теперь читается (как файл 18.11 со скрытыми колонками)
+    const cache = JSON.parse(decryptPayload(fs.readFileSync(s.cachePath, "utf8"), KEY));
+    expect(cache.v).toBe(FINANCE_PARSE_VERSION);
+    expect(cache.files["2"].ok).toBe(false);
+    fs.writeFileSync(s.cachePath, encryptPayload(JSON.stringify({ ...cache, v: FINANCE_PARSE_VERSION - 1 }), KEY), "utf8");
+    bodies["https://disk.example.test/2"] = await financeWorkbookBuffer({ cashGap: true, stockSheets: true });
+    const view = await loadFinanceView({ reader: s.reader, folderId: 1, cachePath: s.cachePath, secretKey: KEY, fetchFn: s.fetchFn });
+    expect(view.file?.id).toBe("2");
+    expect(view.notice).toBeUndefined();
+    expect(view.report?.stock?.map((x) => x.company)).toEqual(["Бета", "Альфа"]);
   });
 
   it("файл не скачался (сеть, HTTP) — на следующем запуске пробуем снова", async () => {

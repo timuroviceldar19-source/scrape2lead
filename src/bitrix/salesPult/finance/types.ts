@@ -105,6 +105,45 @@ export interface FinanceTax {
   total: number;
 }
 
+/** Суммы по складу: на начало, приход, расход, на конец. Приход и расход — если они есть в выгрузке. */
+export interface FinanceStockSums {
+  start: number;
+  in?: number;
+  out?: number;
+  end: number;
+}
+
+/** Товар из материальной ведомости 1С. Суммы округлены до тенге, «шт» не хранится. */
+export interface FinanceStockItem {
+  name: string;
+  unit?: string;
+  startQty: number;
+  startSum: number;
+  inQty?: number;
+  inSum?: number;
+  outQty?: number;
+  outSum?: number;
+  endQty: number;
+  endSum: number;
+}
+
+export interface FinanceStockWarehouse {
+  name: string;
+  sums: FinanceStockSums;
+  items: FinanceStockItem[];
+}
+
+/** Материальная ведомость одной компании — отдельный лист файла. */
+export interface FinanceStock {
+  company: string;
+  /** Период из заголовка ведомости, например «Ноябрь 2026». */
+  period?: string;
+  /** Есть ли колонки «Итого приход» и «Итого расход» (зависит от настроек выгрузки). */
+  hasMoves: boolean;
+  warehouses: FinanceStockWarehouse[];
+  total: FinanceStockSums;
+}
+
 export interface FinanceReport {
   /** На какую дату данные: самая поздняя дата в шапках блоков счетов. */
   dataDate: string;
@@ -124,6 +163,8 @@ export interface FinanceReport {
   /** Платёжный календарь: первый список — блок «Календарь» с итогом в файле, дальше прочие платежи. */
   payments: FinancePaymentList[];
   rates: FinanceRate[];
+  /** Материальные ведомости с отдельных листов (по компаниям); нет листов — нет поля. */
+  stock?: FinanceStock[];
   /** Расхождения, найденные при сверке итогов: страница их показывает, разбор не останавливают. */
   warnings: string[];
 }
