@@ -119,6 +119,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
   let excelBuffer: Buffer | null = null;
   let registerFileName = "";
   let asOf = todayAlmaty;
+  let updatedAt: string | undefined;
 
   if (registerFilePath) {
     if (fs.existsSync(registerFilePath)) {
@@ -133,6 +134,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
       if (diskFile) {
         excelBuffer = diskFile.buffer;
         registerFileName = diskFile.fileName;
+        updatedAt = diskFile.updateTime?.trim() || undefined;
       } else {
         return { error: "Реестр не подключён: файл в папке не найден" };
       }
@@ -313,6 +315,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
     );
 
     if (view.error === undefined) {
+      if (updatedAt) view.updatedAt = updatedAt;
       view.history ??= { asOf, months: [] };
       const { history, historyError: _historyError, ...snapshot } = view;
       history.monthViews ??= {};
@@ -332,6 +335,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
             hasValColumn: parsed.hasValColumn,
             hiddenManagers
           }),
+          ...(updatedAt ? { updatedAt } : {}),
           missingCrm: cachedRow.missingCrm,
           reconciliationPerformed: cachedRow.reconciliationPerformed,
           crmExtra: cachedRow.crmExtra

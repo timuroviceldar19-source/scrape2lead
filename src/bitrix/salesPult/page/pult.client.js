@@ -35,6 +35,17 @@
   const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
   const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
   const ddmm = (iso) => { if (!iso) return "—"; const parts = String(iso).slice(0, 10).split("-"); return parts.length === 3 ? `${parts[2]}.${parts[1]}` : iso; };
+  const formatAlmatyDateTime = (raw) => {
+    const s = String(raw == null ? "" : raw).trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return ddmm(s);
+    const utc5 = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::\d{2})?(?:\s*\(UTC\+5\))?$/.exec(s);
+    if (utc5) return `${utc5[3]}.${utc5[2]} ${utc5[4]}:${utc5[5]} (UTC+5)`;
+    const ms = Date.parse(s);
+    if (Number.isNaN(ms)) return s;
+    const d = new Date(ms + 5 * 3600000).toISOString();
+    return `${d.slice(8, 10)}.${d.slice(5, 7)} ${d.slice(11, 16)} (UTC+5)`;
+  };
 
   const dealUrl = (id) => {
     const base = String(P.portal || "").replace(/\/+$/, "");
@@ -167,6 +178,43 @@
     return (P.outcomeMismatches || []).length + (V.signals || []).length;
   }
 
+  function renderMonthFreshnessHtml(m) {
+    const M = m.asOfMonth;
+    const periodText = `${P.closedMonth ? "Архив" : "Выбран"}: ${MONTHS[M - 1]} ${m.asOfYear}`;
+    let crmText;
+    if (P.closedMonth) {
+      crmText = `архивный срез по ${ddmm(P.asOfDate)}`;
+    } else {
+      const buildTime = formatAlmatyDateTime(PAYLOAD.generatedAt) || (VIEW.genLabel ? `${ddmm(PAYLOAD.asOfDate)} ${VIEW.genLabel} (UTC+5)` : "");
+      crmText = `срез по ${ddmm(P.asOfDate)}${buildTime ? ` · сборка Пульта ${buildTime}` : ""}`;
+    }
+
+    const cs = P.contractSource;
+    let opText;
+    let opWarn = false;
+    if (cs && cs.available) {
+      const opSlice = cs.asOf
+        ? `${P.closedMonth ? "архивный срез" : "срез"} по ${ddmm(cs.asOf)}`
+        : (P.closedMonth ? "архивный срез за месяц" : "дата среза не указана");
+      const opUpd = formatAlmatyDateTime(cs.updatedAt);
+      const opUpdText = opUpd
+        ? `файл с Диска от ${opUpd}`
+        : "время обновления с Диска неизвестно";
+      opText = `${opSlice} · ${opUpdText}`;
+      opWarn = !opUpd;
+    } else {
+      opText = cs && cs.label ? cs.label : (P.closedMonth ? "за месяц недоступен, цифры по Битриксу" : "недоступен, цифры по Битриксу");
+      opWarn = true;
+    }
+
+    return `
+      <div class="month-freshness" id="monthFreshness" aria-label="Свежесть источников">
+        <span class="mf-item mf-period"><span class="mf-k">Период</span><span class="mf-v">${esc(periodText)}</span></span>
+        <span class="mf-item mf-crm"><span class="mf-k">CRM Битрикс24</span><span class="mf-v">${esc(crmText)}</span></span>
+        <span class="mf-item mf-op${opWarn ? " is-warn" : ""}"><span class="mf-k">Реестр ОП</span><span class="mf-v">${esc(opText)}</span></span>
+      </div>`;
+  }
+
   function renderMonth(keepMoreOpen) {
     const m = V.month;
     const M = m.asOfMonth;
@@ -283,6 +331,7 @@
           ${P.callsAvailable ? `<div class="tile-value ${calls.cls}">${fmt(calls.fact)} <span>/ ${fmt(calls.target)}</span></div><div class="hbar"><span class="${calls.cls || ''}" style="width:${Math.max(0, Math.min(100, callsPct))}%"></span></div><p class="tile-note">${esc(calls.text ? `${calls.text}${calls.sub ? ` · ${calls.sub}` : ""}` : (calls.sub || ""))}</p>` : `<div class="tile-value tile-result muted">нет доступа</div><p class="tile-note">нет звонков через Битрикс</p>`}
         </div>
       </div>
+      ${renderMonthFreshnessHtml(m)}
       <details class="month-more" ${document.body.classList.contains("tv") || prevMoreOpen ? "open" : ""}>
       <summary>График и подробности месяца</summary>
       <div class="hero">
@@ -798,23 +847,45 @@
   }
 
   /* ================= chrome ================= */
+  function renderLiveBadge() {
+    const live = document.getElementById("live"), liveText = document.getElementById("liveText");
+    if (!live || !liveText) return;
+    if (typeof currentTab !== "undefined" && currentTab === "pult" && P.closedMonth) {
+      live.classList.remove("stale");
+      live.classList.add("archive");
+      liveText.innerHTML = `Архив · срез по ${esc(ddmm(P.asOfDate))}`;
+      return;
+    }
+    live.classList.remove("archive");
+    const m = /(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(PAYLOAD.generatedAt || "");
+    let genMs = NaN;
+    if (m) {
+      genMs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 5, +m[5]);
+    } else if (PAYLOAD.generatedAt) {
+      genMs = Date.parse(PAYLOAD.generatedAt);
+    }
+    let ago = "";
+    if (!Number.isNaN(genMs)) {
+      const mins = Math.round((Date.now() - genMs) / 60000);
+      if (mins >= 0 && mins < 60 * 24) ago = mins < 1 ? "только что" : mins < 60 ? plural(mins, ["минуту", "минуты", "минут"]) + " назад" : plural(Math.floor(mins / 60), ["час", "часа", "часов"]) + " назад";
+      live.classList.toggle("stale", mins > 90);
+    } else {
+      live.classList.remove("stale");
+    }
+    const buildFull = formatAlmatyDateTime(PAYLOAD.generatedAt) || VIEW.genLabel;
+    const shortTime = VIEW.genLabel || buildFull;
+    liveText.innerHTML =
+      `<span class="live-desktop">Сборка Пульта ${esc(buildFull)}</span>` +
+      `<span class="live-mobile">Сборка ${esc(shortTime)}</span>` +
+      (ago ? ` <span class="ago">· ${ago}</span>` : "");
+  }
+
   function renderChrome() {
     document.getElementById("dateLabel").textContent = V.dateLabel;
     document.getElementById("wdLabel").textContent = V.wdLabel;
     requestAnimationFrame(() => { document.getElementById("monthFill").style.width = V.monthFillPct + "%"; });
-    const live = document.getElementById("live"), liveText = document.getElementById("liveText");
-    function tick() {
-      const m = /(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(PAYLOAD.generatedAt);
-      let ago = "";
-      if (m) {
-        const gen = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 5, +m[5]);
-        const mins = Math.round((Date.now() - gen) / 60000);
-        if (mins >= 0 && mins < 60 * 24) ago = mins < 1 ? "только что" : mins < 60 ? plural(mins, ["минуту", "минуты", "минут"]) + " назад" : plural(Math.floor(mins / 60), ["час", "часа", "часов"]) + " назад";
-        live.classList.toggle("stale", mins > 90);
-      }
-      liveText.innerHTML = `Данные на ${VIEW.genLabel}` + (ago ? ` <span class="ago">· ${ago}</span>` : "");
-    }
-    tick(); setInterval(tick, 30000);
+    renderLiveBadge();
+    setInterval(renderLiveBadge, 30000);
   }
 
   /* ================= motion ================= */
@@ -1082,6 +1153,52 @@
     });
   });
 
+  function updateSourceLabels(tab) {
+    const srcLabel = document.getElementById("srcLabel");
+    const foot = document.getElementById("foot");
+    if (isCompetitorsTab(tab)) {
+      const comp = PAYLOAD.competitors;
+      const compUpd = formatAlmatyDateTime(comp?.updatedAt);
+      if (srcLabel) {
+        if (comp?.stale && compUpd) srcLabel.textContent = `госзакупки · открытые конкурсы · не обновлены с ${compUpd}`;
+        else if (compUpd) srcLabel.textContent = `госзакупки · открытые конкурсы · обновлены ${compUpd}`;
+        else srcLabel.textContent = "госзакупки · открытые конкурсы · Дата обновления неизвестна";
+      }
+      if (foot) foot.innerHTML = `<span>Источник: открытые конкурсы procurement.gov.kz, протоколы итогов и ТС заказчиков</span><span>Обновляется раз в день, утром</span>`;
+    } else if (isPlansTab(tab)) {
+      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · госзакупки";
+      if (foot) foot.innerHTML = `<span>Источник: сделки планов в Битрикс24 (scrape2lead-gz-plans) и сверка с zakup.gov.kz</span>`;
+    } else if (isRadarTab(tab)) {
+      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · радар лотов";
+      if (foot) foot.innerHTML = `<span>Источник: сделки лотов (воронка 43) и планов (9, 41, 29) Битрикс24</span>`;
+    } else if (tab === "ip" || tab === "kt") {
+      const mk = PAYLOAD.market;
+      const mkUpd = formatAlmatyDateTime(mk?.updatedAt);
+      if (srcLabel) {
+        if (mk?.stale && mkUpd) srcLabel.textContent = `госзакупки · zakup.gov.kz · не обновлены с ${mkUpd}`;
+        else if (mkUpd) srcLabel.textContent = `госзакупки · zakup.gov.kz · обновлено ${mkUpd}`;
+        else srcLabel.textContent = "госзакупки · zakup.gov.kz · Дата обновления неизвестна";
+      }
+      if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
+    } else {
+      if (srcLabel) {
+        if (P.closedMonth) {
+          const opPart = P.contractSource?.available
+            ? (P.contractSource.asOf ? ` · ОП по ${ddmm(P.contractSource.asOf)}` : " · ОП за месяц")
+            : " · без ОП";
+          srcLabel.textContent = `Архив: CRM по ${ddmm(P.asOfDate)}${opPart}`;
+        } else {
+          const build = formatAlmatyDateTime(PAYLOAD.generatedAt);
+          const opPart = P.contractSource?.available && P.contractSource.asOf
+            ? ` · ОП на ${ddmm(P.contractSource.asOf)}`
+            : "";
+          srcLabel.textContent = `CRM Битрикс24${build ? ` · сборка ${build}` : ""}${opPart}`;
+        }
+      }
+      if (foot) foot.innerHTML = `<span>Источник: Битрикс24 · ft3.bitrix24.kz</span><span>Обновляется каждый час с 09:00 до 19:00 в будни · клавиши 1 2 3 и T</span>`;
+    }
+  }
+
   function setTab(tab, fromUser, marketMonth) {
     if (!Object.prototype.hasOwnProperty.call(tabPanes, tab)) tab = "pult";
     if (isPlansTab(tab)) selectedPlanMonth[tab] = validPlanMonth(tab, marketMonth !== undefined ? marketMonth : selectedPlanMonth[tab]);
@@ -1125,24 +1242,8 @@
     renderCompetitorsMonths(tab);
     moveSecInd();
 
-    const srcLabel = document.getElementById("srcLabel");
-    const foot = document.getElementById("foot");
-    if (isCompetitorsTab(tab)) {
-      if (srcLabel) srcLabel.textContent = "госзакупки · открытые конкурсы";
-      if (foot) foot.innerHTML = `<span>Источник: открытые конкурсы procurement.gov.kz, протоколы итогов и ТС заказчиков</span><span>Обновляется раз в день, утром</span>`;
-    } else if (isPlansTab(tab)) {
-      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · госзакупки";
-      if (foot) foot.innerHTML = `<span>Источник: сделки планов в Битрикс24 (scrape2lead-gz-plans) и сверка с zakup.gov.kz</span>`;
-    } else if (isRadarTab(tab)) {
-      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · радар лотов";
-      if (foot) foot.innerHTML = `<span>Источник: сделки лотов (воронка 43) и планов (9, 41, 29) Битрикс24</span>`;
-    } else if (tab === "ip" || tab === "kt") {
-      if (srcLabel) srcLabel.textContent = "госзакупки · zakup.gov.kz";
-      if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
-    } else {
-      if (srcLabel) srcLabel.textContent = "CRM Битрикс24";
-      if (foot) foot.innerHTML = `<span>Источник: Битрикс24 · ft3.bitrix24.kz</span><span>Обновляется каждый час с 09:00 до 19:00 в будни · клавиши 1 2 3 и T</span>`;
-    }
+    updateSourceLabels(tab);
+    renderLiveBadge();
 
     if (tab === "pult") {
       setTimeout(moveInd, 0);
@@ -1294,6 +1395,8 @@
     document.getElementById("closedNotice").hidden = !P.closedMonth;
     renderMonth(false); renderSignals(); renderTasks();
     setPeriod(P.closedMonth ? "month" : period, false, false);
+    if (currentTab === "pult") updateSourceLabels("pult");
+    renderLiveBadge();
     animate(document.getElementById("month"));
     observe();
   }
