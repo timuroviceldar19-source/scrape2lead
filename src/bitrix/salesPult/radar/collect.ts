@@ -1,5 +1,6 @@
 import { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import { enrichManagerNames } from "../managerNames.js";
+import { formatSafeErrorStatus } from "../safeLog.js";
 import { buildRadarView, type RadarRawDeal } from "./aggregate.js";
 import type { RadarView } from "./types.js";
 import type { NormalizedPlanDeal } from "../plans/types.js";
@@ -79,7 +80,7 @@ export async function collectRadarView(options: CollectRadarOptions): Promise<Ra
 
     return view;
   } catch (err) {
-    console.warn(`[Радар] ошибка сбора: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(`[Радар] ошибка сбора (${formatSafeErrorStatus(err)})`);
     return {
       asOf: options.asOfDate,
       error: "Не удалось загрузить данные Радара из Битрикс24.",
