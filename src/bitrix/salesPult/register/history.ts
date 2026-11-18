@@ -1165,14 +1165,18 @@ export async function buildFullRegisterHistory(
       }
     }
 
-    const summary = buildRegisterMonthSummary({
-      month: m,
-      fileName: finalPf.fileName,
-      rows: finalPf.rows,
-      plans: finalPf.plans,
-      hasValColumn: finalPf.hasValColumn,
-      hiddenManagers: options.hiddenManagers
-    });
+    const summaryUpdatedAt = finalPf.updateTime.trim() || undefined;
+    const summary: RegisterMonthSummary = {
+      ...buildRegisterMonthSummary({
+        month: m,
+        fileName: finalPf.fileName,
+        rows: finalPf.rows,
+        plans: finalPf.plans,
+        hasValColumn: finalPf.hasValColumn,
+        hiddenManagers: options.hiddenManagers
+      }),
+      ...(summaryUpdatedAt ? { updatedAt: summaryUpdatedAt } : {})
+    };
 
     const contracts = groupRegisterContracts(finalPf.rows);
     allFinalContracts.push(...contracts);
@@ -1218,7 +1222,11 @@ export async function buildFullRegisterHistory(
     });
     if (view.error === undefined) {
       const { history, historyError, ...snapshot } = view;
-      monthViews[summary.month] = snapshot;
+      const monthUpdatedAt = finalPf.updateTime.trim() || undefined;
+      monthViews[summary.month] = {
+        ...snapshot,
+        ...(monthUpdatedAt ? { updatedAt: monthUpdatedAt } : {})
+      };
     }
   }
 

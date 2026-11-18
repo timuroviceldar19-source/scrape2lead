@@ -396,14 +396,15 @@ export function buildMarketView(
   const hasData = units.length > 0 || pendingMonths.length > 0;
   const ip = hasData ? buildMarketGroupView("ИП", units, asOfDate, cfg, pendingMonths) : null;
   const kt = hasData ? buildMarketGroupView("КТ", units, asOfDate, cfg) : null;
-  const isStale = Boolean(updatedAt && updatedAt < getPreviousWorkday(asOfDate));
+  const normalizedUpdatedAt = updatedAt?.trim() || undefined;
+  const isStale = Boolean(normalizedUpdatedAt && normalizedUpdatedAt.slice(0, 10) < getPreviousWorkday(asOfDate));
   return {
     asOf: asOfDate,
     months,
     ip,
     kt,
     educationPending,
-    updatedAt: updatedAt || asOfDate,
+    updatedAt: normalizedUpdatedAt,
     stale: isStale,
     error
   };

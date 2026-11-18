@@ -7,14 +7,14 @@ import { chromium, type Browser } from "playwright";
 import { fixture } from "../fixtures/sales-pult/contracts.js";
 import { attachRegisterContracts } from "../../src/bitrix/salesPult/contracts.js";
 import { loadRegisterView } from "../../src/bitrix/salesPult/register/load.js";
-import { buildRegisterMonthSummary } from "../../src/bitrix/salesPult/register/history.js";
+import { buildFullRegisterHistory, buildRegisterMonthSummary } from "../../src/bitrix/salesPult/register/history.js";
 import type { RegisterSuccessView } from "../../src/bitrix/salesPult/register/types.js";
 import { renderPultHtml, type RegisterPagePayload } from "../../src/bitrix/salesPult/site.js";
 import { buildManagerVariant, renderManagerVariant } from "../../src/bitrix/salesPult/variants/manager.js";
 import { buildCompetitorsView } from "../../src/kz/competitors/aggregate.js";
 import { loadCompetitorsConfig } from "../../src/kz/competitors/config.js";
 import type { CompetitorBid, CompetitorLot } from "../../src/kz/competitors/types.js";
-import { buildMarketGroupView } from "../../src/kz/market/aggregate.js";
+import { buildMarketGroupView, buildMarketView } from "../../src/kz/market/aggregate.js";
 import { loadMarketConfig } from "../../src/kz/market/config.js";
 import type { MarketUnit } from "../../src/kz/market/types.js";
 import type { SalesPultPayload } from "../../src/bitrix/salesPult/types.js";
@@ -320,6 +320,30 @@ describe("wave 2 freshness: данные источников и проброс 
       expect(viewWithoutTime.error).toBeUndefined();
       expect(viewWithoutTime.asOf).toBe("2026-10-28");
       expect(viewWithoutTime.updatedAt).toBeUndefined();
+
+      for (const extra of [{}, { UPDATE_TIME: null }]) {
+        const readerMissingTime = {
+          listAllBatched: async () => [
+            {
+              ID: "3",
+              NAME: "ОП 28.10.26.xlsx",
+              TYPE: "file",
+              DOWNLOAD_URL: "https://example.invalid/reg.xlsx",
+              ...extra
+            }
+          ]
+        };
+        const viewMissing = (await loadRegisterView({
+          reader: readerMissingTime as never,
+          diskFolderId: 42,
+          todayAlmaty: "2026-10-29",
+          historyCachePath: path.join(tmpDir, "h-miss.json"),
+          attemptPath: path.join(tmpDir, "a-miss.json")
+        })) as RegisterSuccessView;
+        expect(viewMissing.error).toBeUndefined();
+        expect(viewMissing.asOf).toBe("2026-10-28");
+        expect(viewMissing.updatedAt).toBeUndefined();
+      }
     } finally {
       globalThis.fetch = origFetch;
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -355,6 +379,40 @@ describe("wave 2 freshness: данные источников и проброс 
       asOfDate: "2026-10-29",
       cfg
     });
+    expect(view.asOf).toBe("2026-10-29");
+    expect(view.updatedAt).toBeUndefined();
+    expect(view.stale).toBe(false);
+  });
+
+  it("buildFullRegisterHistory сохраняет updateTime закрытого месяца и оставляет undefined при его отсутствии", async () => {
+    const buf = await buildRegisterXlsxBuffer();
+    const history = await buildFullRegisterHistory({
+      files: [{ fileName: "ОП 31.10.26.xlsx", buffer: buf, updateTime: "2026-10-31T12:15:00Z" }],
+      todayAlmaty: "2026-11-05",
+      fetchPortal: false
+    });
+    expect(history.months[0]?.updatedAt).toBe("2026-10-31T12:15:00Z");
+    expect(history.monthViews?.["2026-10"]?.updatedAt).toBe("2026-10-31T12:15:00Z");
+
+    const f = fixture();
+    f.payload.closedMonth = true;
+    f.payload.asOfDate = "2026-10-31";
+    attachRegisterContracts(f.payload, { error: "current unavailable", history }, new Map(), f.aliases);
+    expect(f.payload.contractSource?.asOf).toBe("2026-10-31");
+    expect(f.payload.contractSource?.updatedAt).toBe("2026-10-31T12:15:00Z");
+
+    const withoutTime = await buildFullRegisterHistory({
+      files: [{ fileName: "ОП 31.10.26.xlsx", buffer: buf }],
+      todayAlmaty: "2026-11-05",
+      fetchPortal: false
+    });
+    expect(withoutTime.months[0]?.updatedAt).toBeUndefined();
+    expect(withoutTime.monthViews?.["2026-10"]?.updatedAt).toBeUndefined();
+  });
+
+  it("market/aggregate.ts оставляет updatedAt=undefined при отсутствии updatedAt", () => {
+    const cfg = loadMarketConfig();
+    const view = buildMarketView([], "2026-10-29", cfg, undefined, undefined, {});
     expect(view.asOf).toBe("2026-10-29");
     expect(view.updatedAt).toBeUndefined();
     expect(view.stale).toBe(false);
@@ -539,6 +597,19 @@ describe("wave 2 freshness: Playwright (1440 и 375 px)", () => {
         await page.locator('.sections [data-t="market"]').click();
         expect(await page.locator("#srcLabel").textContent()).toContain("Дата обновления неизвестна");
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+        // 4. Прямой вход в закрытый месяц (#pult/2026-09) с архивным updatedAt ОП
+        const withClosedUpd = buildFreshnessPayload({ registerUpdatedAt: "2026-10-28T12:45:00Z", closedUpdatedAt: "2026-09-30T11:20:00Z" });
+        await page.goto("about:blank");
+        await page.setContent(renderPultHtml(withClosedUpd.payload));
+        await page.evaluate(() => {
+          location.hash = "#pult/2026-09";
+        });
+        await page.waitForFunction(() => document.getElementById("liveText")?.textContent?.includes("Архив"));
+        const closedHashText = await page.locator("#monthFreshness").innerText();
+        expect(closedHashText).toContain("архивный срез по 30.09");
+        expect(closedHashText).toContain("30.09 16:20 (UTC+5)");
+        expect(closedHashText).not.toContain("14:30");
 
         expect(errors).toEqual([]);
       } finally {

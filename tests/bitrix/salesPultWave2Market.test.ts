@@ -219,7 +219,15 @@ describe("волна 2: помесячные JSON рынка, выкладка, 
         { id: "80002", verdict: "Да", source: "договор" },
         { id: "80003", verdict: "Нет", source: "объявление" }
       ];
-      const allInput = [...units, hiddenUnit, eduYes, eduNo, eduPending];
+      const allInput = [
+        ...units,
+        hiddenUnit,
+        // Скрытая позиция внутри того же многопозиционного договора 9001 не должна попадать в итог и в JSON
+        { ...hiddenUnit, id: 9001, unitIndex: 2, supplier: ourBin, supplierName: 'ТОО "Альфа Тест"', customer: "111111111101", customerName: "Учебный центр 1", us: true },
+        eduYes,
+        eduNo,
+        eduPending
+      ];
       const unitsFilePath = path.join(dir, "units.json");
       const verdictsFilePath = path.join(dir, "verdicts.json");
       const outDir = path.join(dir, "exports");
@@ -435,15 +443,38 @@ describe("волна 2: помесячные JSON рынка, выкладка, 
     expect(mgrRes.headers.get("cache-control")).toBe("private, no-store");
     expect(asked).toContain("/_r/m2381/market/ip/2026-10.json");
 
-    // Без JWT и чужая почта -> 403
-    expect((await call("/market/ip/2026-10.json")).status).toBe(403);
-    expect((await call("/market/ip/2026-10.json", "stranger@example.test")).status).toBe(403);
+    // Без JWT и чужая почта -> 403 с private, no-store
+    const noJwtRes = await call("/market/ip/2026-10.json");
+    expect(noJwtRes.status).toBe(403);
+    expect(noJwtRes.headers.get("cache-control")).toBe("private, no-store");
+    const strangerRes = await call("/market/ip/2026-10.json", "stranger@example.test");
+    expect(strangerRes.status).toBe(403);
+    expect(strangerRes.headers.get("cache-control")).toBe("private, no-store");
 
     // Роль tv не имеет доступа к рынку -> 403 (и не ходит в /_r/tv/market/...)
     const askedBeforeTv = asked.length;
     const tvRes = await call("/market/ip/2026-10.json", "tv@example.test");
     expect(tvRes.status).toBe(403);
+    expect(tvRes.headers.get("cache-control")).toBe("private, no-store");
     expect(asked.slice(askedBeforeTv)).toEqual([]);
+
+    // Без PULT_ROLES (config: null): /market/... отдаётся из all с private, no-store, но прямой /_r/... всё равно закрыт (404)
+    const openGateRes = await handleGateRequest(new Request("https://pult.example.test/market/ip/2026-10.json"), {
+      config: null,
+      assets,
+      fetchFn,
+      now: () => NOW_MS
+    });
+    expect(openGateRes.status).toBe(200);
+    expect(openGateRes.headers.get("cache-control")).toBe("private, no-store");
+    const directNoCfg = await handleGateRequest(new Request("https://pult.example.test/_r/all/market/ip/2026-10.json"), {
+      config: null,
+      assets,
+      fetchFn,
+      now: () => NOW_MS
+    });
+    expect(directNoCfg.status).toBe(404);
+    expect(directNoCfg.headers.get("cache-control")).toBe("private, no-store");
 
     // Неизвестный месяц -> 404
     expect((await call("/market/ip/2099-01.json", "boss@example.test")).status).toBe(404);
@@ -557,9 +588,20 @@ describe("волна 2: Playwright UI для «Все договоры за ме
     return { page, errors };
   }
 
-  it("открытие/закрытие с клавиатуры, возврат фокуса, порционная выдача, сверка и проверка на 1440/375 px", async () => {
-    const { page, errors } = await openPage("/#ip/2026-10", 1440);
+  it("открытие/закрытие с клавиатуры, возврат фокуса, ленивая загрузка, порционная выдача, сверка и проверка на 1440/375 px", async () => {
+    const marketRequests: string[] = [];
+    const { page, errors } = await openPage("/", 1440);
+    page.on("request", (req) => {
+      const p = new URL(req.url()).pathname;
+      if (p.startsWith("/market/")) marketRequests.push(p);
+    });
     try {
+      // Главная страница «Сегодня» и стартовый «Рынок» не запрашивают полный список договоров до открытия пользователем
+      expect(marketRequests).toEqual([]);
+      await page.locator('.sections a[data-t="market"]').click();
+      await page.waitForSelector("#tab-ip [data-market-all-toggle]");
+      expect(marketRequests).toEqual([]);
+
       // Свежесть источника и сохранность топов
       expect(await page.locator("#tab-ip .source-freshness").textContent()).toContain("Данные рынка обновлены 10.11");
       expect(await page.locator("#tab-ip .share .r").count()).toBeGreaterThan(2);
@@ -573,6 +615,7 @@ describe("волна 2: Playwright UI для «Все договоры за ме
       await page.keyboard.press("Enter");
 
       await page.waitForSelector("#tab-ip .market-all-rows .r:not(.head)");
+      expect(marketRequests).toEqual(["/market/ip/2026-10.json"]);
       expect(await toggleBtn.getAttribute("aria-expanded")).toBe("true");
       expect(await page.locator("#tab-ip .market-all-rows .r:not(.head)").count()).toBe(50);
 
@@ -581,18 +624,26 @@ describe("волна 2: Playwright UI для «Все договоры за ме
       expect(summaryText).toContain("65 договоров");
       expect(summaryText).toContain("совпадает со сводкой");
 
-      // Пагинация («Показать ещё» -> 65 строк)
-      await page.locator("#tab-ip [data-market-all-more]").click();
+      // Пагинация с клавиатуры («Показать ещё» -> 65 строк, фокус переходит на «Свернуть список»)
+      const moreBtn = page.locator("#tab-ip [data-market-all-more]");
+      await moreBtn.focus();
+      await page.keyboard.press("Enter");
       expect(await page.locator("#tab-ip .market-all-rows .r:not(.head)").count()).toBe(65);
       expect(await page.locator("#tab-ip .market-all-summary").textContent()).toContain("Показано 65 из 65");
       expect(await page.locator("#tab-ip [data-market-all-more]").count()).toBe(0);
+      expect(await page.evaluate(() => document.activeElement?.hasAttribute("data-market-all-collapse"))).toBe(true);
 
-      // Без переполнения на 1440 и 375
+      // На 375 px: «Свернуть список» с клавиатуры закрывает и возвращает фокус на кнопку открытия
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.setViewportSize({ width: 375, height: 812 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.keyboard.press("Enter");
+      expect(await toggleBtn.getAttribute("aria-expanded")).toBe("false");
+      expect(await page.evaluate(() => document.activeElement?.hasAttribute("data-market-all-toggle"))).toBe(true);
 
-      // Закрытие по Escape с возвратом фокуса на кнопку открытия
+      // Повторное открытие на 375 px и закрытие по Escape с возвратом фокуса на кнопку открытия
+      await page.keyboard.press("Enter");
+      await page.waitForSelector("#tab-ip .market-all-rows .r:not(.head)");
       const firstLink = page.locator("#tab-ip .market-all-rows a.r").first();
       await firstLink.focus();
       await page.keyboard.press("Escape");
@@ -638,9 +689,12 @@ describe("волна 2: Playwright UI для «Все договоры за ме
       await page.locator('#marketMonths button[data-month="2026-09"]').click();
       await page.waitForSelector("#tab-ip [data-market-all-retry]");
       expect(await page.locator("#tab-ip .market-all-state").textContent()).toContain("Не удалось загрузить");
-      await page.locator("#tab-ip [data-market-all-retry]").click();
+      const retryBtn = page.locator("#tab-ip [data-market-all-retry]");
+      await retryBtn.focus();
+      await page.keyboard.press("Enter");
       await page.waitForSelector("#tab-ip .market-all-rows .r:not(.head)");
       expect(await page.locator("#tab-ip .market-all-rows .r:not(.head)").count()).toBe(3);
+      expect(await page.evaluate(() => document.activeElement?.hasAttribute("data-market-all-toggle"))).toBe(true);
       expect(errors).toEqual([]);
     } finally {
       routeOverride = null;
