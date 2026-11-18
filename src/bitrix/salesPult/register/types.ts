@@ -118,6 +118,8 @@ export interface RegisterMonthSummary {
   month: string;
   label: string;
   fileName: string;
+  /** Время загрузки/обновления файла с Диска (UPDATE_TIME). */
+  updatedAt?: string;
   sale: number;
   val: number | null;
   margin: number | null;
@@ -230,6 +232,8 @@ export interface RegisterSuccessView {
   crmDeals?: CrmWonDeal[];
   file: string;
   asOf: string;
+  /** Время загрузки/обновления файла реестра с Диска (UPDATE_TIME); отсутствует, если неизвестно. */
+  updatedAt?: string;
   month: string;
   total: RegisterTotal;
   daily: RegisterDailyPoint[];
@@ -253,6 +257,7 @@ export interface RegisterErrorView {
   error: string;
   file?: string;
   asOf?: string;
+  updatedAt?: string;
   month?: string;
   total?: RegisterTotal;
   daily?: RegisterDailyPoint[];

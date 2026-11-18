@@ -582,8 +582,8 @@ export function buildCompetitorsView(options: BuildCompetitorsViewOptions): Comp
 
   const ip = buildCompetitorsGroupView("ИП", options.lots, options.bids, options.templateMatches, cfg);
   const kt = buildCompetitorsGroupView("КТ", options.lots, options.bids, options.templateMatches, cfg);
-  const updatedAt = options.updatedAt || options.asOfDate;
-  const stale = Boolean(options.updatedAt && options.updatedAt < getPreviousWorkday(options.asOfDate));
+  const updatedAt = options.updatedAt?.trim() || undefined;
+  const stale = Boolean(updatedAt && updatedAt.slice(0, 10) < getPreviousWorkday(options.asOfDate));
 
   return {
     asOf: options.asOfDate,

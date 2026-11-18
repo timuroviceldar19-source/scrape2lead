@@ -28,6 +28,7 @@
   /** Меньше половины тенге — пусто, а не «0». */
   const has = (n) => Math.abs(n || 0) >= 0.5;
   const ddmm = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : "—");
+  const ddmmyyyy = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : "—");
   const dayMonth = (iso) => `${Number(iso.slice(8, 10))} ${MONTHS_GEN[Number(iso.slice(5, 7)) - 1]}`;
   const daysBetween = (from, to) => Math.round((Date.parse(to) - Date.parse(from)) / 86400000);
   const plural = (n, f) => {
@@ -47,7 +48,7 @@
   let blockNo = 0;
   const idx = () => String(++blockNo).padStart(2, "0");
   const head = (title, meta = "") => `<div class="block-head"><h2><span class="idx">${idx()}</span>${title}</h2><span class="meta">${meta}</span></div>`;
-  const today = (P.asOfDate || "").slice(0, 10);
+  const today = (P.asOfDate || (R && R.dataDate) || "").slice(0, 10);
 
   function setLabels() {
     const dateLabel = document.getElementById("dateLabel");
@@ -169,13 +170,19 @@
 
   /* ---------- 04: дебиторы ---------- */
   let debtFilter = "";
+  let debtAge = 0; // 0 = все, 30 = старше 30 дней, 60 = старше 60 дней
   let debtAll = false;
+  const AGE_FILTERS = [
+    { days: 0, label: "Все" },
+    { days: 30, label: "Старше 30 дней" },
+    { days: 60, label: "Старше 60 дней" }
+  ];
   // Сортировка по клику на «Сумма» или «Прошло»: сначала от большего к меньшему, повторный клик — наоборот.
   let debtSort = { key: "amount", dir: -1 };
   function ageCls(days) {
     return days > 60 ? "bad" : days > 30 ? "warn" : "";
   }
-  const debtDays = (x) => (x.saleDate ? daysBetween(x.saleDate, today) : null);
+  const debtDays = (x) => (x.saleDate && today ? daysBetween(x.saleDate, today) : null);
   function debtCompare(a, b) {
     if (debtSort.key === "days") {
       const da = debtDays(a), db = debtDays(b);
@@ -189,9 +196,16 @@
     }
     return (a.amount - b.amount) * debtSort.dir;
   }
-  // Фильтр по компании — только для основного списка: кнопки компаний стоят внутри него.
+  // Фильтры по компании и возрасту — только для основного списка: кнопки стоят внутри него.
   function debtRows(list, limit, byCompany) {
-    const rows = list.rows.filter((x) => !byCompany || !debtFilter || x.company === debtFilter).sort(debtCompare);
+    const rows = list.rows.filter((x) => {
+      if (byCompany && debtFilter && x.company !== debtFilter) return false;
+      if (byCompany && debtAge > 0) {
+        const days = debtDays(x);
+        if (days === null || days <= debtAge) return false;
+      }
+      return true;
+    }).sort(debtCompare);
     const shown = limit ? rows.slice(0, limit) : rows;
     const html = shown.map((x) => {
       const days = debtDays(x);
@@ -214,11 +228,17 @@
 
   function debtMainHtml() {
     const D = R.debtors;
-    const chips = D.companies.length > 1
-      ? `<div class="chips" id="debtChips" role="group" aria-label="Компания">${["", ...D.companies].map((c) => `<button type="button" data-c="${esc(c)}" aria-pressed="${String(c === debtFilter)}">${c ? esc(c) : "Все"}</button>`).join("")}</div>`
+    const companyGroup = D.companies.length > 1
+      ? `<div class="fin-debt-filter-group"><span class="label">Компания</span><div class="chips" id="debtChips" role="group" aria-label="Компания">${["", ...D.companies].map((c) => `<button type="button" data-c="${esc(c)}" aria-pressed="${String(c === debtFilter)}">${c ? esc(c) : "Все"}</button>`).join("")}</div></div>`
       : "";
+    const ageGroup = `<div class="fin-debt-filter-group"><span class="label">Возраст</span><div class="chips" id="debtAgeChips" role="group" aria-label="Возраст с даты реализации">${AGE_FILTERS.map((f) => `<button type="button" data-age="${f.days}" aria-pressed="${String(f.days === debtAge)}">${esc(f.label)}</button>`).join("")}</div></div>`;
     const main = debtRows(D, debtAll ? 0 : 12, true);
-    let s = `${chips}<div class="rows fin-debt">${debtHead()}${main.html}</div>`;
+    const asOfText = today ? `Отсчёт возраста с даты реализации на ${esc(ddmmyyyy(today))}` : "Возраст с даты реализации";
+    const filterSummary = (debtFilter || debtAge > 0) ? ` · по фильтру: ${plural(main.total, ["долг", "долга", "долгов"])} на ${money(main.sum)}` : "";
+    const bodyHtml = main.html || `<div class="fin-debt-empty">По выбранным фильтрам долгов нет.</div>`;
+    let s = `<div class="fin-debt-filters">${companyGroup}${ageGroup}</div>`;
+    s += `<div class="fin-debt-meta">${asOfText}${filterSummary}</div>`;
+    s += `<div class="rows fin-debt">${debtHead()}${bodyHtml}</div>`;
     if (main.total > 12) {
       s += `<button type="button" class="btn fin-showall" id="debtAll">${debtAll ? "Свернуть" : `Показать все ${main.total} на ${money(main.sum)}`}</button>`;
     }
@@ -232,7 +252,7 @@
     const D = R.debtors;
     const byCompany = D.companies.map((c, i) => `${esc(c)} ${money(D.totals[i])}`).join(" · ");
     let s = `${head("Дебиторы", `${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}`)}
-      <p class="lead">${byCompany}. Цвет — сколько дней прошло с реализации: больше 30 — жёлтый, больше 60 — красный.</p>
+      <p class="lead">${byCompany}. Возраст — сколько дней прошло с даты реализации на ${esc(ddmmyyyy(today))}: больше 30 — оранжевый, больше 60 — красный.</p>
       <details class="fin-more" id="debtMainBox"><summary>Список дебиторов <span class="dim">${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}</span></summary>
         <div id="debtMain">${debtMainHtml()}</div></details>`;
     if (R.problemDebts && R.problemDebts.rows.length) {
@@ -414,8 +434,18 @@
     }
     const chip = e.target.closest("#debtChips button");
     if (chip) {
-      debtFilter = chip.dataset.c || "";
+      const c = chip.dataset.c || "";
+      debtFilter = c;
       rerenderDebtors();
+      [...document.querySelectorAll("#debtChips button")].find((b) => (b.dataset.c || "") === c)?.focus();
+      return;
+    }
+    const ageChip = e.target.closest("#debtAgeChips button");
+    if (ageChip) {
+      const age = Number(ageChip.dataset.age || "0") || 0;
+      debtAge = age;
+      rerenderDebtors();
+      document.querySelector(`#debtAgeChips button[data-age="${age}"]`)?.focus();
       return;
     }
     const sort = e.target.closest(".fin-sort");
@@ -432,6 +462,7 @@
       debtAll = !debtAll;
       rerenderDebtors();
       if (!debtAll) document.getElementById("debtMainBox")?.scrollIntoView({ block: "start" });
+      document.getElementById("debtAll")?.focus();
     }
   });
 

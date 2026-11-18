@@ -59,6 +59,12 @@ a { color: inherit; }
 .live i { width: 7px; height: 7px; border-radius: 50%; background: var(--good); position: relative; }
 .live i::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1px solid var(--good); opacity: 0; animation: ping 2.6s var(--ease) infinite; }
 .live.stale i { background: var(--warn); } .live.stale i::after { border-color: var(--warn); }
+.live.archive i { background: var(--ink-3); } .live.archive i::after { display: none; }
+.live .live-mobile { display: none; }
+@media (max-width: 760px) {
+  .live .live-desktop { display: none; }
+  .live .live-mobile { display: inline; }
+}
 @keyframes ping { 0% { transform: scale(.4); opacity: .9; } 80%, 100% { transform: scale(1.6); opacity: 0; } }
 .btn { border: 1px solid var(--rule-2); border-radius: 6px; background: var(--sheet); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03); padding: 7px 12px; cursor: pointer; font: 500 12px var(--mono); letter-spacing: .04em; transition: background .2s, color .2s, border-color .2s; }
 .btn:hover { background: var(--ink); color: #ffffff; border-color: var(--ink); }
@@ -536,7 +542,20 @@ a.r:focus-visible, .cust-d > summary:focus-visible { outline: 2px solid var(--in
 
 /* Полоса периода остаётся под шапкой, её высота учитывается для якорей. */
 .dateline { position: sticky; top: var(--bar-height, 64px); z-index: 19; background: var(--paper); }
-section[id], #closedNotice { scroll-margin-top: calc(var(--bar-height, 64px) + var(--period-height, 100px) + 18px); }
+section[id], #closedNotice, #r-missing, #r-reconciliation { scroll-margin-top: calc(var(--bar-height, 64px) + var(--period-height, 100px) + 18px); }
+.crm-miss-link { text-underline-offset: 3px; }
+.block-head-side { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }
+.urgent-jump {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid rgba(185, 28, 28, 0.3); border-radius: 6px;
+  background: var(--bad-t); color: #b91c1c;
+  padding: 5px 10px; cursor: pointer;
+  font: 500 12px/1.2 var(--mono);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.urgent-jump:hover { background: #b91c1c; color: #ffffff; border-color: #b91c1c; }
+.urgent-jump-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+body.tv .urgent-jump { display: none !important; }
 .month-picker { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .month-picker select { font: inherit; background: var(--sheet); color: var(--ink); border: 1px solid var(--rule-3); padding: 6px; max-width: 180px; }
 [hidden] { display: none !important; }
@@ -786,6 +805,9 @@ body.tv .search-btn, body.tv .search-modal { display: none !important; }
 .search-empty { padding: 24px 12px; text-align: center; color: var(--ink-3); font: 400 13px var(--mono); }
 
 /* ---------- wow upgrade: plans search input ---------- */
+.plans-summary-actions { margin: 14px 0 18px; }
+body.tv .plans-summary-actions { display: none !important; }
+.plans-open, .plan-search-input { scroll-margin-top: calc(var(--bar-height, 64px) + var(--period-height, 100px) + 18px); }
 .plans-open .block-head { margin-bottom: 8px; }
 .plan-search-wrap { margin: 0 0 6px; }
 .plan-search-input { width: 100%; max-width: 480px; height: 32px; padding: 4px 10px; font: 400 12px var(--display); background: var(--sheet); border: 1px solid var(--rule-2); border-radius: 6px; color: var(--ink); box-sizing: border-box; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02); }
@@ -841,6 +863,30 @@ body.tv .plan-search-wrap { display: none !important; }
   font: 500 13px var(--mono);
   color: var(--ink-2);
   margin-top: 6px;
+}
+.radar-deadline-counters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.radar-deadline-item { min-width: 0; }
+.radar-deadline-item + .radar-deadline-item {
+  border-left: 1px solid var(--rule-2);
+  padding-left: 12px;
+}
+.radar-deadline-title {
+  font: 500 11px/1.3 var(--mono);
+  color: var(--ink-2);
+}
+.radar-deadline-note {
+  display: block;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.radar-deadline-item .v {
+  margin-top: 6px;
+  font-size: clamp(16px, 1.6vw, 22px);
 }
 .radar-filters-bar {
   margin-bottom: 20px;
@@ -1078,6 +1124,15 @@ body.tv .radar-col-more {
   .radar-kpis {
     grid-template-columns: 1fr;
   }
+  .radar-deadline-counters {
+    grid-template-columns: 1fr;
+  }
+  .radar-deadline-item + .radar-deadline-item {
+    border-left: 0;
+    padding-left: 0;
+    border-top: 1px solid var(--rule-2);
+    padding-top: 10px;
+  }
 }
 
 /* ---------- competitors tab ---------- */
@@ -1132,6 +1187,53 @@ body.tv .radar-col-more {
   .comp-readout, .comp-tpl-readout { grid-template-columns: 1fr; gap: 10px; }
   .comp-chart { overflow-x: auto; }
   .comp-chart .months, .comp-chart .mlabels { min-width: max-content; grid-template-columns: repeat(var(--m-count, 11), minmax(36px, 1fr)); }
+}
+
+/* ---------- freshness strips & source banners ---------- */
+.month-freshness {
+  display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline;
+  margin: 14px 0 4px; padding: 10px 14px;
+  background: var(--sheet); border: 1px solid var(--rule-2); border-radius: 8px;
+  font: 400 12px/1.45 var(--mono); color: var(--ink-2);
+}
+.month-freshness .mf-item {
+  display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px;
+  min-width: 0; overflow-wrap: anywhere;
+}
+.month-freshness .mf-k {
+  font-weight: 500; font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.month-freshness .mf-v { color: var(--ink); }
+.month-freshness .mf-item.is-warn .mf-v { color: var(--warn); }
+body.tv .month-freshness { margin: 0 0 12px; padding: 6px 12px; gap: 6px 16px; font-size: 11px; }
+@media (max-width: 760px) {
+  .month-freshness { padding: 9px 12px; gap: 6px 12px; font-size: 11px; }
+}
+
+.source-freshness {
+  margin: 12px 0 18px; padding: 8px 12px;
+  background: var(--sheet); border: 1px solid var(--rule-2); border-left: 3px solid var(--good);
+  border-radius: 0 6px 6px 0;
+  font: 400 12px/1.45 var(--mono); color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.source-freshness.is-unknown { border-left-color: var(--ink-4); color: var(--ink-3); }
+
+/* рынок: полный список договоров за месяц */
+.market-all-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.market-all-panel { margin-top: 16px; }
+.market-all-summary { margin: 0 0 12px; font: 400 12px/1.5 var(--mono); color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; justify-content: space-between; }
+.market-all-state { padding: 14px 16px; background: var(--sheet); border: 1px solid var(--rule-2); border-radius: 8px; font-size: 13px; color: var(--ink-2); display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.market-all-rows .r { grid-template-columns: 50px minmax(0, 2.2fr) minmax(0, 1.4fr) minmax(0, 1fr) 54px 96px 104px; font-size: 13px; }
+.market-all-rows .r > * { min-width: 0; }
+.market-all-rows a.r:hover { background: rgba(255,255,255,.55); }
+.market-all-footer { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+body.tv .market-all-block { display: none !important; }
+@media (max-width: 760px) {
+  .market-all-rows .r.head { display: none; }
+  .market-all-rows .r { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
+  .market-all-rows .r > :nth-child(2) { grid-column: 1 / -1; order: -1; }
 }
 
 

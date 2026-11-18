@@ -47,13 +47,18 @@ import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
 import { loadFinanceView } from "../src/bitrix/salesPult/finance/load.js";
 import { updateMarketWindow } from "../src/kz/market/updateWindow.js";
 import { loadMarketView } from "../src/kz/market/load.js";
+import { buildAllMarketMonthContracts, filterMarketUnitsForView } from "../src/kz/market/aggregate.js";
+import { loadMarketConfig } from "../src/kz/market/config.js";
+import { loadEducationVerdicts } from "../src/kz/market/educationVerdicts.js";
+import type { MarketConfig } from "../src/kz/market/types.js";
 import { backfillCompetitors } from "../src/kz/competitors/collector.js";
 import { updateCompetitorsWindow, loadCompetitorsView, resolveBackfillBudgetMs } from "../src/kz/competitors/load.js";
 import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
 import { collectRadarView } from "../src/bitrix/salesPult/radar/collect.js";
 import {
   backfillMarketByMonths,
-  DEFAULT_MARKET_UNITS_PATH
+  DEFAULT_MARKET_UNITS_PATH,
+  loadStoredMarketData
 } from "../src/kz/market/fetchMarket.js";
 
 export interface PultConfig {
@@ -188,6 +193,48 @@ export async function fetchChatMessagesSince(
   }
 
   return allMessages;
+}
+
+export function writeMarketMonthContractFiles(options: {
+  outDir: string;
+  todayAlmaty: string;
+  unitsFilePath?: string;
+  educationVerdictsFilePath?: string;
+  cfg?: MarketConfig;
+  additionalMonths?: string[];
+}): { ipMonths: string[]; ktMonths: string[] } {
+  const marketDir = path.join(options.outDir, "market");
+  fs.rmSync(marketDir, { recursive: true, force: true });
+
+  const stored = loadStoredMarketData(options.unitsFilePath ?? DEFAULT_MARKET_UNITS_PATH);
+  if (stored.units.length === 0) {
+    return { ipMonths: [], ktMonths: [] };
+  }
+  const cfg = options.cfg ?? loadMarketConfig();
+  const verdicts = loadEducationVerdicts(options.educationVerdictsFilePath);
+  const filtered = filterMarketUnitsForView(stored.units, cfg, verdicts);
+  const byGroup = buildAllMarketMonthContracts(
+    filtered.units,
+    options.todayAlmaty,
+    cfg,
+    filtered.educationPending,
+    options.additionalMonths ?? []
+  );
+
+  for (const [groupSlug, monthsMap] of [
+    ["ip", byGroup.ip],
+    ["kt", byGroup.kt]
+  ] as const) {
+    const groupDir = path.join(marketDir, groupSlug);
+    fs.mkdirSync(groupDir, { recursive: true });
+    for (const [month, monthPayload] of Object.entries(monthsMap)) {
+      fs.writeFileSync(path.join(groupDir, `${month}.json`), JSON.stringify(monthPayload), "utf8");
+    }
+  }
+  return {
+    ipMonths: Object.keys(byGroup.ip).sort(),
+    ktMonths: Object.keys(byGroup.kt).sort()
+  };
 }
 
 export class SalesPultCliError extends Error {
@@ -784,6 +831,10 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
     const html = renderPultHtml(payload);
     fs.writeFileSync(path.join(outDir, "index.html"), html, "utf8");
     fs.writeFileSync(path.join(outDir, "payload.json"), JSON.stringify(payload, null, 2), "utf8");
+    const marketFiles = writeMarketMonthContractFiles({ outDir, todayAlmaty });
+    if (marketFiles.ipMonths.length || marketFiles.ktMonths.length) {
+      console.log(`[Рынок] Помесячные JSON: ИП ${marketFiles.ipMonths.length} мес., КТ ${marketFiles.ktMonths.length} мес.`);
+    }
     // Все сделки «Планов»: из них при выкладке собираются «Планы» в виде менеджера (на сайт файл не идёт).
     if (!plansView.error) fs.writeFileSync(path.join(outDir, "plan-deals.json"), JSON.stringify(planDealsForRadar), "utf8");
 

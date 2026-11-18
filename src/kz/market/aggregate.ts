@@ -13,9 +13,12 @@ import type {
   MarketCompanyItem,
   MarketYtdCompanyItem,
   MarketYtdView,
-  MarketConfig
+  MarketConfig,
+  MarketFullContractItem,
+  MarketMonthContractsPayload
 } from "./types.js";
 import { loadMarketConfig } from "./config.js";
+import { applyEducationVerdicts, loadEducationVerdicts, type EducationVerdict } from "./educationVerdicts.js";
 import { GZ_PORTAL_ORIGIN } from "../goszakupOrigin.js";
 
 /** A customer's or a supplier's drop-down list shows at most this many of the largest contracts. */
@@ -97,6 +100,31 @@ export function getPreviousWorkday(dateStr: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+function resolveMarketGroupMonths(
+  groupUnits: MarketUnit[],
+  asOfDate: string,
+  additionalMonths: string[] = []
+): { defaultMonth: string; monthKeys: string[]; byMonth: Record<string, MarketUnit[]> } {
+  const curMonth = asOfDate.slice(0, 7);
+  const prevMonth = getPreviousMonthKey(curMonth);
+
+  const curCandidate = groupUnits.filter((u) => u.month === curMonth);
+  const prevUnits = groupUnits.filter((u) => u.month === prevMonth);
+
+  // If early in the month and few contracts arrived, or no contracts in current month yet:
+  // show previous month in full.
+  const curCandidateContracts = countContracts(curCandidate);
+  const isEarlyMonth = Number(asOfDate.slice(8, 10)) <= 5;
+  const usePrevMonth = prevUnits.length > 0 && (curCandidateContracts === 0 || (isEarlyMonth && curCandidateContracts < 5));
+  const defaultMonth = usePrevMonth ? prevMonth : curMonth;
+
+  const byMonth = groupBy(groupUnits, (u) => u.month);
+  // Месяц без подтверждённых комплектов остаётся доступен для списка «На проверке».
+  for (const month of additionalMonths) byMonth[month] ??= [];
+  const monthKeys = [...new Set([...Object.keys(byMonth), defaultMonth])].sort();
+  return { defaultMonth, monthKeys, byMonth };
+}
+
 export function buildMarketGroupView(
   group: "ИП" | "КТ",
   allUnits: MarketUnit[],
@@ -108,23 +136,9 @@ export function buildMarketGroupView(
   const ourCompaniesList = getOurCompaniesList(cfg);
   const isOurUnit = (u: MarketUnit) => ourBins.has(u.supplier);
 
-  const curMonth = asOfDate.slice(0, 7);
-  const prevMonth = getPreviousMonthKey(curMonth);
-
   const groupUnits = allUnits.filter((u) => u.group === group);
-  const curCandidate = groupUnits.filter((u) => u.month === curMonth);
-  const prevUnits = groupUnits.filter((u) => u.month === prevMonth);
+  const { defaultMonth, monthKeys, byMonth } = resolveMarketGroupMonths(groupUnits, asOfDate, additionalMonths);
 
-  // If early in the month and few contracts arrived, or no contracts in current month yet:
-  // show previous month in full.
-  const curCandidateContracts = countContracts(curCandidate);
-  const isEarlyMonth = Number(asOfDate.slice(8, 10)) <= 5;
-  const usePrevMonth = prevUnits.length > 0 && (curCandidateContracts === 0 || (isEarlyMonth && curCandidateContracts < 5));
-  const defaultMonth = usePrevMonth ? prevMonth : curMonth;
-  // Months
-  const byMonth = groupBy(groupUnits, (u) => u.month);
-  // Месяц без подтверждённых комплектов остаётся доступен для списка «На проверке».
-  for (const month of additionalMonths) byMonth[month] ??= [];
   const months: MarketMonthItem[] = Object.entries(byMonth)
     .map(([m, xs]) => {
       const monthOurCompanies = ourCompaniesList.map((comp) => ({
@@ -143,7 +157,7 @@ export function buildMarketGroupView(
     .sort((a, b) => a.m.localeCompare(b.m));
 
   const monthViews: Record<string, MarketGroupMonthView> = {};
-  for (const month of new Set([...months.map(m => m.m), defaultMonth])) {
+  for (const month of monthKeys) {
     monthViews[month] = buildSingleMonthGroupView(group, groupUnits, month, asOfDate, cfg, ourBins, ourCompaniesList);
   }
   return { ...monthViews[defaultMonth], months, monthViews };
@@ -382,15 +396,97 @@ export function buildMarketView(
   const hasData = units.length > 0 || pendingMonths.length > 0;
   const ip = hasData ? buildMarketGroupView("ИП", units, asOfDate, cfg, pendingMonths) : null;
   const kt = hasData ? buildMarketGroupView("КТ", units, asOfDate, cfg) : null;
-  const isStale = Boolean(updatedAt && updatedAt < getPreviousWorkday(asOfDate));
+  const normalizedUpdatedAt = updatedAt?.trim() || undefined;
+  const isStale = Boolean(normalizedUpdatedAt && normalizedUpdatedAt.slice(0, 10) < getPreviousWorkday(asOfDate));
   return {
     asOf: asOfDate,
     months,
     ip,
     kt,
     educationPending,
-    updatedAt: updatedAt || asOfDate,
+    updatedAt: normalizedUpdatedAt,
     stale: isStale,
     error
   };
+}
+
+/** Применяет те же правила фильтрации, что и `loadMarketView`: `hiddenKinds` и вердикты комплектов. */
+export function filterMarketUnitsForView(
+  storedUnits: MarketUnit[],
+  cfg: MarketConfig = loadMarketConfig(),
+  verdicts: EducationVerdict[] = loadEducationVerdicts()
+): ReturnType<typeof applyEducationVerdicts> {
+  const hiddenKinds = new Set(cfg.hiddenKinds ?? []);
+  const shown = hiddenKinds.size ? storedUnits.filter((u) => !hiddenKinds.has(u.kind)) : storedUnits;
+  return applyEducationVerdicts(shown, verdicts);
+}
+
+/** Собирает полный список договоров одного направления и месяца с группировкой по `String(u.id)`. */
+export function buildMarketMonthContracts(
+  group: "ИП" | "КТ",
+  allUnits: MarketUnit[],
+  month: string,
+  cfg: MarketConfig = loadMarketConfig()
+): MarketMonthContractsPayload {
+  const ourBins = getOurBinsSet(cfg);
+  const isOurUnit = (u: MarketUnit) => ourBins.has(u.supplier);
+  const cur = allUnits.filter((u) => u.group === group && u.month === month);
+  const contracts: MarketFullContractItem[] = Object.entries(groupBy(cur, (u) => String(u.id)))
+    .map(([idStr, items]) => ({
+      id: Number(idStr),
+      date: items[0]?.date || "",
+      supplier: items[0]?.supplierName || items[0]?.supplier || "",
+      customer: items[0]?.customerName || items[0]?.customer || "",
+      kind: items[0]?.kind || "",
+      method: items[0]?.method || "",
+      qty: sumBy(items, (u) => u.qty),
+      sum: sumBy(items, (u) => u.sum),
+      us: items.some(isOurUnit)
+    }))
+    .sort((a, b) => b.sum - a.sum || b.date.localeCompare(a.date) || b.id - a.id);
+
+  return {
+    group,
+    month,
+    total: {
+      contracts: contracts.length,
+      sum: sumBy(cur, (u) => u.sum),
+      qty: sumBy(cur, (u) => u.qty)
+    },
+    contracts
+  };
+}
+
+/** Формирует помесячные файлы договоров для ИП и КТ, включая пустые месяцы из `months`/`additionalMonths`. */
+export function buildAllMarketMonthContracts(
+  units: MarketUnit[],
+  asOfDate: string,
+  cfg: MarketConfig = loadMarketConfig(),
+  educationPending: MarketView["educationPending"] = {},
+  additionalMonths: string[] = []
+): {
+  ip: Record<string, MarketMonthContractsPayload>;
+  kt: Record<string, MarketMonthContractsPayload>;
+} {
+  const pendingMonths = Object.keys(educationPending);
+  const ipMonths = resolveMarketGroupMonths(
+    units.filter((u) => u.group === "ИП"),
+    asOfDate,
+    [...pendingMonths, ...additionalMonths]
+  ).monthKeys;
+  const ktMonths = resolveMarketGroupMonths(
+    units.filter((u) => u.group === "КТ"),
+    asOfDate,
+    additionalMonths
+  ).monthKeys;
+
+  const ip: Record<string, MarketMonthContractsPayload> = {};
+  for (const month of ipMonths) {
+    ip[month] = buildMarketMonthContracts("ИП", units, month, cfg);
+  }
+  const kt: Record<string, MarketMonthContractsPayload> = {};
+  for (const month of ktMonths) {
+    kt[month] = buildMarketMonthContracts("КТ", units, month, cfg);
+  }
+  return { ip, kt };
 }

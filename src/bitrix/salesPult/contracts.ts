@@ -2,6 +2,7 @@ import type { SalesPultPayload, SignalItem } from "./types.js";
 import type { DealInfo } from "./metrics.js";
 import type { RegisterView, RegisterMonthSummary } from "./register/types.js";
 import { groupRegisterContracts, matchRegisterWithCrm, settleUnmatched } from "./register/matchCrm.js";
+import { parseDateKeyFromFileName } from "./register/diskClient.js";
 import { isPartnerSale } from "./register/parseExcel.js";
 import { isWorkDay, DEFAULT_HOLIDAYS } from "./pace.js";
 import { escapeHtml, MONTHS } from "./format.js";
@@ -17,6 +18,10 @@ export interface PultContractSource {
   reconciliation: ContractReconciliation;
   available: boolean;
   label: string;
+  /** Дата среза реестра ОП (YYYY-MM-DD), если данные взяты из реестра или истории. */
+  asOf?: string;
+  /** Время загрузки/обновления файла реестра ОП с Диска; отсутствует, если неизвестно. */
+  updatedAt?: string;
   fact?: number;
   amount?: number;
   revenuePlan?: number;
@@ -97,6 +102,8 @@ export function attachRegisterContracts(
     const contracts = groupRegisterContracts(monthRows);
     source.available = true;
     source.label = `по реестру ОП, файл «${register.file}»`;
+    source.asOf = register.asOf?.trim() || undefined;
+    source.updatedAt = register.updatedAt?.trim() || undefined;
     source.fact = contracts.length;
     source.amount = rows.reduce((sum, r) => sum + r.sale, 0);
     source.revenuePlan = register.total!.plan;
@@ -149,8 +156,12 @@ export function attachRegisterContracts(
   } else {
     const summary = register.history?.months.find(m => m.month === month);
     if (summary) {
+      const monthSnap = register.history?.monthViews?.[month];
+      const fileDateKey = parseDateKeyFromFileName(summary.fileName);
       source.available = true;
       source.label = `по реестру ОП, файл «${summary.fileName}»`;
+      source.asOf = monthSnap?.asOf?.trim() || fileDateKey || undefined;
+      source.updatedAt = summary.updatedAt?.trim() || monthSnap?.updatedAt?.trim() || undefined;
       // Старый кэш без `contractsWithPartner` считает договоры без партнёрских, как раньше.
       const withPartner = summary.contractsWithPartner;
       source.fact = withPartner?.total ?? summary.contracts;

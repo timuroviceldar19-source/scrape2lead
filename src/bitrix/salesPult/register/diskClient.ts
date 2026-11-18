@@ -114,7 +114,7 @@ export async function fetchLatestRegisterFromDisk(
   return {
     buffer: Buffer.from(arrayBuffer),
     fileName: latest.NAME,
-    updateTime: latest.UPDATE_TIME ?? new Date().toISOString()
+    updateTime: latest.UPDATE_TIME ?? ""
   };
 }
 

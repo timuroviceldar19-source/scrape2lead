@@ -35,6 +35,17 @@
   const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
   const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
   const ddmm = (iso) => { if (!iso) return "—"; const parts = String(iso).slice(0, 10).split("-"); return parts.length === 3 ? `${parts[2]}.${parts[1]}` : iso; };
+  const formatAlmatyDateTime = (raw) => {
+    const s = String(raw == null ? "" : raw).trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return ddmm(s);
+    const utc5 = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::\d{2})?(?:\s*\(UTC\+5\))?$/.exec(s);
+    if (utc5) return `${utc5[3]}.${utc5[2]} ${utc5[4]}:${utc5[5]} (UTC+5)`;
+    const ms = Date.parse(s);
+    if (Number.isNaN(ms)) return s;
+    const d = new Date(ms + 5 * 3600000).toISOString();
+    return `${d.slice(8, 10)}.${d.slice(5, 7)} ${d.slice(11, 16)} (UTC+5)`;
+  };
 
   const dealUrl = (id) => {
     const base = String(P.portal || "").replace(/\/+$/, "");
@@ -156,6 +167,54 @@
   }
 
   /* ================= month hero ================= */
+  function getUrgentJumpCount() {
+    if (P.closedMonth || document.body.classList.contains("tv")) return 0;
+    const myMgr = me ? (P.groups || []).flatMap((g) => g.managers || []).find((m) => m.id === me) : null;
+    if (myMgr) {
+      const myMismatches = (P.outcomeMismatches || []).filter((m) => m.managerId === me);
+      const mySignals = (V.signals || []).filter((sig) => sig.text.includes(myMgr.name) || (first(myMgr.name) && sig.text.includes(first(myMgr.name))));
+      return myMismatches.length + mySignals.length;
+    }
+    return (P.outcomeMismatches || []).length + (V.signals || []).length;
+  }
+
+  function renderMonthFreshnessHtml(m) {
+    const M = m.asOfMonth;
+    const periodText = `${P.closedMonth ? "Архив" : "Выбран"}: ${MONTHS[M - 1]} ${m.asOfYear}`;
+    let crmText;
+    if (P.closedMonth) {
+      crmText = `архивный срез по ${ddmm(P.asOfDate)}`;
+    } else {
+      const buildTime = formatAlmatyDateTime(PAYLOAD.generatedAt) || (VIEW.genLabel ? `${ddmm(PAYLOAD.asOfDate)} ${VIEW.genLabel} (UTC+5)` : "");
+      crmText = `срез по ${ddmm(P.asOfDate)}${buildTime ? ` · сборка Пульта ${buildTime}` : ""}`;
+    }
+
+    const cs = P.contractSource;
+    let opText;
+    let opWarn = false;
+    if (cs && cs.available) {
+      const opSlice = cs.asOf
+        ? `${P.closedMonth ? "архивный срез" : "срез"} по ${ddmm(cs.asOf)}`
+        : (P.closedMonth ? "архивный срез за месяц" : "дата среза не указана");
+      const opUpd = formatAlmatyDateTime(cs.updatedAt);
+      const opUpdText = opUpd
+        ? `файл с Диска от ${opUpd}`
+        : "время обновления с Диска неизвестно";
+      opText = `${opSlice} · ${opUpdText}`;
+      opWarn = !opUpd;
+    } else {
+      opText = cs && cs.label ? cs.label : (P.closedMonth ? "за месяц недоступен, цифры по Битриксу" : "недоступен, цифры по Битриксу");
+      opWarn = true;
+    }
+
+    return `
+      <div class="month-freshness" id="monthFreshness" aria-label="Свежесть источников">
+        <span class="mf-item mf-period"><span class="mf-k">Период</span><span class="mf-v">${esc(periodText)}</span></span>
+        <span class="mf-item mf-crm"><span class="mf-k">CRM Битрикс24</span><span class="mf-v">${esc(crmText)}</span></span>
+        <span class="mf-item mf-op${opWarn ? " is-warn" : ""}"><span class="mf-k">Реестр ОП</span><span class="mf-v">${esc(opText)}</span></span>
+      </div>`;
+  }
+
   function renderMonth(keepMoreOpen) {
     const m = V.month;
     const M = m.asOfMonth;
@@ -241,9 +300,13 @@
     }
 
     const prevMoreOpen = keepMoreOpen && document.querySelector("#month .month-more")?.open;
+    const urgentCount = getUrgentJumpCount();
+    const urgentJumpHtml = urgentCount > 0
+      ? `<button type="button" class="urgent-jump" id="urgentJumpBtn"><span class="urgent-jump-dot" aria-hidden="true"></span><span>К срочному · ${plural(urgentCount, ["пункт", "пункта", "пунктов"])} ↓</span></button>`
+      : "";
 
     document.getElementById("month").innerHTML = `
-      <div class="block-head"><h2><span class="idx">01</span>${MONTHS[M - 1]}</h2><span class="meta">план ${fmt(m.plan)} · ${m.targetContracts} на менеджера × ${m.totalActiveCount}</span></div>
+      <div class="block-head"><h2><span class="idx">01</span>${MONTHS[M - 1]}</h2><div class="block-head-side"><span class="meta">план ${fmt(m.plan)} · ${m.targetContracts} на менеджера × ${m.totalActiveCount}</span>${urgentJumpHtml}</div></div>
       ${meSummaryHtml}
       <div class="month-tiles">
         <div class="month-tile">
@@ -268,6 +331,7 @@
           ${P.callsAvailable ? `<div class="tile-value ${calls.cls}">${fmt(calls.fact)} <span>/ ${fmt(calls.target)}</span></div><div class="hbar"><span class="${calls.cls || ''}" style="width:${Math.max(0, Math.min(100, callsPct))}%"></span></div><p class="tile-note">${esc(calls.text ? `${calls.text}${calls.sub ? ` · ${calls.sub}` : ""}` : (calls.sub || ""))}</p>` : `<div class="tile-value tile-result muted">нет доступа</div><p class="tile-note">нет звонков через Битрикс</p>`}
         </div>
       </div>
+      ${renderMonthFreshnessHtml(m)}
       <details class="month-more" ${document.body.classList.contains("tv") || prevMoreOpen ? "open" : ""}>
       <summary>График и подробности месяца</summary>
       <div class="hero">
@@ -294,6 +358,19 @@
         </div>
       </div></details>`;
     wireBurnTip();
+    const jumpBtn = document.getElementById("urgentJumpBtn");
+    if (jumpBtn) {
+      jumpBtn.addEventListener("click", () => {
+        const target = document.getElementById("signals");
+        if (!target || target.hidden) return;
+        measureBars();
+        const barHeight = document.querySelector(".bar")?.getBoundingClientRect().height || 0;
+        const periodEl = document.querySelector(".dateline");
+        const periodHeight = periodEl && getComputedStyle(periodEl).position === "sticky" ? periodEl.getBoundingClientRect().height : 0;
+        target.style.scrollMarginTop = Math.ceil(barHeight + periodHeight + 18) + "px";
+        target.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+      });
+    }
     const more = document.querySelector("#month .month-more");
     more.addEventListener("toggle", () => {
       if (more.open) animate(more);
@@ -770,23 +847,45 @@
   }
 
   /* ================= chrome ================= */
+  function renderLiveBadge() {
+    const live = document.getElementById("live"), liveText = document.getElementById("liveText");
+    if (!live || !liveText) return;
+    if (typeof currentTab !== "undefined" && currentTab === "pult" && P.closedMonth) {
+      live.classList.remove("stale");
+      live.classList.add("archive");
+      liveText.innerHTML = `Архив · срез по ${esc(ddmm(P.asOfDate))}`;
+      return;
+    }
+    live.classList.remove("archive");
+    const m = /(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(PAYLOAD.generatedAt || "");
+    let genMs = NaN;
+    if (m) {
+      genMs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 5, +m[5]);
+    } else if (PAYLOAD.generatedAt) {
+      genMs = Date.parse(PAYLOAD.generatedAt);
+    }
+    let ago = "";
+    if (!Number.isNaN(genMs)) {
+      const mins = Math.round((Date.now() - genMs) / 60000);
+      if (mins >= 0 && mins < 60 * 24) ago = mins < 1 ? "только что" : mins < 60 ? plural(mins, ["минуту", "минуты", "минут"]) + " назад" : plural(Math.floor(mins / 60), ["час", "часа", "часов"]) + " назад";
+      live.classList.toggle("stale", mins > 90);
+    } else {
+      live.classList.remove("stale");
+    }
+    const buildFull = formatAlmatyDateTime(PAYLOAD.generatedAt) || VIEW.genLabel;
+    const shortTime = VIEW.genLabel || buildFull;
+    liveText.innerHTML =
+      `<span class="live-desktop">Сборка Пульта ${esc(buildFull)}</span>` +
+      `<span class="live-mobile">Сборка ${esc(shortTime)}</span>` +
+      (ago ? ` <span class="ago">· ${ago}</span>` : "");
+  }
+
   function renderChrome() {
     document.getElementById("dateLabel").textContent = V.dateLabel;
     document.getElementById("wdLabel").textContent = V.wdLabel;
     requestAnimationFrame(() => { document.getElementById("monthFill").style.width = V.monthFillPct + "%"; });
-    const live = document.getElementById("live"), liveText = document.getElementById("liveText");
-    function tick() {
-      const m = /(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(PAYLOAD.generatedAt);
-      let ago = "";
-      if (m) {
-        const gen = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 5, +m[5]);
-        const mins = Math.round((Date.now() - gen) / 60000);
-        if (mins >= 0 && mins < 60 * 24) ago = mins < 1 ? "только что" : mins < 60 ? plural(mins, ["минуту", "минуты", "минут"]) + " назад" : plural(Math.floor(mins / 60), ["час", "часа", "часов"]) + " назад";
-        live.classList.toggle("stale", mins > 90);
-      }
-      liveText.innerHTML = `Данные на ${VIEW.genLabel}` + (ago ? ` <span class="ago">· ${ago}</span>` : "");
-    }
-    tick(); setInterval(tick, 30000);
+    renderLiveBadge();
+    setInterval(renderLiveBadge, 30000);
   }
 
   /* ================= motion ================= */
@@ -835,7 +934,8 @@
   btns.forEach((b) => b.addEventListener("click", () => setPeriod(b.dataset.p, true)));
   addEventListener("resize", () => { moveInd(); if (typeof moveSecInd === "function") moveSecInd(); });
   addEventListener("keydown", (e) => {
-    if (e.target.closest("input, textarea")) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.closest("input, textarea, select") || e.target.isContentEditable) return;
     if (e.key === "1") setPeriod("day", true); else if (e.key === "2") setPeriod("week", true); else if (e.key === "3") setPeriod("month", true);
     else if (e.key === "t" || e.key === "T" || e.key === "е" || e.key === "Е") toggleTv();
   });
@@ -879,6 +979,18 @@
   const validCompetitorsPeriod = (tab, period) => window.__competitorsMonths ? (window.__competitorsMonths(competitorsBase(tab)).includes(period) ? period : "all") : "all";
   let currentTab = "pult";
   let preTvTab = "pult";
+  let preTvMonth = currentMonth;
+  let preTvPeriod = "day";
+  const hasTvParam = () => new URLSearchParams(location.search).get("tv") === "1";
+  function setTvUrlParam(on) {
+    if (!history.replaceState || location.protocol === "about:") return;
+    try {
+      const url = new URL(location.href);
+      if (on) url.searchParams.set("tv", "1");
+      else url.searchParams.delete("tv");
+      history.replaceState(null, "", url.toString());
+    } catch (e) {}
+  }
   // Разделы: «Сегодня», «Радар», «Выручка» (страница реестра), «Планы», «Рынок» и «Конкуренты».
   // Внутри «Радара», «Планов», «Рынка» и «Конкурентов» товар (ИП или КТ) выбирается переключателем и сохраняется при переходе между ними.
   let product = "ip";
@@ -1041,12 +1153,62 @@
     });
   });
 
+  function updateSourceLabels(tab) {
+    const srcLabel = document.getElementById("srcLabel");
+    const foot = document.getElementById("foot");
+    if (isCompetitorsTab(tab)) {
+      const comp = PAYLOAD.competitors;
+      const compUpd = formatAlmatyDateTime(comp?.updatedAt);
+      if (srcLabel) {
+        if (comp?.stale && compUpd) srcLabel.textContent = `госзакупки · открытые конкурсы · не обновлены с ${compUpd}`;
+        else if (compUpd) srcLabel.textContent = `госзакупки · открытые конкурсы · обновлены ${compUpd}`;
+        else srcLabel.textContent = "госзакупки · открытые конкурсы · Дата обновления неизвестна";
+      }
+      if (foot) foot.innerHTML = `<span>Источник: открытые конкурсы procurement.gov.kz, протоколы итогов и ТС заказчиков</span><span>Обновляется раз в день, утром</span>`;
+    } else if (isPlansTab(tab)) {
+      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · госзакупки";
+      if (foot) foot.innerHTML = `<span>Источник: сделки планов в Битрикс24 (scrape2lead-gz-plans) и сверка с zakup.gov.kz</span>`;
+    } else if (isRadarTab(tab)) {
+      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · радар лотов";
+      if (foot) foot.innerHTML = `<span>Источник: сделки лотов (воронка 43) и планов (9, 41, 29) Битрикс24</span>`;
+    } else if (tab === "ip" || tab === "kt") {
+      const mk = PAYLOAD.market;
+      const mkUpd = formatAlmatyDateTime(mk?.updatedAt);
+      if (srcLabel) {
+        if (mk?.stale && mkUpd) srcLabel.textContent = `госзакупки · zakup.gov.kz · не обновлены с ${mkUpd}`;
+        else if (mkUpd) srcLabel.textContent = `госзакупки · zakup.gov.kz · обновлено ${mkUpd}`;
+        else srcLabel.textContent = "госзакупки · zakup.gov.kz · Дата обновления неизвестна";
+      }
+      if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
+    } else {
+      if (srcLabel) {
+        if (P.closedMonth) {
+          const opPart = P.contractSource?.available
+            ? (P.contractSource.asOf ? ` · ОП по ${ddmm(P.contractSource.asOf)}` : " · ОП за месяц")
+            : " · без ОП";
+          srcLabel.textContent = `Архив: CRM по ${ddmm(P.asOfDate)}${opPart}`;
+        } else {
+          const build = formatAlmatyDateTime(PAYLOAD.generatedAt);
+          const opPart = P.contractSource?.available && P.contractSource.asOf
+            ? ` · ОП на ${ddmm(P.contractSource.asOf)}`
+            : "";
+          srcLabel.textContent = `CRM Битрикс24${build ? ` · сборка ${build}` : ""}${opPart}`;
+        }
+      }
+      if (foot) foot.innerHTML = `<span>Источник: Битрикс24 · ft3.bitrix24.kz</span><span>Обновляется каждый час с 09:00 до 19:00 в будни · клавиши 1 2 3 и T</span>`;
+    }
+  }
+
   function setTab(tab, fromUser, marketMonth) {
     if (!Object.prototype.hasOwnProperty.call(tabPanes, tab)) tab = "pult";
     if (isPlansTab(tab)) selectedPlanMonth[tab] = validPlanMonth(tab, marketMonth !== undefined ? marketMonth : selectedPlanMonth[tab]);
     if (isCompetitorsTab(tab)) selectedCompetitorsPeriod[tab] = validCompetitorsPeriod(tab, marketMonth !== undefined ? marketMonth : selectedCompetitorsPeriod[tab]);
     if (tab === "ip" || tab === "kt") {
       selectedMarketMonth[tab] = validMarketMonth(tab, marketMonth !== undefined ? marketMonth : selectedMarketMonth[tab]);
+    }
+    if (document.body.classList.contains("tv") && tab !== "pult") {
+      preTvTab = tab;
+      tab = "pult";
     }
     currentTab = tab;
     if (tab !== "pult") product = productOf(tab);
@@ -1080,24 +1242,8 @@
     renderCompetitorsMonths(tab);
     moveSecInd();
 
-    const srcLabel = document.getElementById("srcLabel");
-    const foot = document.getElementById("foot");
-    if (isCompetitorsTab(tab)) {
-      if (srcLabel) srcLabel.textContent = "госзакупки · открытые конкурсы";
-      if (foot) foot.innerHTML = `<span>Источник: открытые конкурсы procurement.gov.kz, протоколы итогов и ТС заказчиков</span><span>Обновляется раз в день, утром</span>`;
-    } else if (isPlansTab(tab)) {
-      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · госзакупки";
-      if (foot) foot.innerHTML = `<span>Источник: сделки планов в Битрикс24 (scrape2lead-gz-plans) и сверка с zakup.gov.kz</span>`;
-    } else if (isRadarTab(tab)) {
-      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · радар лотов";
-      if (foot) foot.innerHTML = `<span>Источник: сделки лотов (воронка 43) и планов (9, 41, 29) Битрикс24</span>`;
-    } else if (tab === "ip" || tab === "kt") {
-      if (srcLabel) srcLabel.textContent = "госзакупки · zakup.gov.kz";
-      if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
-    } else {
-      if (srcLabel) srcLabel.textContent = "CRM Битрикс24";
-      if (foot) foot.innerHTML = `<span>Источник: Битрикс24 · ft3.bitrix24.kz</span><span>Обновляется каждый час с 09:00 до 19:00 в будни · клавиши 1 2 3 и T</span>`;
-    }
+    updateSourceLabels(tab);
+    renderLiveBadge();
 
     if (tab === "pult") {
       setTimeout(moveInd, 0);
@@ -1125,11 +1271,21 @@
   });
 
   window.addEventListener("hashchange", () => {
-    const [tab, month] = location.hash.replace(/^#/, "").split("/");
+    const [rawTab, month] = location.hash.replace(/^#/, "").split("/");
+    const tab = rawTab === "reg" ? "pult" : rawTab;
+    if (document.body.classList.contains("tv")) {
+      if (tab === "ip" || tab === "kt" || isPlansTab(tab) || isRadarTab(tab) || isCompetitorsTab(tab)) {
+        setTab(tab, false, month || null);
+      } else if (tab === "pult") {
+        preTvTab = "pult";
+        preTvMonth = month === currentMonth || hasClosedMonth(month) ? month : currentMonth;
+      }
+      return;
+    }
     if (tab === "ip" || tab === "kt" || isPlansTab(tab) || isRadarTab(tab) || isCompetitorsTab(tab)) {
       setTab(tab, false, month || null);
-    } else if (tab === "pult" || tab === "reg") {
-      selectMonth(tab === "pult" ? month || currentMonth : currentMonth);
+    } else if (tab === "pult") {
+      selectMonth(month || currentMonth);
       setTab("pult", false);
     }
   });
@@ -1160,6 +1316,12 @@
   addEventListener("resize", fitTv);
   function toggleTv() {
     const on = document.body.classList.toggle("tv");
+    if (on) {
+      preTvTab = currentTab;
+      preTvMonth = selectedMonth;
+      preTvPeriod = period;
+    }
+    setTvUrlParam(on);
     const more = document.querySelector("#month .month-more");
     if (more) more.open = on;
     const callsMore = document.querySelector("#calls .calls-more");
@@ -1180,7 +1342,6 @@
     fitTv();
     if (on) {
       selectMonth(currentMonth);
-      preTvTab = currentTab;
       if (currentTab !== "pult") setTab("pult", false);
       if (period !== "day") setPeriod("day");
       let i = 0, t0 = Date.now(); const every = 15000;
@@ -1191,9 +1352,15 @@
       }, 200);
     } else {
       if (bar) bar.style.width = "0";
-      if (preTvTab && preTvTab !== "pult") {
-        setTab(preTvTab, false);
+      const targetTab = Object.prototype.hasOwnProperty.call(tabPanes, preTvTab) ? preTvTab : "pult";
+      if (targetTab === "pult") {
+        if (preTvMonth && preTvMonth !== selectedMonth) selectMonth(preTvMonth);
+        if (!P.closedMonth && preTvPeriod && preTvPeriod !== period) setPeriod(preTvPeriod, false);
+        setTab("pult", true);
+      } else {
+        setTab(targetTab, true);
       }
+      requestAnimationFrame(() => { moveInd(); moveSecInd(); });
     }
   }
   const tvBtn = document.getElementById("tvBtn");
@@ -1228,6 +1395,8 @@
     document.getElementById("closedNotice").hidden = !P.closedMonth;
     renderMonth(false); renderSignals(); renderTasks();
     setPeriod(P.closedMonth ? "month" : period, false, false);
+    if (currentTab === "pult") updateSourceLabels("pult");
+    renderLiveBadge();
     animate(document.getElementById("month"));
     observe();
   }
@@ -1520,16 +1689,17 @@
   let saved = null; try { saved = localStorage.getItem("pult-period"); } catch (e) {}
   setPeriod(/period=(day|week|month)/.exec(location.search)?.[1] || saved || "day");
   
-  let hashTab = location.hash.replace(/^#/, "").split("/")[0];
+  const [hashTabRaw, hashMonthRaw] = location.hash.replace(/^#/, "").split("/");
+  let hashTab = hashTabRaw;
   if (hashTab === "reg") hashTab = "pult";
   let savedTab = null; try { savedTab = localStorage.getItem("pult-tab"); } catch (e) {}
   if (savedTab === "reg") savedTab = "pult";
   const hasTab = tab => Object.prototype.hasOwnProperty.call(tabPanes, tab);
   const initialTab = hasTab(hashTab) ? hashTab : (hasTab(savedTab) ? savedTab : "pult");
-  setTab(initialTab, false, location.hash.split("/")[1] || null);
-  selectMonth(hashTab === "pult" ? location.hash.split("/")[1] || currentMonth : currentMonth);
+  setTab(initialTab, false, hashMonthRaw || null);
+  selectMonth(hashTab === "pult" ? hashMonthRaw || currentMonth : currentMonth);
 
   observe();
-  if (/tv=1/.test(location.search)) toggleTv();
+  if (hasTvParam()) toggleTv();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { moveInd(); moveSecInd(); });
 })();

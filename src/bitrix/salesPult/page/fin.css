@@ -1,10 +1,20 @@
 /* страница «Финансы» (fin.html): подключается после pult.css только на ней */
+/* Контраст >= 4.5:1 для мелкого текста (WCAG AA) на #ffffff (--sheet), #f4f6f8 (--paper) и #fffbeb (--warn-t):
+   #b45309: 5.02:1 на #ffffff, 4.64:1 на #f4f6f8, 4.84:1 на #fffbeb (вместо #d97706, дающего 3.19:1 / 2.94:1).
+   #b91c1c: 6.47:1 на #ffffff, 5.97:1 на #f4f6f8 (вместо #dc2626, дающего 4.46:1 на #f4f6f8). */
+:root {
+  --warn-ink: #b45309;
+  --bad-ink: #b91c1c;
+}
+.warn { color: var(--warn-ink); }
+.bad { color: var(--bad-ink); }
 .fin-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: var(--sheet); border: 1px solid var(--rule-2); border-radius: 10px; box-shadow: var(--card-shadow); overflow: hidden; }
 .fin-tile { padding: 16px 18px 18px; border-top: 1px solid var(--rule); border-left: 1px solid var(--rule); min-width: 0; margin: -1px 0 0 -1px; }
 .fin-tile .v { font-weight: 300; font-size: 34px; letter-spacing: -0.04em; line-height: 1.1; margin-top: 6px; white-space: nowrap; }
 .fin-tile .v small { font: 400 12px var(--mono); color: var(--ink-3); letter-spacing: 0; }
-.fin-tile .sub { margin-top: 6px; font: 400 12px/1.45 var(--mono); color: var(--ink-3); }
-.fin-tile.is-bad .v { color: var(--bad); }
+.fin-tile .sub { margin-top: 6px; font: 400 12px/1.45 var(--mono); color: var(--ink-3); overflow-wrap: break-word; }
+.fin-tile .sub .warn { display: inline-block; margin-top: 2px; padding: 3px 7px; background: var(--warn-t); border-left: 2px solid var(--warn-ink); border-radius: 4px; color: var(--warn-ink); font-weight: 500; max-width: 100%; overflow-wrap: break-word; }
+.fin-tile.is-bad .v { color: var(--bad-ink); }
 .fin-spark { display: block; width: 100%; max-width: 160px; height: 26px; margin-top: 8px; }
 .fin-spark polyline { fill: none; stroke: var(--ink-3); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .fin-note { font-size: 13px; color: var(--ink-2); margin: 14px 0 0; max-width: 92ch; line-height: 1.5; }
@@ -18,7 +28,7 @@
 .r.total { border-top: 1px solid var(--rule-3); border-bottom: 0; }
 .r.total .nm, .r.total .num { font-weight: 500; }
 .r > .num, .r.head > .label.n { text-align: right; }
-.r .num.bad { color: var(--bad); } .r .num.warn { color: var(--warn); }
+.r .num.bad { color: var(--bad-ink); } .r .num.warn { color: var(--warn-ink); }
 .fin-pnl { min-width: 640px; }
 .fin-pnl .r { grid-template-columns: minmax(120px, 1.4fr) repeat(5, minmax(0, 1fr)); }
 .fin-pay .r { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) 110px; }
@@ -32,7 +42,12 @@
 [aria-sort="none"] > .fin-sort .ar { opacity: .4; }
 .fin-sort:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
 .fin-more > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
-#debtMain > .chips { margin-top: 8px; }
+.chips button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+#debtMain > .fin-debt-filters { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.fin-debt-filter-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.fin-debt-filter-group .chips { margin-bottom: 0; }
+.fin-debt-meta { margin: 8px 0 6px; font: 400 12px/1.45 var(--mono); color: var(--ink-2); }
+.fin-debt-empty { padding: 14px 0; font: 400 13px/1.45 var(--mono); color: var(--ink-2); }
 .fin-cash { min-width: 640px; }
 /* склад: материальные ведомости */
 .fin-stock-search { display: flex; align-items: center; gap: 12px; margin: 4px 0; }
@@ -48,6 +63,7 @@
 .fin-stock .r[hidden], .fin-wh[hidden] { display: none; }
 .fin-in .r { grid-template-columns: minmax(0, 3fr) minmax(90px, 1fr) 140px; }
 .fin-bal .r { grid-template-columns: minmax(0, 1.3fr) minmax(0, 2fr) 110px; }
+.note-warn { line-height: 1.5; overflow-wrap: anywhere; border-left-color: var(--warn-ink); }
 .page > .tab > .note-warn { margin-top: 0; }
 
 @media (max-width: 900px) {
@@ -80,5 +96,6 @@
 @media (max-width: 480px) {
   .fin-tile { padding: 12px 12px 14px; }
   .fin-tile .v { font-size: 23px; }
-  .fin-tile .sub { font-size: 11px; }
+  .fin-tile .sub { font-size: 12px; line-height: 1.45; }
+  .fin-tile .sub .warn { display: block; font-size: 12px; line-height: 1.45; padding: 4px 7px; }
 }

@@ -18,12 +18,287 @@
     return `${fmt(n)} ${w}`;
   };
   const ddmm = (d) => `${d.slice(8, 10)}.${d.slice(5, 7)}`;
+  const formatMarketUpdatedAt = (raw) => {
+    if (typeof raw !== "string") return "";
+    const s = raw.trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return ddmm(s);
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s)) {
+      if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(s)) {
+        const ms = Date.parse(s);
+        if (!Number.isNaN(ms)) {
+          const d = new Date(ms + 5 * 3600000).toISOString();
+          return `${d.slice(8, 10)}.${d.slice(5, 7)} ${d.slice(11, 16)} (UTC+5)`;
+        }
+      }
+      return `${s.slice(8, 10)}.${s.slice(5, 7)} ${s.slice(11, 16)} (UTC+5)`;
+    }
+    const ms = Date.parse(s);
+    if (!Number.isNaN(ms)) {
+      const d = new Date(ms + 5 * 3600000).toISOString();
+      return `${d.slice(8, 10)}.${d.slice(5, 7)} ${d.slice(11, 16)} (UTC+5)`;
+    }
+    return s;
+  };
   const short = (s, n = 70) => {
     s = String(s || "").replace(/\s+/g, " ").trim();
     return s.length > n ? s.slice(0, n - 1) + "…" : s;
   };
   const head = (idx, title, meta = "") => `<div class="block-head"><h2><span class="idx">${idx}</span>${title}</h2><span class="meta">${meta}</span></div>`;
   const bar = (w, cls = "", tick) => `<div class="hbar"><span class="${cls}" data-w="${Math.max(0, Math.min(100, w)).toFixed(1)}"></span>${tick != null ? `<i style="left:${Math.min(100, tick)}%"></i>` : ""}</div>`;
+  const contractRow = (url, cls, cells) => /^https:\/\//.test(url || "")
+    ? `<a class="r ${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Открыть договор на портале госзакупок">${cells}</a>`
+    : `<div class="r ${cls}">${cells}</div>`;
+  const tooShort = (name, n) => short(String(name || "").replace(/^Товарищество с ограниченной ответственностью/i, "ТОО"), n);
+
+  const ALL_PAGE_SIZE = 50;
+  const contractCache = new Map();
+  const allStates = {
+    ip: { open: false, month: "", status: "idle", data: null, limit: ALL_PAGE_SIZE, reqId: 0, controller: null, pane: null, totalSummary: null },
+    kt: { open: false, month: "", status: "idle", data: null, limit: ALL_PAGE_SIZE, reqId: 0, controller: null, pane: null, totalSummary: null }
+  };
+
+  function abortAllContractsRequest(st) {
+    st.reqId += 1;
+    if (st.controller) {
+      try { st.controller.abort(); } catch {}
+      st.controller = null;
+    }
+  }
+
+  function isPaneHiddenTab(pane) {
+    return Boolean(pane && pane.classList.contains("tab") && !pane.classList.contains("on"));
+  }
+
+  function renderAllContractsPanel(groupSlug) {
+    const st = allStates[groupSlug];
+    const pane = st.pane;
+    if (!pane || !pane.isConnected) return;
+    const toggleBtn = pane.querySelector("[data-market-all-toggle]");
+    const panel = pane.querySelector(`#market-all-panel-${groupSlug}`);
+    if (!toggleBtn || !panel) return;
+
+    toggleBtn.setAttribute("aria-expanded", st.open ? "true" : "false");
+    panel.hidden = !st.open;
+    if (!st.open) {
+      panel.innerHTML = "";
+      return;
+    }
+
+    if (st.status === "loading") {
+      panel.innerHTML = '<div class="market-all-state" role="status" aria-live="polite">Загрузка договоров…</div>';
+      return;
+    }
+    if (st.status === "unavailable") {
+      panel.innerHTML = '<div class="market-all-state" role="status">Доступен только краткий список: подробный перечень договоров за этот месяц недоступен (локальный файл или не выгружен).</div>';
+      return;
+    }
+    if (st.status === "error") {
+      panel.innerHTML = '<div class="market-all-state" role="alert"><span>Не удалось загрузить список договоров за месяц.</span><button type="button" class="btn market-all-retry" data-market-all-retry>Повторить</button></div>';
+      return;
+    }
+    if (st.status !== "loaded" || !st.data) {
+      panel.innerHTML = "";
+      return;
+    }
+
+    const contracts = Array.isArray(st.data.contracts) ? st.data.contracts : [];
+    if (contracts.length === 0) {
+      panel.innerHTML = '<div class="market-all-state" role="status">Договоров за этот месяц нет</div>';
+      return;
+    }
+
+    const shownCount = Math.min(st.limit, contracts.length);
+    const listSum = contracts.reduce((acc, c) => acc + (c.sum || 0), 0);
+    const summaryContracts = st.totalSummary?.contracts ?? contracts.length;
+    const summarySum = st.totalSummary?.sum ?? listSum;
+    const matchesSummary = contracts.length === summaryContracts && Math.abs(listSum - summarySum) < 1;
+    const reconText = matchesSummary
+      ? `Итого: ${plural(contracts.length, ["договор", "договора", "договоров"])} на ${money(listSum)} (совпадает со сводкой)`
+      : `Итого в списке: ${plural(contracts.length, ["договор", "договора", "договоров"])} на ${money(listSum)} · в сводке: ${plural(summaryContracts, ["договор", "договора", "договоров"])} на ${money(summarySum)}`;
+
+    const rowsHtml = contracts.slice(0, shownCount).map((c) => {
+      const url = c.id ? `https://procurement.gov.kz/ru/egzcontract/cpublic/show/${encodeURIComponent(c.id)}` : "";
+      return contractRow(
+        url,
+        c.us ? "us" : "",
+        `<span class="num">${ddmm(c.date)}</span><span class="market-all-cust" title="${esc(c.customer)}">${esc(short(c.customer, 70))}</span><span class="market-all-supp" title="${esc(c.supplier)}">${esc(tooShort(c.supplier, 34))}</span><span>${esc(c.kind)}</span><span class="num">${fmt(c.qty)}</span><span class="num">${mln(c.sum)} млн</span><span class="dim">${esc(c.method)}</span>`
+      );
+    }).join("");
+
+    const remaining = contracts.length - shownCount;
+    const moreBtnHtml = remaining > 0
+      ? `<button type="button" class="btn market-all-more" data-market-all-more>Показать ещё (${fmt(Math.min(ALL_PAGE_SIZE, remaining))} из ${fmt(remaining)})</button>`
+      : "";
+    const collapseBtnHtml = '<button type="button" class="btn market-all-collapse" data-market-all-collapse>Свернуть список</button>';
+
+    panel.innerHTML = `<div class="market-all-summary"><span>Показано ${fmt(shownCount)} из ${fmt(contracts.length)}</span><span>${esc(reconText)}</span></div>
+      <div class="rows market-all-rows" role="region" aria-label="Все договоры за месяц">
+        <div class="r head"><span class="label">Дата</span><span class="label">Заказчик</span><span class="label">Поставщик</span><span class="label">Товар</span><span class="label">Шт</span><span class="label">Сумма</span><span class="label">Канал</span></div>
+        ${rowsHtml}
+      </div>
+      <div class="market-all-footer">${moreBtnHtml}${collapseBtnHtml}</div>`;
+  }
+
+  async function loadMonthContracts(groupSlug) {
+    const st = allStates[groupSlug];
+    const pane = st.pane;
+    const month = st.month;
+    if (!pane || !pane.isConnected || !st.open || !validMonth(month) || isPaneHiddenTab(pane)) return;
+
+    abortAllContractsRequest(st);
+    const reqId = st.reqId;
+    const cacheKey = `${groupSlug}:${month}`;
+
+    if (contractCache.has(cacheKey)) {
+      st.status = "loaded";
+      st.data = contractCache.get(cacheKey);
+      st.limit = ALL_PAGE_SIZE;
+      renderAllContractsPanel(groupSlug);
+      return;
+    }
+
+    if ((typeof location !== "undefined" && location.protocol === "file:") || typeof fetch !== "function") {
+      st.status = "unavailable";
+      st.data = null;
+      renderAllContractsPanel(groupSlug);
+      return;
+    }
+
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    st.controller = controller;
+    st.status = "loading";
+    st.data = null;
+    renderAllContractsPanel(groupSlug);
+
+    try {
+      const url = `./market/${groupSlug}/${encodeURIComponent(month)}.json`;
+      const res = await fetch(url, controller ? { signal: controller.signal, credentials: "same-origin" } : { credentials: "same-origin" });
+
+      if (st.reqId !== reqId || !st.open || st.month !== month || !pane.isConnected || isPaneHiddenTab(pane)) {
+        return;
+      }
+
+      if (res.status === 404) {
+        st.controller = null;
+        st.status = "unavailable";
+        st.data = null;
+        renderAllContractsPanel(groupSlug);
+        return;
+      }
+
+      if (!res.ok) {
+        st.controller = null;
+        st.status = "error";
+        st.data = null;
+        renderAllContractsPanel(groupSlug);
+        return;
+      }
+
+      const payload = await res.json();
+      if (st.reqId !== reqId || !st.open || st.month !== month || !pane.isConnected || isPaneHiddenTab(pane)) {
+        return;
+      }
+
+      if (!payload || !Array.isArray(payload.contracts)) {
+        st.controller = null;
+        st.status = "error";
+        st.data = null;
+        renderAllContractsPanel(groupSlug);
+        return;
+      }
+
+      st.controller = null;
+      contractCache.set(cacheKey, payload);
+      st.status = "loaded";
+      st.data = payload;
+      st.limit = ALL_PAGE_SIZE;
+      renderAllContractsPanel(groupSlug);
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+      if (st.reqId !== reqId || !st.open || st.month !== month || !pane.isConnected || isPaneHiddenTab(pane)) {
+        return;
+      }
+      st.controller = null;
+      st.status = "error";
+      st.data = null;
+      renderAllContractsPanel(groupSlug);
+    }
+  }
+
+  function closeAllContracts(groupSlug, restoreFocus) {
+    const st = allStates[groupSlug];
+    st.open = false;
+    abortAllContractsRequest(st);
+    st.status = "idle";
+    renderAllContractsPanel(groupSlug);
+    if (restoreFocus) {
+      st.pane?.querySelector("[data-market-all-toggle]")?.focus({ preventScroll: true });
+    }
+  }
+
+  function ensurePaneLifecycle(groupSlug, pane) {
+    if (pane.__marketAllWired) return;
+    pane.__marketAllWired = true;
+    const st = allStates[groupSlug];
+
+    if (typeof MutationObserver === "function" && pane.classList.contains("tab")) {
+      const observer = new MutationObserver(() => {
+        if (!pane.classList.contains("on")) {
+          abortAllContractsRequest(st);
+          if (st.status === "loading") {
+            st.status = "idle";
+            renderAllContractsPanel(groupSlug);
+          }
+        } else if (st.open && st.status === "idle") {
+          void loadMonthContracts(groupSlug);
+        }
+      });
+      observer.observe(pane, { attributes: true, attributeFilter: ["class"] });
+    }
+
+    pane.addEventListener("click", (e) => {
+      const toggleBtn = e.target.closest("[data-market-all-toggle]");
+      if (toggleBtn) {
+        if (st.open) {
+          closeAllContracts(groupSlug, true);
+        } else {
+          st.open = true;
+          void loadMonthContracts(groupSlug);
+        }
+        return;
+      }
+      if (e.target.closest("[data-market-all-collapse]")) {
+        closeAllContracts(groupSlug, true);
+        return;
+      }
+      if (e.target.closest("[data-market-all-retry]")) {
+        void loadMonthContracts(groupSlug);
+        pane.querySelector("[data-market-all-toggle]")?.focus({ preventScroll: true });
+        return;
+      }
+      if (e.target.closest("[data-market-all-more]")) {
+        st.limit += ALL_PAGE_SIZE;
+        renderAllContractsPanel(groupSlug);
+        const nextMore = pane.querySelector("[data-market-all-more]");
+        if (nextMore) {
+          nextMore.focus({ preventScroll: true });
+        } else {
+          pane.querySelector("[data-market-all-collapse]")?.focus({ preventScroll: true });
+        }
+      }
+    });
+
+    pane.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || !st.open) return;
+      const section = pane.querySelector("[data-market-all-section]");
+      if (!section) return;
+      if (section.contains(document.activeElement) || document.activeElement === document.body) {
+        e.preventDefault();
+        closeAllContracts(groupSlug, true);
+      }
+    });
+  }
 
   const validMonth = (month) => typeof month === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
   window.__marketMonths = function (groupView) {
@@ -54,12 +329,36 @@
   window.__renderMarketTab = function (key, MK, el, selectedMonth) {
     if (!el) return;
     const isIp = key === "ip" || key === "ИП";
+    const groupSlug = isIp ? "ip" : "kt";
+    const otherSlug = isIp ? "kt" : "ip";
+    abortAllContractsRequest(allStates[otherSlug]);
+    if (allStates[otherSlug].status === "loading") {
+      allStates[otherSlug].status = "idle";
+      renderAllContractsPanel(otherSlug);
+    }
+
     const baseView = isIp ? MK?.ip : MK?.kt;
     const V = window.__marketViewForMonth(baseView, selectedMonth);
     if (!V) {
+      abortAllContractsRequest(allStates[groupSlug]);
+      allStates[groupSlug].open = false;
+      allStates[groupSlug].status = "idle";
+      allStates[groupSlug].data = null;
       el.innerHTML = `<section class="block"><p class="lead">${esc(MK?.error || "Данные рынка ещё собираются.")}</p></section>`;
       return;
     }
+
+    const st = allStates[groupSlug];
+    if (st.month !== V.month) {
+      abortAllContractsRequest(st);
+      st.month = V.month;
+      st.limit = ALL_PAGE_SIZE;
+      st.data = null;
+      st.status = "idle";
+    }
+    st.pane = el;
+    st.totalSummary = { contracts: V.total?.contracts ?? 0, sum: V.total?.sum ?? 0 };
+    ensurePaneLifecycle(groupSlug, el);
 
     const title = isIp ? "интерактивных панелей и учебного оборудования" : "компьютерной техники";
     const M = Number(V.month.slice(5, 7));
@@ -70,10 +369,15 @@
       ? `Мы первые: <b>${money(V.us.sum)}</b>, у второго места (${esc(short(second.name, 40))}) ${money(second.sum)}.`
       : `Мы на <b>${V.us.rank || "—"}-м месте</b> с ${money(V.us.sum)}. Лидер — ${esc(short(leader.name, 40))}: ${money(leader.sum)}, это ${pct1(V.total.sum ? leader.sum / V.total.sum : 0)} рынка.`;
 
+    const upd = formatMarketUpdatedAt(MK?.updatedAt);
     const isStale = Boolean(MK?.stale);
-    const staleWarning = isStale
-      ? `<div class="note-warn">Данные рынка не обновлены с ${ddmm(MK.updatedAt)}</div>`
-      : "";
+    const freshnessHtml = isStale
+      ? (upd
+          ? `<div class="note-warn">Данные рынка не обновлены с ${esc(upd)}</div>`
+          : `<div class="note-warn">Данные рынка устарели · Дата обновления неизвестна</div>`)
+      : (upd
+          ? `<div class="source-freshness">Данные рынка обновлены ${esc(upd)}</div>`
+          : `<div class="source-freshness is-unknown">Дата обновления неизвестна</div>`);
 
     const roundedDelta = Math.round(delta * 100);
     const deltaText = roundedDelta === 0 ? "0%" : `${roundedDelta > 0 ? "+" : "−"}${Math.abs(roundedDelta)}%`;
@@ -98,11 +402,6 @@
         </div>`
       : "";
 
-    // A row with a portal link opens the contract in a new tab; a payload without links keeps plain rows.
-    const contractRow = (url, cls, cells) => /^https:\/\//.test(url || "")
-      ? `<a class="r ${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Открыть договор на портале госзакупок">${cells}</a>`
-      : `<div class="r ${cls}">${cells}</div>`;
-    const tooShort = (name, n) => short(String(name || "").replace(/^Товарищество с ограниченной ответственностью/i, "ТОО"), n);
     const moreContracts = (x, list) => {
       const rest = x.contracts - list.length;
       return rest > 0 ? `<p class="more">и ещё ${plural(rest, ["договор", "договора", "договоров"])} поменьше</p>` : "";
@@ -118,7 +417,7 @@
       ? `<details class="cust-d"><summary class="r${x.us ? " us" : ""}">${supplierCells(x, i)}</summary>${supplierContracts(x)}</details>`
       : `<div class="r${x.us ? " us" : ""}">${supplierCells(x, i)}</div>`;
 
-    let s = `${staleWarning}${V.legacySummary ? `<p class="note-warn">Доступна сводка месяца. Детальная разбивка появится после обновления кэша.</p>` : ""}<section class="block reveal">${head("01", `Рынок ${title} · ${MONTHS[M - 1]}`, "госзакупки, все каналы · без НДС · нажмите на поставщика, чтобы увидеть договоры")}
+    let s = `${freshnessHtml}${V.legacySummary ? `<p class="note-warn">Доступна сводка месяца. Детальная разбивка появится после обновления кэша.</p>` : ""}<section class="block reveal">${head("01", `Рынок ${title} · ${MONTHS[M - 1]}`, "госзакупки, все каналы · без НДС · нажмите на поставщика, чтобы увидеть договоры")}
     <div class="hero"><div>
       <span class="label">Объём рынка</span>
       <div class="hero-num"><span class="big">${fmt(V.total.sum / 1e6)}</span><span class="of">млн ₸</span></div>
@@ -229,8 +528,24 @@
       : `<div class="r">${customerCells(x)}</div>`).join("")}</div>
     <p class="note-src">Договоры госзакупок по дате подписания, все способы закупки, включая электронный магазин. Суммы позиций без НДС. Расторгнутые и заменённые доп. соглашением версии не считаются. ${isIp ? "Коды ЕНС ТРУ: 262030.100.000021 панель интерактивная, 262030.100.000043 доска интерактивная, 279020.100.* панель жидкокристаллическая, только если в описании позиции сказано «интерактивная»; 329959.900.000019 — комплекты считаются только при подтверждённой панели, сумма комплектов целиком. Мультимедийные системы (262030.100.000011/13) не показываются: это партнёрские продажи." : "Коды ЕНС ТРУ: компьютеры 262013.000.000011/12, системные блоки 262040.000.000267/268, ноутбуки 262011.100.*, МФУ 262018.900.*, принтеры 262016.300.000015–19, мониторы 262017.100.*."}</p></section>`;
 
+    const panelId = `market-all-panel-${groupSlug}`;
+    s += `<section class="block reveal market-all-block" data-market-all-section="${groupSlug}">
+      ${head("06", "Все договоры за месяц", `${MONTHS[M - 1]} · ${plural(V.total.contracts, ["договор", "договора", "договоров"])}`)}
+      <div class="market-all-actions">
+        <button type="button" class="btn market-all-toggle" data-market-all-toggle aria-expanded="${st.open ? "true" : "false"}" aria-controls="${panelId}">Все договоры за месяц</button>
+      </div>
+      <div id="${panelId}" class="market-all-panel" ${st.open ? "" : "hidden"}></div>
+    </section>`;
+
     el.innerHTML = s;
     el.querySelectorAll("[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });
     el.querySelectorAll("[data-w]").forEach((b) => { b.style.width = b.dataset.w + "%"; });
+    if (st.open) {
+      if (st.status === "loaded" && st.data) {
+        renderAllContractsPanel(groupSlug);
+      } else {
+        void loadMonthContracts(groupSlug);
+      }
+    }
   };
 })();

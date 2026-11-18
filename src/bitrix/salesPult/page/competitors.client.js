@@ -14,6 +14,17 @@
   const money = (n) => (n == null ? "—" : n >= 1e6 ? `${mln(n)}${NBSP}млн${NBSP}₸` : `${fmt(n)}${NBSP}₸`);
   const fmtPct1 = (n) => (n == null ? "—" : `${nf1.format(n)}%`);
   const ddmm = (d) => (d && d.length >= 10 ? `${d.slice(8, 10)}.${d.slice(5, 7)}` : "—");
+  const formatAlmatyUpdated = (raw) => {
+    const s = String(raw ?? "").trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return ddmm(s);
+    const utc5 = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::\d{2})?(?:\s*\(UTC\+5\))?$/.exec(s);
+    if (utc5) return `${utc5[3]}.${utc5[2]} ${utc5[4]}:${utc5[5]} (UTC+5)`;
+    const ms = Date.parse(s);
+    if (Number.isNaN(ms)) return s;
+    const d = new Date(ms + 5 * 3600000).toISOString();
+    return `${d.slice(8, 10)}.${d.slice(5, 7)} ${d.slice(11, 16)} (UTC+5)`;
+  };
   const plural = (n, f) => {
     const a = Math.abs(n) % 100, b = a % 10;
     return `${fmt(n)} ${a > 10 && a < 20 ? f[2] : b === 1 ? f[0] : b > 1 && b < 5 ? f[1] : f[2]}`;
@@ -80,8 +91,16 @@
     const isIp = key === "competitors-ip" || key === "ИП";
     const base = isIp ? COMP?.ip : COMP?.kt;
     const V = window.__competitorsViewForPeriod(base, selectedPeriod);
+    const updatedText = formatAlmatyUpdated(COMP?.updatedAt);
+    const freshnessBanner = COMP?.stale
+      ? (updatedText
+          ? `<div class="note-warn">Данные конкурентов не обновлены с ${esc(updatedText)}</div>`
+          : `<div class="note-warn">Данные конкурентов устарели · Дата обновления неизвестна</div>`)
+      : (updatedText
+          ? `<div class="source-freshness">Данные конкурентов обновлены ${esc(updatedText)}</div>`
+          : `<div class="source-freshness is-unknown">Дата обновления неизвестна</div>`);
     if (!V || !base) {
-      el.innerHTML = `<section class="block"><p class="lead">${esc(COMP?.error || "Данные конкурентов ещё собираются.")}</p></section>`;
+      el.innerHTML = `${freshnessBanner}<section class="block"><p class="lead">${esc(COMP?.error || "Данные конкурентов ещё собираются.")}</p></section>`;
       return;
     }
 
@@ -94,9 +113,6 @@
     }
     const title = isIp ? "интерактивных панелей и комплектов" : "компьютерной техники";
     const S = V.summary;
-    const staleWarning = COMP?.stale && COMP?.updatedAt
-      ? `<div class="note-warn">Данные конкурентов не обновлены с ${ddmm(COMP.updatedAt)}</div>`
-      : "";
 
     // 01 Итоги + помесячный график
     const months = base.months || [];
@@ -122,7 +138,7 @@
         </div>`
       : "";
 
-    let html = `${staleWarning}<section class="block reveal in">
+    let html = `${freshnessBanner}<section class="block reveal in">
       ${head("01", `Итоги открытых конкурсов · ${title} · ${esc(monthLabel(activePeriod))}`, "способ «Открытый конкурс» · без НДС · уникальные лоты по последней версии")}
       <div class="hero comp-hero">
         <div>
@@ -165,7 +181,7 @@
         ? `<p class="more">и ещё ${plural(c.totalLotsInList - c.lotList.length, ["лот", "лота", "лотов"])}</p>`
         : "";
       const nameBlock = `<span class="nm" title="${esc(c.name)}">${esc(tooShort(c.name, 42))}${c.us ? ' <span class="tag good">мы</span>' : ""}<span class="dim sub">БИН ${esc(c.bin)}</span></span>`;
-      const summaryRow = `<span class="rk">${idx + 1}</span>${nameBlock}<span class="num" data-l="Заявок">${fmt(c.bids)}</span><span class="num" data-l="Доп. / Откл.">${fmt(c.admitted)} / ${fmt(c.rejected)}</span><span class="num" data-l="Побед (2-х)">${fmt(c.wins)}${c.secondPlaces ? ` (${fmt(c.secondPlaces)})` : ""}</span><span class="num" data-l="Доля побед">${fmtPct1(c.winRateAdmittedPct)}</span><span class="num" data-l="Сумма побед">${money(c.wonSum)}</span><span class="num" data-l="Мед. скидка">${fmtPct1(c.medianDiscountPct)}</span><span class="num" data-l="Усл. скидка">${fmtPct1(c.meanCondDiscountPct)}</span><span class="num" data-l="ОТП/КТП">${fmt(c.otpKtpCount)}</span>`;
+      const summaryRow = `<span class="rk">${idx + 1}</span>${nameBlock}<span class="num" data-l="Заявок">${fmt(c.bids)}</span><span class="num" data-l="Доп. / Откл.">${fmt(c.admitted)} / ${fmt(c.rejected)}</span><span class="num" data-l="Побед (2-х)">${fmt(c.wins)}${c.secondPlaces ? ` (${fmt(c.secondPlaces)})` : ""}</span><span class="num" data-l="Победы / допуски">${fmtPct1(c.winRateAdmittedPct)}</span><span class="num" data-l="Сумма побед">${money(c.wonSum)}</span><span class="num" data-l="Мед. скидка">${fmtPct1(c.medianDiscountPct)}</span><span class="num" data-l="Усл. скидка">${fmtPct1(c.meanCondDiscountPct)}</span><span class="num" data-l="ОТП/КТП">${fmt(c.otpKtpCount)}</span>`;
       return `<details class="cust-d"><summary class="r${c.us ? " us" : ""}">${summaryRow}</summary><div class="cust-list rows">${lotsHtml}${moreLots}</div></details>`;
     }).join("");
 
@@ -176,7 +192,7 @@
     html += `<section class="block reveal in">
       ${head("02", "Конкуренты", `${fmt(V.competitorsTotal)} участников · показаны ${fmt(visibleComps.length)} · строка раскрывает список лотов`)}
       <div class="comp-table rows">
-        <div class="r head"><span></span><span class="label">Участник / БИН</span><span class="label">Заявок</span><span class="label">Доп./Откл.</span><span class="label">Побед (2-х)</span><span class="label">От допусков</span><span class="label">Сумма побед</span><span class="label">Мед. скидка</span><span class="label">Усл. скидка</span><span class="label">ОТП/КТП</span></div>
+        <div class="r head"><span></span><span class="label">Участник / БИН</span><span class="label">Заявок</span><span class="label">Доп./Откл.</span><span class="label">Побед (2-х)</span><span class="label">Победы / допуски</span><span class="label">Сумма побед</span><span class="label">Мед. скидка</span><span class="label">Усл. скидка</span><span class="label">ОТП/КТП</span></div>
         ${compRowsHtml || '<p class="muted">Участников за этот период нет</p>'}
       </div>
       ${compMoreBtn}
