@@ -156,6 +156,17 @@
   }
 
   /* ================= month hero ================= */
+  function getUrgentJumpCount() {
+    if (P.closedMonth || document.body.classList.contains("tv")) return 0;
+    const myMgr = me ? (P.groups || []).flatMap((g) => g.managers || []).find((m) => m.id === me) : null;
+    if (myMgr) {
+      const myMismatches = (P.outcomeMismatches || []).filter((m) => m.managerId === me);
+      const mySignals = (V.signals || []).filter((sig) => sig.text.includes(myMgr.name) || (first(myMgr.name) && sig.text.includes(first(myMgr.name))));
+      return myMismatches.length + mySignals.length;
+    }
+    return (P.outcomeMismatches || []).length + (V.signals || []).length;
+  }
+
   function renderMonth(keepMoreOpen) {
     const m = V.month;
     const M = m.asOfMonth;
@@ -241,9 +252,13 @@
     }
 
     const prevMoreOpen = keepMoreOpen && document.querySelector("#month .month-more")?.open;
+    const urgentCount = getUrgentJumpCount();
+    const urgentJumpHtml = urgentCount > 0
+      ? `<button type="button" class="urgent-jump" id="urgentJumpBtn"><span class="urgent-jump-dot" aria-hidden="true"></span><span>К срочному · ${plural(urgentCount, ["пункт", "пункта", "пунктов"])} ↓</span></button>`
+      : "";
 
     document.getElementById("month").innerHTML = `
-      <div class="block-head"><h2><span class="idx">01</span>${MONTHS[M - 1]}</h2><span class="meta">план ${fmt(m.plan)} · ${m.targetContracts} на менеджера × ${m.totalActiveCount}</span></div>
+      <div class="block-head"><h2><span class="idx">01</span>${MONTHS[M - 1]}</h2><div class="block-head-side"><span class="meta">план ${fmt(m.plan)} · ${m.targetContracts} на менеджера × ${m.totalActiveCount}</span>${urgentJumpHtml}</div></div>
       ${meSummaryHtml}
       <div class="month-tiles">
         <div class="month-tile">
@@ -294,6 +309,19 @@
         </div>
       </div></details>`;
     wireBurnTip();
+    const jumpBtn = document.getElementById("urgentJumpBtn");
+    if (jumpBtn) {
+      jumpBtn.addEventListener("click", () => {
+        const target = document.getElementById("signals");
+        if (!target || target.hidden) return;
+        measureBars();
+        const barHeight = document.querySelector(".bar")?.getBoundingClientRect().height || 0;
+        const periodEl = document.querySelector(".dateline");
+        const periodHeight = periodEl && getComputedStyle(periodEl).position === "sticky" ? periodEl.getBoundingClientRect().height : 0;
+        target.style.scrollMarginTop = Math.ceil(barHeight + periodHeight + 18) + "px";
+        target.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+      });
+    }
     const more = document.querySelector("#month .month-more");
     more.addEventListener("toggle", () => {
       if (more.open) animate(more);
@@ -835,7 +863,8 @@
   btns.forEach((b) => b.addEventListener("click", () => setPeriod(b.dataset.p, true)));
   addEventListener("resize", () => { moveInd(); if (typeof moveSecInd === "function") moveSecInd(); });
   addEventListener("keydown", (e) => {
-    if (e.target.closest("input, textarea")) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.closest("input, textarea, select") || e.target.isContentEditable) return;
     if (e.key === "1") setPeriod("day", true); else if (e.key === "2") setPeriod("week", true); else if (e.key === "3") setPeriod("month", true);
     else if (e.key === "t" || e.key === "T" || e.key === "е" || e.key === "Е") toggleTv();
   });
@@ -879,6 +908,18 @@
   const validCompetitorsPeriod = (tab, period) => window.__competitorsMonths ? (window.__competitorsMonths(competitorsBase(tab)).includes(period) ? period : "all") : "all";
   let currentTab = "pult";
   let preTvTab = "pult";
+  let preTvMonth = currentMonth;
+  let preTvPeriod = "day";
+  const hasTvParam = () => new URLSearchParams(location.search).get("tv") === "1";
+  function setTvUrlParam(on) {
+    if (!history.replaceState || location.protocol === "about:") return;
+    try {
+      const url = new URL(location.href);
+      if (on) url.searchParams.set("tv", "1");
+      else url.searchParams.delete("tv");
+      history.replaceState(null, "", url.toString());
+    } catch (e) {}
+  }
   // Разделы: «Сегодня», «Радар», «Выручка» (страница реестра), «Планы», «Рынок» и «Конкуренты».
   // Внутри «Радара», «Планов», «Рынка» и «Конкурентов» товар (ИП или КТ) выбирается переключателем и сохраняется при переходе между ними.
   let product = "ip";
@@ -1048,6 +1089,10 @@
     if (tab === "ip" || tab === "kt") {
       selectedMarketMonth[tab] = validMarketMonth(tab, marketMonth !== undefined ? marketMonth : selectedMarketMonth[tab]);
     }
+    if (document.body.classList.contains("tv") && tab !== "pult") {
+      preTvTab = tab;
+      tab = "pult";
+    }
     currentTab = tab;
     if (tab !== "pult") product = productOf(tab);
     tabLinks.forEach((link) => {
@@ -1125,11 +1170,21 @@
   });
 
   window.addEventListener("hashchange", () => {
-    const [tab, month] = location.hash.replace(/^#/, "").split("/");
+    const [rawTab, month] = location.hash.replace(/^#/, "").split("/");
+    const tab = rawTab === "reg" ? "pult" : rawTab;
+    if (document.body.classList.contains("tv")) {
+      if (tab === "ip" || tab === "kt" || isPlansTab(tab) || isRadarTab(tab) || isCompetitorsTab(tab)) {
+        setTab(tab, false, month || null);
+      } else if (tab === "pult") {
+        preTvTab = "pult";
+        preTvMonth = month === currentMonth || hasClosedMonth(month) ? month : currentMonth;
+      }
+      return;
+    }
     if (tab === "ip" || tab === "kt" || isPlansTab(tab) || isRadarTab(tab) || isCompetitorsTab(tab)) {
       setTab(tab, false, month || null);
-    } else if (tab === "pult" || tab === "reg") {
-      selectMonth(tab === "pult" ? month || currentMonth : currentMonth);
+    } else if (tab === "pult") {
+      selectMonth(month || currentMonth);
       setTab("pult", false);
     }
   });
@@ -1160,6 +1215,12 @@
   addEventListener("resize", fitTv);
   function toggleTv() {
     const on = document.body.classList.toggle("tv");
+    if (on) {
+      preTvTab = currentTab;
+      preTvMonth = selectedMonth;
+      preTvPeriod = period;
+    }
+    setTvUrlParam(on);
     const more = document.querySelector("#month .month-more");
     if (more) more.open = on;
     const callsMore = document.querySelector("#calls .calls-more");
@@ -1180,7 +1241,6 @@
     fitTv();
     if (on) {
       selectMonth(currentMonth);
-      preTvTab = currentTab;
       if (currentTab !== "pult") setTab("pult", false);
       if (period !== "day") setPeriod("day");
       let i = 0, t0 = Date.now(); const every = 15000;
@@ -1191,9 +1251,15 @@
       }, 200);
     } else {
       if (bar) bar.style.width = "0";
-      if (preTvTab && preTvTab !== "pult") {
-        setTab(preTvTab, false);
+      const targetTab = Object.prototype.hasOwnProperty.call(tabPanes, preTvTab) ? preTvTab : "pult";
+      if (targetTab === "pult") {
+        if (preTvMonth && preTvMonth !== selectedMonth) selectMonth(preTvMonth);
+        if (!P.closedMonth && preTvPeriod && preTvPeriod !== period) setPeriod(preTvPeriod, false);
+        setTab("pult", true);
+      } else {
+        setTab(targetTab, true);
       }
+      requestAnimationFrame(() => { moveInd(); moveSecInd(); });
     }
   }
   const tvBtn = document.getElementById("tvBtn");
@@ -1520,16 +1586,17 @@
   let saved = null; try { saved = localStorage.getItem("pult-period"); } catch (e) {}
   setPeriod(/period=(day|week|month)/.exec(location.search)?.[1] || saved || "day");
   
-  let hashTab = location.hash.replace(/^#/, "").split("/")[0];
+  const [hashTabRaw, hashMonthRaw] = location.hash.replace(/^#/, "").split("/");
+  let hashTab = hashTabRaw;
   if (hashTab === "reg") hashTab = "pult";
   let savedTab = null; try { savedTab = localStorage.getItem("pult-tab"); } catch (e) {}
   if (savedTab === "reg") savedTab = "pult";
   const hasTab = tab => Object.prototype.hasOwnProperty.call(tabPanes, tab);
   const initialTab = hasTab(hashTab) ? hashTab : (hasTab(savedTab) ? savedTab : "pult");
-  setTab(initialTab, false, location.hash.split("/")[1] || null);
-  selectMonth(hashTab === "pult" ? location.hash.split("/")[1] || currentMonth : currentMonth);
+  setTab(initialTab, false, hashMonthRaw || null);
+  selectMonth(hashTab === "pult" ? hashMonthRaw || currentMonth : currentMonth);
 
   observe();
-  if (/tv=1/.test(location.search)) toggleTv();
+  if (hasTvParam()) toggleTv();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { moveInd(); moveSecInd(); });
 })();
