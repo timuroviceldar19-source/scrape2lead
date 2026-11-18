@@ -112,11 +112,20 @@
     `;
   }
 
+  const lotWord = (n) => {
+    const a = Math.abs(n) % 100, b = a % 10;
+    return a > 10 && a < 20 ? "лотов" : b === 1 ? "лот" : b > 1 && b < 5 ? "лота" : "лотов";
+  };
+  const dealWord = (n) => {
+    const a = Math.abs(n) % 100, b = a % 10;
+    return a > 10 && a < 20 ? "закупок" : b === 1 ? "закупка" : b > 1 && b < 5 ? "закупки" : "закупок";
+  };
+
   function renderColumn(colKey, title, idx, cards, state, custIndex) {
     const limit = state.expandedCol[colKey] ? cards.length : 6;
     const visibleCards = cards.slice(0, limit);
     const sum = cards.reduce((acc, c) => acc + (c.sum || 0), 0);
-    const countLabel = colKey === "secondChance" ? "закупок" : "лотов";
+    const countLabel = colKey === "secondChance" ? dealWord(cards.length) : lotWord(cards.length);
 
     return `
       <div class="radar-col" data-col="${colKey}">
@@ -157,68 +166,138 @@
       state.managerId = me;
     }
 
-    const kpis = group.kpis;
     const plansBase = typeof PAYLOAD !== "undefined" ? (groupKey === "kt" ? PAYLOAD?.plans?.kt : PAYLOAD?.plans?.ip) : null;
     const custIndex = typeof window.__buildCustomerIndices === "function"
       ? window.__buildCustomerIndices(plansBase, typeof PAYLOAD !== "undefined" ? PAYLOAD?.market : null)
       : null;
 
-    // Filter cards
-    const filterCard = (card) => {
-      if (state.managerId && String(card.managerId) !== state.managerId) return false;
-      if (state.method && card.method !== state.method) return false;
-      if (state.searchQuery) {
-        const q = state.searchQuery.toLowerCase();
-        const text = `${card.itemName} ${card.lotNumber || ""} ${card.planNumber || ""} ${card.customerName} ${card.customerBin} ${card.method} ${card.managerName}`.toLowerCase();
-        if (!text.includes(q)) return false;
-      }
-      return true;
-    };
-
-    let submitCards = group.submitToday.filter(filterCard);
-    if (state.timeFilter === "today") {
-      submitCards = submitCards.filter(c => c.isToday);
-    } else if (state.timeFilter === "48h") {
-      submitCards = submitCards.filter(c => c.isToday || c.isWithin48h);
-    }
-
-    const discCards = group.discussion.filter(filterCard);
-    const secondCards = group.secondChance.filter(filterCard);
-
-    // Available managers
+    // Available managers & methods (over all cards in group)
     const allCards = [...group.submitToday, ...group.discussion, ...group.secondChance];
     const managersMap = new Map();
     for (const c of allCards) {
       if (c.managerId && c.managerName) managersMap.set(String(c.managerId), c.managerName);
     }
     const managers = [...managersMap.entries()].sort((a, b) => a[1].localeCompare(b[1], "ru"));
-
-    // Available methods
     const methods = [...new Set(allCards.map(c => c.method).filter(Boolean))].sort();
+
+    // Reset stale manager/method if no longer present
+    if (state.managerId && !managersMap.has(state.managerId)) {
+      // keep managerId if synced from "Я — …" so "Нет закупок" stays accurate for that manager
+    }
+    if (state.method && !methods.includes(state.method)) {
+      state.method = "";
+    }
+
+    const filterByMgrMethod = (card) => {
+      if (state.managerId && String(card.managerId) !== state.managerId) return false;
+      if (state.method && card.method !== state.method) return false;
+      return true;
+    };
+
+    const matchesSearch = (card) => {
+      const q = (state.searchQuery || "").trim().toLowerCase();
+      if (!q) return true;
+      const text = `${card.itemName} ${card.lotNumber || ""} ${card.planNumber || ""} ${card.customerName} ${card.customerBin} ${card.method} ${card.managerName}`.toLowerCase();
+      return text.includes(q);
+    };
+
+    const sumOf = (arr) => arr.reduce((acc, c) => acc + (c.sum || 0), 0);
+
+    const submitColTitles = {
+      all: "Все в приёме",
+      today: "Сегодня",
+      "48h": "До 48 часов"
+    };
+
+    const computeViewData = () => {
+      const baseSubmit = group.submitToday.filter(filterByMgrMethod);
+      const baseDisc = group.discussion.filter(filterByMgrMethod);
+      const baseSecond = group.secondChance.filter(filterByMgrMethod);
+
+      const todayCards = baseSubmit.filter(c => c.isToday);
+      const within48hCards = baseSubmit.filter(c => c.isToday || c.isWithin48h);
+
+      let submitCards = baseSubmit.filter(matchesSearch);
+      if (state.timeFilter === "today") {
+        submitCards = submitCards.filter(c => c.isToday);
+      } else if (state.timeFilter === "48h") {
+        submitCards = submitCards.filter(c => c.isToday || c.isWithin48h);
+      }
+      const discCards = baseDisc.filter(matchesSearch);
+      const secondCards = baseSecond.filter(matchesSearch);
+
+      return {
+        todayCount: todayCards.length,
+        todaySum: sumOf(todayCards),
+        within48hCount: within48hCards.length,
+        within48hSum: sumOf(within48hCards),
+        totalCount: baseSubmit.length + baseDisc.length + baseSecond.length,
+        totalSum: sumOf(baseSubmit) + sumOf(baseDisc) + sumOf(baseSecond),
+        discCount: baseDisc.length,
+        discSum: sumOf(baseDisc),
+        secondCount: baseSecond.length,
+        secondSum: sumOf(baseSecond),
+        submitCards,
+        discCards,
+        secondCards,
+        submitColTitle: submitColTitles[state.timeFilter] || "Все в приёме"
+      };
+    };
+
+    const renderKpisHtml = (d) => `
+      <div class="tile">
+        <span class="label">В работе на радаре</span>
+        <div class="v">${fmt(d.totalCount)} <small>${lotWord(d.totalCount)}</small></div>
+        <div class="sub">${mln(d.totalSum)} млн ₸</div>
+      </div>
+      <div class="tile tile-submit-counters">
+        <span class="label">Сроки подачи</span>
+        <div class="radar-deadline-counters">
+          <div class="radar-deadline-item" data-radar-counter="today">
+            <div class="radar-deadline-title">До конца дня</div>
+            <div class="v bad">${fmt(d.todayCount)} <small>${lotWord(d.todayCount)}</small></div>
+            <div class="sub">${mln(d.todaySum)} млн ₸</div>
+          </div>
+          <div class="radar-deadline-item" data-radar-counter="48h">
+            <div class="radar-deadline-title">До 48 часов <span class="radar-deadline-note">(включая сегодня)</span></div>
+            <div class="v warn">${fmt(d.within48hCount)} <small>${lotWord(d.within48hCount)}</small></div>
+            <div class="sub">${mln(d.within48hSum)} млн ₸</div>
+          </div>
+        </div>
+      </div>
+      <div class="tile">
+        <span class="label">Обсуждение КД</span>
+        <div class="v">${fmt(d.discCount)} <small>${lotWord(d.discCount)}</small></div>
+        <div class="sub">${mln(d.discSum)} млн ₸</div>
+      </div>
+      <div class="tile">
+        <span class="label">Второй шанс (ИОИ)</span>
+        <div class="v good">${fmt(d.secondCount)} <small>${dealWord(d.secondCount)}</small></div>
+        <div class="sub">${mln(d.secondSum)} млн ₸</div>
+      </div>
+    `;
+
+    const renderGridHtml = (d) => `
+      ${renderColumn("submitToday", d.submitColTitle, "01", d.submitCards, state, custIndex)}
+      ${renderColumn("discussion", "Успеть с замечанием", "02", d.discCards, state, custIndex)}
+      ${renderColumn("secondChance", "Второй шанс", "03", d.secondCards, state, custIndex)}
+    `;
+
+    const prevInput = container.querySelector(".radar-search-input");
+    const savedSelection = prevInput && document.activeElement === prevInput
+      ? {
+          start: prevInput.selectionStart,
+          end: prevInput.selectionEnd,
+          dir: prevInput.selectionDirection || "none"
+        }
+      : null;
+
+    const initialData = computeViewData();
 
     const html = `
       <section class="block reveal in radar-section">
         <div class="radar-kpis kpis">
-          <div class="tile">
-            <span class="label">В работе на радаре</span>
-            <div class="v">${fmt(kpis.totalCount)} <small>лотов</small></div>
-            <div class="sub">${mln(kpis.totalSum)} млн ₸</div>
-          </div>
-          <div class="tile">
-            <span class="label">Подать сегодня / 48ч</span>
-            <div class="v bad">${fmt(kpis.submitCount)} <small>лотов</small></div>
-            <div class="sub">${mln(kpis.submitSum)} млн ₸</div>
-          </div>
-          <div class="tile">
-            <span class="label">Обсуждение КД</span>
-            <div class="v">${fmt(kpis.discussionCount)} <small>лотов</small></div>
-            <div class="sub">${mln(kpis.discussionSum)} млн ₸</div>
-          </div>
-          <div class="tile">
-            <span class="label">Второй шанс (ИОИ)</span>
-            <div class="v good">${fmt(kpis.secondChanceCount)} <small>закупок</small></div>
-            <div class="sub">${mln(kpis.secondChanceSum)} млн ₸</div>
-          </div>
+          ${renderKpisHtml(initialData)}
         </div>
 
         <div class="radar-filters-bar">
@@ -257,26 +336,47 @@
         </div>
 
         <div class="radar-grid">
-          ${renderColumn("submitToday", "Подать сегодня", "01", submitCards, state, custIndex)}
-          ${renderColumn("discussion", "Успеть с замечанием", "02", discCards, state, custIndex)}
-          ${renderColumn("secondChance", "Второй шанс", "03", secondCards, state, custIndex)}
+          ${renderGridHtml(initialData)}
         </div>
       </section>
     `;
 
     container.innerHTML = html;
 
-    // Wire search input
+    const kpisEl = container.querySelector(".radar-kpis");
+    const gridEl = container.querySelector(".radar-grid");
+
+    const updateDynamicContent = () => {
+      const d = computeViewData();
+      if (kpisEl) kpisEl.innerHTML = renderKpisHtml(d);
+      if (gridEl) gridEl.innerHTML = renderGridHtml(d);
+    };
+
+    const syncPressedChips = () => {
+      container.querySelectorAll("button[data-radar-mgr]").forEach(btn => {
+        btn.setAttribute("aria-pressed", String((btn.dataset.radarMgr || "") === state.managerId));
+      });
+      container.querySelectorAll("button[data-radar-method]").forEach(btn => {
+        btn.setAttribute("aria-pressed", String((btn.dataset.radarMethod || "") === state.method));
+      });
+      container.querySelectorAll("button[data-radar-time]").forEach(btn => {
+        btn.setAttribute("aria-pressed", String((btn.dataset.radarTime || "all") === state.timeFilter));
+      });
+    };
+
+    // Wire search input: update only the columns without touching the input element, preserving cursor & selection
     const searchInput = container.querySelector(".radar-search-input");
     if (searchInput) {
+      if (savedSelection) {
+        searchInput.focus();
+        if (savedSelection.start !== null && savedSelection.end !== null) {
+          searchInput.setSelectionRange(savedSelection.start, savedSelection.end, savedSelection.dir);
+        }
+      }
       searchInput.addEventListener("input", () => {
         state.searchQuery = searchInput.value;
-        window.__renderRadarTab(tab, radarView, container);
-        const nextInput = container.querySelector(".radar-search-input");
-        if (nextInput) {
-          nextInput.focus();
-          nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
-        }
+        const d = computeViewData();
+        if (gridEl) gridEl.innerHTML = renderGridHtml(d);
       });
     }
 
@@ -286,7 +386,8 @@
       if (expandBtn) {
         const col = expandBtn.dataset.radarExpand;
         state.expandedCol[col] = true;
-        window.__renderRadarTab(tab, radarView, container);
+        const d = computeViewData();
+        if (gridEl) gridEl.innerHTML = renderGridHtml(d);
         return;
       }
 
@@ -294,21 +395,24 @@
       if (mgrBtn) {
         state.managerId = mgrBtn.dataset.radarMgr || "";
         state.manualFilter = true;
-        window.__renderRadarTab(tab, radarView, container);
+        syncPressedChips();
+        updateDynamicContent();
         return;
       }
 
       const methodBtn = e.target.closest("button[data-radar-method]");
       if (methodBtn) {
         state.method = methodBtn.dataset.radarMethod || "";
-        window.__renderRadarTab(tab, radarView, container);
+        syncPressedChips();
+        updateDynamicContent();
         return;
       }
 
       const timeBtn = e.target.closest("button[data-radar-time]");
       if (timeBtn) {
         state.timeFilter = timeBtn.dataset.radarTime || "all";
-        window.__renderRadarTab(tab, radarView, container);
+        syncPressedChips();
+        updateDynamicContent();
         return;
       }
     };

@@ -96,14 +96,25 @@ function httpsUrl(url: string | null | undefined): string {
   }
 }
 
+const ALMATY_OFFSET_MS = 5 * 3_600_000;
+
+function toAlmatyDateString(ms: number): string {
+  return new Date(ms + ALMATY_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 function parseAlmatyTimestamp(str: string | null | undefined): number | null {
   if (!str) return null;
   const s = str.trim();
-  // Format: "YYYY-MM-DD HH:mm" or "YYYY-MM-DD HH:mm:ss"
-  const m = /^(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}:\d{2})(?::\d{2})?)?/.exec(s);
+  const tzMatch = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)(Z|[+-]\d{2}:?\d{2})$/i.exec(s);
+  if (tzMatch) {
+    const ms = Date.parse(s);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  // Format: "YYYY-MM-DD", "YYYY-MM-DD HH:mm" or "YYYY-MM-DD HH:mm:ss" (Almaty UTC+5)
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}:\d{2})(?::(\d{2}))?)?/.exec(s);
   if (!m) return null;
   const date = m[1];
-  const time = m[2] ? `${m[2]}:00` : "23:59:59";
+  const time = m[2] ? `${m[2]}:${m[3] || "00"}` : "23:59:59";
   const ms = Date.parse(`${date}T${time}+05:00`);
   return Number.isFinite(ms) ? ms : null;
 }
@@ -156,6 +167,9 @@ export function parseRadarLotDeal(raw: RadarRawDeal, options: ParseRadarDealOpti
   const asOfTimeMs = options.asOfTime
     ? Date.parse(options.asOfTime)
     : Date.parse(`${options.asOfDate}T12:00:00+05:00`);
+  const almatyAsOfDate = options.asOfTime && Number.isFinite(asOfTimeMs)
+    ? toAlmatyDateString(asOfTimeMs)
+    : options.asOfDate;
 
   let hoursLeft: number | null = null;
   let isToday = false;
@@ -166,7 +180,7 @@ export function parseRadarLotDeal(raw: RadarRawDeal, options: ParseRadarDealOpti
     if (endAtMs !== null) {
       const msLeft = endAtMs - asOfTimeMs;
       hoursLeft = msLeft / 3_600_000;
-      isToday = endAt.startsWith(options.asOfDate);
+      isToday = toAlmatyDateString(endAtMs) === almatyAsOfDate;
       isWithin48h = hoursLeft > 0 && hoursLeft <= 48;
     }
   }
