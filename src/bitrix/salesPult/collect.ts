@@ -1,5 +1,6 @@
 import { enrichManagerNames } from "./managerNames.js";
 import { ReadOnlyBitrixClient, flattenBitrixParams } from "../reporting/readOnlyClient.js";
+import { formatSafeErrorStatus } from "./safeLog.js";
 import type { WonLostMismatchDeal } from "./types.js";
 import {
   toAlmatyEndOfDay,
@@ -346,7 +347,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     outcomeDealsRaw.push(...wonList.filter((d) => String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("won:")));
   } catch (err) {
     if (params.historyOnly) throw err;
-    console.warn("[collectPultData] Failed to load won: outcome deals:", err);
+    console.warn(`[collectPultData] Failed to load won: outcome deals (${formatSafeErrorStatus(err)})`);
   }
 
   try {
@@ -357,7 +358,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     outcomeDealsRaw.push(...partnerList.filter((d) => String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("partner:")));
   } catch (err) {
     if (params.historyOnly) throw err;
-    console.warn("[collectPultData] Failed to load partner: outcome deals:", err);
+    console.warn(`[collectPultData] Failed to load partner: outcome deals (${formatSafeErrorStatus(err)})`);
   }
 
   // Противоречие WON/lost остаётся актуальным и после смены месяца.
@@ -369,7 +370,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
       });
       outcomeDealsRaw.push(...lostWins.filter(d => d.STAGE_SEMANTIC_ID === "S" && String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("lost:")));
     } catch (err) {
-      console.warn("[Пульт] Не удалось загрузить противоречия WON/lost:", err instanceof Error ? err.message : String(err));
+      console.warn(`[Пульт] Не удалось загрузить противоречия WON/lost (${formatSafeErrorStatus(err)})`);
     }
   }
 
@@ -444,7 +445,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         }
       } catch (err) {
         if (params.historyOnly) throw err;
-        console.warn("[collectPultData] Failed to batch load comments for won deals:", err);
+        console.warn(`[collectPultData] Failed to batch load comments for won deals (${formatSafeErrorStatus(err)})`);
       }
     }
   }
@@ -671,7 +672,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         }
       }
     } catch (err) {
-      console.warn("[collectPultData] Failed to batch load comments for top tasks:", err);
+      console.warn(`[collectPultData] Failed to batch load comments for top tasks (${formatSafeErrorStatus(err)})`);
     }
   }
 
@@ -697,7 +698,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         }
       }
     } catch (err) {
-      console.warn("[collectPultData] Failed to batch load calls for overdue top tasks:", err);
+      console.warn(`[collectPultData] Failed to batch load calls for overdue top tasks (${formatSafeErrorStatus(err)})`);
     }
   }
 
