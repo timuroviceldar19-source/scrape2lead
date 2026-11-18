@@ -91,6 +91,25 @@
     "B2B, вне портала": "B2B"
   };
 
+  const missingRows = Array.isArray(R.missing) ? R.missing : null;
+  const hasMissingSection = missingRows !== null;
+  const missingCount = hasMissingSection ? missingRows.length : 0;
+  const missSum = hasMissingSection ? missingRows.reduce((a, x) => a + x.sale, 0) : 0;
+
+  const hasReconciliationSection = Boolean(reconciliation);
+  const recClosedCount = hasReconciliationSection && Array.isArray(reconciliation.closedNotInRegister) ? reconciliation.closedNotInRegister.length : 0;
+  const recDupCount = hasReconciliationSection && Array.isArray(reconciliation.possibleDuplicates) ? reconciliation.possibleDuplicates.length : 0;
+  const recCount = recClosedCount + recDupCount;
+
+  const crmLinks = [];
+  if (hasMissingSection && missingCount > 0) {
+    crmLinks.push(`<a class="crm-miss-link" href="#r-missing">нет в CRM: ${plural(missingCount, ["договор", "договора", "договоров"])} на ${money(missSum)}</a>`);
+  }
+  if (hasReconciliationSection && recCount > 0) {
+    crmLinks.push(`<a class="crm-miss-link" href="#r-reconciliation">в CRM «Выигран», нет в реестре: ${plural(recCount, ["сделка", "сделки", "сделок"])}</a>`);
+  }
+  const crmSummaryHtml = crmLinks.length ? ` Расхождения с CRM: ${crmLinks.join(" · ")}.` : "";
+
   const planPct = T.plan ? T.sale / T.plan : 0;
   const over = T.sale - T.plan;
   const top = R.managers[0] ?? { name: "—", sale: 0 };
@@ -107,7 +126,7 @@
       </div>
       <p class="verdict">${VIEWER
         ? (over >= 0 ? `Ваш план перевыполнен на <b>${money(over)}</b>.` : `До вашего плана <b>${money(-over)}</b>.`)
-        : `${over >= 0 ? `План отдела перевыполнен на <b>${money(over)}</b>.` : `До плана отдела <b>${money(-over)}</b>.`} Больше всех продал ${esc(top.name)}: ${money(top.sale)}. B2B: ${money(T.b2bSale)} из ${money(T.b2bPlan)}.`}${PS ? ` Партнёрские продажи <b>${money(PS.sale)}</b> в эти суммы не входят, они <a href="#r-partner">отдельным блоком ниже</a>.` : ""}</p>
+        : `${over >= 0 ? `План отдела перевыполнен на <b>${money(over)}</b>.` : `До плана отдела <b>${money(-over)}</b>.`} Больше всех продал ${esc(top.name)}: ${money(top.sale)}. B2B: ${money(T.b2bSale)} из ${money(T.b2bPlan)}.`}${PS ? ` Партнёрские продажи <b>${money(PS.sale)}</b> в эти суммы не входят, они <a href="#r-partner">отдельным блоком ниже</a>.` : ""}${crmSummaryHtml}</p>
     </div><div class="chart-wrap" id="regChart"></div></div></section>`;
 
   // Партнёрские продажи: низкий вал, поэтому отдельно от выручки, вала, бонусов и плана отдела
@@ -137,7 +156,7 @@
       <div><span class="num">${valText}</span></div>
       <div><span class="num">${nf0.format(Math.round(m.bonus / 1000))}</span> <span class="dim">тыс</span></div>
       <div class="num">${m.contracts}</div>
-      <div>${m.missCount ? `<span class="flag-miss">нет в CRM: ${m.missCount} на ${mln(m.missSum)} млн</span>` : m.contracts ? `<span class="flag-ok">всё отмечено</span>` : `<span class="flag-ok">—</span>`}</div>
+      <div>${m.missCount ? (hasMissingSection && missingCount > 0 ? `<a class="flag-miss crm-miss-link" href="#r-missing">нет в CRM: ${m.missCount} на ${mln(m.missSum)} млн</a>` : `<span class="flag-miss">нет в CRM: ${m.missCount} на ${mln(m.missSum)} млн</span>`) : m.contracts ? `<span class="flag-ok">всё отмечено</span>` : `<span class="flag-ok">—</span>`}</div>
       <span class="chev">${m.contracts ? "▾" : ""}</span>
     </div><div class="detail"><div><div class="deals">${dealRows(m.rows)}</div></div></div>`;
   }
@@ -159,21 +178,24 @@
   </div></section>`;
 
   let reconciliationHtml = "";
-  if (reconciliation) {
+  if (hasReconciliationSection) {
     const dealLink = (d) => `<a href="${esc(String(portal || "").replace(/\/+$/, "") + "/crm/deal/details/" + encodeURIComponent(d.dealId) + "/")}" target="_blank" rel="noopener">${esc(d.title)}</a>`;
     const rows = [
-      ...reconciliation.closedNotInRegister.map(d => `<div class="mismatch-row"><div class="info">${dealLink(d)} · ${esc(d.manager)}</div><div class="meta">${esc(fmt(d.amount) + " ₸")} · ${esc(ddmm(d.date))}</div></div>`),
-      ...reconciliation.possibleDuplicates.map(d => `<div class="mismatch-row"><div class="info">${dealLink(d)} · ${esc(d.manager)}</div><div class="meta">Возможен дубль · в реестре у ${esc(d.registerManager)}</div></div>`)
+      ...(reconciliation.closedNotInRegister || []).map(d => `<div class="mismatch-row"><div class="info">${dealLink(d)} · ${esc(d.manager)}</div><div class="meta">${esc(fmt(d.amount) + " ₸")} · ${esc(ddmm(d.date))}</div></div>`),
+      ...(reconciliation.possibleDuplicates || []).map(d => `<div class="mismatch-row"><div class="info">${dealLink(d)} · ${esc(d.manager)}</div><div class="meta">Возможен дубль · в реестре у ${esc(d.registerManager)}</div></div>`)
     ];
-    reconciliationHtml = `<h3>В CRM «Выигран», в реестре нет</h3><div class="reconciliation mismatches-list">${rows.length ? rows.join("") : "расхождений нет"}</div>`;
+    reconciliationHtml = `<div id="r-reconciliation"><h3>В CRM «Выигран», в реестре нет</h3><div class="reconciliation mismatches-list">${rows.length ? rows.join("") : "расхождений нет"}</div></div>`;
   }
 
   // Нет в CRM
-  const missSum = R.missing.reduce((a, x) => a + x.sale, 0);
-  s += `<section class="block reveal">${head(idx(), "В реестре есть, в CRM не «Выигран»", `${plural(R.missing.length, ["договор", "договора", "договоров"])} на ${money(missSum)}`)}
-    <p class="lead">Эти договоры подписаны, но в Битрикс24 сделки нет или она не переведена в «Выигран». Пульт их не видит, поэтому выручка в CRM <b>на ${money(missSum)} меньше</b>, чем в реестре. Сверка по названию заказчика и сумме.</p>
-    <div class="miss rows"><div class="r head"><span class="label">Дата</span><span class="label">Менеджер</span><span class="label">Заказчик</span><span class="label">Товар</span><span class="label">Сумма</span></div>
-    ${R.missing.map((x) => `<div class="r"><span class="num">${ddmm(x.date)}</span><span class="nm">${esc(x.manager)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 90))}</span><span>${esc(x.products.join(", "))}</span><span class="num">${mln(x.sale)} млн</span></div>`).join("")}</div>${reconciliationHtml}</section>`;
+  if (hasMissingSection) {
+    s += `<section class="block reveal" id="r-missing">${head(idx(), "В реестре есть, в CRM не «Выигран»", `${plural(missingCount, ["договор", "договора", "договоров"])} на ${money(missSum)}`)}
+      <p class="lead">Эти договоры подписаны, но в Битрикс24 сделки нет или она не переведена в «Выигран». Пульт их не видит, поэтому выручка в CRM <b>на ${money(missSum)} меньше</b>, чем в реестре. Сверка по названию заказчика и сумме.</p>
+      <div class="miss rows"><div class="r head"><span class="label">Дата</span><span class="label">Менеджер</span><span class="label">Заказчик</span><span class="label">Товар</span><span class="label">Сумма</span></div>
+      ${missingRows.map((x) => `<div class="r"><span class="num">${ddmm(x.date)}</span><span class="nm">${esc(x.manager)}</span><span class="cust" title="${esc(x.customer)}">${esc(short(x.customer, 90))}</span><span>${esc(x.products.join(", "))}</span><span class="num">${mln(x.sale)} млн</span></div>`).join("")}</div>${reconciliationHtml}</section>`;
+  } else if (reconciliationHtml) {
+    s += `<section class="block reveal">${head(idx(), "Сверка с CRM", "данные по реестру отсутствуют")}${reconciliationHtml}</section>`;
+  }
 
 
   // Все договоры

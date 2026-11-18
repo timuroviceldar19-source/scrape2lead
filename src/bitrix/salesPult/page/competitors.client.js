@@ -165,7 +165,7 @@
         ? `<p class="more">и ещё ${plural(c.totalLotsInList - c.lotList.length, ["лот", "лота", "лотов"])}</p>`
         : "";
       const nameBlock = `<span class="nm" title="${esc(c.name)}">${esc(tooShort(c.name, 42))}${c.us ? ' <span class="tag good">мы</span>' : ""}<span class="dim sub">БИН ${esc(c.bin)}</span></span>`;
-      const summaryRow = `<span class="rk">${idx + 1}</span>${nameBlock}<span class="num" data-l="Заявок">${fmt(c.bids)}</span><span class="num" data-l="Доп. / Откл.">${fmt(c.admitted)} / ${fmt(c.rejected)}</span><span class="num" data-l="Побед (2-х)">${fmt(c.wins)}${c.secondPlaces ? ` (${fmt(c.secondPlaces)})` : ""}</span><span class="num" data-l="Доля побед">${fmtPct1(c.winRateAdmittedPct)}</span><span class="num" data-l="Сумма побед">${money(c.wonSum)}</span><span class="num" data-l="Мед. скидка">${fmtPct1(c.medianDiscountPct)}</span><span class="num" data-l="Усл. скидка">${fmtPct1(c.meanCondDiscountPct)}</span><span class="num" data-l="ОТП/КТП">${fmt(c.otpKtpCount)}</span>`;
+      const summaryRow = `<span class="rk">${idx + 1}</span>${nameBlock}<span class="num" data-l="Заявок">${fmt(c.bids)}</span><span class="num" data-l="Доп. / Откл.">${fmt(c.admitted)} / ${fmt(c.rejected)}</span><span class="num" data-l="Побед (2-х)">${fmt(c.wins)}${c.secondPlaces ? ` (${fmt(c.secondPlaces)})` : ""}</span><span class="num" data-l="Победы / допуски">${fmtPct1(c.winRateAdmittedPct)}</span><span class="num" data-l="Сумма побед">${money(c.wonSum)}</span><span class="num" data-l="Мед. скидка">${fmtPct1(c.medianDiscountPct)}</span><span class="num" data-l="Усл. скидка">${fmtPct1(c.meanCondDiscountPct)}</span><span class="num" data-l="ОТП/КТП">${fmt(c.otpKtpCount)}</span>`;
       return `<details class="cust-d"><summary class="r${c.us ? " us" : ""}">${summaryRow}</summary><div class="cust-list rows">${lotsHtml}${moreLots}</div></details>`;
     }).join("");
 
@@ -176,7 +176,7 @@
     html += `<section class="block reveal in">
       ${head("02", "Конкуренты", `${fmt(V.competitorsTotal)} участников · показаны ${fmt(visibleComps.length)} · строка раскрывает список лотов`)}
       <div class="comp-table rows">
-        <div class="r head"><span></span><span class="label">Участник / БИН</span><span class="label">Заявок</span><span class="label">Доп./Откл.</span><span class="label">Побед (2-х)</span><span class="label">От допусков</span><span class="label">Сумма побед</span><span class="label">Мед. скидка</span><span class="label">Усл. скидка</span><span class="label">ОТП/КТП</span></div>
+        <div class="r head"><span></span><span class="label">Участник / БИН</span><span class="label">Заявок</span><span class="label">Доп./Откл.</span><span class="label">Побед (2-х)</span><span class="label">Победы / допуски</span><span class="label">Сумма побед</span><span class="label">Мед. скидка</span><span class="label">Усл. скидка</span><span class="label">ОТП/КТП</span></div>
         ${compRowsHtml || '<p class="muted">Участников за этот период нет</p>'}
       </div>
       ${compMoreBtn}
