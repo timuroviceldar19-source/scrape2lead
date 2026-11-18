@@ -218,13 +218,18 @@
     const searchInput = open.querySelector(".plan-search-input");
     if (searchInput) {
       searchInput.addEventListener("input", () => {
+        const start = searchInput.selectionStart;
+        const end = searchInput.selectionEnd;
+        const dir = searchInput.selectionDirection || "none";
         state.searchQuery = searchInput.value;
         state.limit = 50;
         renderOpenPlans(base, el, active, state);
         const nextInput = open.querySelector(".plan-search-input");
         if (nextInput) {
-          nextInput.focus();
-          nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
+          nextInput.focus({ preventScroll: true });
+          if (start !== null && end !== null) {
+            nextInput.setSelectionRange(start, end, dir);
+          }
         }
       });
     }
@@ -284,6 +289,7 @@
           <span class="label">Общая сумма собранных планов</span>
           <div class="hero-num"><span class="big">${mln(total.sum)}</span><span class="of">млн ₸</span></div>
           <p data-plan-count="${total.count}">${fmt(total.count)} пунктов · ${fmt(total.customers)} заказчиков</p>
+          <p class="plans-summary-actions"><button type="button" class="btn plans-find-open" data-plan-find-open>Найти открытый план</button></p>
           <div class="readout">${metric("В работе", total.openSum, total.openCount)}${metric('Ждут разбора (стадия «Новая»)', total.newSum, total.newCount, total.newCount ? "bad" : "")}${metric("Опубликовано / Договор", total.publishedSum, total.publishedCount)}</div>
           <div class="readout plans-outcomes">${metric("Забрали мы (F3 + партнёр)", total.wonSum, total.wonCount)}${metric("Ушло конкурентам", total.lostSum, total.lostCount)}${totalWinShare}${metric("Отменено / изменено", total.cancelledSum, total.cancelledCount)}${metric("Новые за 7 дней", total.createdLast7dSum, total.createdLast7dCount)}</div>
         </div><div class="share rows"><h3>По менеджерам</h3>
@@ -317,5 +323,23 @@
     if (state.month !== active) state.limit = 50;
     state.month = active;
     renderOpenPlans(base, el, active, state);
+    const findOpenBtn = el.querySelector("[data-plan-find-open]");
+    if (findOpenBtn) {
+      findOpenBtn.addEventListener("click", () => {
+        const openSection = el.querySelector(".plans-open");
+        const input = el.querySelector(".plan-search-input");
+        const target = openSection || input;
+        if (target) {
+          const barH = document.querySelector(".bar")?.getBoundingClientRect().height || 0;
+          const dateH = document.querySelector(".dateline")?.getBoundingClientRect().height || 0;
+          const offset = barH + dateH + 16;
+          window.scrollTo({
+            top: Math.max(0, window.scrollY + target.getBoundingClientRect().top - offset),
+            behavior: "instant"
+          });
+        }
+        if (input) input.focus({ preventScroll: true });
+      });
+    }
   };
 })();
