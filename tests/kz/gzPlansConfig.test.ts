@@ -66,6 +66,20 @@ describe("loadGzPlansConfig", () => {
     expect(config.includeTruCodePrefixes).toEqual([]);
   });
 
+  it("reads both daily plan searches from zakup.gov.kz", () => {
+    // С 13.11.2026 реестр планов procurement.gov.kz не пополняется, новые пункты есть только на zakup.gov.kz.
+    expect(loadGzPlansConfig("config/gz-plans.json").source).toBe("zakup");
+    expect(loadGzPlansConfig("config/gz-plans.pk.json").source).toBe("zakup");
+    // Пункты до 88654473 были в реестре портала; номер исходного пункта для них знал только портал.
+    expect(loadGzPlansConfig("config/gz-plans.json").zakupMinPlanPointId).toBe(88654474);
+    expect(loadGzPlansConfig("config/gz-plans.pk.json").zakupMinPlanPointId).toBe(88654474);
+  });
+
+  it("keeps the portal search as the default source for other configs", () => {
+    expect(loadGzPlansConfig(writeTempConfig({ keywords: ["Панель интерактивная"] })).source).toBe("portal");
+    expect(() => loadGzPlansConfig(writeTempConfig({ keywords: ["Панель"], source: "ows" }))).toThrow();
+  });
+
   it("loads and validates config from JSON file", () => {
     const configPath = writeTempConfig({
       keywords: ["Панель интерактивная"],
@@ -168,6 +182,13 @@ describe("mergeGzPlansExportOptions", () => {
 
     expect(merged.minAmount).toBe(500000);
     expect(merged.excludeKeywords).toEqual(["Уголок"]);
+  });
+
+  it("threads the plan source into export options", () => {
+    const configPath = writeTempConfig({ keywords: ["Панель интерактивная"], source: "zakup" });
+
+    expect(mergeGzPlansExportOptions(loadGzPlansConfig(configPath)).source).toBe("zakup");
+    expect(mergeGzPlansExportOptions(loadGzPlansConfig(writeTempConfig({ keywords: ["Панель"], zakupMinPlanPointId: 5 }))).minPlanPointId).toBe(5);
   });
 });
 

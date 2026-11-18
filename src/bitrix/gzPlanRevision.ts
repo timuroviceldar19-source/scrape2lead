@@ -101,6 +101,27 @@ export function buildGzPlanRevisionComment(row: GzPlanRevisionRow, revision: GzP
   return lines.join("\n");
 }
 
+/**
+ * zakup.gov.kz хранит и старые версии пункта со статусом «Утвержден». Если к одной сделке в прогоне ведут
+ * несколько пунктов, сумму может менять только самый новый (номер пункта растёт с каждой версией).
+ * Возвращает индексы строк, чью правку надо отложить.
+ */
+export function findOutdatedRevisionIndexes(
+  items: ReadonlyArray<{ dealId: string | null; planPointId: string; revises: boolean }>
+): Set<number> {
+  const newest = new Map<string, number>();
+  for (const item of items) {
+    const point = Number(item.planPointId);
+    if (!item.dealId || !Number.isFinite(point)) continue;
+    newest.set(item.dealId, Math.max(newest.get(item.dealId) ?? point, point));
+  }
+  const outdated = new Set<number>();
+  items.forEach((item, index) => {
+    if (item.revises && item.dealId && Number(item.planPointId) < (newest.get(item.dealId) ?? -Infinity)) outdated.add(index);
+  });
+  return outdated;
+}
+
 /** Two rows of one run rewriting the same deal means we cannot tell which version is current. */
 export function findAmbiguousRevisionDealIds(dealIds: readonly string[]): Set<string> {
   const seen = new Set<string>();

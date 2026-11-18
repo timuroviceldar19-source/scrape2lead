@@ -67,6 +67,19 @@ describe("shipped GZ quantity rules: classification", () => {
     expect(ruleOf("Компьютер в комплекте с монитором")).toBe("pc");
   });
 
+  it("treats every item with a PC code as a PC, whatever its name", () => {
+    // 18.11.2026: «Устройство компьютерное» (внутри ноутбук), 1 шт на 520 000 ₸, код 262013 — шаблон «компьютер(?!н)»
+    // слово «компьютерное» не узнаёт, и сделку пришлось удалять вручную.
+    expect(ruleOf("Устройство компьютерное", "262013.000.000008")).toBe("pc");
+    expect(ruleOf("Планшет", "262011.500.000001")).toBe("pc");
+    expect(check("Устройство компьютерное", "1", "262013.000.000008", "520 000")).toMatchObject({ allowed: false, ruleName: "pc" });
+    // Без кода решает название, как раньше.
+    expect(ruleOf("Устройство компьютерное")).toBeNull();
+    // Панели и исключения стоят раньше и узнаются по своему коду или названию.
+    expect(ruleOf("Интерактивная панель с компьютером", "262013.000.000011")).toBe("panels");
+    expect(ruleOf("Монитор", "262017.100.000002")).toBe("monitors");
+  });
+
   it("does not treat a computer class or computer furniture as a PC", () => {
     expect(ruleOf("Комплект оборудования для компьютерного класса")).toBeNull();
     expect(ruleOf("Стол компьютерный")).toBeNull();
