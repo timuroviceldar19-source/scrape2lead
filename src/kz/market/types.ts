@@ -192,6 +192,29 @@ export interface MarketGroupView {
 
 export type MarketEducationPending = Record<string, { contracts: number; sum: number; ids: number[] }>;
 
+export interface MarketFullContractItem {
+  id: number;
+  date: string;
+  supplier: string;
+  customer: string;
+  kind: string;
+  method: string;
+  qty: number;
+  sum: number;
+  us: boolean;
+}
+
+export interface MarketMonthContractsPayload {
+  group: "ИП" | "КТ";
+  month: string;
+  total: {
+    contracts: number;
+    sum: number;
+    qty: number;
+  };
+  contracts: MarketFullContractItem[];
+}
+
 export interface MarketView {
   asOf: string;
   months?: string[];

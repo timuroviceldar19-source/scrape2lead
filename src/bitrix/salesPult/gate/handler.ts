@@ -2,7 +2,7 @@
 // Варианты лежат в статике Pages как _r/<вариант>/index.html, reg.html и fin.html (только all); напрямую по этим
 // адресам их не отдаём, иначе роль можно было бы обойти.
 
-import { variantOf, type PultGateConfig } from "./config.js";
+import { variantOf, type PultGateConfig, type PultRole } from "./config.js";
 import { verifyAccessJwt } from "./accessJwt.js";
 
 export interface GateAssets {
@@ -94,24 +94,46 @@ async function fetchAsset(assets: GateAssets, origin: string, pathname: string):
   return new Response("not found", { status: 404 });
 }
 
+const MARKET_JSON_RE = /^\/market\/(ip|kt)\/(\d{4}-(?:0[1-9]|1[0-2]))\.json$/;
+
 export async function handleGateRequest(request: Request, deps: GateDeps): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response("method not allowed", { status: 405, headers: { ...SECURITY_HEADERS, allow: "GET, HEAD" } });
   }
   const url = new URL(request.url);
   const page = PAGES[url.pathname];
-  if (!page) return new Response("not found", { status: 404, headers: SECURITY_HEADERS });
+  const marketMatch = page ? null : MARKET_JSON_RE.exec(url.pathname);
+  if (!page && !marketMatch) return new Response("not found", { status: 404, headers: SECURITY_HEADERS });
 
   let variant = "all";
+  let role: PultRole | null = null;
   if (deps.config) {
     const token = tokenFrom(request);
     const who = token
       ? await verifyAccessJwt(token, { team: deps.config.team, aud: deps.config.aud, fetchFn: deps.fetchFn, now: deps.now?.() })
       : null;
     if (!who) return denied(null);
-    const role = deps.config.users[who.email];
+    role = deps.config.users[who.email] ?? null;
     if (!role) return denied(who.email);
     variant = variantOf(role);
+  }
+
+  if (marketMatch) {
+    if (role?.kind === "tv") {
+      return pageClosed();
+    }
+    const [, group, month] = marketMatch;
+    const asset = await fetchAsset(deps.assets, url.origin, `/_r/${variant}/market/${group}/${month}.json`);
+    if (asset.status === 404) {
+      return new Response("not found", { status: 404, headers: SECURITY_HEADERS });
+    }
+    if (!asset.ok) {
+      return new Response("upstream error", { status: 502, headers: SECURITY_HEADERS });
+    }
+    return new Response(request.method === "HEAD" ? null : asset.body, {
+      status: 200,
+      headers: { ...SECURITY_HEADERS, "content-type": "application/json; charset=utf-8" }
+    });
   }
 
   const asset = await fetchAsset(deps.assets, url.origin, page === "index" ? `/_r/${variant}/` : `/_r/${variant}/${page}`);
