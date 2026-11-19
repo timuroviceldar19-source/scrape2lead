@@ -165,7 +165,7 @@ describe("страница «Финансы»", () => {
         expect(await first.locator(".r.body .nm").evaluateAll((es) => es.map((e) => e.getAttribute("title")))).toEqual(["Ноутбук Тест 15", "Кабель тестовый", "Монитор Пример 24"]);
         expect(await first.locator(".r.body.is-gone").count()).toBe(1);
         if (width === 1440) {
-          expect((await first.locator(".r.head .label").allTextContents()).map((t) => t.trim())).toEqual(["Товар", "На начало", "Приход", "Расход", "На конец", "Сумма"]);
+          expect((await first.locator(".r.head .label").allTextContents()).map((t) => t.trim())).toEqual(["Товар ↕", "На начало ↕", "Приход ↕", "Расход ↕", "На конец ↕", "Сумма ↓"]);
         } else {
           expect((await first.locator(".fin-stock-m").first().innerText()).replace(/\s/g, " ")).toBe("остаток 2 → 4 · приход 3 · расход 1");
         }
@@ -192,6 +192,54 @@ describe("страница «Финансы»", () => {
       } finally { await page.close(); }
     }
   }, 20000);
+
+  it("склад: сортировка по любому столбцу, повторный клик — наоборот, склад не закрывается", async () => {
+    for (const width of [1440, 375]) {
+      const { page, errors } = await open(renderFinanceHtml(payload(view({ stockSheets: true }))), width);
+      try {
+        const box = page.locator("#f-stock details.fin-wh").first();
+        await box.locator("summary").click();
+        const names = () => box.locator(".r.body .nm").evaluateAll((es) => es.map((e) => e.getAttribute("title")));
+        const state = () => box.locator('[role="columnheader"]').evaluateAll((es) => es.filter((e) => e.getAttribute("aria-sort") !== "none").map((e) => `${e.textContent!.trim()}=${e.getAttribute("aria-sort")}`));
+        const click = async (key: string) => {
+          await box.locator(`[data-stock-sort="${key}"]`).click();
+          expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.stockSort)).toBe(key);
+        };
+        // на телефоне шапка — строка кнопок сортировки, все шесть видны
+        expect(await box.locator("[data-stock-sort]").evaluateAll((es) => es.filter((e) => (e as HTMLElement).offsetParent !== null).length)).toBe(6);
+        expect(await names()).toEqual(["Ноутбук Тест 15", "Кабель тестовый", "Монитор Пример 24"]);
+        await click("name");
+        expect(await state()).toEqual(["Товар ↑=ascending"]);
+        expect(await names()).toEqual(["Кабель тестовый", "Монитор Пример 24", "Ноутбук Тест 15"]);
+        await click("name");
+        expect(await names()).toEqual(["Ноутбук Тест 15", "Монитор Пример 24", "Кабель тестовый"]);
+        await click("startQty");
+        expect(await state()).toEqual(["На начало ↓=descending"]);
+        expect(await names()).toEqual(["Кабель тестовый", "Монитор Пример 24", "Ноутбук Тест 15"]);
+        await click("outQty");
+        expect(await names()).toEqual(["Монитор Пример 24", "Ноутбук Тест 15", "Кабель тестовый"]);
+        await click("inQty");
+        expect(await names()).toEqual(["Ноутбук Тест 15", "Кабель тестовый", "Монитор Пример 24"]);
+        await click("endQty");
+        await click("endQty");
+        expect(await state()).toEqual(["На конец ↑=ascending"]);
+        expect(await names()).toEqual(["Монитор Пример 24", "Ноутбук Тест 15", "Кабель тестовый"]);
+        expect(await box.evaluate((e) => (e as HTMLDetailsElement).open)).toBe(true);
+        // сортировка общая: второй склад тоже отсортирован, поиск после сортировки работает
+        // второй склад закрыт: innerText у скрытого пустой, берём textContent
+        expect(await page.locator("#f-stock details.fin-wh").nth(1).locator('[aria-sort="ascending"]').evaluate((e) => e.textContent!.trim())).toBe("На конец ↑");
+        await page.locator("#stockQ").fill("ноутбук");
+        expect(await box.locator(".r.body:not([hidden])").count()).toBe(1);
+        await page.locator("#stockQ").fill("");
+        // у компании без прихода и расхода сортировка по ним показывается как по сумме
+        await click("inQty");
+        await page.locator('#stockChips button[data-c="Бета"]').click();
+        expect(await page.locator("#f-stock details.fin-wh").first().locator('[role="columnheader"]:not([aria-sort="none"])').evaluate((e) => e.textContent!.trim())).toBe("Сумма ↓");
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        expect(errors).toEqual([]);
+      } finally { await page.close(); }
+    }
+  }, 30000);
 
   it("нет листов ведомости — нет и раздела «Склад»", async () => {
     const { page } = await open(renderFinanceHtml(payload(view())), 1440);
