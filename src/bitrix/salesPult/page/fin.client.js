@@ -295,27 +295,71 @@
     return `на начало ${money(x.start)}${moves ? ` · приход ${money(x.in || 0)} · расход ${money(x.out || 0)}` : ""} · на конец <b>${money(x.end)}</b>`;
   }
 
+  // Сортировка по любому столбцу: числа — сначала от большего, название — от А до Я, повторный
+  // клик — наоборот. Одна на все склады и обе компании; по умолчанию — сумма на конец.
+  let stockSort = { key: "endSum", dir: -1 };
+  const STOCK_COLS = [
+    { key: "name", label: "Товар", what: "по названию" },
+    { key: "startQty", label: "На начало", what: "по остатку на начало" },
+    { key: "inQty", label: "Приход", what: "по приходу", moves: true },
+    { key: "outQty", label: "Расход", what: "по расходу", moves: true },
+    { key: "endQty", label: "На конец", what: "по остатку на конец" },
+    { key: "endSum", label: "Сумма", what: "по сумме на конец" }
+  ];
+  const collator = new Intl.Collator("ru", { sensitivity: "base", numeric: true });
+  // у компании без прихода и расхода сортировка по ним показывается как по сумме
+  const stockSortFor = (moves) => (!moves && (stockSort.key === "inQty" || stockSort.key === "outQty") ? { key: "endSum", dir: -1 } : stockSort);
+  function stockCompare(sort) {
+    return (a, b) => {
+      const byName = collator.compare(a.name, b.name);
+      if (sort.key === "name") return byName * sort.dir;
+      return ((a[sort.key] || 0) - (b[sort.key] || 0)) * sort.dir || b.endSum - a.endSum || byName;
+    };
+  }
+  function stockSortBtn(c, sort) {
+    const on = sort.key === c.key;
+    const ariaSort = on ? (sort.dir > 0 ? "ascending" : "descending") : "none";
+    const arrow = on ? (sort.dir > 0 ? "↑" : "↓") : "↕";
+    const nextDir = on ? -sort.dir : c.key === "name" ? 1 : -1;
+    const next = c.key === "name" ? (nextDir > 0 ? "от А до Я" : "от Я до А") : nextDir < 0 ? "от большего к меньшему" : "от меньшего к большему";
+    return `<span class="label${c.key === "name" ? "" : " n"}" role="columnheader" aria-sort="${ariaSort}"><button type="button" class="fin-sort" data-stock-sort="${c.key}" title="Сортировать ${c.what}: ${next}">${c.label} <span class="ar" aria-hidden="true">${arrow}</span></button></span>`;
+  }
+  const stockWarehouses = (S) => [...S.warehouses].sort((a, b) => b.sums.end - a.sums.end || b.sums.start - a.sums.start);
+  function stockTableHtml(w, moves) {
+    const sort = stockSortFor(moves);
+    const headRow = `<div class="r head fin-sortable">${STOCK_COLS.filter((c) => moves || !c.moves).map((c) => stockSortBtn(c, sort)).join("")}</div>`;
+    const rows = [...w.items].sort(stockCompare(sort)).map((x) => {
+      const gone = !x.endQty && !x.endSum;
+      const q0 = (n) => `${nfq.format(n || 0)}${x.unit ? NB + esc(x.unit) : ""}`;
+      const mob = `остаток ${nfq.format(x.startQty || 0)} → ${q0(x.endQty)}${x.inQty ? ` · приход ${nfq.format(x.inQty)}` : ""}${x.outQty ? ` · расход ${nfq.format(x.outQty)}` : ""}`;
+      return `<div class="r body${gone ? " is-gone" : ""}" data-n="${esc(searchKey(x.name))}"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 110))}<span class="fin-stock-m">${mob}</span></span>
+          <span class="num dim">${qty(x.startQty, x.unit)}</span>${moves ? `<span class="num dim">${qty(x.inQty)}</span><span class="num dim">${qty(x.outQty)}</span>` : ""}<span class="num">${qty(x.endQty, x.unit)}</span><span class="num">${has(x.endSum) ? esc(amt(x.endSum)) : "—"}</span></div>`;
+    }).join("");
+    return headRow + rows;
+  }
+
   function stockBodyHtml() {
     const S = stockList().find((x) => x.company === stockPick);
     if (!S) return "";
     const moves = S.hasMoves;
-    const cls = `rows fin-stock${moves ? " moves" : ""}`;
-    const headRow = `<div class="r head"><span class="label">Товар</span><span class="label n">На начало</span>${moves ? `<span class="label n">Приход</span><span class="label n">Расход</span>` : ""}<span class="label n">На конец</span><span class="label n">Сумма</span></div>`;
-    const whs = [...S.warehouses].sort((a, b) => b.sums.end - a.sums.end || b.sums.start - a.sums.start);
     let s = `<p class="fin-note">${esc(S.company)}: ${stockSums(S.total, moves)}.${moves ? "" : " Прихода и расхода в выгрузке этой компании нет."}</p>`;
-    s += whs.map((w) => {
-      const items = [...w.items].sort((a, b) => b.endSum - a.endSum || b.startSum - a.startSum);
-      const rows = items.map((x) => {
-        const gone = !x.endQty && !x.endSum;
-        const q0 = (n) => `${nfq.format(n || 0)}${x.unit ? NB + esc(x.unit) : ""}`;
-        const mob = `остаток ${nfq.format(x.startQty || 0)} → ${q0(x.endQty)}${x.inQty ? ` · приход ${nfq.format(x.inQty)}` : ""}${x.outQty ? ` · расход ${nfq.format(x.outQty)}` : ""}`;
-        return `<div class="r body${gone ? " is-gone" : ""}" data-n="${esc(searchKey(x.name))}"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 110))}<span class="fin-stock-m">${mob}</span></span>
-          <span class="num dim">${qty(x.startQty, x.unit)}</span>${moves ? `<span class="num dim">${qty(x.inQty)}</span><span class="num dim">${qty(x.outQty)}</span>` : ""}<span class="num">${qty(x.endQty, x.unit)}</span><span class="num">${has(x.endSum) ? esc(amt(x.endSum)) : "—"}</span></div>`;
-      }).join("");
-      return `<details class="fin-more fin-wh"><summary>${esc(w.name)} <span class="dim">${plural(items.length, ["позиция", "позиции", "позиций"])} · ${money(w.sums.end)}</span></summary>
-        <p class="fin-note">${stockSums(w.sums, moves)}</p><div class="${cls}">${headRow}${rows}</div></details>`;
-    }).join("");
+    s += stockWarehouses(S).map((w, i) => `<details class="fin-more fin-wh" data-wh="${i}"><summary>${esc(w.name)} <span class="dim">${plural(w.items.length, ["позиция", "позиции", "позиций"])} · ${money(w.sums.end)}</span></summary>
+        <p class="fin-note">${stockSums(w.sums, moves)}</p><div class="rows fin-stock${moves ? " moves" : ""}">${stockTableHtml(w, moves)}</div></details>`).join("");
     return s;
+  }
+
+  // Сортировка перерисовывает только таблицы внутри складов: раскрытые склады остаются раскрытыми,
+  // поиск применяется заново.
+  function resortStock() {
+    const S = stockList().find((x) => x.company === stockPick);
+    if (!S) return;
+    const whs = stockWarehouses(S);
+    for (const box of document.querySelectorAll("#stockBody details.fin-wh")) {
+      const w = whs[Number(box.dataset.wh)];
+      const table = box.querySelector(".fin-stock");
+      if (w && table) table.innerHTML = stockTableHtml(w, S.hasMoves);
+    }
+    applyStockSearch();
   }
 
   function stockBlock() {
@@ -446,6 +490,18 @@
       debtAge = age;
       rerenderDebtors();
       document.querySelector(`#debtAgeChips button[data-age="${age}"]`)?.focus();
+      return;
+    }
+    const stockSortEl = e.target.closest("[data-stock-sort]");
+    if (stockSortEl) {
+      const key = stockSortEl.dataset.stockSort;
+      const box = stockSortEl.closest("details.fin-wh");
+      // переключаем от того, что сейчас видно (у компании без прихода видна сортировка по сумме)
+      const shown = stockList().find((x) => x.company === stockPick);
+      const cur = stockSortFor(shown ? shown.hasMoves : true);
+      stockSort = cur.key === key ? { key, dir: -cur.dir } : { key, dir: key === "name" ? 1 : -1 };
+      resortStock();
+      box?.querySelector(`[data-stock-sort="${key}"]`)?.focus();
       return;
     }
     const sort = e.target.closest(".fin-sort");

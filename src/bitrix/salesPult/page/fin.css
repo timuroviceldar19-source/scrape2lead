@@ -85,7 +85,9 @@
   .fin-debt .r.head.fin-sortable::before { content: "Сортировка"; margin-right: auto; font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
   .fin-sort { padding: 6px 0; }
   /* склад на телефоне: название и сумма, количество строкой ниже */
-  .fin-stock .r.head { display: none; }
+  /* шапка склада на телефоне — строка кнопок сортировки по всем столбцам */
+  .fin-stock .r.head.fin-sortable { display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; padding-bottom: 6px; }
+  .fin-stock .r.head.fin-sortable::before { content: "Сортировка"; flex-basis: 100%; margin-bottom: 2px; font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
   .fin-stock .r, .fin-stock.moves .r { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
   .fin-stock .r > .num { display: none; }
   .fin-stock .r > .num:last-child { display: block; grid-column: 2; grid-row: 1; }
