@@ -17,7 +17,8 @@ export const DEFAULT_FINANCE_CACHE_PATH = "data/register/finance.json";
 
 /** Повышать, когда меняется разбор: файлы из кэша тогда разбираются заново. */
 // 2 — скрытые пустые колонки между банками и листы материальных ведомостей.
-export const FINANCE_PARSE_VERSION = 2;
+// 3 — новые колонки дебиторов (дата оплаты, иск) и сдвинутые «Прочие платежи» / «Топ» (20.11.2026).
+export const FINANCE_PARSE_VERSION = 3;
 
 const DEFAULT_MAX_DOWNLOADS = 20;
 const MAX_SNAPSHOTS = 400;

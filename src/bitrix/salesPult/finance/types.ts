@@ -61,12 +61,23 @@ export interface FinanceDebtor {
   company: string;
   amount: number;
   saleDate?: string;
+  /** «Дата оплаты» — когда должны заплатить; дни до неё страница считает сама на дату сборки. */
+  paymentDate?: string;
+  /** «Дата подачи иска». */
+  claimDate?: string;
+  /** «Номер иска» — в файле там бывает и текст («иск подан в …»). */
+  claimNumber?: string;
   note?: string;
 }
+
+/** Необязательные колонки шапки «Дебиторы» (между «Датой реализации» и «ИТОГО»). */
+export type FinanceDebtorColumn = "paymentDate" | "daysToPay" | "claimDate" | "claimNumber";
 
 export interface FinanceDebtors {
   /** Компании, по которым ведётся список (колонки блока «Дебиторы»). */
   companies: string[];
+  /** Какие необязательные колонки есть в файле — их и показывает страница. */
+  columns?: FinanceDebtorColumn[];
   rows: FinanceDebtor[];
   /** Суммы строк по компаниям. */
   totals: number[];
