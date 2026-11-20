@@ -129,6 +129,73 @@ describe("страница «Финансы»", () => {
     }
   }, 20000);
 
+  it("дебиторы: колонки из файла 20.11 — дата оплаты, дни до оплаты, иск; сортировка по каждой", async () => {
+    const debtors = [
+      ...DEFAULT_DEBTORS.slice(0, 2),
+      { ...DEFAULT_DEBTORS[2], claimDate: "2026-11-13", claimNo: "Иск подан в суд Пример" }
+    ];
+    const { page, errors } = await open(renderFinanceHtml(payload(view({ debtors, debtorColumns: true, debtorGap: true }))), 1280);
+    try {
+      expect((await text(page, "#f-debtors .lead")).replace(/\s/g, " ")).toContain("«До оплаты» — дней до даты оплаты");
+      const box = page.locator("#debtMainBox");
+      await box.locator("summary").click();
+      const heads = (await box.locator(".fin-debt .r.head > span").allTextContents()).map((t) => t.replace(/[↕↓↑]/g, "").trim());
+      expect(heads).toEqual(["Должник", "Компания", "Сумма", "Реализация", "Прошло", "Оплата", "До оплаты", "Иск подан", "№ иска"]);
+      const cells = (name: string) => box.locator(`.fin-debt .r.body:has(.nm[title="${name}"]) > span`).allTextContents();
+      // отсчёт — дата сборки 17.11.2026; оплата — дата реализации + 30 дней
+      expect((await cells("Колледж Пример")).slice(5).map((t) => t.replace(/\s/g, " ").trim())).toEqual(["01.10", "−47 дней", "—", "—"]);
+      expect((await cells("Учреждение Образец")).slice(5).map((t) => t.replace(/\s/g, " ").trim())).toEqual(["01.07", "−139 дней", "13.11", "Иск подан в суд Пример"]);
+      const overdue = box.locator('.fin-debt .r.body:has(.nm[title="Колледж Пример"]) > span').nth(6);
+      expect(await overdue.getAttribute("class")).toContain("bad");
+      expect(await overdue.getAttribute("title")).toBe("просрочено на 47 дней");
+      expect(await box.locator('.fin-debt .r.body:has(.nm[title="Школа Тест №1"]) > span').nth(6).innerText()).toBe("18 дней");
+
+      const names = () => box.locator(".fin-debt .r.body .nm").evaluateAll((es) => es.map((e) => e.getAttribute("title")));
+      await box.locator('.fin-sort[data-sort="toPay"]').click();
+      expect(await names()).toEqual(["Школа Тест №1", "Колледж Пример", "Учреждение Образец"]);
+      expect(await box.locator('[role="columnheader"]:has([data-sort="toPay"])').getAttribute("aria-sort")).toBe("descending");
+      await box.locator('.fin-sort[data-sort="toPay"]').click();
+      expect(await names()).toEqual(["Учреждение Образец", "Колледж Пример", "Школа Тест №1"]);
+      // «Оплата» — та же очерёдность, что и «До оплаты»
+      await box.locator('.fin-sort[data-sort="payDate"]').click();
+      expect(await names()).toEqual(["Школа Тест №1", "Колледж Пример", "Учреждение Образец"]);
+      // у иска значение только у одного — он первым, остальные ниже по сумме; список не закрылся
+      for (const key of ["claimDate", "claimNo"]) {
+        await box.locator(`.fin-sort[data-sort="${key}"]`).click();
+        expect(await names(), key).toEqual(["Учреждение Образец", "Школа Тест №1", "Колледж Пример"]);
+        await box.locator(`.fin-sort[data-sort="${key}"]`).click();
+        expect(await names(), key).toEqual(["Учреждение Образец", "Школа Тест №1", "Колледж Пример"]);
+      }
+      expect(await box.evaluate((e) => (e as HTMLDetailsElement).open)).toBe(true);
+      // у проблемных долгов те же колонки
+      await page.locator("#debtProblemBox summary").click();
+      expect(await page.locator("#debtProblemBox .fin-debt .r.head [data-sort]").evaluateAll((es) => es.map((e) => (e as HTMLElement).dataset.sort)))
+        .toEqual(["amount", "days", "payDate", "toPay", "claimDate", "claimNo"]);
+      // на ноутбуке таблица помещается без прокрутки вбок
+      expect(await page.locator("#debtMain .fin-scroll").evaluate((e) => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 20000);
+
+  it("дебиторы на телефоне: колонки из файла — строкой под названием, страница не шире экрана", async () => {
+    const debtors = [...DEFAULT_DEBTORS.slice(0, 2), { ...DEFAULT_DEBTORS[2], claimDate: "2026-11-13", claimNo: "Иск подан в суд Пример" }];
+    const { page, errors } = await open(renderFinanceHtml(payload(view({ debtors, debtorColumns: true }))), 375);
+    try {
+      await page.locator("#debtMainBox summary").click();
+      const line = (name: string) => page.locator(`#debtMain .r.body:has(.nm[title="${name}"]) .fin-debt-m`).innerText();
+      expect((await line("Колледж Пример")).replace(/\s/g, " ")).toBe("оплата 01.10 · просрочено на 47 дней");
+      expect((await line("Учреждение Образец")).replace(/\s/g, " ")).toBe("оплата 01.07 · просрочено на 139 дней · иск 13.11 · Иск подан в суд Пример");
+      // колонки 6–9 скрыты, кнопки сортировки по ним — есть
+      expect(await page.locator('#debtMain .r.body:has(.nm[title="Колледж Пример"]) > span').nth(6).isVisible()).toBe(false);
+      for (const key of ["amount", "days", "payDate", "toPay", "claimDate", "claimNo"]) {
+        expect(await page.locator(`#debtMain .fin-sort[data-sort="${key}"]`).isVisible(), key).toBe(true);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(await page.locator("#debtMain .fin-scroll").evaluate((e) => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 20000);
+
   it("дебиторы: фильтр по компании, «показать все», давность цветом", async () => {
     const many = Array.from({ length: 20 }, (_, i) => ({ name: `Должник ${i + 1}`, company: 0 as const, amount: 10_000 + i, date: "2026-10-01" }));
     const { page, errors } = await open(renderFinanceHtml(payload(view({ debtors: [...DEFAULT_DEBTORS, ...many] }))), 1440);

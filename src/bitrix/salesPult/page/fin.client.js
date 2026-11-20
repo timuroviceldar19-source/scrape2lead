@@ -177,27 +177,82 @@
     { days: 30, label: "Старше 30 дней" },
     { days: 60, label: "Старше 60 дней" }
   ];
-  // Сортировка по клику на «Сумма» или «Прошло»: сначала от большего к меньшему, повторный клик — наоборот.
+  // Сортировка по клику на заголовок: сначала от большего к меньшему (у «№ иска» — от А до Я),
+  // повторный клик — наоборот. Строки без значения всегда в конце.
   let debtSort = { key: "amount", dir: -1 };
   function ageCls(days) {
     return days > 60 ? "bad" : days > 30 ? "warn" : "";
   }
   const debtDays = (x) => (x.saleDate && today ? daysBetween(x.saleDate, today) : null);
+  /** Дней до даты оплаты на дату сборки; меньше нуля — просрочено. */
+  const payDays = (x) => (x.paymentDate && today ? daysBetween(today, x.paymentDate) : null);
+  const dayValue = (iso) => (iso ? Date.parse(iso) : null);
+  const debtCollator = new Intl.Collator("ru", { sensitivity: "base", numeric: true });
+  const DEBT_SORTS = {
+    amount: { get: (x) => x.amount },
+    days: { get: debtDays },
+    payDate: { get: (x) => dayValue(x.paymentDate) },
+    toPay: { get: payDays },
+    claimDate: { get: (x) => dayValue(x.claimDate) },
+    claimNo: { get: (x) => x.claimNumber || null, text: true }
+  };
+  const firstDir = (key) => (DEBT_SORTS[key] && DEBT_SORTS[key].text ? 1 : -1);
   function debtCompare(a, b) {
-    if (debtSort.key === "days") {
-      const da = debtDays(a), db = debtDays(b);
-      // без даты реализации — всегда в конце
-      if (da !== db) {
-        if (da === null) return 1;
-        if (db === null) return -1;
-        return (da - db) * debtSort.dir;
-      }
-      return b.amount - a.amount;
+    const s = DEBT_SORTS[debtSort.key] || DEBT_SORTS.amount;
+    const va = s.get(a), vb = s.get(b);
+    if (va !== vb) {
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      const c = s.text ? debtCollator.compare(va, vb) : va - vb;
+      if (c) return c * debtSort.dir;
     }
-    return (a.amount - b.amount) * debtSort.dir;
+    return b.amount - a.amount;
+  }
+  // Необязательные колонки — те, что есть в файле (list.columns). «До оплаты» считается от
+  // «Даты оплаты», поэтому без неё не показывается.
+  function debtExtras(list) {
+    const cols = (list && list.columns) || [];
+    const out = [];
+    if (cols.includes("paymentDate")) out.push("payDate");
+    if (cols.includes("paymentDate") && cols.includes("daysToPay")) out.push("toPay");
+    if (cols.includes("claimDate")) out.push("claimDate");
+    if (cols.includes("claimNumber")) out.push("claimNo");
+    return out;
+  }
+  const EXTRA_WIDTH = { payDate: "82px", toPay: "88px", claimDate: "84px", claimNo: "minmax(90px, 1.2fr)" };
+  // Ширины колонок из файла — переменной на таблице: сетку задаёт fin.css, и на телефоне её
+  // можно перестроить без !important.
+  const debtExtraWidths = (extras) => extras.map((k) => EXTRA_WIDTH[k]).join(" ");
+  /** Дата для таблицы: «05.12», год — если не текущий. */
+  const shortDate = (iso) => (iso ? ddmm(iso) + (iso.slice(0, 4) !== today.slice(0, 4) ? "." + iso.slice(2, 4) : "") : "—");
+  function payDaysText(n) {
+    if (n === null) return "—";
+    if (n === 0) return "сегодня";
+    return n < 0 ? `−${plural(-n, ["день", "дня", "дней"])}` : plural(n, ["день", "дня", "дней"]);
+  }
+  const payDaysTitle = (n) => (n === null ? "" : n < 0 ? `просрочено на ${plural(-n, ["день", "дня", "дней"])}` : n === 0 ? "оплата сегодня" : `до оплаты ${plural(n, ["день", "дня", "дней"])}`);
+  function extraCell(key, x) {
+    if (key === "payDate") return `<span class="num dim">${shortDate(x.paymentDate)}</span>`;
+    if (key === "toPay") {
+      const n = payDays(x);
+      return `<span class="num ${n !== null && n < 0 ? "bad" : ""}"${n !== null ? ` title="${esc(payDaysTitle(n))}"` : ""}>${payDaysText(n)}</span>`;
+    }
+    if (key === "claimDate") return `<span class="num dim">${shortDate(x.claimDate)}</span>`;
+    return `<span class="fin-debt-claim"${x.claimNumber ? ` title="${esc(x.claimNumber)}"` : ""}>${x.claimNumber ? esc(short(x.claimNumber, 60)) : "—"}</span>`;
+  }
+  /** На телефоне колонок нет: дата оплаты и иск — строкой под названием. */
+  function debtMobileLine(x, extras) {
+    const parts = [];
+    if (extras.includes("payDate") && x.paymentDate) {
+      const n = payDays(x);
+      parts.push(`оплата ${esc(shortDate(x.paymentDate))}${n !== null && extras.includes("toPay") ? ` · <span class="${n < 0 ? "bad" : ""}">${esc(payDaysTitle(n))}</span>` : ""}`);
+    }
+    if (x.claimDate || x.claimNumber) parts.push(`иск${x.claimDate ? " " + esc(shortDate(x.claimDate)) : ""}${x.claimNumber ? " · " + esc(short(x.claimNumber, 60)) : ""}`);
+    return parts.length ? `<span class="fin-debt-m">${parts.join(" · ")}</span>` : "";
   }
   // Фильтры по компании и возрасту — только для основного списка: кнопки стоят внутри него.
   function debtRows(list, limit, byCompany) {
+    const extras = debtExtras(list);
     const rows = list.rows.filter((x) => {
       if (byCompany && debtFilter && x.company !== debtFilter) return false;
       if (byCompany && debtAge > 0) {
@@ -209,22 +264,40 @@
     const shown = limit ? rows.slice(0, limit) : rows;
     const html = shown.map((x) => {
       const days = debtDays(x);
-      return `<div class="r body"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 80))}${x.note ? `<span class="fin-debt-note">${esc(x.note)}</span>` : ""}</span>
+      return `<div class="r body"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 80))}${x.note ? `<span class="fin-debt-note">${esc(x.note)}</span>` : ""}${debtMobileLine(x, extras)}</span>
         <span class="dim">${esc(x.company)}</span><span class="num">${esc(amt(x.amount))}</span>
-        <span class="num dim">${x.saleDate ? ddmm(x.saleDate) + (x.saleDate.slice(0, 4) !== today.slice(0, 4) ? "." + x.saleDate.slice(2, 4) : "") : "—"}</span>
-        <span class="num ${days !== null ? ageCls(days) : ""}">${days !== null ? plural(days, ["день", "дня", "дней"]) : "—"}</span></div>`;
+        <span class="num dim">${shortDate(x.saleDate)}</span>
+        <span class="num ${days !== null ? ageCls(days) : ""}">${days !== null ? plural(days, ["день", "дня", "дней"]) : "—"}</span>${extras.map((k) => extraCell(k, x)).join("")}</div>`;
     }).join("");
     return { html, total: rows.length, sum: rows.reduce((s, x) => s + x.amount, 0) };
   }
   // Как сортировка на «Планах»: заголовок колонки с aria-sort, внутри кнопка, стрелки ↓ ↑ ↕.
-  function sortBtn(key, label, what) {
+  function sortBtn(key, label, what, full) {
     const on = debtSort.key === key;
     const ariaSort = on ? (debtSort.dir > 0 ? "ascending" : "descending") : "none";
     const arrow = on ? (debtSort.dir > 0 ? "↑" : "↓") : "↕";
-    const next = on && debtSort.dir < 0 ? "от меньшего к большему" : "от большего к меньшему";
-    return `<span class="label n" role="columnheader" aria-sort="${ariaSort}"><button type="button" class="fin-sort" data-sort="${key}" title="Сортировать ${what}: ${next}">${label} <span class="ar" aria-hidden="true">${arrow}</span></button></span>`;
+    const nextDir = on ? -debtSort.dir : firstDir(key);
+    const next = DEBT_SORTS[key].text ? (nextDir > 0 ? "от А до Я" : "от Я до А") : nextDir < 0 ? "от большего к меньшему" : "от меньшего к большему";
+    const cls = DEBT_SORTS[key].text ? "label" : "label n";
+    return `<span class="${cls}" role="columnheader" aria-sort="${ariaSort}"><button type="button" class="fin-sort" data-sort="${key}" title="${full ? esc(full) + ". " : ""}Сортировать ${what}: ${next}">${label} <span class="ar" aria-hidden="true">${arrow}</span></button></span>`;
   }
-  const debtHead = () => `<div class="r head fin-sortable"><span class="label">Должник</span><span class="label">Компания</span>${sortBtn("amount", "Сумма", "по сумме")}<span class="label n">Реализация</span>${sortBtn("days", "Прошло", "по дням с реализации")}</div>`;
+  const EXTRA_HEAD = {
+    payDate: ["Оплата", "по дате оплаты", "Дата оплаты"],
+    toPay: ["До оплаты", "по дням до оплаты", "Дней до оплаты; минус — просрочено"],
+    claimDate: ["Иск подан", "по дате подачи иска", "Дата подачи иска"],
+    claimNo: ["№ иска", "по номеру иска", "Номер иска"]
+  };
+  const debtHead = (list) => {
+    const extras = debtExtras(list);
+    return `<div class="r head fin-sortable"><span class="label">Должник</span><span class="label">Компания</span>${sortBtn("amount", "Сумма", "по сумме")}<span class="label n">Реализация</span>${sortBtn("days", "Прошло", "по дням с реализации")}${extras.map((k) => sortBtn(k, EXTRA_HEAD[k][0], EXTRA_HEAD[k][1], EXTRA_HEAD[k][2])).join("")}</div>`;
+  };
+  /** Таблица с колонками из файла шире экрана ноутбука не бывает, но на узком окне прокручивается. */
+  const debtTable = (list, inner) => {
+    const extras = debtExtras(list);
+    return extras.length
+      ? `<div class="fin-scroll"><div class="rows fin-debt wide" style="--debt-extra: ${debtExtraWidths(extras)}">${inner}</div></div>`
+      : `<div class="rows fin-debt">${inner}</div>`;
+  };
 
   function debtMainHtml() {
     const D = R.debtors;
@@ -238,13 +311,13 @@
     const bodyHtml = main.html || `<div class="fin-debt-empty">По выбранным фильтрам долгов нет.</div>`;
     let s = `<div class="fin-debt-filters">${companyGroup}${ageGroup}</div>`;
     s += `<div class="fin-debt-meta">${asOfText}${filterSummary}</div>`;
-    s += `<div class="rows fin-debt">${debtHead()}${bodyHtml}</div>`;
+    s += debtTable(D, `${debtHead(D)}${bodyHtml}`);
     if (main.total > 12) {
       s += `<button type="button" class="btn fin-showall" id="debtAll">${debtAll ? "Свернуть" : `Показать все ${main.total} на ${money(main.sum)}`}</button>`;
     }
     return s;
   }
-  const debtProblemHtml = () => `<div class="rows fin-debt">${debtHead()}${debtRows(R.problemDebts, 0).html}</div>`;
+  const debtProblemHtml = () => debtTable(R.problemDebts, `${debtHead(R.problemDebts)}${debtRows(R.problemDebts, 0).html}`);
 
   // Как в «Платежах»: шапка с итогом, списки свёрнуты. Перерисовывается только содержимое,
   // поэтому раскрытый блок не закрывается от фильтра или сортировки.
@@ -252,7 +325,7 @@
     const D = R.debtors;
     const byCompany = D.companies.map((c, i) => `${esc(c)} ${money(D.totals[i])}`).join(" · ");
     let s = `${head("Дебиторы", `${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}`)}
-      <p class="lead">${byCompany}. Возраст — сколько дней прошло с даты реализации на ${esc(ddmmyyyy(today))}: больше 30 — оранжевый, больше 60 — красный.</p>
+      <p class="lead">${byCompany}. Возраст — сколько дней прошло с даты реализации на ${esc(ddmmyyyy(today))}: больше 30 — оранжевый, больше 60 — красный.${debtExtras(D).includes("toPay") ? " «До оплаты» — дней до даты оплаты, с минусом и красным — просрочено." : ""}</p>
       <details class="fin-more" id="debtMainBox"><summary>Список дебиторов <span class="dim">${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}</span></summary>
         <div id="debtMain">${debtMainHtml()}</div></details>`;
     if (R.problemDebts && R.problemDebts.rows.length) {
@@ -507,7 +580,7 @@
     const sort = e.target.closest(".fin-sort");
     if (sort) {
       const key = sort.dataset.sort;
-      debtSort = debtSort.key === key ? { key, dir: -debtSort.dir } : { key, dir: -1 };
+      debtSort = debtSort.key === key ? { key, dir: -debtSort.dir } : { key, dir: firstDir(key) };
       const box = sort.closest("#debtMain, #debtProblem");
       rerenderDebtors();
       // кнопку перерисовали — фокус возвращаем на новую, чтобы клавиатура не теряла место

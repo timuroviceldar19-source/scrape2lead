@@ -35,6 +35,11 @@
 .fin-pay .r .nm { white-space: normal; }
 .fin-debt .r { grid-template-columns: minmax(0, 3fr) minmax(90px, .8fr) 100px 96px 90px; }
 .fin-debt .r .nm { white-space: normal; }
+/* колонки из файла (дата оплаты, дни до оплаты, иск): ширины — в --debt-extra из fin.client.js */
+.fin-debt.wide { min-width: 880px; }
+.fin-debt.wide .r { grid-template-columns: minmax(140px, 2.4fr) minmax(70px, .8fr) 88px 78px 74px var(--debt-extra); gap: 12px; }
+.fin-debt-claim { font-size: 13px; line-height: 1.35; color: var(--ink-2); white-space: normal; overflow-wrap: anywhere; }
+.fin-debt-m { display: none; }
 .fin-debt-note { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--ink-3); }
 .fin-sort { border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; padding: 2px 0; white-space: nowrap; }
 .fin-sort:hover, [aria-sort="ascending"] > .fin-sort, [aria-sort="descending"] > .fin-sort { color: var(--ink); }
@@ -78,11 +83,18 @@
   .fin-pay .r > :nth-child(2), .fin-debt .r > :nth-child(2), .fin-in .r > :nth-child(2), .fin-bal .r > :nth-child(2) { grid-column: 1; grid-row: 2; }
   .fin-debt .r > :nth-child(4) { display: none; }
   .fin-debt .r > :nth-child(5) { grid-column: 2; grid-row: 2; font-size: 12px; }
+  .fin-debt.wide { min-width: 0; }
+  .fin-debt.wide .r { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
+  .fin-debt .r.body > :nth-child(n+6) { display: none; }
+  .fin-debt-m { display: block; margin-top: 2px; font: 400 12px/1.45 var(--mono); color: var(--ink-3); }
   .fin-pay .r.total > :nth-child(2) { display: none; }
   /* на телефоне шапка дебиторов — только кнопки сортировки */
   .fin-debt .r.head.fin-sortable { display: flex; justify-content: flex-end; align-items: center; gap: 18px; padding-bottom: 8px; }
   .fin-debt .r.head.fin-sortable > span:not([role="columnheader"]) { display: none; }
   .fin-debt .r.head.fin-sortable::before { content: "Сортировка"; margin-right: auto; font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+  /* кнопок больше двух — переносятся строками, как у склада */
+  .fin-debt.wide .r.head.fin-sortable { flex-wrap: wrap; justify-content: flex-start; gap: 0 16px; padding-bottom: 6px; }
+  .fin-debt.wide .r.head.fin-sortable::before { flex-basis: 100%; margin-right: 0; margin-bottom: 2px; }
   .fin-sort { padding: 6px 0; }
   /* склад на телефоне: название и сумма, количество строкой ниже */
   /* шапка склада на телефоне — строка кнопок сортировки по всем столбцам */
