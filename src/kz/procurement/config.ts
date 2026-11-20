@@ -7,6 +7,10 @@ const schema = z.object({
   keywords: z.array(z.string().trim().min(1)).min(1),
   minAmount: z.number().nonnegative(),
   pkTruPrefixes: z.array(z.string().trim().min(1)).min(1),
+  /** Для префиксов ЕНС ТРУ, общих для нескольких товаров (например `262013.` — ПК и моноблоки), требует совпадения хотя бы одного слова. */
+  pkTruKeywordFilters: z.record(z.string().trim().min(1), z.array(z.string().trim().min(1)).min(1)).default({}),
+  /** Слова в названии/описании для отбора кандидатов ПК/моноблоков/ноутбуков без кода ЕНС ТРУ и до загрузки деталей плана. */
+  pkNameWords: z.array(z.string().trim().min(1)).min(1).optional(),
   panelKeywords: z.array(z.string().trim().min(1)).min(1),
   stopWords: z.array(z.string().trim().min(1)),
   /** Ширина скользящего окна в месяцах: «текущий месяц плюс следующие шесть» — это 7. */

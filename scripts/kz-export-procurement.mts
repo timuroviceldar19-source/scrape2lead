@@ -50,6 +50,7 @@ applyUnavailableStatuses(collection.completeness, config.planStatuses);
 
 const collectedRecords = collection.records.filter((record) => config.sources.includes(record.source));
 const filterOptions = { minAmount: config.minAmount, pkTruPrefixes: config.pkTruPrefixes,
+  pkTruKeywordFilters: config.pkTruKeywordFilters, pkNameWords: config.pkNameWords,
   panelKeywords: config.panelKeywords, stopWords: config.stopWords,
   planStatuses: config.planStatuses.map((status) => status.name), planPeriodWindow };
 const classificationBeforeDetail = classifyProcurementRecords(collectedRecords, filterOptions);
