@@ -39,7 +39,7 @@ npm run cloudflare:check  # wrangler deploy --dry-run
 | `scripts/` | CLI-обёртки (`automation.mts`, `check-gz-deal-outcomes.mts`, `bitrix-*.mts`) |
 | `config/` | конфиги запусков (`automation.json` — main, `automation.pk.json` — PK), ключевые слова, маршрутизация |
 | `infra/cloudflare-github-dispatch/` | Worker, который по cron вызывает `workflow_dispatch` |
-| `.github/workflows/` | `gz-daily-main`, `gz-daily-pk`, `gz-automation` (общее тело), `gz-watchdog`, `gz-probe` |
+| `.github/workflows/` | `gz-daily-main`, `gz-daily-pk`, `gz-automation` (общее тело), `gz-watchdog`, `gz-probe`, `f3-daily` + `f3-automation` (F3 B2B) |
 | `certs/` | публичный промежуточный сертификат портала (см. ниже) |
 | `docs/testing/*.tdd.md` | журналы TDD по каждой фиче: RED/GREEN, решения |
 
@@ -48,10 +48,10 @@ npm run cloudflare:check  # wrangler deploy --dry-run
 - Расписание живёт в **коде Worker** ([infra/cloudflare-github-dispatch/src/index.ts](infra/cloudflare-github-dispatch/src/index.ts)),
   а не в cron GitHub Actions: GHA cron опаздывает на часы, он остаётся только запасным путём (backstop).
 - Список cron в `wrangler.jsonc` должен совпадать с `SCHEDULED_CRONS` в `index.ts` (это проверяет тест).
-  Бесплатный тариф Cloudflare — **не больше 5 cron на аккаунт**; сейчас занято 3.
+  Бесплатный тариф Cloudflare — **не больше 5 cron на аккаунт**; сейчас занято 4.
 - Слоты (Алматы, UTC+5): 08:40 — PK и main одновременно, PK с `deal_outcomes=true`; затем каждый час в :30
-  до 16:30 — PK и main без `deal-outcomes`; watchdog в 11:30 и 15:15. F3 в Actions и Worker отключён
-  (код F3 оставлен).
+  до 16:30 — PK и main без `deal-outcomes`; в слот 09:30 добавляется F3 B2B (`f3-daily.yml`, воронка
+  «F3-B2B тендеры», своя concurrency-группа `f3-automation`, GHA backstop в 10:30); watchdog в 11:30 и 15:15.
 - PK и main работают параллельно: у каждого своя concurrency-группа `gz-automation-<runs-dir>` и свой кэш плана
   (`gz-db-pk-`, `gz-db-main-`). Это безопасно, пока наборы планов не пересекаются.
 - Guard пропускает повтор только для `event=schedule`; `workflow_dispatch` (Worker и ручной запуск) выполняется

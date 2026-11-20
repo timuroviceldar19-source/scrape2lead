@@ -141,13 +141,15 @@ applyLots=succeeded
 | `gz-daily-pk.yml` | `40 3` и `40 4` UTC = 08:40 и 09:40 Алматы (backstop) | `config/automation.pk.json` |
 | `gz-daily-main.yml` | `20 4` и `20 5` UTC = 09:20 и 10:20 Алматы (backstop) | `config/automation.json` |
 | `gz-automation.yml` | — | Общее тело GZ, вызывается двумя GZ-задачами |
+| `f3-daily.yml` | Worker в 09:30 Алматы; `30 5` UTC = 10:30 (backstop) | `config/automation.f3.json` → воронка «F3-B2B тендеры» |
+| `f3-automation.yml` | — | Тело F3, своя concurrency-группа `f3-automation` и кэш `f3-db-` |
 | `gz-watchdog.yml` | 11:30 и 15:15 Алматы | Падает, если сегодня не отработала хотя бы одна из GZ-задач |
 | `gz-probe.yml` | вручную | Проверяет, отвечает ли goszakup с раннеров GitHub |
 | `deploy-worker.yml` | push в `main` с изменениями в `infra/cloudflare-github-dispatch/`, вручную | Выкладывает Cloudflare Worker; нужен секрет репозитория `CLOUDFLARE_API_TOKEN` |
 | `ci.yml` | каждый PR и push в `main` | `npm run lint` и весь набор тестов (Python с reportlab и Chromium ставятся в самом workflow) |
 
-F3 B2B в GitHub Actions больше не запускается: `f3-daily.yml` и `f3-automation.yml` удалены,
-Worker его не дёргает. Код F3 (`config/automation.f3.json`, `src/`) остаётся в репозитории.
+F3 B2B снова запускается ежедневно (с 2026-11-20): Worker шлёт `f3-daily.yml` в слот 09:30,
+GitHub cron в 10:30 — только backstop. F3 не стоит в очереди GZ и не трогает его кэш.
 
 PK и main идут **параллельно**: у каждого своя concurrency-группа
 (`gz-automation-<runs-dir>`) и свой кэш плана (`gz-db-pk-`, `gz-db-main-`). Это безопасно
@@ -212,6 +214,7 @@ Guard пропускает повтор **только для `event=schedule`**
 |---|---|---|
 | `40 3 * * *` | 08:40 | PK + main одновременно, PK с `deal_outcomes=true` |
 | `30 4-11 * * *` | 09:30, 10:30 … 16:30 | PK (`deal_outcomes=false`) + main одновременно |
+| `30 4-11 * * *`, только 04:30 UTC | 09:30 | дополнительно `f3-daily.yml` (сбор F3 B2B) |
 | `30 4-11 * * *`, только 06:30 UTC | 11:30 | дополнительно `gz-watchdog.yml` (утреннее окно) |
 | `15 10 * * *` | 15:15 | `gz-watchdog.yml`, окно `afternoon` |
 | `*/15 4-14 * * mon-fri` | 09:00–19:00 каждые 15 мин (пн–пт) | `sales-pult.yml` (09:00: morning + site; 18:00: evening + site; остальные: site) |
@@ -390,6 +393,9 @@ npm run assistant                                 # рабочий цикл бо
 > `config/procurement-sources.f3.json`. Gate подтверждён семью чистыми dry-run, проверкой
 > назначения на пользователя `2255` и первым production execute; подробности в
 > [docs/runbooks/procurement-rollout.md](docs/runbooks/procurement-rollout.md).
+> С 2026-11-20 сделки распределяются между менеджерами `2403` и `2405`, а заливка сама
+> находит или создаёт компанию заказчика по БИН с телефоном из реестра zakup.gov.kz
+> ([docs/testing/f3-b2b-customer-company.tdd.md](docs/testing/f3-b2b-customer-company.tdd.md)).
 
 <details>
 <summary><b>Подробности экспорта договоров</b></summary>

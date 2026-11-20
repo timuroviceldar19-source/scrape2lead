@@ -1,0 +1,90 @@
+name: F3 automation (reusable)
+
+# Тело ежедневного сбора F3 B2B (Samruk, MITWORK, Tizilim -> воронка F3-B2B).
+#
+# Намеренно отдельный workflow, а не параметризация gz-automation.yml:
+#  * у того жёстко задана concurrency-группа gz-automation, и на эфемерных раннерах
+#    именно она, а не runs/prepare.lock, обеспечивает взаимное исключение. F3 не должен
+#    стоять в этой очереди — сбой или долгий прогон GZ не должен блокировать F3;
+#  * F3 не использует Playwright и не трогает data/scrape2lead.db — это чистый HTTP
+#    к публичным API плюс собственная data/procurement.sqlite;
+#  * ноль правок в работающем GZ-workflow означает ноль риска регрессии для него.
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: Путь к конфигу automation (config/automation.f3.json)
+        required: true
+        type: string
+      runs-dir:
+        description: Каталог прогонов, должен совпадать с runsDir из конфига
+        required: true
+        type: string
+      log-path:
+        description: Путь к логу планировщика
+        required: true
+        type: string
+    secrets:
+      BITRIX24_WEBHOOK_URL:
+        required: true
+
+concurrency:
+  group: f3-automation
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # Сбор идёт по HTTP без браузера, поэтому запас времени меньше, чем у GZ.
+    timeout-minutes: 90
+
+    env:
+      # createRunId() в src/automation/core.ts берёт локальное время: без TZ
+      # идентификаторы прогонов уехали бы на 5 часов от казахстанских.
+      TZ: Asia/Almaty
+      BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Своя БД, отдельная от кэша GZ: у F3 нет доступа к реестру goszakup,
+      # и goszakupRegistryDatabasePath в config/procurement-sources.f3.json = null,
+      # чтобы результат не зависел от случайного наличия чужого кэша.
+      - name: Restore procurement cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/procurement.sqlite
+          key: f3-db-${{ github.run_id }}
+          restore-keys: f3-db-
+
+      - name: Run automation
+        run: sh scripts/run-automation.sh '${{ inputs.config }}' '${{ inputs.log-path }}'
+
+      - name: Show run log
+        if: always()
+        run: cat '${{ inputs.log-path }}' || true
+
+      - name: Save procurement cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/procurement.sqlite
+          key: f3-db-${{ github.run_id }}
+
+      # manifest.json, xlsx, JSON-отчёт, f3-dry-run.json, f3-report.txt и summary.txt.
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: f3-run-${{ github.run_id }}
+          path: ${{ inputs.runs-dir }}/**
+          retention-days: 30
+          if-no-files-found: warn

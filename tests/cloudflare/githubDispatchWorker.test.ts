@@ -71,6 +71,7 @@ const PK_HOURLY: SentDispatch = {
   body: { ref: "main", inputs: { deal_outcomes: "false" } },
 };
 const MAIN: SentDispatch = { workflow: "gz-daily-main.yml", body: { ref: "main" } };
+const F3: SentDispatch = { workflow: "f3-daily.yml", body: { ref: "main" } };
 const WATCHDOG_MORNING: SentDispatch = { workflow: "gz-watchdog.yml", body: { ref: "main" } };
 const WATCHDOG_AFTERNOON: SentDispatch = {
   workflow: "gz-watchdog.yml",
@@ -92,7 +93,7 @@ const SALES_PULT_SITE: SentDispatch = {
 describe("Cloudflare GitHub workflow dispatcher", () => {
   it.each([
     [CRON_MORNING, "03:40", [PK_MORNING, MAIN]],
-    [CRON_HOURLY, "04:30", [PK_HOURLY, MAIN]],
+    [CRON_HOURLY, "04:30", [PK_HOURLY, MAIN, F3]],
     [CRON_HOURLY, "05:30", [PK_HOURLY, MAIN]],
     [CRON_HOURLY, "06:30", [PK_HOURLY, MAIN, WATCHDOG_MORNING]],
     [CRON_HOURLY, "07:30", [PK_HOURLY, MAIN]],
@@ -196,7 +197,7 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
     const deps = dependencies(...accepted(2));
 
     await dispatchScheduled(
-      { cron: CRON_HOURLY, scheduledTime: at("04:30") },
+      { cron: CRON_HOURLY, scheduledTime: at("05:30") },
       { GITHUB_ACTIONS_TOKEN: TOKEN },
       deps,
     );
@@ -206,14 +207,14 @@ describe("Cloudflare GitHub workflow dispatcher", () => {
       event: "github_workflow_dispatch",
       cron: CRON_HOURLY,
       workflow: "gz-daily-pk.yml",
-      scheduledTime: "2026-07-26T04:30:00.000Z",
+      scheduledTime: "2026-07-26T05:30:00.000Z",
       status: 204,
     });
     expect(deps.log).toHaveBeenCalledWith({
       event: "github_workflow_dispatch",
       cron: CRON_HOURLY,
       workflow: "gz-daily-main.yml",
-      scheduledTime: "2026-07-26T04:30:00.000Z",
+      scheduledTime: "2026-07-26T05:30:00.000Z",
       status: 204,
     });
   });
@@ -491,20 +492,23 @@ describe("Cloudflare cron wiring", () => {
     expect(watchdog).toContain('main_since="${day}T08:30:00Z"');
   });
 
-  it("does not dispatch the removed F3 workflow", async () => {
+  it("dispatches the F3 B2B collection once a day in the 09:30 slot without a cron of its own", async () => {
     expect(wranglerCrons).not.toContain("10 4 * * *");
     expect(wranglerCrons).not.toContain("10 5 * * *");
-    expect(fs.existsSync(".github/workflows/f3-daily.yml")).toBe(false);
-    expect(fs.existsSync(".github/workflows/f3-automation.yml")).toBe(false);
+    expect(fs.existsSync(".github/workflows/f3-daily.yml")).toBe(true);
+    expect(fs.existsSync(".github/workflows/f3-automation.yml")).toBe(true);
 
-    const deps = dependencies(new Response(null, { status: 204 }));
-    await expect(
-      dispatchScheduled(
-        { cron: "10 4 * * *", scheduledTime: at("04:10") },
-        { GITHUB_ACTIONS_TOKEN: TOKEN },
-        deps,
-      ),
-    ).rejects.toThrow("Unknown cron trigger: 10 4 * * *");
-    expect(deps.fetch).not.toHaveBeenCalled();
+    const f3Slots: string[] = [];
+    for (const [cron, utcTime] of [
+      [CRON_MORNING, "03:40"],
+      ...[4, 5, 6, 7, 8, 9, 10, 11].map((hour) => [CRON_HOURLY, `${String(hour).padStart(2, "0")}:30`]),
+      [CRON_AFTERNOON_WATCHDOG, "10:15"],
+    ] as const) {
+      const deps = dependencies(...accepted(4));
+      await dispatchScheduled({ cron, scheduledTime: at(utcTime) }, { GITHUB_ACTIONS_TOKEN: TOKEN }, deps);
+      if (sent(deps).some((dispatch) => dispatch.workflow === "f3-daily.yml")) f3Slots.push(utcTime);
+    }
+    // 04:30 UTC = 09:30 Алматы — ровно один диспетч F3 в сутки.
+    expect(f3Slots).toEqual(["04:30"]);
   });
 });
