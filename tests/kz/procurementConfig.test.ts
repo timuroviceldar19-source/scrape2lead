@@ -55,4 +55,9 @@ describe("external procurement configuration", () => {
     });
     expect(config.pkNameWords).toEqual(["моноблок*", "ноутбук*", "all-in-one", "all in one"]);
   });
+
+  it("checks F3 assignments against the current B2B managers the Bitrix robot distributes to", () => {
+    const config = loadProcurementConfig("config/procurement-sources.f3.json");
+    expect(config.bitrix.managerIds).toEqual(["2403", "2405"]);
+  });
 });

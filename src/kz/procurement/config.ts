@@ -35,7 +35,8 @@ const schema = z.object({
   bitrix: z.object({
     categoryId: z.literal(1),
     stageId: z.literal("C1:NEW"),
-    managerIds: z.tuple([z.literal("2255")]),
+    // Менеджеры, между которыми робот Bitrix распределяет сделки воронки; проверяется после заливки.
+    managerIds: z.array(z.string().regex(/^[1-9]\d*$/)).min(1),
     executeEnabled: z.boolean().default(false)
   })
 });

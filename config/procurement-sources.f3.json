@@ -72,7 +72,8 @@
     "categoryId": 1,
     "stageId": "C1:NEW",
     "managerIds": [
-      "2255"
+      "2403",
+      "2405"
     ],
     "executeEnabled": true
   }
