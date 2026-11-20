@@ -1,17 +1,30 @@
 import { BitrixClient } from "./client.js";
 import type { ProcurementPushClient } from "./procurementPush.js";
 import type { ExistingProcurementDeal } from "./procurementDealPlan.js";
+import { COMPANY_BIN_FIELD, type ProcurementCustomerClient } from "./procurementCustomer.js";
 import type { ProcurementRecord } from "../kz/procurement/types.js";
 
-export class ProcurementBitrixClient implements ProcurementPushClient {
+export class ProcurementBitrixClient implements ProcurementPushClient, ProcurementCustomerClient {
   constructor(private readonly client: BitrixClient) {}
 
   async findByOrigin(originatorId: string, originId: string): Promise<ExistingProcurementDeal | null> {
     // BEGINDATE нужен, чтобы понять, несёт ли карточка ложную дату, оставшуюся от прежней схемы.
     const row = await this.client.findFirst("deal", { ORIGINATOR_ID: originatorId, ORIGIN_ID: originId },
-      ["ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID", "BEGINDATE"]);
+      ["ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID", "BEGINDATE", "COMPANY_ID"]);
     return row?.ID === undefined ? null : toExistingDeal(row);
   }
+
+  async findCompanyByBin(bin: string): Promise<string | null> {
+    const row = await this.client.findFirst("company", { [COMPANY_BIN_FIELD]: bin }, ["ID"]);
+    return row?.ID === undefined ? null : String(row.ID);
+  }
+
+  async findCompanyByOrigin(originatorId: string, originId: string): Promise<string | null> {
+    const row = await this.client.findFirst("company", { ORIGINATOR_ID: originatorId, ORIGIN_ID: originId }, ["ID"]);
+    return row?.ID === undefined ? null : String(row.ID);
+  }
+
+  async addCompany(fields: Record<string, unknown>): Promise<string> { return await this.client.add("company", fields); }
 
   async findPotentialDuplicate(record: ProcurementRecord): Promise<ExistingProcurementDeal | null> {
     const select = ["ID", "TITLE", "COMMENTS", "ORIGIN_ID", "CATEGORY_ID", "STAGE_ID", "ASSIGNED_BY_ID", "BEGINDATE"];
@@ -58,7 +71,7 @@ export class ProcurementBitrixClient implements ProcurementPushClient {
 
 function toExistingDeal(row: Record<string, unknown>): ExistingProcurementDeal {
   return { ID: String(row.ID), CATEGORY_ID: scalar(row.CATEGORY_ID), STAGE_ID: textScalar(row.STAGE_ID),
-    ASSIGNED_BY_ID: scalar(row.ASSIGNED_BY_ID), BEGINDATE: textScalar(row.BEGINDATE) };
+    ASSIGNED_BY_ID: scalar(row.ASSIGNED_BY_ID), BEGINDATE: textScalar(row.BEGINDATE), COMPANY_ID: scalar(row.COMPANY_ID) };
 }
 function textScalar(value: unknown): string | null { return value === undefined || value === null ? null : String(value); }
 function scalar(value: unknown): string | number | null {

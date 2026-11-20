@@ -39,6 +39,46 @@ describe("planProcurementPush", () => {
     expect(client.addDeal.mock.calls[0]?.[0]).not.toHaveProperty("ASSIGNED_BY_ID");
     expect(client.updateDeal.mock.calls[0]?.[1]).not.toHaveProperty("STAGE_ID");
   });
+
+  it("links the resolved customer company on create and fills it on an update that lacks one", async () => {
+    const client = {
+      findByOrigin: vi.fn(async (_originator: string, originId: string) => {
+        if (originId.endsWith(":plan:parent")) return { ID: "700", CATEGORY_ID: "1", STAGE_ID: "C1:NEW", COMPANY_ID: "0" };
+        if (originId.endsWith(":plan:linked")) return { ID: "701", CATEGORY_ID: "1", STAGE_ID: "C1:NEW", COMPANY_ID: "77" };
+        return null;
+      }),
+      findPotentialDuplicate: vi.fn(async () => null),
+      addDeal: vi.fn(async (_fields: Record<string, unknown>) => "900"),
+      updateDeal: vi.fn(async (_id: string, _fields: Record<string, unknown>) => undefined)
+    };
+    const resolveCustomer = vi.fn(async () => ({ action: "create" as const, companyId: "555", warning: null }));
+    const result = await planProcurementPush([
+      row({ externalId: "new" }),
+      row({ recordKind: "tender", externalId: "published", parentExternalId: "parent" }),
+      row({ recordKind: "tender", externalId: "other", parentExternalId: "linked" })
+    ], client, { execute: true, resolveCustomer });
+
+    expect(client.addDeal.mock.calls[0]?.[0]).toMatchObject({ COMPANY_ID: "555" });
+    expect(client.updateDeal.mock.calls[0]?.[1]).toMatchObject({ COMPANY_ID: "555" });
+    expect(client.updateDeal.mock.calls[1]?.[1]).not.toHaveProperty("COMPANY_ID");
+    expect(resolveCustomer).toHaveBeenCalledTimes(2);
+    expect(result.items[0]?.customer).toEqual({ action: "create", companyId: "555", warning: null });
+  });
+
+  it("keeps the deal when the customer lookup fails and reports the reason", async () => {
+    const client = {
+      findByOrigin: vi.fn(async () => null),
+      findPotentialDuplicate: vi.fn(async () => null),
+      addDeal: vi.fn(async (_fields: Record<string, unknown>) => "901"),
+      updateDeal: vi.fn()
+    };
+    const result = await planProcurementPush([row()], client, {
+      execute: true, resolveCustomer: async () => { throw new Error("bitrix company list failed"); }
+    });
+    expect(result.counts).toMatchObject({ create: 1, failed: 0 });
+    expect(client.addDeal.mock.calls[0]?.[0]).not.toHaveProperty("COMPANY_ID");
+    expect(result.items[0]?.customer?.warning).toContain("bitrix company list failed");
+  });
 });
 
 function row(overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {

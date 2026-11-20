@@ -1,0 +1,72 @@
+name: F3 daily B2B collection
+
+# Ежедневный сбор F3 B2B (Samruk, MITWORK, Tizilim -> воронка «F3-B2B тендеры»).
+#
+# Основной запуск — Cloudflare Worker, слот 09:30 Алматы (04:30 UTC), вместе с часовым
+# сбором PK и main. Казахстан живёт в UTC+5 без перехода на летнее время.
+# Concurrency-группа у F3 своя, поэтому пересечение с прогоном GZ ничего не блокирует.
+#
+# Cron ниже — только backstop в 10:30 Алматы (05:30 UTC): GitHub опаздывает с cron на часы,
+# а 2026-07-26 не доставил запланированное событие вообще. Guard пропускает backstop сам,
+# если сегодняшний прогон (в т.ч. от Worker) уже успешен или ещё идёт.
+#
+# ВАЖНО: Worker шлёт workflow_dispatch только в основной слот. Диспетч приходит как
+# event=workflow_dispatch и guard пропускает его безусловно, поэтому добавление
+# backstop-слота в Worker обесценило бы всю проверку.
+
+on:
+  schedule:
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - name: Skip if a run today already succeeded or is still going
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SELF_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -eu
+          if [ "$EVENT" != "schedule" ]; then
+            echo "Ручной запуск или внешний диспетч — выполняем безусловно."
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Блокирует и успех за сегодня, и любой ещё идущий прогон; свой собственный
+          # run исключаем — на момент запроса он сам in_progress. Упавший прогон не
+          # блокирует: ради этого backstop и существует.
+          midnight=$(date -u +%Y-%m-%dT00:00:00Z)
+          blocking=$(gh run list --workflow f3-daily.yml --limit 30 \
+            --json databaseId,status,conclusion,createdAt \
+            --jq "[.[]
+                   | select(.databaseId != (env.SELF_RUN_ID | tonumber))
+                   | select(.status != \"completed\"
+                            or (.conclusion == \"success\" and .createdAt >= \"$midnight\"))
+                  ] | length")
+          if [ "$blocking" -gt 0 ]; then
+            echo "Сегодня уже есть успешный или активный прогон ($blocking) — backstop пропускаем."
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Успешных и активных прогонов нет — запускаем."
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  f3-b2b:
+    needs: guard
+    if: needs.guard.outputs.should-run == 'true'
+    uses: ./.github/workflows/f3-automation.yml
+    with:
+      config: config/automation.f3.json
+      runs-dir: runs/f3
+      log-path: runs/f3/scheduler.log
+    secrets:
+      BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}

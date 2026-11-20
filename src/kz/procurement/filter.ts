@@ -4,6 +4,10 @@ import type { ClassifiedProcurement, ProcurementClassification, ProcurementProdu
 export interface ProcurementFilterOptions {
   minAmount?: number;
   pkTruPrefixes?: string[];
+  /** Дополнительные обязательные ключевые слова по префиксу кода ЕНС ТРУ (например `262013.` -> только моноблоки). */
+  pkTruKeywordFilters?: Record<string, string[]>;
+  /** Слова в названии/описании для отбора ПК-товаров (поддерживается суффикс `*` для окончаний слова). */
+  pkNameWords?: string[];
   panelKeywords?: string[];
   stopWords?: string[];
   /** Разрешённые статусы плана; по умолчанию — только «Утвержден». */
@@ -16,12 +20,14 @@ const DEFAULT_PK_PREFIXES = ["262011.", "262013.", "262017.100."];
 const DEFAULT_PANEL_KEYWORDS = ["доска специальная", "панель интерактивная", "панель жидкокристаллическая"];
 const DEFAULT_STOP_WORDS = ["мфу", "принтер", "устройство многофункциональное"];
 const DEFAULT_PLAN_STATUSES = ["Утвержден"];
-const PK_NAME_WORDS = ["компьютер", "моноблок", "ноутбук", "монитор", "рабочая станция"];
+const DEFAULT_PK_NAME_WORDS = ["компьютер", "моноблок", "ноутбук", "монитор", "рабочая станция"];
 
 export function classifyProcurementRecords(records: ProcurementRecord[], options: ProcurementFilterOptions = {}): ProcurementClassification {
   const config = {
     minAmount: options.minAmount ?? 500_000,
     pkTruPrefixes: options.pkTruPrefixes ?? DEFAULT_PK_PREFIXES,
+    pkTruKeywordFilters: options.pkTruKeywordFilters ?? {},
+    pkNameWords: options.pkNameWords ?? DEFAULT_PK_NAME_WORDS,
     panelKeywords: options.panelKeywords ?? DEFAULT_PANEL_KEYWORDS,
     stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
     planStatuses: options.planStatuses ?? DEFAULT_PLAN_STATUSES,
@@ -46,8 +52,9 @@ export function isPlanDetailCandidate(record: ProcurementRecord, options: Procur
   const stopWords = options.stopWords ?? DEFAULT_STOP_WORDS;
   if (stopWords.some((word) => haystack.includes(normalize(word)))) return false;
   const panelKeywords = options.panelKeywords ?? DEFAULT_PANEL_KEYWORDS;
+  const pkNameWords = options.pkNameWords ?? DEFAULT_PK_NAME_WORDS;
   return panelKeywords.some((word) => haystack.includes(normalize(word)))
-    || PK_NAME_WORDS.some((word) => containsTerm(haystack, normalize(word)));
+    || pkNameWords.some((word) => containsTerm(haystack, normalize(word)));
 }
 
 function classify(record: ProcurementRecord, config: Required<ProcurementFilterOptions>): {
@@ -89,9 +96,15 @@ function classify(record: ProcurementRecord, config: Required<ProcurementFilterO
     return review(record, "panel", "ambiguous_panel");
   } else {
     const normalizedCode = normalizeTru(record.truCode);
-    const codeAllowed = config.pkTruPrefixes.some((prefix) => normalizedCode.startsWith(normalizeTru(prefix)));
-    const pkNamed = PK_NAME_WORDS.some((word) => containsTerm(haystack, normalize(word)));
-    if (codeAllowed) product = "pk";
+    const matchedPrefix = config.pkTruPrefixes.find((prefix) => normalizedCode.startsWith(normalizeTru(prefix)));
+    const pkNamed = config.pkNameWords.some((word) => containsTerm(haystack, normalize(word)));
+    if (matchedPrefix) {
+      const requiredKeywords = findRequiredKeywordsForPrefix(matchedPrefix, config.pkTruKeywordFilters);
+      if (requiredKeywords && !requiredKeywords.some((word) => containsTerm(haystack, normalize(word)))) {
+        return rejected(record, null, "irrelevant_product");
+      }
+      product = "pk";
+    }
     else if (pkNamed && !normalizedCode) return review(record, "pk", "missing_tru_code");
     else if (pkNamed) return rejected(record, "pk", "irrelevant_tru_code");
     else return rejected(record, null, "irrelevant_product");
@@ -99,6 +112,14 @@ function classify(record: ProcurementRecord, config: Required<ProcurementFilterO
 
   if (!record.customerBin) return review(record, product, "missing_bin");
   return { bucket: "data", item: { record, product, reason: null } };
+}
+
+function findRequiredKeywordsForPrefix(prefix: string, filters: Record<string, string[]>): string[] | null {
+  const normalized = normalizeTru(prefix);
+  for (const [key, keywords] of Object.entries(filters)) {
+    if (normalizeTru(key) === normalized) return keywords;
+  }
+  return null;
 }
 
 function rejected(record: ProcurementRecord, product: ProcurementProduct | null, reason: ClassifiedProcurement["reason"]) {
@@ -110,6 +131,10 @@ function review(record: ProcurementRecord, product: ProcurementProduct | null, r
 function normalize(value: string): string { return value.normalize("NFKC").toLocaleLowerCase("ru").replace(/\s+/g, " ").trim(); }
 function normalizeTru(value: string | null): string { return (value ?? "").replace(/\s+/g, "").replace(/,+/g, "."); }
 function containsTerm(text: string, term: string): boolean {
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u").test(text);
+  const prefixMatch = term.endsWith("*");
+  const base = prefixMatch ? term.slice(0, -1) : term;
+  if (!base) return false;
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tail = prefixMatch ? "\\p{L}*" : "(?=$|[^\\p{L}\\p{N}])";
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}${tail}`, "u").test(text);
 }

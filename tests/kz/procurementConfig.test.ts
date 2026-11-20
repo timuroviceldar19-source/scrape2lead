@@ -6,11 +6,16 @@ describe("external procurement configuration", () => {
     const config = loadProcurementConfig("config/procurement-sources.json");
     expect(config.sources).toEqual(["mitwork", "samruk", "tizilim"]);
     expect(config.keywords).toEqual(expect.arrayContaining([
-      "Компьютер", "Монитор", "Моноблок", "Ноутбук", "Интерактивная панель"
+      "Компьютер", "Моноблок", "Ноутбук", "262011", "Интерактивная панель"
     ]));
     expect(config.keywords).not.toContain("Компьютер персональный");
-    expect(config.pkTruPrefixes).toEqual(["262011.", "262013.", "262017.100."]);
-    expect(config.minAmount).toBe(500_000);
+    expect(config.keywords).not.toContain("Монитор");
+    expect(config.pkTruPrefixes).toEqual(["262011.", "262013."]);
+    expect(config.pkTruKeywordFilters).toEqual({
+      "262013.": ["моноблок*", "all-in-one", "all in one"]
+    });
+    expect(config.pkNameWords).toEqual(["моноблок*", "ноутбук*", "all-in-one", "all in one"]);
+    expect(config.minAmount).toBe(700_000);
     expect(config.bitrix).toMatchObject({ categoryId: 1, stageId: "C1:NEW", executeEnabled: false });
     expect(config.bitrix.managerIds).toEqual(["2255"]);
     expect(config.manualRunsRequired).toBe(7);
@@ -38,8 +43,21 @@ describe("external procurement configuration", () => {
     ]);
   });
 
-  it("enables Bitrix execution in the dedicated F3 cutover config", () => {
+  it("enables Bitrix execution in the dedicated F3 cutover config with matching 700k filters", () => {
     const config = loadProcurementConfig("config/procurement-sources.f3.json");
     expect(config.bitrix.executeEnabled).toBe(true);
+    expect(config.minAmount).toBe(700_000);
+    expect(config.keywords).not.toContain("Монитор");
+    expect(config.keywords).toContain("262011");
+    expect(config.pkTruPrefixes).toEqual(["262011.", "262013."]);
+    expect(config.pkTruKeywordFilters).toEqual({
+      "262013.": ["моноблок*", "all-in-one", "all in one"]
+    });
+    expect(config.pkNameWords).toEqual(["моноблок*", "ноутбук*", "all-in-one", "all in one"]);
+  });
+
+  it("checks F3 assignments against the current B2B managers the Bitrix robot distributes to", () => {
+    const config = loadProcurementConfig("config/procurement-sources.f3.json");
+    expect(config.bitrix.managerIds).toEqual(["2403", "2405"]);
   });
 });

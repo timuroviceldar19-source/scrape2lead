@@ -30,7 +30,10 @@ const RETRY_DELAYS_MS = [5_000, 20_000] as const;
 // Cloudflare Free allows five cron triggers per account. Четыре выражения ниже покрывают
 // все слоты: расписание «какие workflow запускать» хранится в коде, а не в числе триггеров.
 //
-// F3 B2B отключён и в GitHub Actions, и здесь.
+// F3 B2B (Samruk, MITWORK, Tizilim -> воронка «F3-B2B тендеры») запускается раз в сутки
+// в часовом слоте 09:30 (04:30 UTC) вместе с PK и main: отдельный cron ему не нужен.
+// У F3 своя concurrency-группа и своя БД, с GZ он не конкурирует. GHA cron в f3-daily.yml —
+// только backstop в 10:30 на случай, если этот диспетч потерялся.
 export interface DispatchTarget {
   workflow: string;
   inputs?: Record<string, string>;
@@ -40,6 +43,7 @@ const PK_WORKFLOW = "gz-daily-pk.yml";
 const MAIN_WORKFLOW = "gz-daily-main.yml";
 const WATCHDOG_WORKFLOW = "gz-watchdog.yml";
 const SALES_PULT_WORKFLOW = "sales-pult.yml";
+const F3_WORKFLOW = "f3-daily.yml";
 
 function collection(dealOutcomes: boolean): DispatchTarget[] {
   return [
@@ -52,6 +56,8 @@ function collection(dealOutcomes: boolean): DispatchTarget[] {
 const HOURLY_SLOT_HOURS_UTC = [4, 5, 6, 7, 8, 9, 10, 11] as const;
 // 06:30 UTC = 11:30 Алматы: к часовому сбору добавляется утренний сторож.
 const MORNING_WATCHDOG_HOUR_UTC = 6;
+// 04:30 UTC = 09:30 Алматы: к часовому сбору добавляется дневной сбор F3 B2B.
+const F3_HOUR_UTC = 4;
 
 const CRON_MORNING = "40 3 * * *"; // 08:40 Алматы
 const CRON_HOURLY = "30 4-11 * * *"; // 09:30 ... 16:30 Алматы
@@ -108,6 +114,9 @@ function targetsForSchedule(cron: string, scheduledTime: number): DispatchTarget
     const targets = collection(false);
     if (scheduledHour === MORNING_WATCHDOG_HOUR_UTC) {
       targets.push({ workflow: WATCHDOG_WORKFLOW });
+    }
+    if (scheduledHour === F3_HOUR_UTC) {
+      targets.push({ workflow: F3_WORKFLOW });
     }
     return targets;
   }

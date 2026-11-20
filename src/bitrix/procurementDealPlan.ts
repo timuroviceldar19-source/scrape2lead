@@ -12,6 +12,7 @@ export interface ExistingProcurementDeal {
   STAGE_ID?: string | null;
   ASSIGNED_BY_ID?: string | number | null;
   BEGINDATE?: string | null;
+  COMPANY_ID?: string | number | null;
 }
 
 export function procurementOpportunityOriginId(record: ProcurementRecord): string {
