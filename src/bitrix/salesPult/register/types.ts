@@ -18,6 +18,8 @@ export interface RegisterRow {
   group: ProductGroup;
   kind: string;
   channel: string;
+  /** Партнёрская продажа: в итоги отдела не входит, см. `PARTNER_SALE_KINDS`. */
+  partner?: boolean;
 }
 
 export interface RegisterContract {
@@ -72,6 +74,18 @@ export interface RegisterGroupItem {
   val: number | null;
 }
 
+/** Партнёрские продажи месяца: отдельно от выручки, вала, бонусов и плана отдела. */
+export interface RegisterPartnerSales {
+  sale: number;
+  val: number | null;
+  margin: number | null;
+  bonusMop: number;
+  bonusRop: number;
+  contracts: number;
+  kinds: string[];
+  rows: RegisterRow[];
+}
+
 export interface RegisterDailyPoint {
   d: string;
   sale: number;
@@ -104,6 +118,8 @@ export interface RegisterMonthSummary {
   month: string;
   label: string;
   fileName: string;
+  /** Время загрузки/обновления файла с Диска (UPDATE_TIME). */
+  updatedAt?: string;
   sale: number;
   val: number | null;
   margin: number | null;
@@ -123,6 +139,18 @@ export interface RegisterMonthSummary {
   missingCrm?: RegisterMissingContract[];
   reconciliationPerformed?: boolean;
   crmExtra?: number;
+  /** Партнёрские продажи месяца, в `sale`, `val`, `contracts` и `byManager` не входят. */
+  partnerSale?: number;
+  partnerContracts?: number;
+  /**
+   * Число договоров вместе с партнёрскими, для главной: там партнёрские считаются в договорах,
+   * но не в выручке. Есть, только если в месяце были партнёрские строки.
+   */
+  contractsWithPartner?: {
+    total: number;
+    byManager: Record<string, number>;
+    daily: Record<string, number>;
+  };
 }
 
 export interface RegisterPortalMissingContract {
@@ -188,6 +216,8 @@ export interface RegisterDisciplineView {
 }
 
 export interface RegisterHistoryPayload {
+  /** `REGISTER_HISTORY_VERSION` кода, который собрал кэш; у старых кэшей нет. */
+  version?: number;
   asOf: string;
   cachedAt?: string;
   months: RegisterMonthSummary[];
@@ -202,6 +232,8 @@ export interface RegisterSuccessView {
   crmDeals?: CrmWonDeal[];
   file: string;
   asOf: string;
+  /** Время загрузки/обновления файла реестра с Диска (UPDATE_TIME); отсутствует, если неизвестно. */
+  updatedAt?: string;
   month: string;
   total: RegisterTotal;
   daily: RegisterDailyPoint[];
@@ -209,8 +241,11 @@ export interface RegisterSuccessView {
   mix: RegisterMixItem[];
   channels: RegisterChannelItem[];
   groups: RegisterGroupItem[];
+  /** Есть, только если в месяце были партнёрские продажи. */
+  partner?: RegisterPartnerSales;
   missing: RegisterMissingContract[];
   crmExtra: number;
+  /** Все строки файла, включая партнёрские (`partner: true`). */
   rows: RegisterRow[];
   history?: RegisterHistoryPayload;
   historyError?: string;
@@ -222,6 +257,7 @@ export interface RegisterErrorView {
   error: string;
   file?: string;
   asOf?: string;
+  updatedAt?: string;
   month?: string;
   total?: RegisterTotal;
   daily?: RegisterDailyPoint[];
@@ -229,6 +265,7 @@ export interface RegisterErrorView {
   mix?: RegisterMixItem[];
   channels?: RegisterChannelItem[];
   groups?: RegisterGroupItem[];
+  partner?: RegisterPartnerSales;
   missing?: RegisterMissingContract[];
   crmExtra?: number;
   rows?: RegisterRow[];

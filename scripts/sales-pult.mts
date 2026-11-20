@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { attachRegisterContracts } from "../src/bitrix/salesPult/contracts.js";
 import { loadClosedMonths } from "../src/bitrix/salesPult/months.js";
+import { formatSafeErrorStatus } from "../src/bitrix/salesPult/safeLog.js";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -35,21 +36,29 @@ import {
 import {
   renderPultHtml,
   renderRegisterHtml,
+  renderFinanceHtml,
   type SalesPultPayload,
   type RegisterPagePayload,
+  type FinancePagePayload,
   type PultGroupView,
   type DayDynamic
 } from "../src/bitrix/salesPult/site.js";
 import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
+import { loadFinanceView } from "../src/bitrix/salesPult/finance/load.js";
+import { updateMarketWindow } from "../src/kz/market/updateWindow.js";
 import { loadMarketView } from "../src/kz/market/load.js";
+import { buildAllMarketMonthContracts, filterMarketUnitsForView } from "../src/kz/market/aggregate.js";
+import { loadMarketConfig } from "../src/kz/market/config.js";
+import { loadEducationVerdicts } from "../src/kz/market/educationVerdicts.js";
+import type { MarketConfig } from "../src/kz/market/types.js";
+import { backfillCompetitors } from "../src/kz/competitors/collector.js";
+import { updateCompetitorsWindow, loadCompetitorsView, resolveBackfillBudgetMs } from "../src/kz/competitors/load.js";
 import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
+import { collectRadarView } from "../src/bitrix/salesPult/radar/collect.js";
 import {
-  loadStoredMarketUnits,
-  saveStoredMarketUnits,
-  fetchMarketUnits,
-  mergeMarketUnits,
   backfillMarketByMonths,
-  DEFAULT_MARKET_UNITS_PATH
+  DEFAULT_MARKET_UNITS_PATH,
+  loadStoredMarketData
 } from "../src/kz/market/fetchMarket.js";
 
 export interface PultConfig {
@@ -77,9 +86,16 @@ export interface PultConfig {
     trackedMetrics: string[];
     managers: Array<{ id: string; name: string }>;
   }>;
+  /** Ушедшие, которые в Битриксе ещё активны: на «Планах» не получают строки менеджера. Неактивных пульт скрывает сам. */
+  formerManagers?: Array<{ id: string; name: string }>;
   register?: {
     diskFolderId?: number;
     managerAliases?: Record<string, string>;
+    hiddenManagers?: string[];
+  };
+  /** Ежедневный отчёт финансиста: папка файлов чата «Финансовый отчет» на Диске Битрикс24. */
+  finance?: {
+    diskFolderId?: number;
   };
 }
 
@@ -179,32 +195,96 @@ export async function fetchChatMessagesSince(
   return allMessages;
 }
 
-export async function runSalesPult(args: string[]): Promise<void> {
+export function writeMarketMonthContractFiles(options: {
+  outDir: string;
+  todayAlmaty: string;
+  unitsFilePath?: string;
+  educationVerdictsFilePath?: string;
+  cfg?: MarketConfig;
+  additionalMonths?: string[];
+}): { ipMonths: string[]; ktMonths: string[] } {
+  const marketDir = path.join(options.outDir, "market");
+  fs.rmSync(marketDir, { recursive: true, force: true });
+
+  const stored = loadStoredMarketData(options.unitsFilePath ?? DEFAULT_MARKET_UNITS_PATH);
+  if (stored.units.length === 0) {
+    return { ipMonths: [], ktMonths: [] };
+  }
+  const cfg = options.cfg ?? loadMarketConfig();
+  const verdicts = loadEducationVerdicts(options.educationVerdictsFilePath);
+  const filtered = filterMarketUnitsForView(stored.units, cfg, verdicts);
+  const byGroup = buildAllMarketMonthContracts(
+    filtered.units,
+    options.todayAlmaty,
+    cfg,
+    filtered.educationPending,
+    options.additionalMonths ?? []
+  );
+
+  for (const [groupSlug, monthsMap] of [
+    ["ip", byGroup.ip],
+    ["kt", byGroup.kt]
+  ] as const) {
+    const groupDir = path.join(marketDir, groupSlug);
+    fs.mkdirSync(groupDir, { recursive: true });
+    for (const [month, monthPayload] of Object.entries(monthsMap)) {
+      fs.writeFileSync(path.join(groupDir, `${month}.json`), JSON.stringify(monthPayload), "utf8");
+    }
+  }
+  return {
+    ipMonths: Object.keys(byGroup.ip).sort(),
+    ktMonths: Object.keys(byGroup.kt).sort()
+  };
+}
+
+export class SalesPultCliError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SalesPultCliError";
+  }
+}
+
+export interface SalesPultRunOptions {
+  config?: PultConfig;
+  rawClient?: Pick<BitrixClient, "call">;
+  reader?: ReadOnlyBitrixClient;
+  nowIso?: string;
+  webhookUrl?: string;
+  skipUpdates?: boolean;
+}
+
+export async function runSalesPult(args: string[], options?: SalesPultRunOptions): Promise<void> {
   const modeIdx = args.indexOf("--mode");
   const mode = modeIdx !== -1 && args[modeIdx + 1] ? args[modeIdx + 1] : "site";
-  const execute = args.includes("--execute");
+  const dryRun = args.includes("--dry-run");
+  const execute = args.includes("--execute") && !dryRun;
   const compareManual = args.includes("--compare-manual");
   const daysIdx = args.indexOf("--days");
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
   const registerFileIdx = args.indexOf("--register-file");
   const registerFilePath = registerFileIdx !== -1 && args[registerFileIdx + 1] ? args[registerFileIdx + 1] : undefined;
+  const financeFileIdx = args.indexOf("--finance-file");
+  const financeFilePath = financeFileIdx !== -1 && args[financeFileIdx + 1] ? args[financeFileIdx + 1] : undefined;
   const refreshHistory = args.includes("--refresh-history");
   const historyCacheIdx = args.indexOf("--history-cache");
   const historyCachePath = historyCacheIdx !== -1 && args[historyCacheIdx + 1] ? args[historyCacheIdx + 1] : undefined;
   const backfillIdx = args.indexOf("--market-backfill-from");
   const backfillFromDate = backfillIdx !== -1 && args[backfillIdx + 1] ? args[backfillIdx + 1] : undefined;
   const marketUpdate = args.includes("--market-update");
+  const compBackfillIdx = args.indexOf("--competitors-backfill-from");
+  const compBackfillFrom = compBackfillIdx !== -1 && args[compBackfillIdx + 1] ? args[compBackfillIdx + 1] : undefined;
+  const compUpdate = args.includes("--competitors-update");
 
-  const config = loadConfig();
-  const webhookUrl = process.env.BITRIX24_WEBHOOK_URL?.trim();
+  const config = options?.config ?? loadConfig();
+  const webhookUrl = options?.webhookUrl ?? process.env.BITRIX24_WEBHOOK_URL?.trim();
   if (!webhookUrl) {
-    throw new Error("Missing BITRIX24_WEBHOOK_URL in environment (.env)");
+    throw new SalesPultCliError("Missing BITRIX24_WEBHOOK_URL in environment (.env)");
   }
 
-  const rawClient = new BitrixClient(webhookUrl);
-  const reader = new ReadOnlyBitrixClient(rawClient);
+  const rawClient = options?.rawClient ?? new BitrixClient(webhookUrl);
+  const reader = options?.reader ?? new ReadOnlyBitrixClient(rawClient as BitrixClient);
 
-  const nowIso = new Date().toISOString();
+  const nowIso = options?.nowIso ?? new Date().toISOString();
   const todayAlmaty = toAlmatyDate(nowIso);
 
   if (backfillFromDate) {
@@ -225,28 +305,43 @@ export async function runSalesPult(args: string[]): Promise<void> {
     } catch (err: any) {
       console.warn(`::warning::[Рынок] Ошибка при докачке рынка: ${err?.message || err}`);
     }
+    if (args.length <= 2 && !compBackfillFrom) return;
+  }
+
+  if (compBackfillFrom) {
+    console.log(`[Конкуренты] Полная докачка с ${compBackfillFrom} по ${todayAlmaty}...`);
+    try {
+      const stats = await backfillCompetitors({
+        fromDate: compBackfillFrom,
+        toDate: todayAlmaty,
+        maxDurationMs: resolveBackfillBudgetMs(args),
+        onProgress: (stage, detail) => {
+          console.log(`[Конкуренты] ${stage}: ${detail}`);
+        }
+      });
+      console.log(`[Конкуренты] Докачка завершена: лотов ${stats.lotsCount}, заявок ${stats.bidsCount}, ТС ${stats.specsCount}, ошибок ${stats.errors.length}`);
+    } catch (err: any) {
+      console.warn(`::warning::[Конкуренты] Ошибка при докачке: ${err?.message || err}`);
+    }
     if (args.length <= 2) return;
   }
 
-  if (mode === "morning" || marketUpdate) {
-    const gzToken = process.env.GOSZAKUP_TOKEN?.trim() || null;
-    const d = new Date(Date.parse(`${todayAlmaty}T12:00:00Z`));
-    d.setDate(d.getDate() - 45);
-    const cutoffDate = d.toISOString().slice(0, 10);
-    try {
-      console.log(`[Рынок] Утреннее обновление за последние 45 дней (с ${cutoffDate})...`);
-      const { units: freshUnits, source } = await fetchMarketUnits({
-        token: gzToken,
-        fromDate: cutoffDate,
-        toDate: todayAlmaty
-      });
-      const existingUnits = loadStoredMarketUnits(DEFAULT_MARKET_UNITS_PATH);
-      const merged = mergeMarketUnits(existingUnits, freshUnits, cutoffDate, todayAlmaty);
-      saveStoredMarketUnits(merged, DEFAULT_MARKET_UNITS_PATH);
-      console.log(`[Рынок] Утреннее обновление (${source}): свежих ${freshUnits.length}, всего ${merged.length}`);
-    } catch (marketErr: any) {
-      console.warn(`::warning::[Рынок] Ошибка при утреннем обновлении рынка: ${marketErr?.message || marketErr}`);
+  if (!options?.skipUpdates && (mode === "morning" || marketUpdate)) {
+    const total = await updateMarketWindow({
+      todayAlmaty,
+      token: process.env.GOSZAKUP_TOKEN?.trim() || null,
+      strict: args.includes("--market-update-strict")
+    });
+    if (process.env.MARKET_RESEED === "true" && total !== undefined) {
+      console.log(`[Рынок] Восстановление: в копии ${process.env.MARKET_SEED_COUNT}, после импорта комплектов ${process.env.MARKET_EDUCATION_COUNT}, после обновления окна ${total}`);
     }
+  }
+
+  if (!options?.skipUpdates && (mode === "morning" || compUpdate)) {
+    await updateCompetitorsWindow({
+      todayAlmaty,
+      strict: args.includes("--competitors-update-strict")
+    });
   }
 
   // Weekend and holiday check for scheduled reporting modes
@@ -532,13 +627,13 @@ export async function runSalesPult(args: string[]): Promise<void> {
     webhookUserId
   });
 
-  // Check and report activity loading errors
+  // Check and report activity loading errors (anonymized count only)
   let hasTaskErrors = false;
   if (collected.taskErrorsByManager && collected.taskErrorsByManager.size > 0) {
     hasTaskErrors = true;
-    for (const [mId, err] of collected.taskErrorsByManager.entries()) {
-      console.error(`[ОШИБКА] Не удалось загрузить задачи для менеджера ${mId}: ${err}`);
-    }
+    console.error(
+      `[ОШИБКА] Не удалось загрузить задачи: затронуто менеджеров ${collected.taskErrorsByManager.size}.`
+    );
   }
 
   const allDates = getDateRange(startDate, todayAlmaty);
@@ -619,6 +714,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
       reader,
       diskFolderId: config.register?.diskFolderId,
       managerAliases: config.register?.managerAliases,
+      hiddenManagers: config.register?.hiddenManagers,
       registerFilePath,
       todayAlmaty,
       contractTransitions: collected.contractTransitions,
@@ -629,9 +725,42 @@ export async function runSalesPult(args: string[]): Promise<void> {
       holidays: config.holidays
     });
 
+    // Финансы: отчёт финансиста из чата, отдельная страница fin.html. Сбой здесь не должен ронять пульт.
+    const financeView = await loadFinanceView({
+      reader,
+      folderId: config.finance?.diskFolderId,
+      localFile: financeFilePath
+    }).catch((err: unknown) => {
+      console.warn(`[Финансы] Не загрузились (${(err as Error)?.name || "Error"})`);
+      return { snapshots: [], error: "Финансовый отчёт не загрузился при сборке пульта, попробуем на следующем обновлении." };
+    });
+
     // Market
     const marketView = loadMarketView({
       todayAlmaty
+    });
+    const competitorsView = loadCompetitorsView({
+      todayAlmaty
+    });
+
+    let planDealsForRadar: import("../src/bitrix/salesPult/plans/types.js").NormalizedPlanDeal[] = [];
+    const plansView = await collectPlansMonitor({
+      reader,
+      asOfDate: todayAlmaty,
+      portal: config.portal,
+      userProfiles: collected.userProfiles,
+      groups: config.groups,
+      formerManagerIds: config.formerManagers?.map((m) => m.id),
+      onDeals: (deals) => { planDealsForRadar = deals; }
+    });
+    const radarView = await collectRadarView({
+      reader,
+      asOfDate: todayAlmaty,
+      asOfTime: nowIso,
+      portal: config.portal,
+      userProfiles: collected.userProfiles,
+      groups: config.groups,
+      planDeals: planDealsForRadar
     });
 
     const payload: SalesPultPayload = {
@@ -647,7 +776,9 @@ export async function runSalesPult(args: string[]): Promise<void> {
       dynamics,
       holidays: config.holidays,
       market: marketView,
-      plans: await collectPlansMonitor({ reader, asOfDate: todayAlmaty, portal: config.portal, userProfiles: collected.userProfiles, groups: config.groups }),
+      competitors: competitorsView,
+      plans: plansView,
+      radar: radarView,
       outcomeMismatches: collected.outcomeMismatches
     };
 
@@ -688,7 +819,7 @@ export async function runSalesPult(args: string[]): Promise<void> {
         if (deal && (!deal.contractDate || metric.date < deal.contractDate)) deal.contractDate = metric.date;
       }
     }
-    attachRegisterContracts(payload, registerView, collected.deals, config.register?.managerAliases);
+    attachRegisterContracts(payload, registerView, collected.deals, config.register?.managerAliases, collected.userProfiles);
     for (const closed of Object.values(payload.closedMonths)) {
       if (closed) attachRegisterContracts(closed, registerView, new Map(), config.register?.managerAliases);
     }
@@ -700,6 +831,12 @@ export async function runSalesPult(args: string[]): Promise<void> {
     const html = renderPultHtml(payload);
     fs.writeFileSync(path.join(outDir, "index.html"), html, "utf8");
     fs.writeFileSync(path.join(outDir, "payload.json"), JSON.stringify(payload, null, 2), "utf8");
+    const marketFiles = writeMarketMonthContractFiles({ outDir, todayAlmaty });
+    if (marketFiles.ipMonths.length || marketFiles.ktMonths.length) {
+      console.log(`[Рынок] Помесячные JSON: ИП ${marketFiles.ipMonths.length} мес., КТ ${marketFiles.ktMonths.length} мес.`);
+    }
+    // Все сделки «Планов»: из них при выкладке собираются «Планы» в виде менеджера (на сайт файл не идёт).
+    if (!plansView.error) fs.writeFileSync(path.join(outDir, "plan-deals.json"), JSON.stringify(planDealsForRadar), "utf8");
 
     // 2. Standalone register page
     const regPayload: RegisterPagePayload = {
@@ -707,13 +844,19 @@ export async function runSalesPult(args: string[]): Promise<void> {
       generatedAt: generatedTimeStr,
       portal: config.portal,
       pultUrl: config.pultUrl,
-      register: registerView
+      register: registerView,
+      reconciliation: payload.contractSource?.reconciliation
     };
     const regHtml = renderRegisterHtml(regPayload);
     fs.writeFileSync(path.join(outDir, "reg.html"), regHtml, "utf8");
     fs.writeFileSync(path.join(outDir, "payload-reg.json"), JSON.stringify(regPayload, null, 2), "utf8");
 
-    console.log(`[Sales Pult] Готово: index.html, reg.html и payload.json`);
+    // 3. Финансы: только в полный вариант (pult-variants.mts), менеджеру и на ТВ не идёт
+    const finPayload: FinancePagePayload = { asOfDate: todayAlmaty, generatedAt: generatedTimeStr, finance: financeView };
+    fs.writeFileSync(path.join(outDir, "fin.html"), renderFinanceHtml(finPayload), "utf8");
+    fs.writeFileSync(path.join(outDir, "payload-fin.json"), JSON.stringify(finPayload, null, 2), "utf8");
+
+    console.log(`[Sales Pult] Готово: index.html, reg.html, fin.html и payload.json`);
     if (hasTaskErrors) {
       process.exitCode = 1;
     }
@@ -729,10 +872,17 @@ export async function runSalesPult(args: string[]): Promise<void> {
 
     const salesGroup = config.groups.find((g) => g.id === "sales");
     const managersToReport = salesGroup ? salesGroup.managers : config.groups[0].managers;
+    const totalCount = managersToReport.length;
 
-    const failedManagers: Array<{ id: string; name: string }> = [];
+    let sentCount = 0;
+    let verifiedDeliveredAfterErrorCount = 0;
+    let skippedAlreadySentCount = 0;
+    let dryRunCount = 0;
+    let failedCount = 0;
 
-    for (const m of managersToReport) {
+    for (let idx = 0; idx < managersToReport.length; idx++) {
+      const m = managersToReport[idx];
+      const slotLabel = `[#${idx + 1}/${totalCount}]`;
       const rollups = rollupsByManager.get(m.id)!;
       const topTasks = topTasksByManager.get(m.id) || [];
       const managerName = collected.userProfiles.get(m.id)?.name || m.name;
@@ -763,17 +913,14 @@ export async function runSalesPult(args: string[]): Promise<void> {
       const modeRu = mode === "morning" ? "утро" : "вечер";
       const alreadySent = isReportAlreadySent(chatMessages, todayAlmaty, modeRu, m.id);
 
-      console.log(`----------------------------------------`);
-      console.log(`Менеджер: ${managerName} (${m.id})`);
       if (alreadySent) {
-        console.log(`[ИДЕМПОТЕНТНОСТЬ] Отчет уже присутствует в чате, пропуск.`);
+        skippedAlreadySentCount++;
+        console.log(`${slotLabel} [ИДЕМПОТЕНТНОСТЬ] Отчёт уже присутствует в чате, пропуск.`);
         continue;
       }
 
-      console.log(reportText);
-
       if (execute) {
-        console.log(`[ОТПРАВКА] Отправка в ${config.chatDialogId}...`);
+        console.log(`${slotLabel} [ОТПРАВКА] Отправка отчёта в чат (длина ${reportText.length} симв.)...`);
         try {
           await rawClient.call(
             "im.message.add",
@@ -784,32 +931,51 @@ export async function runSalesPult(args: string[]): Promise<void> {
             },
             { maxRetries: 0 }
           );
-          console.log(`[ОТПРАВЛЕНО] Успешно.`);
+          sentCount++;
+          console.log(`${slotLabel} [ОТПРАВЛЕНО] Успешно (длина ${reportText.length} симв.).`);
         } catch (sendErr) {
           console.warn(
-            `[ВНИМАНИЕ] Ошибка при отправке отчета для ${managerName}: ${sendErr instanceof Error ? sendErr.message : String(sendErr)}. Перечитываем чат...`
+            `${slotLabel} [ВНИМАНИЕ] Ошибка при отправке отчёта (${formatSafeErrorStatus(sendErr)}). Перечитываем чат...`
           );
-          // Re-read chat and verify marker before proceeding to next manager
-          chatMessages = await fetchRecentChatMessages(reader, config.chatDialogId, 200);
-          const sentAfterAll = isReportAlreadySent(chatMessages, todayAlmaty, modeRu, m.id);
-          if (sentAfterAll) {
-            console.log(`[ИДЕМПОТЕНТНОСТЬ] Маркер обнаружен в чате после сбоя запроса — сообщение доставлено.`);
+          let sentAfterAll = false;
+          let recheckFailed = false;
+          try {
+            // Re-read chat and verify marker before proceeding to next manager
+            chatMessages = await fetchRecentChatMessages(reader, config.chatDialogId, 200);
+            sentAfterAll = isReportAlreadySent(chatMessages, todayAlmaty, modeRu, m.id);
+          } catch (recheckErr) {
+            recheckFailed = true;
+            console.error(
+              `${slotLabel} [ОШИБКА] Не удалось перечитать чат после сбоя отправки (${formatSafeErrorStatus(recheckErr)}). Повторная отправка отменена во избежание дублей.`
+            );
+          }
+          if (!recheckFailed && sentAfterAll) {
+            verifiedDeliveredAfterErrorCount++;
+            console.log(`${slotLabel} [ИДЕМПОТЕНТНОСТЬ] Маркер обнаружен в чате после сбоя запроса — сообщение доставлено.`);
           } else {
-            console.error(`[ОШИБКА] Маркер не обнаружен. Сообщение не отправлено, но повторная отправка отменена во избежание дублей.`);
-            failedManagers.push({ id: m.id, name: managerName });
+            if (!recheckFailed) {
+              console.error(
+                `${slotLabel} [ОШИБКА] Маркер не обнаружен. Сообщение не отправлено, но повторная отправка отменена во избежание дублей.`
+              );
+            }
+            failedCount++;
           }
         }
       } else {
-        console.log(`[DRY-RUN] Сообщение не отправлено (добавьте --execute для отправки).`);
+        dryRunCount++;
+        console.log(
+          `${slotLabel} [DRY-RUN] Отчёт сформирован (длина ${reportText.length} симв.), отправка в чат отключена (добавьте --execute для отправки).`
+        );
       }
     }
 
-    if (failedManagers.length > 0) {
+    console.log(
+      `[Sales Pult] Итог (${mode}): всего=${totalCount}, отправлено=${sentCount}, подтверждено_после_сбоя=${verifiedDeliveredAfterErrorCount}, пропущено_идемпотентно=${skippedAlreadySentCount}, dry_run=${dryRunCount}, ошибок_доставки=${failedCount}.`
+    );
+
+    if (failedCount > 0) {
       process.exitCode = 1;
-      console.error(`\n[ОШИБКА ДОСТАВКИ] Отчёт не дошёл следующим менеджерам (${failedManagers.length}):`);
-      for (const fm of failedManagers) {
-        console.error(`• ${fm.name} (${fm.id})`);
-      }
+      console.error(`[ОШИБКА ДОСТАВКИ] Отчёт не доставлен (${failedCount} из ${totalCount}).`);
     }
 
     if (hasTaskErrors) {
@@ -818,15 +984,18 @@ export async function runSalesPult(args: string[]): Promise<void> {
     return;
   }
 
-  throw new Error(`Unknown mode: ${mode}`);
+  throw new SalesPultCliError(`Unknown mode: ${mode}`);
 }
 
-export async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+export async function main(
+  args: string[] = process.argv.slice(2),
+  options?: SalesPultRunOptions
+): Promise<void> {
   try {
-    await runSalesPult(args);
+    await runSalesPult(args, options);
   } catch (err) {
-    console.error("Sales Pult Error:", err);
+    const detail = err instanceof SalesPultCliError ? err.message : formatSafeErrorStatus(err);
+    console.error(`Sales Pult Error: ${detail}`);
     process.exit(1);
   }
 }

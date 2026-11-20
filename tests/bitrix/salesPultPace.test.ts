@@ -279,7 +279,7 @@ describe("salesPultPace", () => {
       expect(zeroCallsSignal).toBeUndefined();
     });
 
-    it("triggers zeroBitrixCallsToday signal after 11:00", () => {
+    it("keeps zeroBitrixCallsToday out of urgent after 11:00", () => {
       const afternoonCtx = calculatePace("2026-10-29", "2026-10-29 11:30 (UTC+5)", DEFAULT_HOLIDAYS);
       const payload: SalesPultPayload = {
         asOfDate: "2026-10-29",
@@ -331,8 +331,7 @@ describe("salesPultPace", () => {
 
       const signals = buildPultSignals(payload, afternoonCtx);
       const zeroCallsSignal = signals.find((s) => s.text.includes("ни одного звонка через Битрикс"));
-      expect(zeroCallsSignal).toBeDefined();
-      expect(zeroCallsSignal?.text).toContain("Бекзат");
+      expect(zeroCallsSignal).toBeUndefined();
     });
   });
 
@@ -542,40 +541,9 @@ describe("salesPultPace", () => {
       const middayPayload = JSON.parse(middayRaw) as SalesPultPayload;
       const view = buildPultView(middayPayload);
 
-      // Verify signals
-      expect(view.signals.length).toBeGreaterThan(0);
-      expect(
-        view.signals.some(
-          (s) => s.text.includes("Михаил") && s.text.includes("сегодня ни одного звонка через Битрикс")
-        )
-      ).toBe(true);
-      expect(
-        view.signals.some(
-          (s) => s.text.includes("Алексей") && s.text.includes("1 новая сделка без звонка")
-        )
-      ).toBe(true);
-      expect(
-        view.signals.some(
-          (s) =>
-            s.text.includes("Иван") &&
-            s.text.includes("1 новая сделка без звонка") &&
-            s.text.includes("самой старой 3 дня")
-        )
-      ).toBe(true);
-      expect(
-        view.signals.some(
-          (s) =>
-            s.text.includes("Мало дозвонов к 15:10") &&
-            s.text.includes("Иван") &&
-            s.text.includes("при норме 15")
-        )
-      ).toBe(true);
-      expect(
-        view.signals.some((s) => s.text.includes("подписан договор"))
-      ).toBe(true);
-      expect(
-        view.signals.some((s) => s.text.includes("Пора закрыть 1 сделку"))
-      ).toBe(true);
+      // Долги, звонки и поздравления остаются в таблицах.
+      expect(view.signals).toEqual([]);
+      expect(view.signalsMeta).toBe("Срочного нет");
 
       // Verify manager statuses for day
       const dayManagers = view.periods.day.sales.managers;
@@ -600,7 +568,7 @@ describe("salesPultPace", () => {
   });
 
   describe("portal won debts and mismatches signals", () => {
-    it("triggers red signals for wonOnPortalNotClosed debts and outcomeMismatches", () => {
+    it("counts outcome mismatch box only and omits table debts", () => {
       const payload: SalesPultPayload = {
         asOfDate: "2026-10-29",
         generatedAt: "2026-10-29 15:00 (UTC+5)",
@@ -657,15 +625,9 @@ describe("salesPultPace", () => {
       };
 
       const signals = buildPultSignals(payload);
-      const wonDebtSignal = signals.find((s) => s.text.includes("выиграно на портале, не закрыто в CRM"));
-      expect(wonDebtSignal).toBeDefined();
-      expect(wonDebtSignal?.color).toBe("red");
-      expect(wonDebtSignal?.text).toBe("<b>Бекзат</b>: выиграно на портале, не закрыто в CRM — 2\u00A0сделки");
+      expect(signals).toEqual([]);
+      expect(buildPultView(payload).signalsUrgent).toBe(1); // сделка коробки, без второй строки
 
-      const mismatchSignal = signals.find((s) => s.text.includes("Ошибка в CRM"));
-      expect(mismatchSignal).toBeDefined();
-      expect(mismatchSignal?.color).toBe("red");
-      expect(mismatchSignal?.text).toBe("<b>Ошибка в CRM:</b> 1\u00A0сделка выиграна на портале, но закрыта как проигрыш");
     });
   });
 

@@ -101,6 +101,15 @@ describe("renderRunSummary", () => {
     expect(text).toContain("дубликаты 8");
   });
 
+  it("adds up deals held back by the quantity rules over plans and lots", () => {
+    const m = manifest();
+    m.stages.applyPlans!.counts = { ...m.stages.applyPlans!.counts, filtered: 4 };
+    m.stages.applyLots!.counts = { ...m.stages.applyLots!.counts, filtered: 2 };
+
+    expect(renderRunSummary(m)).toContain("не заведено по количеству 6");
+    expect(renderRunSummary(manifest())).toContain("не заведено по количеству 0");
+  });
+
   it("lists every stage with its duration and counts", () => {
     const text = renderRunSummary(manifest());
 

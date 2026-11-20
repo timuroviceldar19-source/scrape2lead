@@ -18,6 +18,7 @@ describe("salesPult in-browser Playwright test", () => {
   let tempDir: string;
   let indexPath: string;
   let regPath: string;
+  let debtLayoutPath: string;
 
   beforeAll(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pult-browser-test-"));
@@ -160,6 +161,14 @@ describe("salesPult in-browser Playwright test", () => {
     }));
     const firstMgr = basePayload.groups[0].managers[0];
     if (firstMgr.debts) {
+      firstMgr.debts.readyToCloseDealIds = ["990001"];
+      firstMgr.debts.readyToCloseDeals = [{ kind: "passed", dealId: "990001", title: '<img src=x onerror="window.debtXss=1"> Выдуманная сделка', amount: 123000 }];
+      firstMgr.debts.newDeals = 60;
+      firstMgr.debts.newDealsList = [{ dealId: "990002", title: "Выдуманная новая сделка", amount: 200, ageDays: 8 }];
+      firstMgr.debts.overdue = 1;
+      firstMgr.debts.overdueList = [{ dealId: "990003", title: "Выдуманная просроченная сделка", amount: 300, overdueDays: 12 }];
+      firstMgr.debts.wonOnPortalNotClosed = 1;
+      firstMgr.debts.wonOnPortalNotClosedDeals = [{ dealId: "990004", title: "Выдуманная победа", amount: 400, portalSignDate: "2026-10-30" }];
       firstMgr.debts.overdueOverMonth = 2;
       firstMgr.debts.overdueOverMonthTasks = [
         {
@@ -197,6 +206,7 @@ describe("salesPult in-browser Playwright test", () => {
       }
     ];
     basePayload.market = {
+      educationPending: {},
       asOf: "2026-10-29",
       months: ["2026-01", "2026-09", "2026-10"],
       ip: marketIp,
@@ -270,6 +280,23 @@ describe("salesPult in-browser Playwright test", () => {
       m.rollups.month.contracts.totalAmount = 700;
     }));
     basePayload.closedMonths = { "2026-09": closed, "2026-08": null };
+    debtLayoutPath = path.join(tempDir, "debt-layout.html");
+    const layoutPayload = structuredClone(basePayload);
+    const layoutDebts = layoutPayload.groups[0].managers[0].debts!;
+    const examples = Array.from({ length: 26 }, (_, i) => ({
+      dealId: `9990${i}`, title: `Выдуманная образовательная организация номер ${i + 1} — поставка оборудования для учебных кабинетов`, amount: 100000 + i
+    }));
+    layoutDebts.readyToCloseDealIds = examples.map(d => d.dealId);
+    layoutDebts.readyToCloseDeals = examples.map(d => ({ ...d, kind: "passed" }));
+    layoutDebts.newDeals = 26;
+    layoutDebts.newDealsList = examples.map(d => ({ ...d, ageDays: 8 }));
+    layoutDebts.overdue = 26;
+    layoutDebts.overdueList = examples.map(d => ({ ...d, overdueDays: 42 }));
+    layoutDebts.wonOnPortalNotClosed = 26;
+    layoutDebts.wonOnPortalNotClosedDeals = examples.map(d => ({ ...d, portalSignDate: "2026-10-30" }));
+    layoutDebts.overdueOverMonth = 26;
+    layoutDebts.overdueOverMonthTasks = examples.map(d => ({ ...d, overdueDays: 42, deadline: "2026-09-01" }));
+    fs.writeFileSync(debtLayoutPath, renderPultHtml(layoutPayload), "utf8");
     fs.writeFileSync(indexPath, renderPultHtml(basePayload), "utf8");
     fs.writeFileSync(regPath, renderRegisterHtml(regPayload), "utf8");
 
@@ -283,18 +310,158 @@ describe("salesPult in-browser Playwright test", () => {
     } catch {}
   });
 
+  it.each(["click", "Enter", " "])("opens ready-to-close from the debt label using %s and escapes titles", async (action) => {
+    const page = await browser.newPage({ reducedMotion: "reduce" });
+    await page.goto(`${pathToFileURL(indexPath).href}#pult`);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    const button = row.getByRole("button", { name: /пора закрыть/ });
+    expect(await button.count()).toBe(1);
+    if (action === "click") await button.click();
+    else { await button.focus(); await button.press(action); }
+    expect(await row.getAttribute("aria-expanded")).toBe("true");
+    const detail = page.locator("#" + await row.getAttribute("aria-controls"));
+    const list = detail.locator('details[data-debt-list="readyToCloseDeals"]');
+    expect(await list.getAttribute("open")).not.toBeNull();
+    const link = list.locator('a[href$="/crm/deal/details/990001/"]');
+    expect(await link.isVisible()).toBe(true);
+    expect(await link.textContent()).toBe('<img src=x onerror="window.debtXss=1"> Выдуманная сделка');
+    expect(await link.getAttribute("target")).toBe("_blank");
+    expect(await list.locator("img").count()).toBe(0);
+    expect(await page.evaluate(() => (window as any).debtXss)).toBeUndefined();
+    // A repeated activation must keep the row open; a plain row click still toggles it.
+    await button.click();
+    expect(await row.getAttribute("aria-expanded")).toBe("true");
+    await row.locator(".who").click();
+    expect(await row.getAttribute("aria-expanded")).toBe("false");
+    await page.close();
+  });
+
+  it.each([1440, 375])("opens other debt lists with age, sign date and omitted count at width %i", async (width) => {
+    const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+    await page.goto(`${pathToFileURL(indexPath).href}#pult`);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    for (const [label, key, text] of [
+      [/без звонка/, "newDealsList", "без звонка 8 дней"],
+      [/просрочен/, "overdueList", "просрочено 12 дней"],
+      [/выиграно на портале/, "wonOnPortalNotClosedDeals", "подписан 30.10"]
+    ] as const) {
+      await row.getByRole("button", { name: label }).click();
+      const list = page.locator("#" + await row.getAttribute("aria-controls")).locator(`details[data-debt-list="${key}"]`);
+      expect(await list.getAttribute("open")).not.toBeNull();
+      expect((await list.textContent())?.replace(/\u00a0/g, " ")).toContain(text);
+      expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      if (key === "newDealsList") expect(await list.textContent()).toContain("и ещё 59 в Битриксе");
+    }
+    await page.close();
+  });
+
+  it("uses the full manager detail width for all five lists without nested scrolling at 1440 px", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+    await page.goto(pathToFileURL(debtLayoutPath).href);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    await row.locator(".who").click();
+    const detail = page.locator("#" + await row.getAttribute("aria-controls"));
+    const lists = detail.locator("details");
+    expect(await lists.count()).toBe(5);
+    for (const list of await lists.all()) {
+      await list.locator("summary").click();
+      const layout = await list.evaluate(el => ({
+        width: el.getBoundingClientRect().width,
+        detailWidth: el.closest(".detail-in")!.getBoundingClientRect().width,
+        inStats: !!el.closest(".dstats"),
+        scrolls: [el, ...el.querySelectorAll("*")].filter(node => /^(auto|scroll)$/.test(getComputedStyle(node).overflowY)).length
+      }));
+      expect(layout.width).toBeGreaterThanOrEqual(layout.detailWidth * 0.7);
+      expect(layout.inStats).toBe(false);
+      expect(layout.scrolls).toBe(0);
+      expect(await list.locator(".old-task-link").first().evaluate(el => getComputedStyle(el).wordBreak)).toBe("normal");
+      expect((await list.locator(".old-task-meta").first().boundingBox())!.width).toBeCloseTo(240, 0);
+    }
+    await page.close();
+  });
+
+  it("keeps urgent tasks beside counters and closed lists compact at 1440 px", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+    await page.goto(pathToFileURL(debtLayoutPath).href);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    await row.locator(".who").click();
+    const detail = page.locator("#" + await row.getAttribute("aria-controls"));
+    const stats = (await detail.locator(".dstats").boundingBox())!;
+    const urgent = (await detail.locator(".manager-urgent").boundingBox())!;
+    expect(urgent.y).toBeCloseTo(stats.y, 0);
+    expect(urgent.x).toBeGreaterThan(stats.x + stats.width);
+    const lists = await detail.locator("details").all();
+    const first = (await lists[0].boundingBox())!;
+    expect(first.y - Math.max(stats.y + stats.height, urgent.y + urgent.height)).toBeGreaterThanOrEqual(20);
+    for (let i = 1; i < lists.length; i++) {
+      const prev = (await lists[i - 1].boundingBox())!;
+      const next = (await lists[i].boundingBox())!;
+      expect(next.y - prev.y - prev.height).toBeGreaterThanOrEqual(8);
+      expect(next.y - prev.y - prev.height).toBeLessThanOrEqual(12);
+    }
+    await page.close();
+  });
+
+  it("shows ten of 26 rows on mobile, then expands the other sixteen in every debt list", async () => {
+    const page = await browser.newPage({ viewport: { width: 375, height: 812 }, reducedMotion: "reduce" });
+    await page.goto(pathToFileURL(debtLayoutPath).href);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    await row.locator(".who").click();
+    const detail = page.locator("#" + await row.getAttribute("aria-controls"));
+    for (const list of await detail.locator("details").all()) {
+      await list.locator("summary").click();
+      expect(await list.locator(".old-task-item:visible").count()).toBe(10);
+      const more = list.getByRole("button", { name: "показать ещё 16", exact: true });
+      expect(await more.isVisible()).toBe(true);
+      const title = (await list.locator(".old-task-link").first().boundingBox())!;
+      const meta = (await list.locator(".old-task-meta").first().boundingBox())!;
+      expect(meta.y).toBeGreaterThanOrEqual(title.y + title.height);
+      await more.click();
+      expect(await list.locator(".old-task-item:visible").count()).toBe(26);
+      expect(await more.isVisible()).toBe(false);
+      expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
+    await page.close();
+  });
+
+  it.each(["reduce", "no-preference"] as const)("scrolls the selected list into view with reduced motion %s", async (reducedMotion) => {
+    const page = await browser.newPage({ viewport: { width: 375, height: 812 }, reducedMotion });
+    await page.addInitScript(() => {
+      const original = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = function(options) {
+        if (this.matches("details[data-debt-list]")) (window as any).debtScroll = options;
+        original.call(this, options);
+      };
+    });
+    await page.goto(pathToFileURL(debtLayoutPath).href);
+    const row = page.locator("#sales .trow.body").filter({ hasText: "Тестовый менеджер 1.1" });
+    await row.getByRole("button", { name: /пора закрыть/ }).click();
+    await page.waitForFunction(() => !!(window as any).debtScroll, undefined, { timeout: 2000 });
+    expect(await page.evaluate(() => (window as any).debtScroll)).toMatchObject({ block: "nearest", behavior: reducedMotion === "reduce" ? "instant" : "smooth" });
+    await page.waitForFunction(() => {
+      const summary = document.querySelector('#sales details[data-debt-list="readyToCloseDeals"][open] > summary');
+      const header = document.querySelector(".dateline");
+      if (!summary || !header) return false;
+      const box = summary.getBoundingClientRect();
+      return box.top >= header.getBoundingClientRect().bottom && box.top < innerHeight;
+    }, undefined, { timeout: 2000 });
+    await page.close();
+  });
+
   it.each([1280, 375])("keeps periods visible at tenders on width %i", async (width) => {
     const page = await browser.newPage({ viewport: { width, height: 850 }, reducedMotion: "reduce" });
     await page.goto(`${pathToFileURL(indexPath).href}#pult`);
-    await page.locator("#tenders").scrollIntoViewIfNeeded();
+    const tenders = page.locator('#sales .trow.group[data-group="tenders"]');
+    await tenders.scrollIntoViewIfNeeded();
     const nav = await page.locator("#periodsNav").boundingBox();
     expect(nav).not.toBeNull();
     expect(nav!.y).toBeGreaterThanOrEqual(0);
     expect(nav!.y + nav!.height).toBeLessThan(850);
-    await page.evaluate(() => document.getElementById("tenders")!.scrollIntoView());
-    const heading = await page.locator("#tenders h2").boundingBox();
+    expect((await tenders.boundingBox())!.y).toBeGreaterThanOrEqual(nav!.y + nav!.height);
+    await page.evaluate(() => document.getElementById("sales")!.scrollIntoView());
+    const heading = await page.locator("#sales h2").boundingBox();
     expect(heading!.y).toBeGreaterThanOrEqual(nav!.y + nav!.height);
-    await page.waitForFunction(() => document.getElementById("tenders")!.classList.contains("in"));
+    await page.waitForFunction(() => document.getElementById("sales")!.classList.contains("in"));
     if (process.env.PULT_SCREENSHOT_DIR) {
       fs.mkdirSync(process.env.PULT_SCREENSHOT_DIR, { recursive: true });
       await page.screenshot({ path: path.join(process.env.PULT_SCREENSHOT_DIR, `pult-${width}.png`), animations: "disabled" });
@@ -322,7 +489,7 @@ describe("salesPult in-browser Playwright test", () => {
     expect(await page.locator("#month .big").getAttribute("data-count")).not.toBe(septemberFact);
     await page.selectOption("#monthSelect", "2026-09");
     expect(page.url()).toContain("#pult/2026-09");
-    await page.locator('.sections a[data-t="ip"]').click();
+    await page.locator('.sections [data-t="market"]').click(); await page.locator('#productSwitch [data-product="ip"]').click();
     expect(await page.locator("#periodsNav").isVisible()).toBe(false);
     expect(await page.locator("#tab-ip").textContent()).toContain("ИП");
     await page.locator('.sections a[data-t="pult"]').click();
@@ -563,7 +730,7 @@ describe("salesPult in-browser Playwright test", () => {
       const card = document.querySelector("#tab-kt .ytd-box");
       return card ? card.textContent : "";
     });
-    expect(ytdCardText).toContain("С начала года");
+    expect(ytdCardText).toContain("С января по октябрь 2026 года");
     expect(ytdCardText).toContain("F3");
     expect(ytdCardText).toContain("Amanat Asia");
 
@@ -609,7 +776,7 @@ describe("salesPult in-browser Playwright test", () => {
 
     await page.close();
   }, 20_000);
-  it("loads main pult tab: no console errors with outcomeMismatches, renders error box and valid deal URL", async () => {
+  it("loads main pult tab: no console errors with outcomeMismatches, renders collapsed error list and valid deal URL", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const consoleErrors: string[] = [];
     page.on("pageerror", (err) => consoleErrors.push(err.message));
@@ -632,18 +799,20 @@ describe("salesPult in-browser Playwright test", () => {
     // 1. Zero console errors
     expect(consoleErrors).toEqual([]);
 
-    // 2. Mismatches box is rendered with deal title and ddmm date
+    // Д4а: список по умолчанию свёрнут; прежние строки доступны после раскрытия.
+    await page.locator('.outcome-mismatches > summary').click();
+    // 2. Error list preserves the deal title and ddmm date
     const boxText = await page.evaluate(() => {
-      const el = document.querySelector(".mismatches-box");
+      const el = document.querySelector(".outcome-mismatches");
       return el ? el.textContent : "";
     });
-    expect(boxText).toContain("Ошибка в CRM: сделки выиграны на портале, но закрыты как проигрыш");
+    expect(boxText).toContain("Ошибка в CRM: 1 сделка выиграна на портале, но закрыта как проигрыш");
     expect(boxText).toContain("Школа №72");
     expect(boxText).toContain("от 29.09");
 
     // 3. Link has valid single-https URL
     const linkHref = await page.evaluate(() => {
-      const a = document.querySelector(".mismatches-box a") as HTMLAnchorElement | null;
+      const a = document.querySelector(".outcome-mismatches a") as HTMLAnchorElement | null;
       return a ? a.href : "";
     });
     expect(linkHref).toBe("https://ft3.bitrix24.kz/crm/deal/details/45477/");
@@ -655,7 +824,7 @@ describe("salesPult in-browser Playwright test", () => {
       const row = document.querySelector(".mismatch-row") as HTMLElement | null;
       const info = row?.querySelector(".info") as HTMLElement | null;
       const meta = row?.querySelector(".meta") as HTMLElement | null;
-      const box = document.querySelector(".mismatches-box") as HTMLElement | null;
+      const box = document.querySelector(".outcome-mismatches") as HTMLElement | null;
       if (!row || !info || !meta || !box) return null;
       const rowRect = row.getBoundingClientRect();
       const infoRect = info.getBoundingClientRect();
@@ -752,22 +921,24 @@ describe('OP contracts in the pult browser', () => {
     const screenshotDir=path.resolve('exports/pult-contracts-fixture'); fs.mkdirSync(screenshotDir,{recursive:true});
     try {
       await page.setContent(renderPultHtml(f.payload));
+      await page.locator('.month-more > summary').click();
       await page.waitForFunction(()=>document.querySelector('#month .big')?.textContent==='3');
       expect(await page.locator('#month').innerText()).toContain('600 ₸');
       expect((await page.locator('#month .awaiting-register').innerText()).replace(/\s+/g,' ')).toContain('ещё 1 сделка');
       expect(await page.locator('#sales').innerText()).toContain('по Битриксу, предварительно');
-      expect(await page.locator('#tenders').innerText()).toContain('по Битриксу, предварительно');
+      expect(await page.locator('#sales .trow.body.tender').innerText()).toContain('по Битриксу, предварительно');
       await page.locator('#month').screenshot({path:path.join(screenshotDir,'current-month.png')});
       await page.locator('[data-p="month"]').click();
       expect(await page.locator('#sales').innerText()).toContain('по реестру ОП');
-      expect(await page.locator('#tenders').innerText()).toContain('по реестру ОП');
-      expect(await page.locator('#tenders .num').first().innerText()).toContain('1');
-      await page.locator('#tenders').screenshot({path:path.join(screenshotDir,'tenders-month.png')});
+      expect(await page.locator('#sales .trow.body.tender').innerText()).toContain('по реестру ОП');
+      expect(await page.locator('#sales .trow.body.tender .cell[data-l="Подписал"] .num').innerText()).toContain('1');
+      await page.locator('#sales').screenshot({path:path.join(screenshotDir,'team-month.png')});
       expect(await page.locator('#signals').innerText()).toContain('Сумма сделки 0');
       expect(await page.locator('#signals').innerText()).toContain('договор у другого поставщика');
-      expect(await page.locator('#signals').innerText()).toContain('Закрыто в Битриксе, нет в ОП');
+      expect(await page.locator('#signals').innerText()).not.toContain('Закрыто в Битриксе, нет в ОП');
       await page.locator('#signals').screenshot({path:path.join(screenshotDir,'signals.png')});
       await page.locator('#monthSelect').selectOption('2026-09');
+      await page.locator('.month-more > summary').click();
       expect(await page.locator('#month').innerText()).toContain('ОП итог тест.xlsx');
       expect(await page.locator('#sales').innerText()).toContain('по реестру ОП');
       expect(await page.locator('#month .awaiting-register').count()).toBe(0);
@@ -784,6 +955,7 @@ describe('OP contracts in the pult browser', () => {
     const page=await browser.newPage({viewport:{width:1440,height:1100}, reducedMotion:'reduce'});
     try {
       await page.setContent(renderPultHtml(f.payload));
+      await page.locator('.month-more > summary').click();
       const amount=(await page.locator('#month .hero-amt').innerText()).replace(/\s+/g,' ');
       expect(amount).not.toMatch(/·\s*·/);
       expect(amount).not.toContain('без НДС');

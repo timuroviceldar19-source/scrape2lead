@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import type { StageTransition } from "../metrics.js";
 import { toAlmatyDate } from "../metrics.js";
+import { formatSafeErrorStatus } from "../safeLog.js";
 import type { UserProfileInfo } from "../collect.js";
 import type { RegisterView, RegisterHistoryPayload, RegisterContract, CrmWonDeal } from "./types.js";
 import {
@@ -16,6 +17,7 @@ import { fetchCrmWonDealsForRegister, fetchCrmWonDealsForMonths, getNextMonth } 
 import { buildRegisterView } from "./buildView.js";
 import {
   buildFullRegisterHistory,
+  buildRegisterMonthSummary,
   DEFAULT_REGISTER_HISTORY_PATH
 } from "./history.js";
 import {
@@ -34,6 +36,7 @@ export interface LoadRegisterOptions {
   reader: ReadOnlyBitrixClient;
   diskFolderId?: number;
   managerAliases?: Record<string, string>;
+  hiddenManagers?: string[];
   registerFilePath?: string;
   todayAlmaty?: string;
   contractTransitions?: StageTransition[];
@@ -58,7 +61,7 @@ export async function loadRegisterView(options: LoadRegisterOptions): Promise<Re
     view = { error: `Реестр не подключён: ${err instanceof Error ? err.message : String(err)}` };
   }
   if (view.error) {
-    console.warn(`[Пульт] Реестр ОП недоступен: ${view.error}`);
+    console.warn("[Пульт] Реестр ОП недоступен (подробности в карточке реестра)");
     // Закрытые месяцы остаются доступны из кэша даже при сбое текущего файла.
     const cached = loadEncryptedRegisterHistory(
       options.historyCachePath || options.cachePath || DEFAULT_REGISTER_HISTORY_PATH,
@@ -100,6 +103,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
     reader,
     diskFolderId,
     managerAliases,
+    hiddenManagers,
     registerFilePath,
     todayAlmaty = getAlmatyToday(),
     contractTransitions,
@@ -116,6 +120,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
   let excelBuffer: Buffer | null = null;
   let registerFileName = "";
   let asOf = todayAlmaty;
+  let updatedAt: string | undefined;
 
   if (registerFilePath) {
     if (fs.existsSync(registerFilePath)) {
@@ -130,6 +135,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
       if (diskFile) {
         excelBuffer = diskFile.buffer;
         registerFileName = diskFile.fileName;
+        updatedAt = diskFile.updateTime?.trim() || undefined;
       } else {
         return { error: "Реестр не подключён: файл в папке не найден" };
       }
@@ -161,7 +167,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
         ));
       } catch (err) {
         console.warn(
-          `[Реестр] Сделки CRM за ${fileMonth} не загрузились, сверка по сделкам пульта: ${err instanceof Error ? err.message : String(err)}`
+          `[Реестр] Сделки CRM за ${fileMonth} не загрузились, сверка по сделкам пульта (${formatSafeErrorStatus(err)})`
         );
       }
     }
@@ -215,6 +221,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
             historyPayload = await buildFullRegisterHistory({
               files: filesToProcess,
               managerAliases,
+              hiddenManagers,
               todayAlmaty,
               crmWonDealsByMonth: crmWonByMonth,
               crmWonDeals: wonDeals,
@@ -242,7 +249,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
             historyError = loaded.error;
           }
         } catch (histErr) {
-          console.warn("[Реестр] Ошибка построения истории:", histErr);
+          console.warn(`[Реестр] Ошибка построения истории (${formatSafeErrorStatus(histErr)})`);
           const errMsg = histErr instanceof Error ? histErr.message : String(histErr);
           recordRegisterHistoryAttempt(attemptPath, { success: false, error: errMsg });
           const loaded = cachedHistory;
@@ -299,6 +306,7 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
       asOf,
       month: parsed.month || todayAlmaty.slice(0, 7),
       hasValColumn: parsed.hasValColumn,
+      hiddenManagers,
       history: historyPayload,
       historyError
     });
@@ -308,15 +316,37 @@ async function loadRegisterViewImpl(options: LoadRegisterOptions): Promise<Regis
     );
 
     if (view.error === undefined) {
+      if (updatedAt) view.updatedAt = updatedAt;
       view.history ??= { asOf, months: [] };
       const { history, historyError: _historyError, ...snapshot } = view;
       history.monthViews ??= {};
       history.monthViews[view.month] = snapshot;
+      // Строка месяца в «Истории» считается по тому же файлу, что и срез: кэш истории
+      // пересобирается раз в день и без этого расходится с первым блоком страницы.
+      const rowIndex = history.months.findIndex((m) => m.month === view.month);
+      if (rowIndex >= 0) {
+        const cachedRow = history.months[rowIndex];
+        history.months[rowIndex] = {
+          ...buildRegisterMonthSummary({
+            month: view.month,
+            label: cachedRow.label,
+            fileName: registerFileName,
+            rows: parsed.rows,
+            plans: parsed.plans,
+            hasValColumn: parsed.hasValColumn,
+            hiddenManagers
+          }),
+          ...(updatedAt ? { updatedAt } : {}),
+          missingCrm: cachedRow.missingCrm,
+          reconciliationPerformed: cachedRow.reconciliationPerformed,
+          crmExtra: cachedRow.crmExtra
+        };
+      }
       view.crmDeals = wonDeals;
     }
     return view;
   } catch (err) {
-    console.error("[Реестр] Ошибка обработки реестра:", err);
+    console.error(`[Реестр] Ошибка обработки реестра (${formatSafeErrorStatus(err)})`);
     return {
       error: `Реестр не подключён: ${err instanceof Error ? err.message : String(err)}`
     };

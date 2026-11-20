@@ -1,4 +1,6 @@
+import { enrichManagerNames } from "./managerNames.js";
 import { ReadOnlyBitrixClient, flattenBitrixParams } from "../reporting/readOnlyClient.js";
+import { formatSafeErrorStatus } from "./safeLog.js";
 import type { WonLostMismatchDeal } from "./types.js";
 import {
   toAlmatyEndOfDay,
@@ -12,6 +14,7 @@ import {
 import {
   CONTACTED_AFTER_DEADLINE_NOTE,
   EMPTY_DEBTS,
+  DEBT_LIST_LIMIT,
   buildManagerDebts,
   formatResponsibleNote,
   isExcludedProvider,
@@ -344,7 +347,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     outcomeDealsRaw.push(...wonList.filter((d) => String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("won:")));
   } catch (err) {
     if (params.historyOnly) throw err;
-    console.warn("[collectPultData] Failed to load won: outcome deals:", err);
+    console.warn(`[collectPultData] Failed to load won: outcome deals (${formatSafeErrorStatus(err)})`);
   }
 
   try {
@@ -355,19 +358,19 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     outcomeDealsRaw.push(...partnerList.filter((d) => String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("partner:")));
   } catch (err) {
     if (params.historyOnly) throw err;
-    console.warn("[collectPultData] Failed to load partner: outcome deals:", err);
+    console.warn(`[collectPultData] Failed to load partner: outcome deals (${formatSafeErrorStatus(err)})`);
   }
 
   // Противоречие WON/lost остаётся актуальным и после смены месяца.
   if (!params.historyOnly) {
     try {
       const lostWins = await client.listAllBatched<RawDealItem>("crm.deal.list", {
-        filter: { STAGE_SEMANTIC_ID: "S", "%UF_CRM_S2L_GZ_OUTCOME": "lost:", ASSIGNED_BY_ID: params.managerIds },
+        filter: { STAGE_SEMANTIC_ID: "S", "%UF_CRM_S2L_GZ_OUTCOME": "lost:" },
         select: DEAL_SELECT_FIELDS
       });
       outcomeDealsRaw.push(...lostWins.filter(d => d.STAGE_SEMANTIC_ID === "S" && String(d.UF_CRM_S2L_GZ_OUTCOME ?? "").startsWith("lost:")));
     } catch (err) {
-      console.warn("[Пульт] Не удалось загрузить противоречия WON/lost:", err instanceof Error ? err.message : String(err));
+      console.warn(`[Пульт] Не удалось загрузить противоречия WON/lost (${formatSafeErrorStatus(err)})`);
     }
   }
 
@@ -442,7 +445,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         }
       } catch (err) {
         if (params.historyOnly) throw err;
-        console.warn("[collectPultData] Failed to batch load comments for won deals:", err);
+        console.warn(`[collectPultData] Failed to batch load comments for won deals (${formatSafeErrorStatus(err)})`);
       }
     }
   }
@@ -669,7 +672,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         }
       }
     } catch (err) {
-      console.warn("[collectPultData] Failed to batch load comments for top tasks:", err);
+      console.warn(`[collectPultData] Failed to batch load comments for top tasks (${formatSafeErrorStatus(err)})`);
     }
   }
 
@@ -695,7 +698,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
         }
       }
     } catch (err) {
-      console.warn("[collectPultData] Failed to batch load calls for overdue top tasks:", err);
+      console.warn(`[collectPultData] Failed to batch load calls for overdue top tasks (${formatSafeErrorStatus(err)})`);
     }
   }
 
@@ -743,6 +746,19 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     }
   }
 
+  const urgentOwners = [...deals.values()].filter(d => {
+    const outcome = d.outcome ?? "";
+    const lostInCrm = d.stageSemanticId === "F" && !/DUPLICATE|DOUBLE/i.test(d.stageId ?? "");
+    const wonInCrm = d.stageSemanticId === "S" || /(?:^|:)WON$/.test(d.stageId ?? "");
+    return (lostInCrm && /^(won|partner):/.test(outcome)) || (wonInCrm && outcome.startsWith("lost:"));
+  }).map(d => String(d.assignedById));
+  const names = new Map([...userProfiles].map(([id, profile]) => [id, profile.name]));
+  const inactiveOwners = new Set<string>();
+  await enrichManagerNames(client, urgentOwners, names, inactiveOwners);
+  for (const id of new Set(urgentOwners)) {
+    if (!userProfiles.has(id)) userProfiles.set(id, { id, name: names.get(id)!, active: !inactiveOwners.has(id) });
+  }
+
   // 8. Identify outcome mismatches (won on portal, but stage is lost in CRM; duplicates are excluded)
   const outcomeMismatches: WonLostMismatchDeal[] = [];
   for (const d of deals.values()) {
@@ -750,7 +766,7 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
     if ((oc.startsWith("won:") || oc.startsWith("partner:")) && d.stageSemanticId === "F") {
       const stageUpper = String(d.stageId ?? "").toUpperCase();
       if (stageUpper.includes("DUPLICATE") || stageUpper.includes("DOUBLE")) continue;
-      const mgrName = userProfiles.get(String(d.assignedById))?.name || `Менеджер ${d.assignedById}`;
+      const mgrName = userProfiles.get(String(d.assignedById))?.name || `сотрудник ID ${d.assignedById}`;
       outcomeMismatches.push({
         id: d.id,
         title: d.title,
@@ -766,15 +782,19 @@ export async function collectPultData(params: CollectPultDataParams): Promise<Pu
 
   // 9. Update debts.wonOnPortalNotClosed for each manager
   for (const mId of managerIds) {
-    const debts = debtsByManager.get(mId) || { ...EMPTY_DEBTS };
+    const debts = { ...(debtsByManager.get(mId) || EMPTY_DEBTS) };
     const wonNotClosed = Array.from(deals.values()).filter((d) => {
       if (String(d.assignedById) !== String(mId)) return false;
       const oc = String(d.outcome ?? "");
       const isWon = oc.startsWith("won:") || oc.startsWith("partner:");
       if (!isWon) return false;
       return d.stageSemanticId !== "S" && d.stageSemanticId !== "F";
-    }).length;
-    debts.wonOnPortalNotClosed = wonNotClosed;
+    });
+    debts.wonOnPortalNotClosed = wonNotClosed.length;
+    debts.wonOnPortalNotClosedDeals = wonNotClosed
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, DEBT_LIST_LIMIT)
+      .map(d => ({ dealId: d.id, title: d.title, amount: d.amount, planNumber: d.planNumber ?? null, portalSignDate: d.portalSignDate }));
     debtsByManager.set(mId, debts);
   }
 

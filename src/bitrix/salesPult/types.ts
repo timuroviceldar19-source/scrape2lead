@@ -1,6 +1,7 @@
 import type { TargetsConfig, ManagerRollups, TopTask } from "./metrics.js";
 import type { ManagerDebts } from "./debts.js";
 import type { MarketView } from "../../kz/market/types.js";
+import type { CompetitorsView } from "../../kz/competitors/types.js";
 
 
 export interface WonLostMismatchDeal {
@@ -42,7 +43,16 @@ export interface PultGroupView {
   managers: PultManagerView[];
 }
 
+/** Кто смотрит вариант пульта; нет — полный пульт. */
+export interface PultViewer {
+  kind: "manager";
+  managerId: string;
+  name: string;
+}
+
 export interface SalesPultPayload {
+  /** Вариант для одного человека: страница закрепляет «Я — …» и прячет недоступные разделы. */
+  viewer?: PultViewer;
   contractSource?: import("./contracts.js").PultContractSource;
   closedMonth?: boolean;
   closedMonths?: Record<string, SalesPultPayload | null>;
@@ -58,7 +68,9 @@ export interface SalesPultPayload {
   dynamics: DayDynamic[];
   holidays?: string[];
   market?: MarketView | null;
+  competitors?: CompetitorsView | null;
   plans?: import("./plans/types.js").PlansMonitorView | null;
+  radar?: import("./radar/types.js").RadarView | null;
   outcomeMismatches?: WonLostMismatchDeal[];
 }
 
@@ -158,6 +170,7 @@ export interface PultTenderManagerView {
   id: string;
   name: string;
   initials: string;
+  tasksCountText: string;
   contracts: PultManagerContractsView;
   debts?: ManagerDebts;
   topTasks: TopTask[];
@@ -236,6 +249,9 @@ export interface PultMonthView {
   sourceLabel: string;
   revenuePlan?: number;
   awaitingRegister?: number;
+  /** Партнёрские продажи по реестру, в `fact` и `amount` не входят. */
+  partnerAmount?: number;
+  partnerContracts?: number;
   crmFact: number;
   crmAmount: number;
   plan: number;

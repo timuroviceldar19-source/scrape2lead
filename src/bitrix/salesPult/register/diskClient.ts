@@ -1,4 +1,5 @@
 import type { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
+import { formatSafeErrorStatus } from "../safeLog.js";
 
 export type DiskChildItem = {
   ID: string | number;
@@ -113,7 +114,7 @@ export async function fetchLatestRegisterFromDisk(
   return {
     buffer: Buffer.from(arrayBuffer),
     fileName: latest.NAME,
-    updateTime: latest.UPDATE_TIME ?? new Date().toISOString()
+    updateTime: latest.UPDATE_TIME ?? ""
   };
 }
 
@@ -163,8 +164,8 @@ export async function fetchRegisterFilesFromDisk(
         updateTime: item.UPDATE_TIME ?? ""
       });
     } catch (err) {
-      console.warn(`[Disk] Ошибка при скачивании ${item.NAME}:`, err);
-      failedFiles.push({ fileName: item.NAME, reason: err instanceof Error ? err.message : String(err) });
+      console.warn(`[Disk] Ошибка при скачивании ${item.NAME} (${formatSafeErrorStatus(err)})`);
+      failedFiles.push({ fileName: item.NAME, reason: formatSafeErrorStatus(err) });
     }
   }
 

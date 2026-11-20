@@ -19,15 +19,17 @@
       <span class="mark-box">F3</span><span class="mark-name">Пульт продаж</span>
     </a>
     <nav class="sections" aria-label="Разделы">
-      <a href="#pult" data-t="pult">Пульт</a>
-      <a href="./reg.html">Реестр ОП</a>
-      <a href="#ip" data-t="ip">Рынок ИП</a>
-      <a href="#kt" data-t="kt">Рынок КТ</a>
-      <a href="#plans-ip" data-t="plans-ip">Планы ИП</a>
-      <a href="#plans-kt" data-t="plans-kt">Планы КТ</a>
+      <a href="#pult" data-t="pult">Сегодня</a>
+      <a href="#radar-ip" data-t="radar">Радар</a>
+      <a href="./reg.html">Выручка</a>
+      <a href="./fin.html">Финансы</a>
+      <a href="#plans-ip" data-t="plans">Планы</a>
+      <a href="#ip" data-t="market">Рынок</a>
+      <a href="#competitors-ip" data-t="competitors">Конкуренты</a>
       <span class="ind" aria-hidden="true"></span>
     </nav>
     <div class="bar-right">
+      <button class="btn search-btn" id="searchBtn" type="button" title="Поиск (/ или ⌘K)">Поиск <span class="kbd">/</span></button>
       <div class="scenes" id="scenes" aria-hidden="true"></div>
       <div class="live" id="live"><i></i><span id="liveText"></span></div>
       <button class="btn tvb" id="tvBtn" title="Клавиша T">ТВ</button>
@@ -38,8 +40,13 @@
 <main class="page" id="top">
   <div class="dateline">
     <div class="date-left"><span class="label" id="dateLabel"></span><span class="label" id="wdLabel"></span><span class="label" id="srcLabel"></span></div>
+    <div class="chips product-switch" id="productSwitch" role="group" aria-label="Товар" hidden>
+      <button type="button" data-product="ip" aria-pressed="true">Панели (ИП)</button>
+      <button type="button" data-product="kt" aria-pressed="false">Техника (КТ)</button>
+    </div>
     <nav class="periods" id="periodsNav" aria-label="Период">
       <label class="month-picker">Месяц <select id="monthSelect" aria-label="Выбор месяца"></select></label>
+      <label class="me-picker">Я — <select id="meSelect" aria-label="Кто я: показать только мою строку и мои задачи"></select></label>
       <button data-p="day">Сегодня<span class="kbd">1</span></button>
       <button data-p="week">Неделя<span class="kbd">2</span></button>
       <button data-p="month">Месяц<span class="kbd">3</span></button>
@@ -47,6 +54,7 @@
     </nav>
     <div class="chips register-months market-months" id="marketMonths" role="group" aria-label="Месяц рынка" hidden></div>
     <div class="chips register-months market-months" id="planMonths" role="group" aria-label="Месяц планов" hidden></div>
+    <div class="chips register-months market-months" id="competitorsMonths" role="group" aria-label="Период конкурентов" hidden></div>
   </div>
   <div class="monthtrack" aria-hidden="true"><span id="monthFill"></span></div>
 
@@ -56,13 +64,16 @@
     <section class="block reveal" id="signals"></section>
     <section class="block reveal" id="sales"></section>
     <section class="block reveal" id="calls"></section>
-    <section class="block reveal" id="tenders"></section>
     <section class="block reveal" id="tasks"></section>
   </div>
   <div class="tab" id="tab-ip"></div>
   <div class="tab" id="tab-kt"></div>
   <div class="tab" id="tab-plans-ip"></div>
   <div class="tab" id="tab-plans-kt"></div>
+  <div class="tab" id="tab-radar-ip"></div>
+  <div class="tab" id="tab-radar-kt"></div>
+  <div class="tab" id="tab-competitors-ip"></div>
+  <div class="tab" id="tab-competitors-kt"></div>
 
   <footer id="foot">
     <span>Источник: Битрикс24 · ft3.bitrix24.kz</span>
@@ -70,6 +81,16 @@
   </footer>
 </main>
 <div class="tv-cycle" aria-hidden="true"><span id="tvCycle"></span></div>
+
+<dialog id="searchModal" class="search-modal" aria-label="Быстрый поиск">
+  <div class="search-modal-box">
+    <div class="search-input-wrap">
+      <input type="search" id="quickSearchInput" class="search-input" placeholder="Поиск по сделкам, планам, заказчикам, БИН…" autocomplete="off" spellcheck="false">
+      <span class="search-hint"><kbd>Esc</kbd></span>
+    </div>
+    <div id="searchResults" class="search-results" role="listbox" aria-label="Результаты поиска"></div>
+  </div>
+</dialog>
 
 <script>
 const PAYLOAD = __PAYLOAD__;

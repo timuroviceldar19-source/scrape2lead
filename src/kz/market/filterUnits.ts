@@ -1,6 +1,7 @@
 import type { MarketConfig, MarketUnit } from "./types.js";
 import {
   classifyCode,
+  marketMinUnitPrice,
   isExcludedStatus,
   getMethodName,
   cleanEntityName,
@@ -112,7 +113,7 @@ export function filterContractUnits(
       }
 
       const price = Number(u.itemPrice ?? 0);
-      if (price < cfg.minUnitPrice) continue;
+      if (price < marketMinUnitPrice(matchedCode, cfg)) continue;
 
       const qty = Number(u.quantity ?? 0);
       const sum = Number(u.totalSum != null ? u.totalSum : price * qty);

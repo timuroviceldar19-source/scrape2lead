@@ -2,20 +2,38 @@ import type { SalesPultPayload, SignalItem } from "./types.js";
 import type { DealInfo } from "./metrics.js";
 import type { RegisterView, RegisterMonthSummary } from "./register/types.js";
 import { groupRegisterContracts, matchRegisterWithCrm, settleUnmatched } from "./register/matchCrm.js";
+import { parseDateKeyFromFileName } from "./register/diskClient.js";
+import { isPartnerSale } from "./register/parseExcel.js";
 import { isWorkDay, DEFAULT_HOLIDAYS } from "./pace.js";
 import { escapeHtml, MONTHS } from "./format.js";
 
 type ManagerTotal = Pick<RegisterMonthSummary["byManager"][number], "name" | "contracts" | "sale">;
 
+export interface ContractReconciliation {
+  closedNotInRegister: Array<{ dealId: string; title: string; manager: string; amount: number; date: string }>;
+  possibleDuplicates: Array<{ dealId: string; title: string; manager: string; registerManager: string }>;
+}
+
 export interface PultContractSource {
+  reconciliation: ContractReconciliation;
   available: boolean;
   label: string;
+  /** Дата среза реестра ОП (YYYY-MM-DD), если данные взяты из реестра или истории. */
+  asOf?: string;
+  /** Время загрузки/обновления файла реестра ОП с Диска; отсутствует, если неизвестно. */
+  updatedAt?: string;
   fact?: number;
   amount?: number;
   revenuePlan?: number;
   byManager: Array<ManagerTotal & { id?: string; groupId?: string }>;
   daily?: Array<{ date: string; contracts: number; amount: number }>;
   awaiting?: number;
+  /**
+   * Партнёрские продажи по реестру: в выручку (`amount`, `sale` и `amount` в разбивках) не входят,
+   * в число договоров (`fact`, `contracts` в разбивках) входят.
+   */
+  partnerAmount?: number;
+  partnerContracts?: number;
   crmFact: number;
   crmAmount: number;
   signals: SignalItem[];
@@ -31,10 +49,26 @@ function workingDaysAfter(date: string, asOfDate: string, holidays: Set<string>)
   return count;
 }
 
+/**
+ * Сотрудник Битрикса для имени из реестра ОП: сначала псевдоним из настроек, затем полное
+ * совпадение имени, затем совпадение только имени, если оно однозначно.
+ */
+export function matchRegisterManager<T extends { name: string }>(
+  name: string, managers: readonly T[], aliases: Record<string, string> = {}
+): T | undefined {
+  const normalize = (value: string) => value.trim().toLocaleLowerCase("ru");
+  const full = normalize(aliases[name] ?? name);
+  const exact = managers.find(m => normalize(m.name) === full);
+  if (exact) return exact;
+  const first = managers.filter(m => normalize(m.name).split(/\s+/)[0] === full);
+  return first.length === 1 ? first[0] : undefined;
+}
+
 /** Только нужные пульту данные: без себестоимости, маржи и премий реестра. */
 export function attachRegisterContracts(
   payload: SalesPultPayload, register: RegisterView, deals: Map<string, DealInfo>,
-  aliases: Record<string, string> = {}
+  aliases: Record<string, string> = {},
+  ownerNames: ReadonlyMap<string, { name: string }> = new Map()
 ): void {
   const month = payload.asOfDate.slice(0, 7);
   const managers = payload.groups.flatMap(g => g.managers.map(m => ({ ...m, groupId: g.id })));
@@ -47,19 +81,12 @@ export function attachRegisterContracts(
     byManager: [],
     crmFact: managers.reduce((sum, m) => sum + m.rollups.month.contracts.uniqueDealsCount, 0),
     crmAmount: managers.reduce((sum, m) => sum + m.rollups.month.contracts.totalAmount, 0),
-    signals: []
+    signals: [],
+    reconciliation: { closedNotInRegister: [], possibleDuplicates: [] }
   };
   payload.contractSource = source;
 
-  const normalize = (name: string) => name.trim().toLocaleLowerCase("ru");
-  const findManager = (name: string) => {
-    const full = normalize(aliases[name] ?? name);
-    const exact = managers.find(m => normalize(m.name) === full);
-    if (exact) return exact;
-    const first = managers.filter(m => normalize(m.name).split(/\s+/)[0] === full);
-    // Совпадение только имени допустимо, если оно однозначно в настройках.
-    return first.length === 1 ? first[0] : undefined;
-  };
+  const findManager = (name: string) => matchRegisterManager(name, managers, aliases);
   const setManagers = (items: ManagerTotal[]) => {
     source.byManager = items.map(m => {
       const manager = findManager(m.name);
@@ -68,19 +95,28 @@ export function attachRegisterContracts(
   };
 
   if (!register.error && register.month === month && register.rows) {
-    const rows = register.rows.filter(r => r.date.startsWith(month) && r.date <= payload.asOfDate);
-    const contracts = groupRegisterContracts(rows);
+    const monthRows = register.rows.filter(r => r.date.startsWith(month) && r.date <= payload.asOfDate);
+    // Партнёрские продажи не входят в выручку отдела, но считаются в договорах и сверяются с CRM.
+    const rows = monthRows.filter(r => !isPartnerSale(r));
+    const partnerRows = monthRows.filter(isPartnerSale);
+    const contracts = groupRegisterContracts(monthRows);
     source.available = true;
     source.label = `по реестру ОП, файл «${register.file}»`;
+    source.asOf = register.asOf?.trim() || undefined;
+    source.updatedAt = register.updatedAt?.trim() || undefined;
     source.fact = contracts.length;
     source.amount = rows.reduce((sum, r) => sum + r.sale, 0);
     source.revenuePlan = register.total!.plan;
-    setManagers([...new Set(rows.map(r => r.manager))].map(name => ({
+    if (partnerRows.length) {
+      source.partnerAmount = partnerRows.reduce((sum, r) => sum + r.sale, 0);
+      source.partnerContracts = groupRegisterContracts(partnerRows).length;
+    }
+    setManagers([...new Set(monthRows.map(r => r.manager))].map(name => ({
       name,
       contracts: contracts.filter(c => c.manager === name).length,
       sale: rows.filter(r => r.manager === name).reduce((sum, r) => sum + r.sale, 0)
     })));
-    source.daily = [...new Set(rows.map(r => r.date))].sort().map(date => ({
+    source.daily = [...new Set(monthRows.map(r => r.date))].sort().map(date => ({
       date,
       contracts: contracts.filter(c => c.date === date).length,
       amount: rows.filter(r => r.date === date).reduce((sum, r) => sum + r.sale, 0)
@@ -93,7 +129,7 @@ export function attachRegisterContracts(
         if (!deal) return [];
         return [{
           id, title: deal.title, company: companies.get(id) ?? "", amount: deal.amount,
-          manager: managers.find(m => m.id === deal.assignedById)?.name ?? deal.assignedById,
+          manager: managers.find(m => m.id === deal.assignedById)?.name ?? ownerNames.get(deal.assignedById)?.name ?? `сотрудник ID ${deal.assignedById}`,
           // Дата перехода предпочтительнее планового CLOSEDATE.
           date: deal.contractDate || deal.portalSignDate || deal.closeDate?.slice(0, 10)
         }];
@@ -101,42 +137,51 @@ export function attachRegisterContracts(
       const result = matchRegisterWithCrm(contracts, crm, { managerAliases: aliases });
       const settled = settleUnmatched(result, contracts, aliases);
       const pending = settled.extra;
-      // B2B пульт по Битриксу не считает, поэтому его договоры здесь сделок не найдут.
-      const missing = settled.missing.filter(c => c.type.toLowerCase() !== "b2b");
       source.awaiting = pending.length;
       const holidays = new Set(payload.holidays ?? DEFAULT_HOLIDAYS);
       for (const deal of pending) {
         if (!deal.date || !/^\d{4}-\d{2}-\d{2}$/.test(deal.date)) continue;
         if (workingDaysAfter(deal.date, payload.asOfDate, holidays) > 2) {
-          source.signals.push({
-            color: "gray",
-            text: `<b>${escapeHtml(deal.manager)}</b>: Закрыто в Битриксе, нет в ОП — ${escapeHtml(deal.title)} (${escapeHtml(deal.id)}), проверить сопоставление по названию и сумме`
+          source.reconciliation.closedNotInRegister.push({
+            dealId: deal.id, title: deal.title, manager: deal.manager, amount: deal.amount, date: deal.date
           });
         }
       }
       for (const { deal, contract } of settled.repeats) {
-        source.signals.push({
-          color: "gray",
-          text: `<b>${escapeHtml(deal.manager)}</b>: Возможен дубль — ${escapeHtml(deal.title)} (${escapeHtml(deal.id)}): договор с этим заказчиком уже есть в ОП (менеджер в ОП: ${escapeHtml(contract.manager)}), проверить`
-        });
-      }
-      for (const contract of missing) {
-        source.signals.push({
-          color: "gray",
-          text: `<b>${escapeHtml(contract.manager)}</b>: Есть в ОП, нет сделки в Битриксе — ${escapeHtml(contract.customer)}, проверить сопоставление по названию и сумме`
+        source.reconciliation.possibleDuplicates.push({
+          dealId: deal.id, title: deal.title, manager: deal.manager, registerManager: contract.manager
         });
       }
     }
   } else {
     const summary = register.history?.months.find(m => m.month === month);
     if (summary) {
+      const monthSnap = register.history?.monthViews?.[month];
+      const fileDateKey = parseDateKeyFromFileName(summary.fileName);
       source.available = true;
       source.label = `по реестру ОП, файл «${summary.fileName}»`;
-      source.fact = summary.contracts;
+      source.asOf = monthSnap?.asOf?.trim() || fileDateKey || undefined;
+      source.updatedAt = summary.updatedAt?.trim() || monthSnap?.updatedAt?.trim() || undefined;
+      // Старый кэш без `contractsWithPartner` считает договоры без партнёрских, как раньше.
+      const withPartner = summary.contractsWithPartner;
+      source.fact = withPartner?.total ?? summary.contracts;
       source.amount = summary.sale;
       source.revenuePlan = summary.plan;
-      source.daily = summary.dailyContracts;
-      setManagers(summary.byManager.map(({ name, contracts, sale }) => ({ name, contracts, sale })));
+      source.partnerAmount = summary.partnerSale;
+      source.partnerContracts = summary.partnerContracts;
+      if (withPartner) {
+        const amounts = new Map((summary.dailyContracts ?? []).map(d => [d.date, d.amount]));
+        source.daily = [...new Set([...amounts.keys(), ...Object.keys(withPartner.daily)])].sort().map(date => ({
+          date, contracts: withPartner.daily[date] ?? 0, amount: amounts.get(date) ?? 0
+        }));
+        const sales = new Map(summary.byManager.map(m => [m.name, m.sale]));
+        setManagers([...new Set([...sales.keys(), ...Object.keys(withPartner.byManager)])].map(name => ({
+          name, contracts: withPartner.byManager[name] ?? 0, sale: sales.get(name) ?? 0
+        })));
+      } else {
+        source.daily = summary.dailyContracts;
+        setManagers(summary.byManager.map(({ name, contracts, sale }) => ({ name, contracts, sale })));
+      }
     } else if (!register.error && register.month && register.month < month) {
       // В первые дни месяца последний файл ОП ещё за прошлый месяц — это не сбой.
       source.label = `файла ОП за ${MONTHS[Number(month.slice(5, 7)) - 1].toLocaleLowerCase("ru")} ещё нет, цифры по Битриксу`;
@@ -144,19 +189,26 @@ export function attachRegisterContracts(
   }
 
   if (payload.closedMonth) return;
+  const portal = (payload.portal || "").replace(/\/+$/, "");
+  const linkDeal = (id: string, title: string) => {
+    const label = `${escapeHtml(title)} (${escapeHtml(id)})`;
+    if (!portal) return label;
+    const href = `${escapeHtml(portal)}/crm/deal/details/${encodeURIComponent(id)}/`;
+    return `<a href="${href}" target="_blank" rel="noopener">${label}</a>`;
+  };
   for (const deal of deals.values()) {
-    const manager = managers.find(m => m.id === deal.assignedById)?.name ?? deal.assignedById;
+    const manager = managers.find(m => m.id === deal.assignedById)?.name ?? ownerNames.get(deal.assignedById)?.name ?? `сотрудник ID ${deal.assignedById}`;
     if (crmIds.has(deal.id) && deal.amount === 0) {
       source.signals.push({
         color: "yellow",
-        text: `<b>${escapeHtml(manager)}</b>: Сумма сделки 0 — ${escapeHtml(deal.title)} (${escapeHtml(deal.id)})`
+        text: `<b>${escapeHtml(manager)}</b>: Сумма сделки 0 — ${linkDeal(deal.id, deal.title)}`
       });
     }
     const wonInCrm = deal.stageSemanticId === "S" || /(?:^|:)WON$/.test(deal.stageId ?? "");
     if (wonInCrm && deal.outcome?.startsWith("lost:")) {
       source.signals.push({
         color: "red",
-        text: `<b>${escapeHtml(manager)}</b>: Успешна в Битриксе, а на портале договор у другого поставщика — ${escapeHtml(deal.title)} (${escapeHtml(deal.id)})`
+        text: `<b>${escapeHtml(manager)}</b>: Успешна в Битриксе, а на портале договор у другого поставщика — ${linkDeal(deal.id, deal.title)}`
       });
     }
   }

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadRegisterView } from "../../src/bitrix/salesPult/register/load.js";
 import type { ReadOnlyBitrixClient } from "../../src/bitrix/reporting/readOnlyClient.js";
-import { saveEncryptedRegisterHistory, shouldRefreshRegisterHistory, recordRegisterHistoryAttempt } from "../../src/bitrix/salesPult/register/crypto.js";
+import { saveEncryptedRegisterHistory, shouldRefreshRegisterHistory, recordRegisterHistoryAttempt, REGISTER_HISTORY_VERSION } from "../../src/bitrix/salesPult/register/crypto.js";
 import ExcelJS from "exceljs";
 import { chromium } from "playwright";
 import { buildFullRegisterHistory } from "../../src/bitrix/salesPult/register/history.js";
@@ -23,6 +23,64 @@ async function fixture() {
 }
 
 describe("переключатель месяцев реестра", () => {
+  it("hiddenManagers убирает менеджера из списка, но не из плана отдела и не из договоров", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Лист1");
+    ws.getRow(1).values = [null, "Дата договора", "Контрагент", "Товар", "Сумма продажи без НДС", "Менеджер"];
+    ws.getRow(2).values = [null, "2026-11-02", "Заказчик", "панель", 100, "Менеджер В"];
+    ws.getRow(4).values = [null, null, "Менеджер", "План на месяц"];
+    ws.getRow(5).values = [null, null, "Менеджер Б", 2000];
+    ws.getRow(6).values = [null, null, "Менеджер В", 0];
+    ws.getRow(7).values = [null, null, "Менеджер А", 3000];
+    const history = await buildFullRegisterHistory({
+      files: [{ fileName: "ОП 03.11.26.xlsx", buffer: Buffer.from(await wb.xlsx.writeBuffer()) }],
+      hiddenManagers: ["Менеджер Б", "Менеджер В"],
+      todayAlmaty: "2026-11-03",
+      fetchPortal: false,
+      crmWonDealsByMonth: new Map()
+    });
+
+    const [month] = history.months;
+    expect(month.byManager.map((m) => m.name).sort()).toEqual(["Менеджер А", "Менеджер В"]);
+    expect(month.plan).toBe(5000);
+    expect(month.sale).toBe(100);
+
+    const view = history.monthViews!["2026-11"];
+    expect(view.managers.map((m) => m.name).sort()).toEqual(["Менеджер А", "Менеджер В"]);
+    expect(view.total.plan).toBe(5000);
+    expect(view.rows).toHaveLength(1);
+  });
+
+  it("hiddenManagers работает и для текущего файла", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Лист1");
+    ws.getRow(1).values = [null, "Дата договора", "Контрагент", "Товар", "Сумма продажи без НДС", "Менеджер"];
+    ws.getRow(2).values = [null, "2026-11-02", "Заказчик", "панель", 100, "Менеджер А"];
+    ws.getRow(4).values = [null, null, "Менеджер", "План на месяц"];
+    ws.getRow(5).values = [null, null, "Менеджер Б", 2000];
+    ws.getRow(6).values = [null, null, "Менеджер А", 3000];
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "register-hidden-"));
+    try {
+      const registerFilePath = path.join(dir, "ОП 03.11.26.xlsx");
+      await wb.xlsx.writeFile(registerFilePath);
+      const reader = { call: async () => [], listAllBatched: async () => [] } as unknown as ReadOnlyBitrixClient;
+
+      const view = await loadRegisterView({
+        reader,
+        registerFilePath,
+        hiddenManagers: ["Менеджер Б"],
+        todayAlmaty: "2026-11-03",
+        historyCachePath: path.join(dir, "history.json"),
+        secretKey: "test-key",
+        fetchPortal: false
+      });
+
+      expect(view.error).toBeUndefined();
+      expect(view.managers?.map((m) => m.name)).toEqual(["Менеджер А"]);
+      expect(view.total?.plan).toBe(5000);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it("сохраняет независимые полные срезы после сверки CRM", async () => {
     const history = await fixture();
     const views = history.monthViews!;
@@ -113,6 +171,55 @@ describe("кэш срезов реестра", () => {
         recordRegisterHistoryAttempt(attemptFilePath, { success, timestamp: "2026-11-03T04:30:00Z" });
         expect(shouldRefreshRegisterHistory({ cacheFilePath, attemptFilePath, nowIso, cachedPayload: history })).toBe(false);
       }
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("сразу пересобирает кэш, собранный старым расчётом, соблюдая часовой антиспам", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reg-month-version-"));
+    try {
+      const history = await fixture();
+      expect(history.version).toBe(REGISTER_HISTORY_VERSION);
+      const cacheFilePath = path.join(dir, "history.json");
+      const attemptFilePath = path.join(dir, "last_attempt.json");
+      // 10:00 Алматы, кэш собран в 10:00 — по суточному правилу пересборки нет.
+      const nowIso = "2026-11-03T05:00:00Z";
+      saveEncryptedRegisterHistory(cacheFilePath, history, "test-key");
+      fs.utimesSync(cacheFilePath, new Date(nowIso), new Date(nowIso));
+      expect(shouldRefreshRegisterHistory({ cacheFilePath, attemptFilePath, nowIso, cachedPayload: history })).toBe(false);
+      const old = { ...history };
+      delete old.version;
+      expect(shouldRefreshRegisterHistory({ cacheFilePath, attemptFilePath, nowIso, cachedPayload: old })).toBe(true);
+      expect(shouldRefreshRegisterHistory({ cacheFilePath, attemptFilePath, nowIso, cachedPayload: { ...history, version: REGISTER_HISTORY_VERSION + 1 } })).toBe(false);
+      for (const success of [false, true]) {
+        recordRegisterHistoryAttempt(attemptFilePath, { success, timestamp: "2026-11-03T04:30:00Z" });
+        expect(shouldRefreshRegisterHistory({ cacheFilePath, attemptFilePath, nowIso, cachedPayload: old })).toBe(false);
+      }
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("строка текущего месяца в истории считается по последнему файлу, с партнёрскими отдельно", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reg-month-row-"));
+    try {
+      const history = await fixture();
+      const before = history.months.find((m) => m.month === "2026-11")!;
+      expect(before.sale).toBe(11000000);
+      const cachePath = path.join(dir, "history.json");
+      saveEncryptedRegisterHistory(cachePath, history, "test-key");
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("Лист1");
+      ws.getRow(1).values = [null, "Дата договора", "Тип продажи", "Контрагент", "Кол-во", "Товар", "Сумма без НДС", "Сумма продажи без НДС", "Менеджер"];
+      ws.getRow(2).values = [null, "2026-11-03", "ом", "Новый заказчик", 1, "панель", 100, 222, "Новый менеджер"];
+      ws.getRow(3).values = [null, "2026-11-03", "ок", "Тестовый колледж", 1, "мульт сист", 400, 500, "Новый менеджер"];
+      const registerFilePath = path.join(dir, "ОП 03.11.26.xlsx");
+      await wb.xlsx.writeFile(registerFilePath);
+      const reader = { call: async () => [], listAllBatched: async () => [] } as unknown as ReadOnlyBitrixClient;
+      const view = await loadRegisterView({ reader, registerFilePath, todayAlmaty: "2026-11-03", historyCachePath: cachePath, secretKey: "test-key", fetchPortal: false });
+      const row = view.history!.months.find((m) => m.month === "2026-11")!;
+      expect(row).toMatchObject({ sale: 222, contracts: 1, fileName: "ОП 03.11.26.xlsx", partnerSale: 500, partnerContracts: 1 });
+      expect(row.byManager.map((m) => [m.name, m.sale])).toEqual([["Новый менеджер", 222]]);
+      expect(row.reconciliationPerformed).toBe(before.reconciliationPerformed);
+      expect(row.label).toBe(before.label);
+      expect(view.history!.months.find((m) => m.month === "2026-10")!.sale).toBe(10000000);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 

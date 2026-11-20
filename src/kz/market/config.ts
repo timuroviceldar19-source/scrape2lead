@@ -145,3 +145,15 @@ export function cleanEntityName(name: unknown): string {
     .replace(/"{2,}/g, '"')
     .trim();
 }
+
+/** Price threshold for the matched item category; kits may have any unit price. */
+export function marketMinUnitPrice(code: string, cfg: MarketConfig): number {
+  for (const group of Object.values(cfg.groups)) {
+    for (const kind of group.kinds) {
+      if (kind.patterns.some(pattern => new RegExp(pattern).test(code))) {
+        return kind.minUnitPrice ?? cfg.minUnitPrice;
+      }
+    }
+  }
+  return cfg.minUnitPrice;
+}

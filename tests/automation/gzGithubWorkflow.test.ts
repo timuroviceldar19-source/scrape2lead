@@ -10,7 +10,7 @@ function readWorkflow(name: string): string {
 
 describe("GZ GitHub workflow credentials", () => {
   it("passes the Goszakup token into the reusable automation", () => {
-    const reusable = readWorkflow("gz-automation.yml");
+    const reusable = readWorkflow("gz-automation-machine.yml");
 
     expect(reusable).toMatch(/secrets:\s+[\s\S]*GOSZAKUP_TOKEN:\s+required: false/);
     expect(reusable).toContain("GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}");
@@ -84,7 +84,7 @@ describe("GZ parallel PK and main collection", () => {
   });
 
   it("keeps the plan cache separate per scope and falls back to the legacy shared key", () => {
-    const reusable = readWorkflow("gz-automation.yml");
+    const reusable = readWorkflow("gz-automation-machine.yml");
 
     expect(reusable).toContain("key: gz-db-${{ inputs.cache-scope }}-${{ github.run_id }}");
     expect(reusable).toContain("gz-db-${{ inputs.cache-scope }}-\n            gz-db-");
@@ -93,7 +93,7 @@ describe("GZ parallel PK and main collection", () => {
 
 describe("GZ GitHub workflow browser setup", () => {
   it("installs the Playwright browser without refreshing external apt repositories", () => {
-    const reusable = readWorkflow("gz-automation.yml");
+    const reusable = readWorkflow("gz-automation-machine.yml");
 
     expect(reusable).toContain("npx playwright install chromium");
     expect(reusable).not.toContain("playwright install --with-deps");
@@ -113,7 +113,7 @@ describe("GZ portal intermediate certificate", () => {
   });
 
   it("trusts it for the collection and for the deal outcome check", () => {
-    expect(readWorkflow("gz-automation.yml")).toContain(envLine);
+    expect(readWorkflow("gz-automation-machine.yml")).toContain(envLine);
     const pk = readWorkflow("gz-daily-pk.yml");
     expect(pk.slice(pk.indexOf("  deal-outcomes:"))).toContain(envLine);
   });
@@ -121,7 +121,7 @@ describe("GZ portal intermediate certificate", () => {
 
 describe("GZ run summary", () => {
   it("writes the run summary to the job page even when the run failed", () => {
-    const reusable = readWorkflow("gz-automation.yml");
+    const reusable = readWorkflow("gz-automation-machine.yml");
     const step = reusable.slice(reusable.indexOf("      - name: Run summary"));
     const block = step.slice(0, step.indexOf("      - name: Save plan cache"));
 
@@ -158,10 +158,49 @@ describe("CI workflow", () => {
 
 describe("GZ portal outage retry", () => {
   it("runs the automation through the retry wrapper", () => {
-    const reusable = readWorkflow("gz-automation.yml");
+    const reusable = readWorkflow("gz-automation-machine.yml");
 
     expect(reusable).toContain("sh scripts/run-automation-with-retry.sh '${{ inputs.config }}' '${{ inputs.log-path }}'");
     expect(reusable).not.toContain("sh scripts/run-automation.sh");
   });
 });
 
+
+describe("GZ machine handoff chain", () => {
+  it("chains three reusable attempts only on explicit handoff and fails closed", () => {
+    const chain = readWorkflow("gz-automation.yml");
+    expect(chain.match(/uses: .\/.github\/workflows\/gz-automation-machine.yml/g)).toHaveLength(3);
+    for (const n of [2, 3]) {
+      expect(chain).toContain(`needs: machine-${n - 1}`);
+      expect(chain).toContain(`if: needs.machine-${n - 1}.result == 'success' && needs.machine-${n - 1}.outputs.handoff == 'true'`);
+    }
+    const final = chain.slice(chain.indexOf("  collection-result:"));
+    expect(final).toContain("needs: [machine-1, machine-2, machine-3]");
+    expect(final).toContain("if: always()");
+    for (const n of [1, 2, 3]) expect(final).toContain(`needs.machine-${n}.outputs.collected == 'true'`);
+    expect(final).toContain(`test "$COLLECTED" = 'true'`);
+  });
+  it("exports nested outputs, passes secrets and protects cache and artifacts", () => {
+    const machine = readWorkflow("gz-automation-machine.yml");
+    expect(machine).toContain("value: ${{ jobs.run.outputs.collected }}");
+    expect(machine).toContain("value: ${{ jobs.run.outputs.handoff }}");
+    expect(machine).toContain("collected: ${{ steps.collect.outputs.collected }}");
+    expect(machine).toContain("handoff: ${{ steps.collect.outputs.handoff }}");
+    expect(machine).toContain("GZ_PORTAL_HANDOFF: ${{ inputs.machine < 3 && '1' || '0' }}");
+    expect(machine).toContain("if: always() && steps.collect.outputs.handoff != 'true'");
+    expect(machine).toContain("format('-machine-{0}', inputs.machine)");
+    expect(machine).toContain("${{ inputs.log-path }}.portal-probe-state");
+    expect(machine).toContain('if [ "$code" -eq 0 ]; then\n            echo "collected=true"');
+    expect(machine).toContain('elif [ "$code" -eq 76 ]; then');
+    expect(machine).toContain("BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}");
+    expect(machine).not.toContain("concurrency:");
+    expect(readWorkflow("gz-automation.yml").match(/BITRIX24_WEBHOOK_URL: \$\{\{ secrets.BITRIX24_WEBHOOK_URL \}\}/g)).toHaveLength(3);
+  });
+  it.each(["gz-daily-main.yml", "gz-daily-pk.yml"])("%s exposes explicit simulation", name => {
+    const daily = readWorkflow(name);
+    expect(daily).toContain("options: ['0', '1', '2', '3']");
+    expect(daily).toContain("default: '0'");
+    expect(daily).toContain("fromJSON(inputs.simulate_portal_block || '0')");
+    expect(readWorkflow("gz-automation-machine.yml")).toContain("inputs.machine <= inputs.simulate-portal-block");
+  });
+});

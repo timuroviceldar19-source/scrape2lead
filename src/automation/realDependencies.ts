@@ -28,7 +28,7 @@ export function createRealAutomationDependencies(): AutomationDependencies {
     dryRunPlans: (input) => runTsx("scripts/bitrix-push-gz-deals.mts", ["--input", input]),
     dryRunLots: (input) => runTsx("scripts/bitrix-push-gz-lots.mts", ["--input", input, "--no-company"]),
     applyPlans: (input, limit) => runTsx("scripts/bitrix-push-gz-deals.mts", withLimit(["--input", input, "--execute"], limit)),
-    applyLots: (input, limit) => runTsx("scripts/bitrix-push-gz-lots.mts", withLimit(["--input", input, "--execute"], limit)),
+    applyLots: (input, limit) => runTsx("scripts/bitrix-push-gz-lots.mts", withLimit(["--input", input, "--execute", "--sync-open"], limit)),
     analyzeLots: (input, limit) => runTsx("scripts/analyze-gz-specs.mts", withLimit(["--input", input, "--execute"], limit)),
     procurement: {
       collect: async (configPath, outputDir, years) => {

@@ -77,6 +77,7 @@ export function buildMonthView(
     hasContractDynamics: !op?.available || op.daily !== undefined,
     sourceLabel: op?.label ?? (payload.closedMonth ? "реестр ОП за месяц недоступен, цифры по Битриксу" : "реестр ОП недоступен, цифры по Битриксу"),
     revenuePlan: op?.revenuePlan, awaitingRegister: op?.awaiting,
+    partnerAmount: op?.partnerAmount, partnerContracts: op?.partnerContracts,
     crmFact: op?.crmFact ?? monthFact, crmAmount: op?.crmAmount ?? monthAmount,
     plan: monthPlan, fact: monthFact, amount: monthAmount,
     pacePerDay: forecastRes.pacePerDay, forecast: forecastRes.forecast,
@@ -91,6 +92,11 @@ export function buildMonthView(
     nowXDay: payload.closedMonth ? D : D - 1 + ctx.dayFrac, dayFrac: payload.closedMonth ? 1 : ctx.dayFrac,
     asOfDate: payload.asOfDate, asOfDay: D, asOfMonth: M, asOfYear: Y
   };
+}
+
+function tasksCountText(m: PultManagerView): string {
+  const tasksCount = (m.topTasks || []).length;
+  return tasksCount ? pluralNbsp(tasksCount, ["срочная задача", "срочные задачи", "срочных задач"]) : "срочных задач нет";
 }
 
 function buildSalesManager(
@@ -110,11 +116,8 @@ function buildSalesManager(
     ? `набрал ${fmtNumberNbsp(r.calls.totalAttempts)} · ${fmtNumberNbsp(r.calls.durationMinutes)} мин`
     : "пока не звонил";
   const mContractsSub = r.contracts.uniqueDealsCount ? (formatPultMoney(r.contracts.totalAmount) || "сумма не указана") : "";
-  const tasksCount = (m.topTasks || []).length;
-  const tasksCountText = tasksCount ? pluralNbsp(tasksCount, ["срочная задача", "срочные задачи", "срочных задач"]) : "срочных задач нет";
-
   return {
-    id: m.id, name: m.name, initials: initials(m.name), tasksCountText,
+    id: m.id, name: m.name, initials: initials(m.name), tasksCountText: tasksCountText(m),
     calls: {
       fact: r.calls.successful, target: targetCalls, expected: mjc.expected,
       cls: mjc.cls, label: mjc.text, text: mjc.text, sub: mCallsSub,
@@ -243,11 +246,11 @@ function buildTenderManager(
   const tmJudge = judgeMetricStatus(r.contracts.uniqueDealsCount, targetContracts, period, "contracts", ctx);
   const sub = r.contracts.uniqueDealsCount ? (formatPultMoney(r.contracts.totalAmount) || "сумма не указана") : "";
   return {
-    id: m.id, name: m.name, initials: initials(m.name),
+    id: m.id, name: m.name, initials: initials(m.name), tasksCountText: tasksCountText(m),
     contracts: {
       fact: r.contracts.uniqueDealsCount, target: targetContracts,
       expected: tmJudge.expected, cls: tmJudge.cls, label: tmJudge.text, text: tmJudge.text,
-      sub: `${sub} · ${contractLabel(payload, period)}`, totalAmount: r.contracts.totalAmount,
+      sub: [sub, contractLabel(payload, period)].filter(Boolean).join(" · "), totalAmount: r.contracts.totalAmount,
       isEarlyEmpty: period === "day" && ctx.isEarly && r.contracts.uniqueDealsCount === 0
     },
     debts: m.debts, topTasks: m.topTasks || []
@@ -311,7 +314,7 @@ export function buildPultView(payload: SalesPultPayload): PultView {
   const wdLabel = `Рабочих дней прошло ${passedWd} из ${ctx.monthTotal}`;
   const monthFillPct = (ctx.monthDone / ctx.monthTotal) * 100;
 
-  const { signals, signalsUrgent, signalsMeta } = formatSignals(buildPultSignals(payload));
+  const { signals, signalsUrgent, signalsMeta } = formatSignals(buildPultSignals(payload), payload.outcomeMismatches?.length ?? 0);
 
   const sales = payload.groups.find((g) => g.id === "sales") || payload.groups[0];
   const tenders = payload.groups.find((g) => g.id === "tenders");

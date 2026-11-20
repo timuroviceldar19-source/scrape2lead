@@ -15,6 +15,11 @@ on:
     - cron: "40 4 * * *"
   workflow_dispatch:
     inputs:
+      simulate_portal_block:
+        description: Имитация недоступности на первых машинах (без сети)
+        type: choice
+        options: ['0', '1', '2', '3']
+        default: '0'
       deal_outcomes:
         description: "Run the deal outcome check after the collection (the Worker enables it for the morning slot only)"
         type: boolean
@@ -81,6 +86,7 @@ jobs:
       config: config/automation.pk.json
       runs-dir: runs/pk
       log-path: runs/pk/scheduler.log
+      simulate-portal-block: ${{ fromJSON(inputs.simulate_portal_block || '0') }}
       cache-scope: pk
     secrets:
       BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}

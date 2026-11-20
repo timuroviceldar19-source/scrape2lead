@@ -3,6 +3,8 @@
 
   let P = PAYLOAD;
   let V = VIEW;
+  // Вариант для одного менеджера: «Я — …» закреплено за ним, «Радара» нет (данные уже урезаны при сборке).
+  const VIEWER = PAYLOAD.viewer && PAYLOAD.viewer.kind === "manager" ? PAYLOAD.viewer : null;
   const currentMonth = PAYLOAD.asOfDate.slice(0, 7);
   let selectedMonth = currentMonth;
 
@@ -33,30 +35,56 @@
   const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
   const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
   const ddmm = (iso) => { if (!iso) return "—"; const parts = String(iso).slice(0, 10).split("-"); return parts.length === 3 ? `${parts[2]}.${parts[1]}` : iso; };
+  const formatAlmatyDateTime = (raw) => {
+    const s = String(raw == null ? "" : raw).trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return ddmm(s);
+    const utc5 = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::\d{2})?(?:\s*\(UTC\+5\))?$/.exec(s);
+    if (utc5) return `${utc5[3]}.${utc5[2]} ${utc5[4]}:${utc5[5]} (UTC+5)`;
+    const ms = Date.parse(s);
+    if (Number.isNaN(ms)) return s;
+    const d = new Date(ms + 5 * 3600000).toISOString();
+    return `${d.slice(8, 10)}.${d.slice(5, 7)} ${d.slice(11, 16)} (UTC+5)`;
+  };
+
+  const dealUrl = (id) => {
+    const base = String(P.portal || "").replace(/\/+$/, "");
+    return (base ? base : "") + "/crm/deal/details/" + encodeURIComponent(id) + "/";
+  };
+
+  function copyToClipboard(text, btn) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+    const original = btn.textContent;
+    btn.textContent = "Скопировано ✓";
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.disabled = false;
+    }, 2000);
+  }
 
   /* ================= signals ================= */
   function renderSignals() {
-    const s = V.signals;
-    const urgent = V.signalsUrgent;
-    const body = s.length ? s.map((sig) => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("") : `<div class="sig s-good"><span>Сегодня без происшествий</span></div>`;
+    const isTv = document.body.classList.contains("tv");
+    const myMgr = me && !isTv ? P.groups.flatMap(g => g.managers).find(m => m.id === me) : null;
 
-    let mismatchesHtml = "";
-    if (P.outcomeMismatches && P.outcomeMismatches.length > 0) {
-      const dealUrl = (id) => {
-        const base = String(P.portal || "").replace(/\/+$/, "");
-        return (base ? base : "") + "/crm/deal/details/" + encodeURIComponent(id) + "/";
-      };
-      mismatchesHtml = `
-        <div class="mismatches-box">
-          <div class="box-title">
-            ⚠️ Ошибка в CRM: сделки выиграны на портале, но закрыты как проигрыш (${P.outcomeMismatches.length})
+    const buildMismatchesDetails = (mismatches, extraClass = "") => {
+      if (!mismatches || !mismatches.length) return "";
+      return `
+        <details class="outcome-mismatches ${extraClass}">
+          <summary class="sig s-bad"><span>Ошибка в CRM: ${plural(mismatches.length, ["сделка выиграна", "сделки выиграны", "сделок выиграно"])} на портале, но ${mismatches.length % 10 === 1 && mismatches.length % 100 !== 11 ? "закрыта" : "закрыты"} как проигрыш</span><span class="mismatch-toggle">список</span></summary>
+          <div class="mismatch-content">
+          <div class="mismatch-actions">
+            <button type="button" class="copy-chat-btn" data-copy-mismatches>Скопировать для чата</button>
           </div>
           <div class="box-desc">
             По этим сделкам проверка портала зафиксировала действующий договор группы, но в CRM они закрыты со статусом проигрыша. Проверьте и исправьте стадию:
           </div>
           <div class="mismatches-list">
-            ${P.outcomeMismatches.map((m) => `
-              <div class="mismatch-row">
+            ${mismatches.map((m) => `
+              <div class="mismatch-row" data-id="${esc(m.id)}">
                 <div class="info">
                   <a href="${dealUrl(m.id)}" target="_blank" rel="noopener" class="deal-link">${esc(m.title)}</a>
                   <span class="mgr">· Менеджер: ${esc(m.managerName)}</span>
@@ -67,23 +95,245 @@
               </div>
             `).join("")}
           </div>
-        </div>
+          </div>
+        </details>
       `;
+    };
+
+    let innerHtml = "";
+    if (myMgr) {
+      const myMismatches = (P.outcomeMismatches || []).filter(m => m.managerId === me);
+      const otherMismatches = (P.outcomeMismatches || []).filter(m => m.managerId !== me);
+
+      const mySignals = V.signals.filter(sig => sig.text.includes(myMgr.name) || (first(myMgr.name) && sig.text.includes(first(myMgr.name))));
+      const otherSignals = V.signals.filter(sig => !mySignals.includes(sig));
+
+      const myHtml = [
+        buildMismatchesDetails(myMismatches),
+        mySignals.map(sig => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("")
+      ].filter(Boolean).join("");
+
+      const urgentMe = myMismatches.length + mySignals.length;
+      const headHtml = urgentMe
+        ? myHtml
+        : `<div class="sig s-good"><span>У вас нет срочных пунктов</span></div>`;
+
+      const otherCount = otherMismatches.length + otherSignals.length;
+      const otherHtml = otherCount > 0 ? `
+        <details class="other-team-signals">
+          <summary>У остальных в команде: ${plural(otherCount, ["пункт", "пункта", "пунктов"])}</summary>
+          <div class="other-team-content">
+            ${buildMismatchesDetails(otherMismatches)}
+            ${otherSignals.map(sig => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("")}
+          </div>
+        </details>
+      ` : "";
+
+      innerHtml = headHtml + otherHtml;
+    } else {
+      const mismatchesHtml = buildMismatchesDetails(P.outcomeMismatches);
+      const body = V.signals.length
+        ? V.signals.map(sig => `<div class="sig ${sig.cls}"><span>${sig.text}</span></div>`).join("")
+        : (!V.signalsUrgent ? `<div class="sig s-good"><span>Срочного нет</span></div>` : "");
+      innerHtml = mismatchesHtml + body;
     }
 
     document.getElementById("signals").innerHTML = `
-      <div class="block-head"><h2><span class="idx">02</span>Требует внимания</h2><span class="meta">${urgent ? plural(urgent, ["срочный пункт", "срочных пункта", "срочных пунктов"]) : "срочного нет"}</span></div>
-      <div class="signals">${body}</div>
-      ${mismatchesHtml}`;
+      <div class="block-head"><h2><span class="idx">02</span>Срочно</h2><span class="meta">${esc(V.signalsMeta)}</span></div>
+      <div class="signals">${innerHtml}</div>`;
+
+    document.querySelectorAll("#signals .outcome-mismatches").forEach(errors => {
+      errors.querySelector("summary")?.addEventListener("click", e => {
+        if (document.body.classList.contains("tv")) e.preventDefault();
+      });
+      errors.addEventListener("toggle", () => {
+        if (document.body.classList.contains("tv")) errors.open = false;
+      });
+      errors.querySelectorAll("button[data-copy-mismatches]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const ids = new Set([...errors.querySelectorAll(".mismatch-row")].map(r => r.dataset.id));
+          const rootMismatches = (typeof PAYLOAD !== "undefined" && PAYLOAD?.outcomeMismatches) || P.outcomeMismatches || [];
+          const rows = rootMismatches.filter(m => ids.has(String(m.id))).map((m, idx) => {
+            const url = dealUrl(m.id);
+            const amt = money(m.amount) || "сумма не указана";
+            const dateStr = m.portalSignDate ? `от ${ddmm(m.portalSignDate)}` : m.outcome;
+            return `${idx + 1}. ${m.title} (${amt}, ${dateStr}) — Менеджер: ${m.managerName}\n   ${url}`;
+          });
+          const text = `Ошибки в CRM (выиграно на портале, но закрыто как проигрыш):\n` + rows.join("\n");
+          copyToClipboard(text, btn);
+        });
+      });
+    });
   }
 
   /* ================= month hero ================= */
-  function renderMonth() {
+  function getUrgentJumpCount() {
+    if (P.closedMonth || document.body.classList.contains("tv")) return 0;
+    const myMgr = me ? (P.groups || []).flatMap((g) => g.managers || []).find((m) => m.id === me) : null;
+    if (myMgr) {
+      const myMismatches = (P.outcomeMismatches || []).filter((m) => m.managerId === me);
+      const mySignals = (V.signals || []).filter((sig) => sig.text.includes(myMgr.name) || (first(myMgr.name) && sig.text.includes(first(myMgr.name))));
+      return myMismatches.length + mySignals.length;
+    }
+    return (P.outcomeMismatches || []).length + (V.signals || []).length;
+  }
+
+  function renderMonthFreshnessHtml(m) {
+    const M = m.asOfMonth;
+    const periodText = `${P.closedMonth ? "Архив" : "Выбран"}: ${MONTHS[M - 1]} ${m.asOfYear}`;
+    let crmText;
+    if (P.closedMonth) {
+      crmText = `архивный срез по ${ddmm(P.asOfDate)}`;
+    } else {
+      const buildTime = formatAlmatyDateTime(PAYLOAD.generatedAt) || (VIEW.genLabel ? `${ddmm(PAYLOAD.asOfDate)} ${VIEW.genLabel} (UTC+5)` : "");
+      crmText = `срез по ${ddmm(P.asOfDate)}${buildTime ? ` · сборка Пульта ${buildTime}` : ""}`;
+    }
+
+    const cs = P.contractSource;
+    let opText;
+    let opWarn = false;
+    if (cs && cs.available) {
+      const opSlice = cs.asOf
+        ? `${P.closedMonth ? "архивный срез" : "срез"} по ${ddmm(cs.asOf)}`
+        : (P.closedMonth ? "архивный срез за месяц" : "дата среза не указана");
+      const opUpd = formatAlmatyDateTime(cs.updatedAt);
+      const opUpdText = opUpd
+        ? `файл с Диска от ${opUpd}`
+        : "время обновления с Диска неизвестно";
+      opText = `${opSlice} · ${opUpdText}`;
+      opWarn = !opUpd;
+    } else {
+      opText = cs && cs.label ? cs.label : (P.closedMonth ? "за месяц недоступен, цифры по Битриксу" : "недоступен, цифры по Битриксу");
+      opWarn = true;
+    }
+
+    return `
+      <div class="month-freshness" id="monthFreshness" aria-label="Свежесть источников">
+        <span class="mf-item mf-period"><span class="mf-k">Период</span><span class="mf-v">${esc(periodText)}</span></span>
+        <span class="mf-item mf-crm"><span class="mf-k">CRM Битрикс24</span><span class="mf-v">${esc(crmText)}</span></span>
+        <span class="mf-item mf-op${opWarn ? " is-warn" : ""}"><span class="mf-k">Реестр ОП</span><span class="mf-v">${esc(opText)}</span></span>
+      </div>`;
+  }
+
+  function renderMonth(keepMoreOpen) {
     const m = V.month;
     const M = m.asOfMonth;
+    const activePeriod = P.closedMonth ? "month" : period;
+    const calls = V.periods[activePeriod].sales.totals.calls;
+    const need = m.daysLeft > 0 ? m.left / m.daysLeft : 0;
+    const revPct = m.revenuePlan && m.revenuePlan > 0 ? Math.round(m.amount / m.revenuePlan * 100) : 0;
+
+    const allWonPortalDeals = (P.groups || []).flatMap(g => (g.managers || []).flatMap(mgr => mgr.debts?.wonOnPortalNotClosedDeals || []));
+    const wonPortalDealsMap = new Map();
+    for (const d of allWonPortalDeals) {
+      if (d && d.dealId && !wonPortalDealsMap.has(d.dealId)) {
+        wonPortalDealsMap.set(d.dealId, d);
+      }
+    }
+    const wonPortalCount = wonPortalDealsMap.size;
+    const wonPortalAmount = Array.from(wonPortalDealsMap.values()).reduce((sum, d) => sum + (d.amount || 0), 0);
+    const potentialParts = [];
+    if (wonPortalCount > 0) {
+      potentialParts.push(`+ Ещё ${fmt(wonPortalCount)} на ${fmt1(wonPortalAmount / 1e6)} млн ₸ выиграно на портале (не закрыты в CRM)`);
+    }
+    if (m.awaitingRegister && m.awaitingRegister > 0) {
+      potentialParts.push(`ждёт ОП: ${plural(m.awaitingRegister, ["сделка", "сделки", "сделок"])}`);
+    }
+    const potentialHtml = potentialParts.length
+      ? `<div class="tile-potential">${potentialParts.join(" · ")}</div>`
+      : "";
+
+    const callsLabel = P.closedMonth || activePeriod === "month" ? "Дозвоны за месяц" : activePeriod === "week" ? "Дозвоны за неделю" : "Дозвоны сегодня";
+    const callsPct = calls.target > 0 ? Math.round((calls.fact / calls.target) * 100) : 0;
+
+    let meSummaryHtml = "";
+    if (me && !document.body.classList.contains("tv")) {
+      const myMgr = P.groups.flatMap(g => g.managers).find(mgr => mgr.id === me);
+      if (myMgr) {
+        const monthSalesMgr = V.periods.month.sales.managers.find(mgr => mgr.id === me);
+        const monthTenderMgr = V.periods.month.tenders?.managers.find(mgr => mgr.id === me);
+        const monthMgr = monthSalesMgr || monthTenderMgr;
+        const myFact = monthMgr?.contracts?.fact || 0;
+        const myTarget = monthMgr?.contracts?.target || V.month.targetContracts || 0;
+        const myAmount = monthMgr?.contracts?.totalAmount || 0;
+
+        const periodSalesMgr = V.periods[activePeriod].sales.managers.find(mgr => mgr.id === me);
+        const myCalls = periodSalesMgr?.calls;
+        const myCallsFactStr = myCalls ? fmt(myCalls.fact) : "—";
+        const myCallsTargetStr = myCalls && myCalls.target ? `/ ${fmt(myCalls.target)}` : "";
+        const myCallsCls = myCalls?.cls || "";
+        const myCallsSub = myCalls ? (myCalls.text || myCalls.sub || "") : "не звонит через CRM";
+
+        const d = myMgr.debts || {};
+        const dOverdue = d.overdue || 0;
+        const dNew = d.newDeals || 0;
+        const dWon = d.wonOnPortalNotClosed || 0;
+        const totalDebts = dOverdue + dNew + dWon;
+        const debtsBreakdown = [dWon ? `выиграно на портале: ${fmt(dWon)}` : "", dOverdue ? plural(dOverdue, ["дело просрочено", "дела просрочены", "дел просрочено"]) : "", dNew ? `${fmt(dNew)} без звонка` : ""].filter(Boolean).join(" · ") || "долгов нет ✓";
+
+        meSummaryHtml = `
+          <div class="me-summary">
+            <div class="me-summary-head">
+              <div class="me-badge">Мои показатели · ${esc(myMgr.name)}</div>
+              <div class="me-period-note">${P.closedMonth ? "закрытый месяц" : (activePeriod === "day" ? "сегодня" : activePeriod === "week" ? "за неделю" : "за месяц")}</div>
+            </div>
+            <div class="me-summary-grid">
+              <div class="me-stat">
+                <span class="label">Договоры за месяц</span>
+                <div class="stat-v">${fmt(myFact)} <span>/ ${fmt(myTarget)}</span></div>
+                <div class="stat-sub">${money(myAmount) || "0 ₸"}</div>
+              </div>
+              <div class="me-stat">
+                <span class="label">Дозвоны ${activePeriod === "day" ? "сегодня" : activePeriod === "week" ? "за неделю" : "за месяц"}</span>
+                <div class="stat-v ${myCallsCls}">${myCallsFactStr} <span>${myCallsTargetStr}</span></div>
+                <div class="stat-sub">${esc(myCallsSub)}</div>
+              </div>
+              <div class="me-stat">
+                <span class="label">Долги на сегодня</span>
+                <div class="stat-v ${totalDebts > 0 ? "bad" : "good"}">${totalDebts > 0 ? fmt(totalDebts) : "0"}</div>
+                <div class="stat-sub">${esc(debtsBreakdown)}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    const prevMoreOpen = keepMoreOpen && document.querySelector("#month .month-more")?.open;
+    const urgentCount = getUrgentJumpCount();
+    const urgentJumpHtml = urgentCount > 0
+      ? `<button type="button" class="urgent-jump" id="urgentJumpBtn"><span class="urgent-jump-dot" aria-hidden="true"></span><span>К срочному · ${plural(urgentCount, ["пункт", "пункта", "пунктов"])} ↓</span></button>`
+      : "";
 
     document.getElementById("month").innerHTML = `
-      <div class="block-head"><h2><span class="idx">01</span>${MONTHS[M - 1]}: договоры</h2><span class="meta">план ${fmt(m.plan)} · ${m.targetContracts} на менеджера × ${m.totalActiveCount}</span></div>
+      <div class="block-head"><h2><span class="idx">01</span>${MONTHS[M - 1]}</h2><div class="block-head-side"><span class="meta">план ${fmt(m.plan)} · ${m.targetContracts} на менеджера × ${m.totalActiveCount}</span>${urgentJumpHtml}</div></div>
+      ${meSummaryHtml}
+      <div class="month-tiles">
+        <div class="month-tile">
+          <span class="label">Договоры</span>
+          <div class="tile-value">${fmt(m.fact)} <span>/ ${fmt(m.plan)}</span></div>
+          <div class="hbar"><span class="ink" style="width:${Math.max(0, Math.min(100, m.pct))}%"></span></div>
+          <p class="tile-note">${P.closedMonth || m.daysLeft <= 0 ? `в среднем ${fmt1(m.pacePerDay)} в день` : `темп ${fmt1(m.pacePerDay)} в день, нужно ${fmt1(need)}`}</p>
+        </div>
+        <div class="month-tile">
+          <span class="label">Выручка</span>
+          <div class="tile-value tile-money">${money(m.amount) || "0 ₸"}${m.revenuePlan !== undefined ? ` <span>/ ${money(m.revenuePlan) || "0 ₸"}</span>` : ""}</div>
+          <div class="hbar"><span class="ink" style="width:${Math.max(0, Math.min(100, revPct))}%"></span></div>
+          <p class="tile-note">${m.revenuePlan !== undefined ? `без НДС · ${m.revenuePlan > 0 ? Math.round(m.amount / m.revenuePlan * 100) : 0}% плана выручки` : esc(m.sourceLabel)}${m.partnerAmount > 0 ? ` · партнёрские ${fmt1(m.partnerAmount / 1e6)} млн отдельно` : ""}</p>
+          ${potentialHtml}
+        </div>
+        <div class="month-tile">
+          <span class="label">${P.closedMonth ? "Итог месяца" : `Прогноз к ${m.daysInMonth}.${String(M).padStart(2, "0")}`}</span>
+          ${P.closedMonth ? `<div class="tile-value tile-result">Итог: ${m.pct}% плана</div>` : m.hasForecast ? `<div class="tile-value">≈ ${fmt(m.forecast)} <span>/ ${fmt(m.plan)}</span></div><p class="tile-note">${m.fpct}% плана при нынешнем темпе</p>` : `<div class="tile-value tile-result">—, с 3-го дня</div>`}
+        </div>
+        <div class="month-tile">
+          <span class="label">${callsLabel}</span>
+          ${P.callsAvailable ? `<div class="tile-value ${calls.cls}">${fmt(calls.fact)} <span>/ ${fmt(calls.target)}</span></div><div class="hbar"><span class="${calls.cls || ''}" style="width:${Math.max(0, Math.min(100, callsPct))}%"></span></div><p class="tile-note">${esc(calls.text ? `${calls.text}${calls.sub ? ` · ${calls.sub}` : ""}` : (calls.sub || ""))}</p>` : `<div class="tile-value tile-result muted">нет доступа</div><p class="tile-note">нет звонков через Битрикс</p>`}
+        </div>
+      </div>
+      ${renderMonthFreshnessHtml(m)}
+      <details class="month-more" ${document.body.classList.contains("tv") || prevMoreOpen ? "open" : ""}>
+      <summary>График и подробности месяца</summary>
       <div class="hero">
         <div>
           <span class="label">Подписано с 1 ${MONTHS_GEN[M - 1]}</span>
@@ -91,6 +341,7 @@
           <div class="hero-amt">${money(m.amount) || "0 ₸"} <span class="muted">${m.revenuePlan !== undefined ? "без НДС · " : "· "}${m.pct}% плана договоров</span></div>
           <p class="muted contract-source">${esc(m.sourceLabel)}</p>
           ${m.revenuePlan !== undefined ? `<p>План выручки: ${money(m.revenuePlan) || '0 ₸'} без НДС</p>` : ''}
+          ${m.partnerAmount > 0 ? `<p class="muted partner-note">Партнёрские продажи ${money(m.partnerAmount)} без НДС (${plural(m.partnerContracts || 0, ["договор", "договора", "договоров"])}) в выручку не входят, в договорах учтены</p>` : ''}
           ${m.awaitingRegister !== undefined ? `<p class="muted awaiting-register">ещё ${plural(m.awaitingRegister, ["сделка", "сделки", "сделок"])} в Битриксе, ждут ОП</p>` : ''}
           <p class="muted crm-comparison">в Битриксе отмечено ${plural(m.crmFact, ["сделка", "сделки", "сделок"])} на ${fmt1(m.crmAmount / 1e6)} млн</p>
           <div class="readout" ${P.closedMonth ? "hidden" : ""}>
@@ -105,8 +356,26 @@
           <div class="chart-wrap" id="burnWrap">${m.hasContractDynamics ? burnup() : `<p class="muted">Дневная разбивка реестра ОП недоступна</p>`}<div class="tip" id="burnTip"></div></div>
           <div class="legend"><span><i></i>подписано</span><span><i class="dash"></i>${P.closedMonth ? "план" : "темп плана"}</span>${P.closedMonth ? "" : `<span><i class="dot"></i>прогноз</span>`}<span><i class="band"></i>выходные</span></div>
         </div>
-      </div>`;
+      </div></details>`;
     wireBurnTip();
+    const jumpBtn = document.getElementById("urgentJumpBtn");
+    if (jumpBtn) {
+      jumpBtn.addEventListener("click", () => {
+        const target = document.getElementById("signals");
+        if (!target || target.hidden) return;
+        measureBars();
+        const barHeight = document.querySelector(".bar")?.getBoundingClientRect().height || 0;
+        const periodEl = document.querySelector(".dateline");
+        const periodHeight = periodEl && getComputedStyle(periodEl).position === "sticky" ? periodEl.getBoundingClientRect().height : 0;
+        target.style.scrollMarginTop = Math.ceil(barHeight + periodHeight + 18) + "px";
+        target.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+      });
+    }
+    const more = document.querySelector("#month .month-more");
+    more.addEventListener("toggle", () => {
+      if (more.open) animate(more);
+      if (document.body.classList.contains("tv")) fitTv();
+    });
   }
 
   function burnup() {
@@ -172,41 +441,81 @@
     });
   }
 
-  /* ================= sales department ================= */
-  function gauge(fact, tgt, j, unit, period) {
-    const w = tgt ? Math.min(100, (fact / tgt) * 100) : 0;
-    const pp = tgt ? Math.min(100, (j.expected / tgt) * 100) : 0;
-    const edge = pp > 82 ? "edge-r" : pp < 12 ? "edge-l" : "";
-    const pace = !P.closedMonth && j.expected >= 0.5 && fact < tgt ? `<span class="pace ${edge}" style="left:${pp}%"><span>${period === "day" ? "к " + V.genLabel + " нужно" : "по темпу нужно"} ${fmt(j.expected)}${unit || ""}</span></span>` : "";
-    return `<div class="gauge"><span class="fill ${j.cls}" data-w="${w}"></span>${pace}</div>`;
+  /* ================= «Я — …»: только моя строка и мои задачи ================= */
+  // Выбор хранится в браузере человека. В ТВ всегда показывается вся команда.
+  let me = "";
+  let showAllTeam = false;
+  try { me = localStorage.getItem("pult-me") || ""; } catch (e) {}
+  if (VIEWER) me = VIEWER.managerId;
+  function teamPeople() {
+    const day = VIEW.periods.day;
+    const all = [...day.sales.managers, ...(day.tenders ? day.tenders.managers : [])];
+    return [...new Map(all.map((m) => [m.id, m.name])).entries()].map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  }
+  function myGroup(sp, tp) {
+    if (!me || showAllTeam || document.body.classList.contains("tv")) return "";
+    if (sp.managers.some((m) => m.id === me)) return "sales";
+    if (tp && tp.managers.some((m) => m.id === me)) return "tenders";
+    return "";
   }
 
-  function instrument(label, fact, tgt, period, sub, j) {
-    return `<div>
-      <span class="label">${label}</span>
-      <div class="v"><span class="n" data-count="${fact}">0</span><span class="t">из ${fmt(tgt)}</span></div>
-      <span class="state ${j.cls === "idle" ? "idle" : j.cls}">${j.label || j.text}</span>
-      ${gauge(fact, tgt, j, "", period)}
-      <div class="sub">${sub}</div>
-    </div>`;
+  /* ================= team: sales and tenders in one table ================= */
+  const NA_CELL = (label) => `<div class="cell na" data-l="${label}"><span class="muted">—</span></div>`;
+
+  // Итог группы в тех же колонках, что и строки людей: цифра, полоска с отметкой темпа и оценка темпа.
+  function groupCell(label, j) {
+    if (j.untracked) return `<div class="cell" data-l="${label}"><div class="top"><span class="num muted">${fmt(j.fact)}</span></div><div class="sub">в CRM пока не отмечают</div></div>`;
+    const state = `<span class="group-state ${j.cls === "idle" ? "" : j.cls}">${esc(j.text)}</span>`;
+    return miniCell(label, { ...j, isEarlyEmpty: false, sub: state + (j.sub ? "<br>" + esc(j.sub) : "") });
+  }
+
+  function groupRow(id, name, meta, cells) {
+    return `<div class="trow group" role="row" data-group="${id}">
+        <div class="who"><div><div class="nm">${esc(name)}</div><div class="rl">${esc(meta)}</div></div></div>
+        ${cells}
+      </div>`;
   }
 
   function renderSales(period) {
     const sp = V.periods[period].sales;
+    const tp = V.periods[period].tenders;
     const tc = sp.totals.calls, tk = sp.totals.proposals, tg = sp.totals.contracts;
-    document.getElementById("sales").innerHTML = `
-      <div class="block-head"><h2><span class="idx">03</span>${esc(sp.name)} ${sp.periodName}</h2><span class="meta">${sp.meta}</span></div>
-      <div class="inst">
-        ${instrument("Дозвонились", tc.fact, tc.target, period, tc.sub, tc)}
-        ${instrument("Отправили КП", tk.fact, tk.target, period, tk.sub, tk)}
-        ${instrument("Подписали договоры", tg.fact, tg.target, period, tg.sub, tg)}
-      </div>
+    const people = sp.managers.length + (tp ? tp.managers.length : 0);
+    const mine = myGroup(sp, tp);
+    const callsTotal = P.callsAvailable ? groupCell("Дозвонились", tc) : `<div class="cell" data-l="Дозвонились"><span class="muted">нет доступа</span></div>`;
+    const salesRows = mine === "tenders" ? [] : sp.managers.filter((m) => mine !== "sales" || m.id === me);
+    const tenderRows = !tp || mine === "sales" ? [] : tp.managers.filter((m) => mine !== "tenders" || m.id === me);
+    const el = document.getElementById("sales");
+    el.innerHTML = `
+      <div class="block-head"><h2><span class="idx">03</span>Команда ${sp.periodName}</h2><span class="meta">${mine ? "показана только ваша строка · «Я — …» в полосе периода" : `${plural(people, ["человек", "человека", "человек"])} · строка раскрывает долги и задачи`}</span></div>
       ${sp.isEarly ? `<p class="early">${sp.earlyText}</p>` : ""}
-      <div class="team" role="table" aria-label="Менеджеры отдела продаж">
+      <div class="team" role="table" aria-label="Команда: отдел продаж и тендерный отдел">
         <div class="trow head label" role="row"><span>Менеджер</span><span>Дозвонился</span><span>КП</span><span>Подписал</span><span>Долги сегодня</span><span></span></div>
-        ${sp.managers.map((m) => managerRow(m, period)).join("")}
-      </div>`;
-    wireRows(document.getElementById("sales"));
+        ${mine === "tenders" ? "" : groupRow("sales", sp.name, sp.meta, callsTotal + groupCell("КП", tk) + groupCell("Подписали", tg))}
+        ${salesRows.map((m) => managerRow(m, period)).join("")}
+        ${tp && mine !== "sales" ? groupRow("tenders", tp.name, tp.meta, NA_CELL("Дозвонился") + NA_CELL("КП") + groupCell("Подписали", tp.totals.contracts)) : ""}
+        ${tenderRows.map(tenderRow).join("")}
+      </div>
+      ${mine && !VIEWER ? `<button type="button" class="btn team-all">Показать всю команду (${fmt(people)})</button>` : ""}`;
+    wireRows(el);
+    if (mine && !VIEWER) {
+      el.querySelector(".team-all").addEventListener("click", () => {
+        showAllTeam = true;
+        renderSales(period);
+        if (el.classList.contains("in")) animate(el);
+      });
+    }
+  }
+
+  function tenderRow(m) {
+    const id = "t-" + m.id;
+    const isSingle = !showAllTeam && me === m.id && !document.body.classList.contains("tv");
+    return `<div class="trow body tender" role="row" tabindex="0" aria-expanded="${isSingle ? "true" : "false"}" aria-controls="${id}">
+        <div class="who"><span class="mono-av">${esc(m.initials)}</span><div><div class="nm">${esc(m.name)}</div><div class="rl">${m.tasksCountText || ""}</div></div></div>
+        ${NA_CELL("Дозвонился")}${NA_CELL("КП")}${miniCell("Подписал", m.contracts)}${debtsCell(m.debts)}
+        <span class="chev" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4.5 6 8.5l4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
+      </div><div class="detail ${isSingle ? "open" : ""}" id="${id}"><div>${managerDetail(m)}</div></div>`;
   }
 
   function miniCell(label, j) {
@@ -220,10 +529,13 @@
   function debtsCell(d) {
     if (!d) return `<div class="cell debts" data-l="Долги"><span class="clean">нет данных</span></div>`;
     const out = [];
-    if (d.wonOnPortalNotClosed) out.push(`<span class="bad">выиграно на портале: ${d.wonOnPortalNotClosed}</span>`);
-    if (d.overdue) out.push(`<span class="bad">${plural(d.overdue, ["дело просрочено", "дела просрочены", "дел просрочено"])}</span>`);
-    if (d.newDeals) out.push(`<span class="warn">${plural(d.newDeals, ["новая", "новые", "новых"])} без звонка</span>`);
-    if (d.readyToCloseDealIds && d.readyToCloseDealIds.length) out.push(`<span class="muted">${fmt(d.readyToCloseDealIds.length)} пора закрыть</span>`);
+    const badge = (key, cls, text) => P.closedMonth
+      ? `<span class="${cls}">${text}</span>`
+      : `<button type="button" class="debt-button ${cls}" data-debt="${key}">${text}</button>`;
+    if (d.wonOnPortalNotClosed) out.push(badge("wonOnPortalNotClosedDeals", "bad", `выиграно на портале: ${fmt(d.wonOnPortalNotClosed)}`));
+    if (d.overdue) out.push(badge("overdueList", "bad", plural(d.overdue, ["дело просрочено", "дела просрочены", "дел просрочено"])));
+    if (d.newDeals) out.push(badge("newDealsList", "warn", `${plural(d.newDeals, ["новая", "новые", "новых"])} без звонка`));
+    if (d.readyToCloseDealIds && d.readyToCloseDealIds.length) out.push(badge("readyToCloseDeals", "muted", `${fmt(d.readyToCloseDealIds.length)} пора закрыть`));
     return `<div class="cell debts" data-l="Долги">${out.length ? out.join("") : `<span class="clean">долгов нет</span>`}</div>`;
   }
 
@@ -235,33 +547,112 @@
     const kp = miniCell("КП", m.proposals);
     const c = miniCell("Подписал", m.contracts);
     const id = "d-" + m.id;
-    return `<div class="trow body" role="row" tabindex="0" aria-expanded="false" aria-controls="${id}">
+    const isSingle = !showAllTeam && me === m.id && !document.body.classList.contains("tv");
+    return `<div class="trow body" role="row" tabindex="0" aria-expanded="${isSingle ? "true" : "false"}" aria-controls="${id}">
         <div class="who"><span class="mono-av">${esc(m.initials)}</span><div><div class="nm">${esc(m.name)}</div><div class="rl">${m.tasksCountText}</div></div></div>
         ${calls}${kp}${c}${debtsCell(m.debts)}
         <span class="chev" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4.5 6 8.5l4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
       </div>
-      <div class="detail" id="${id}"><div>${managerDetail(m)}</div></div>`;
+      <div class="detail ${isSingle ? "open" : ""}" id="${id}"><div>${managerDetail(m)}</div></div>`;
+  }
+
+  function debtList(key, label, items, total) {
+    const old = key === "overdueOverMonthTasks";
+    if (!total || (old ? !items || !items.length : P.closedMonth)) return "";
+    const list = (items || []).slice(0, 50);
+    const rows = list.map((item, index) => {
+      const ct = cleanTitle(item);
+      const url = P.portal + "/crm/deal/details/" + encodeURIComponent(item.dealId) + "/";
+      let note = "";
+      if (key === "newDealsList") note = "без звонка " + plural(item.ageDays || 0, ["день", "дня", "дней"]);
+      if (key === "overdueList" || key === "overdueOverMonthTasks") note = "просрочено " + plural(item.overdueDays || 0, ["день", "дня", "дней"]);
+      if (key === "wonOnPortalNotClosedDeals" && item.portalSignDate) note = "подписан " + ddmm(item.portalSignDate);
+      return `<div class="old-task-item debt-list-item"${index >= 10 ? " hidden" : ""}><a href="${esc(url)}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || item.title || item.dealId)}</a><span class="old-task-meta">${esc(money(item.amount) || "сумма не указана")}${note ? " · " + esc(note) : ""}</span></div>`;
+    }).join("");
+    const remaining = Math.max(0, total - list.length);
+    return `<details class="debt-list${old ? " old-tasks" : ""}" data-debt-list="${key}"><summary class="old-tasks-sum">${old ? "Показать список 30+ дней" : "Показать список: " + esc(label)} (${fmt(total)})</summary><div class="old-tasks-list">${rows}</div>${list.length > 10 ? `<button type="button" class="debt-more">показать ещё ${fmt(list.length - 10)}</button>` : ""}${remaining ? `<div class="muted">и ещё ${fmt(remaining)} в Битриксе</div>` : ""}</details>`;
   }
 
   function managerDetail(m) {
     const d = m.debts || { overdue: 0, overdueOverMonth: 0, overdueOverMonthTasks: [], newDeals: 0, newOldestAgeDays: 0, readyToCloseDealIds: [] };
-    const oldList = d.overdueOverMonthTasks && d.overdueOverMonthTasks.length ? `<details class="old-tasks" style="grid-column:1/-1"><summary class="old-tasks-sum">Показать список 30+ дней (${fmt(d.overdueOverMonthTasks.length)})</summary><div class="old-tasks-list">${d.overdueOverMonthTasks.map((ot) => { const ct = cleanTitle(ot); const url = P.portal + "/crm/deal/details/" + encodeURIComponent(ot.dealId) + "/"; return `<div class="old-task-item"><a href="${url}" target="_blank" rel="noopener" class="old-task-link">${esc(ct.title || ot.title || ot.dealId)}</a><span class="old-task-meta">${plural(ot.overdueDays || 0, ["день", "дня", "дней"])} · ${money(ot.amount) || "сумма не указана"}</span></div>`; }).join("")}</div></details>` : "";
+
     const tasks = (m.topTasks || []).map((t) => taskRow(t, m, true)).join("");
     return `<div class="detail-in">
       <div class="dstats">
+        <div style="grid-column:1/-1" class="dstats-actions"><button type="button" class="copy-chat-btn" data-copy-manager="${esc(m.id)}">Скопировать для чата</button></div>
         ${d.wonOnPortalNotClosed ? `<div style="grid-column:1/-1"><span class="label">Выиграно на портале, не закрыто в CRM</span><span class="num bad">${fmt(d.wonOnPortalNotClosed)}</span></div>` : ""}
         <div><span class="label">Просрочено</span><span class="num ${d.overdue ? "bad" : ""}">${fmt(d.overdue)}</span></div>
         <div><span class="label">30+ дней</span><span class="num">${fmt(d.overdueOverMonth)}</span></div>
-        ${oldList}
         <div><span class="label">Без звонка</span><span class="num ${d.newDeals ? "warn" : ""}">${fmt(d.newDeals)}</span></div>
         <div><span class="label">Самой старой</span><span class="num">${d.newDeals ? fmt(d.newOldestAgeDays) + " дн." : "—"}</span></div>
         <div style="grid-column:1/-1"><span class="label">Пора закрыть</span><span class="num">${fmt(d.readyToCloseDealIds.length)}</span></div>
       </div>
-      <div>${tasks || `<div class="mini-empty">Срочных задач нет.</div>`}</div>
+      <div class="manager-urgent">${tasks || `<div class="mini-empty">Срочных задач нет.</div>`}</div>
+      ${debtList("wonOnPortalNotClosedDeals", "выиграно на портале", d.wonOnPortalNotClosedDeals, d.wonOnPortalNotClosed)}
+      ${debtList("overdueList", "просрочено", d.overdueList, d.overdue)}
+      ${debtList("newDealsList", "без звонка", d.newDealsList, d.newDeals)}
+      ${debtList("readyToCloseDeals", "пора закрыть", d.readyToCloseDeals, d.readyToCloseDealIds.length)}
+      ${debtList("overdueOverMonthTasks", "30+ дней", d.overdueOverMonthTasks, d.overdueOverMonth)}
     </div>`;
   }
 
   function wireRows(root) {
+    root.querySelectorAll(".debt-more").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.closest(".debt-list").querySelectorAll(".old-task-item[hidden]").forEach(item => { item.hidden = false; });
+        button.hidden = true;
+      });
+    });
+    root.querySelectorAll("button[data-copy-manager]").forEach((button) => {
+      button.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const mgrId = button.dataset.copyManager;
+        const allMgrs = P.groups.flatMap(g => g.managers);
+        const mgr = allMgrs.find(x => x.id === mgrId);
+        if (!mgr) return;
+        const d = mgr.debts || {};
+        const lines = [`${mgr.name} — проблемы по сделкам:`];
+        const wonDeals = d.wonOnPortalNotClosedDeals || [];
+        if (wonDeals.length) {
+          lines.push(`\nВыиграно на портале, не закрыто в CRM (${wonDeals.length}):`);
+          wonDeals.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title || item.dealId} (${money(item.amount) || "—"}) — ${dealUrl(item.dealId)}`);
+          });
+        }
+        const overdueDeals = d.overdueList || [];
+        if (overdueDeals.length) {
+          lines.push(`\nПросрочено (${overdueDeals.length}):`);
+          overdueDeals.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title || item.dealId} (${money(item.amount) || "—"}, просрочено ${item.overdueDays || 0} дн.) — ${dealUrl(item.dealId)}`);
+          });
+        }
+        const newDeals = d.newDealsList || [];
+        if (newDeals.length) {
+          lines.push(`\nНовые без звонка (${newDeals.length}):`);
+          newDeals.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title || item.dealId} (${money(item.amount) || "—"}, без звонка ${item.ageDays || 0} дн.) — ${dealUrl(item.dealId)}`);
+          });
+        }
+        const readyDeals = d.readyToCloseDeals || [];
+        if (readyDeals.length) {
+          lines.push(`\nПора закрыть (${readyDeals.length}):`);
+          readyDeals.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title || item.dealId} — ${dealUrl(item.dealId)}`);
+          });
+        }
+        const myMismatches = (P.outcomeMismatches || []).filter(om => om.managerId === mgr.id);
+        if (myMismatches.length) {
+          lines.push(`\nОшибки стадии (выиграно на портале, в CRM проигрыш, ${myMismatches.length}):`);
+          myMismatches.forEach((item, i) => {
+            lines.push(`  ${i + 1}. ${item.title} (${money(item.amount) || "—"}) — ${dealUrl(item.id)}`);
+          });
+        }
+        if (lines.length === 1) {
+          lines.push("Проблемных сделок нет ✓");
+        }
+        copyToClipboard(lines.join("\n"), button);
+      });
+    });
     root.querySelectorAll(".trow.body").forEach((row) => {
       const toggle = () => {
         const open = row.getAttribute("aria-expanded") !== "true";
@@ -269,12 +660,37 @@
         const target = document.getElementById(row.getAttribute("aria-controls"));
         if (target) target.classList.toggle("open", open);
       };
-      row.addEventListener("click", (e) => { if (!e.target.closest("a")) toggle(); });
-      row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+      row.querySelectorAll("button[data-debt]").forEach((button) => {
+        button.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (row.getAttribute("aria-expanded") !== "true") toggle();
+          const target = document.getElementById(row.getAttribute("aria-controls"));
+          const list = target && target.querySelector(`details[data-debt-list="${button.dataset.debt}"]`);
+          if (list) {
+            list.open = true;
+            // Wait for the detail's grid expansion before measuring the scroll target.
+            requestAnimationFrame(() => {
+              Promise.all(target.getAnimations().map(animation => animation.finished.catch(() => {}))).then(() => {
+                if (row.getAttribute("aria-expanded") === "true" && list.open) {
+                  const headerBottom = document.querySelector(".dateline")?.getBoundingClientRect().bottom || 0;
+                  list.style.scrollMarginTop = Math.max(0, headerBottom) + 8 + "px";
+                  list.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+                }
+              });
+            });
+          }
+        });
+      });
+      row.addEventListener("click", (e) => { if (!e.target.closest("a, button")) toggle(); });
+      row.addEventListener("keydown", (e) => {
+        if (e.target.closest("a, button")) return;
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+      });
     });
   }
 
   /* ================= calls ================= */
+  let callsMoreOpen = false;
   function renderCalls(period) {
     const cp = V.periods[period].calls;
     const st = cp.strip;
@@ -287,6 +703,8 @@
         <div><span class="label">Средний разговор</span><div class="v">${st.calls ? fmt1(st.avg) : "—"}<small>${st.calls ? "мин" : ""}</small></div></div>
         <div><span class="label">${st.normLabel}</span><div class="v">${st.normValue}<small>${st.normSub}</small></div></div>
       </div>
+      <details class="calls-more"${document.body.classList.contains("tv") || callsMoreOpen ? " open" : ""}>
+      <summary>График звонков и кто как звонит</summary>
       <div class="calls-grid">
         <div>
           <div class="sub-h"><h3>Дозвоны по дням, ${MONTHS[V.month.asOfMonth - 1].toLowerCase()}</h3><span class="label">норма ${fmt(st.norm)} в день</span></div>
@@ -301,9 +719,19 @@
         <div class="sub-h"><h3>Кто как звонит</h3><span class="label">■ дозвон  ▨ не дозвонился  ┆ норма</span></div>
         <div class="arow head label"><span>Менеджер</span><span>Наборы</span><span class="astats"><span>Дозвон</span><span>Доля</span><span>Разговор</span><span>Минут</span></span></div>
         ${anatomy(period)}
-      </div>`;
+      </div>
+      </details>`;
     document.getElementById("calls").innerHTML = html;
     wireCallsTip();
+    const more = document.querySelector("#calls .calls-more");
+    // Выбор человека запоминаем по клику на заголовок (Enter и пробел тоже дают click):
+    // программное раскрытие в ТВ и перерисовка при смене периода его не меняют.
+    more.querySelector("summary").addEventListener("click", () => { callsMoreOpen = !more.open; });
+    more.addEventListener("toggle", () => {
+      if (more.open) animate(more);
+      if (document.body.classList.contains("tv")) fitTv();
+    });
+    animate(document.getElementById("calls"));
   }
 
   function callsChart(norm) {
@@ -364,30 +792,6 @@
     }).join("");
   }
 
-  /* ================= tenders ================= */
-  function renderTenders(period) {
-    const el = document.getElementById("tenders");
-    const tp = V.periods[period].tenders;
-    if (!tp) { if (el) el.remove(); return; }
-    const tg = tp.totals.contracts;
-    const rows = tp.managers.map((m) => {
-      const id = "t-" + m.id;
-      return `<div class="trow body" role="row" tabindex="0" aria-expanded="false" aria-controls="${id}" style="grid-template-columns:minmax(200px,1.5fr) minmax(0,1.5fr) minmax(0,1.5fr) 28px">
-        <div class="who"><span class="mono-av">${esc(m.initials)}</span><div class="nm">${esc(m.name)}</div></div>
-        ${miniCell("Подписал", m.contracts)}
-        ${debtsCell(m.debts)}
-        <span class="chev" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4.5 6 8.5l4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
-      </div><div class="detail" id="${id}"><div>${managerDetail(m)}</div></div>`;
-    }).join("");
-    el.innerHTML = `
-      <div class="block-head"><h2><span class="idx">05</span>${esc(tp.name)} ${tp.periodName}</h2><span class="meta">${tp.meta}</span></div>
-      <div class="inst one">
-        ${instrument("Подписали договоры", tg.fact, tg.target, period, tg.sub, tg)}
-        <div class="team" style="margin:0">${rows}</div>
-      </div>`;
-    wireRows(el);
-  }
-
   /* ================= tasks ================= */
   let taskFilter = "all", taskAll = false;
   function cleanTitle(t) {
@@ -424,13 +828,14 @@
     const all = [];
     for (const g of P.groups) for (const m of g.managers) for (const t of m.topTasks || []) all.push({ t, m });
     const el = document.getElementById("tasks");
-    if (!all.length) { el.innerHTML = `<div class="block-head"><h2><span class="idx">06</span>Что сделать сегодня</h2></div><div class="mini-empty">Срочных задач нет.</div>`; return; }
+    if (!all.length) { el.innerHTML = `<div class="block-head"><h2><span class="idx">05</span>Что сделать сегодня</h2></div><div class="mini-empty">Срочных задач нет.</div>`; return; }
     const owners = [...new Map(all.map((x) => [x.m.id, x.m])).values()];
+    if (taskFilter !== "all" && !owners.some((m) => m.id === taskFilter)) taskFilter = "all";
     const list = all.filter((x) => taskFilter === "all" || x.m.id === taskFilter)
       .sort((a, b) => (a.t.group || 9) - (b.t.group || 9) || (a.t.passedPlanMonthNote ? 1 : 0) - (b.t.passedPlanMonthNote ? 1 : 0) || (b.t.amount || 0) - (a.t.amount || 0) || String(a.t.deadline || "").localeCompare(String(b.t.deadline || "")));
     const sumAmt = list.reduce((s, x) => s + (x.t.amount || 0), 0);
     el.innerHTML = `
-      <div class="block-head"><h2><span class="idx">06</span>Что сделать сегодня</h2><span class="meta">${plural(list.length, ["задача", "задачи", "задач"])} · сделки на ${money(sumAmt)}</span></div>
+      <div class="block-head"><h2><span class="idx">05</span>Что сделать сегодня</h2><span class="meta">${plural(list.length, ["задача", "задачи", "задач"])} · сделки на ${money(sumAmt)}</span></div>
       <div class="filters" role="group" aria-label="Фильтр по менеджеру">
         <button data-f="all" aria-pressed="${taskFilter === "all"}">Все<span class="num">${all.length}</span></button>
         ${owners.map((m) => `<button data-f="${m.id}" aria-pressed="${taskFilter === m.id}">${esc(first(m.name))}<span class="num">${all.filter((x) => x.m.id === m.id).length}</span></button>`).join("")}
@@ -442,23 +847,45 @@
   }
 
   /* ================= chrome ================= */
+  function renderLiveBadge() {
+    const live = document.getElementById("live"), liveText = document.getElementById("liveText");
+    if (!live || !liveText) return;
+    if (typeof currentTab !== "undefined" && currentTab === "pult" && P.closedMonth) {
+      live.classList.remove("stale");
+      live.classList.add("archive");
+      liveText.innerHTML = `Архив · срез по ${esc(ddmm(P.asOfDate))}`;
+      return;
+    }
+    live.classList.remove("archive");
+    const m = /(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(PAYLOAD.generatedAt || "");
+    let genMs = NaN;
+    if (m) {
+      genMs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 5, +m[5]);
+    } else if (PAYLOAD.generatedAt) {
+      genMs = Date.parse(PAYLOAD.generatedAt);
+    }
+    let ago = "";
+    if (!Number.isNaN(genMs)) {
+      const mins = Math.round((Date.now() - genMs) / 60000);
+      if (mins >= 0 && mins < 60 * 24) ago = mins < 1 ? "только что" : mins < 60 ? plural(mins, ["минуту", "минуты", "минут"]) + " назад" : plural(Math.floor(mins / 60), ["час", "часа", "часов"]) + " назад";
+      live.classList.toggle("stale", mins > 90);
+    } else {
+      live.classList.remove("stale");
+    }
+    const buildFull = formatAlmatyDateTime(PAYLOAD.generatedAt) || VIEW.genLabel;
+    const shortTime = VIEW.genLabel || buildFull;
+    liveText.innerHTML =
+      `<span class="live-desktop">Сборка Пульта ${esc(buildFull)}</span>` +
+      `<span class="live-mobile">Сборка ${esc(shortTime)}</span>` +
+      (ago ? ` <span class="ago">· ${ago}</span>` : "");
+  }
+
   function renderChrome() {
     document.getElementById("dateLabel").textContent = V.dateLabel;
     document.getElementById("wdLabel").textContent = V.wdLabel;
     requestAnimationFrame(() => { document.getElementById("monthFill").style.width = V.monthFillPct + "%"; });
-    const live = document.getElementById("live"), liveText = document.getElementById("liveText");
-    function tick() {
-      const m = /(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(PAYLOAD.generatedAt);
-      let ago = "";
-      if (m) {
-        const gen = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 5, +m[5]);
-        const mins = Math.round((Date.now() - gen) / 60000);
-        if (mins >= 0 && mins < 60 * 24) ago = mins < 1 ? "только что" : mins < 60 ? plural(mins, ["минуту", "минуты", "минут"]) + " назад" : plural(Math.floor(mins / 60), ["час", "часа", "часов"]) + " назад";
-        live.classList.toggle("stale", mins > 90);
-      }
-      liveText.innerHTML = `Данные на ${VIEW.genLabel}` + (ago ? ` <span class="ago">· ${ago}</span>` : "");
-    }
-    tick(); setInterval(tick, 30000);
+    renderLiveBadge();
+    setInterval(renderLiveBadge, 30000);
   }
 
   /* ================= motion ================= */
@@ -494,32 +921,46 @@
     ind.style.left = b.offsetLeft + 14 + "px";
     ind.style.width = b.offsetWidth - 28 + "px";
   }
-  function setPeriod(p, fromUser) {
+  function setPeriod(p, fromUser, keepMore = true) {
     if (P.closedMonth) p = "month";
     period = p;
     btns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.p === p)));
     moveInd();
-    renderSales(p); renderCalls(p); renderTenders(p);
-    ["sales", "calls", "tenders"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
+    renderMonth(keepMore);
+    renderSales(p); renderCalls(p);
+    ["month", "sales", "calls"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
     try { if (fromUser) localStorage.setItem("pult-period", p); } catch (e) {}
   }
   btns.forEach((b) => b.addEventListener("click", () => setPeriod(b.dataset.p, true)));
   addEventListener("resize", () => { moveInd(); if (typeof moveSecInd === "function") moveSecInd(); });
   addEventListener("keydown", (e) => {
-    if (e.target.closest("input, textarea")) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.closest("input, textarea, select") || e.target.isContentEditable) return;
     if (e.key === "1") setPeriod("day", true); else if (e.key === "2") setPeriod("week", true); else if (e.key === "3") setPeriod("month", true);
     else if (e.key === "t" || e.key === "T" || e.key === "е" || e.key === "Е") toggleTv();
   });
 
   /* ================= tabs ================= */
+  // «Финансы» в вид менеджера не собираются (scripts/pult-variants.mts), ссылку тоже убираем.
+  if (VIEWER) document.querySelectorAll('.sections a[data-t="radar"], .sections a[data-t="competitors"], .sections a[href="./fin.html"]').forEach((a) => a.remove());
   const tabLinks = [...document.querySelectorAll(".sections a[data-t]")];
   const tabPanes = {
     pult: document.getElementById("tab-pult"),
     ip: document.getElementById("tab-ip"),
     kt: document.getElementById("tab-kt"),
     "plans-ip": document.getElementById("tab-plans-ip"),
-    "plans-kt": document.getElementById("tab-plans-kt")
+    "plans-kt": document.getElementById("tab-plans-kt"),
+    "radar-ip": document.getElementById("tab-radar-ip"),
+    "radar-kt": document.getElementById("tab-radar-kt"),
+    "competitors-ip": document.getElementById("tab-competitors-ip"),
+    "competitors-kt": document.getElementById("tab-competitors-kt")
   };
+  if (VIEWER) {
+    delete tabPanes["radar-ip"];
+    delete tabPanes["radar-kt"];
+    delete tabPanes["competitors-ip"];
+    delete tabPanes["competitors-kt"];
+  }
   const secInd = document.querySelector(".sections .ind");
   const periodsNav = document.getElementById("periodsNav");
   const marketMonths = document.getElementById("marketMonths");
@@ -527,14 +968,39 @@
   const renderedMarketMonth = { ip: null, kt: null };
   const planMonths = document.getElementById("planMonths");
   const selectedPlanMonth = { "plans-ip": "all", "plans-kt": "all" };
+  const competitorsMonths = document.getElementById("competitorsMonths");
+  const selectedCompetitorsPeriod = { "competitors-ip": "all", "competitors-kt": "all" };
   const isPlansTab = tab => tab === "plans-ip" || tab === "plans-kt";
+  const isRadarTab = tab => tab === "radar-ip" || tab === "radar-kt";
+  const isCompetitorsTab = tab => tab === "competitors-ip" || tab === "competitors-kt";
   const plansBase = tab => tab === "plans-ip" ? PAYLOAD.plans?.ip : PAYLOAD.plans?.kt;
+  const competitorsBase = tab => tab === "competitors-ip" ? PAYLOAD.competitors?.ip : PAYLOAD.competitors?.kt;
   const validPlanMonth = (tab, month) => window.__planMonths(plansBase(tab)).includes(month) ? month : "all";
+  const validCompetitorsPeriod = (tab, period) => window.__competitorsMonths ? (window.__competitorsMonths(competitorsBase(tab)).includes(period) ? period : "all") : "all";
   let currentTab = "pult";
   let preTvTab = "pult";
+  let preTvMonth = currentMonth;
+  let preTvPeriod = "day";
+  const hasTvParam = () => new URLSearchParams(location.search).get("tv") === "1";
+  function setTvUrlParam(on) {
+    if (!history.replaceState || location.protocol === "about:") return;
+    try {
+      const url = new URL(location.href);
+      if (on) url.searchParams.set("tv", "1");
+      else url.searchParams.delete("tv");
+      history.replaceState(null, "", url.toString());
+    } catch (e) {}
+  }
+  // Разделы: «Сегодня», «Радар», «Выручка» (страница реестра), «Планы», «Рынок» и «Конкуренты».
+  // Внутри «Радара», «Планов», «Рынка» и «Конкурентов» товар (ИП или КТ) выбирается переключателем и сохраняется при переходе между ними.
+  let product = "ip";
+  const productSwitch = document.getElementById("productSwitch");
+  const sectionOf = tab => tab === "pult" ? "pult" : isRadarTab(tab) ? "radar" : isPlansTab(tab) ? "plans" : isCompetitorsTab(tab) ? "competitors" : "market";
+  const productOf = tab => tab === "kt" || tab === "plans-kt" || tab === "radar-kt" || tab === "competitors-kt" ? "kt" : "ip";
+  const tabFor = (section, prod) => section === "radar" ? "radar-" + prod : section === "plans" ? "plans-" + prod : section === "competitors" ? "competitors-" + prod : section === "market" ? prod : "pult";
 
   function moveSecInd() {
-    const a = tabLinks.find((x) => x.dataset.t === currentTab);
+    const a = tabLinks.find((x) => x.dataset.t === sectionOf(currentTab));
     if (!a || !secInd) return;
     secInd.style.left = a.offsetLeft + 14 + "px";
     secInd.style.width = a.offsetWidth - 28 + "px";
@@ -561,6 +1027,14 @@
     }).join("");
   }
   function renderTabContent(tab) {
+    if (isCompetitorsTab(tab)) {
+      if (window.__renderCompetitorsTab) window.__renderCompetitorsTab(tab, PAYLOAD.competitors, tabPanes[tab], selectedCompetitorsPeriod[tab]);
+      return;
+    }
+    if (isRadarTab(tab)) {
+      if (window.__renderRadarTab) window.__renderRadarTab(tab, PAYLOAD.radar, tabPanes[tab]);
+      return;
+    }
     if (isPlansTab(tab)) {
       window.__renderPlansTab(tab, PAYLOAD.plans, tabPanes[tab], selectedPlanMonth[tab]);
       return;
@@ -610,6 +1084,7 @@
     planMonths.innerHTML = isPlansTab(tab) ? window.__planMonths(plansBase(tab)).map(month =>
       `<button type="button" data-month="${month}" aria-pressed="${month === selectedPlanMonth[tab]}">${month === "all" ? "Все месяцы" : MONTHS[Number(month.slice(5)) - 1] + " " + month.slice(0, 4)}</button>`
     ).join("") : "";
+    window.__scrollPlanSelection(planMonths);
   }
   function selectPlanMonth(month, toggle) {
     if (!isPlansTab(currentTab)) return;
@@ -639,15 +1114,107 @@
     });
   });
 
+  function renderCompetitorsMonths(tab) {
+    if (!competitorsMonths) return;
+    competitorsMonths.hidden = !isCompetitorsTab(tab);
+    competitorsMonths.innerHTML = isCompetitorsTab(tab) && window.__competitorsMonths
+      ? window.__competitorsMonths(competitorsBase(tab)).map(period =>
+          `<button type="button" data-month="${period}" aria-pressed="${period === selectedCompetitorsPeriod[tab]}">${period === "all" ? "Весь год" : MONTHS[Number(period.slice(5)) - 1] + " " + period.slice(0, 4)}</button>`
+        ).join("")
+      : "";
+    if (window.__scrollPlanSelection) window.__scrollPlanSelection(competitorsMonths);
+  }
+  function selectCompetitorsPeriod(period, toggle) {
+    if (!isCompetitorsTab(currentTab)) return;
+    period = validCompetitorsPeriod(currentTab, period);
+    if (toggle && selectedCompetitorsPeriod[currentTab] === period) period = "all";
+    selectedCompetitorsPeriod[currentTab] = period;
+    renderTabContent(currentTab);
+    renderCompetitorsMonths(currentTab);
+    observe();
+    history.replaceState(null, "", `#${currentTab}/${period}`);
+  }
+  if (competitorsMonths) competitorsMonths.addEventListener("click", e => {
+    const button = e.target.closest("button[data-month]");
+    if (button) selectCompetitorsPeriod(button.dataset.month, false);
+  });
+  ["competitors-ip", "competitors-kt"].forEach(tab => {
+    const pane = tabPanes[tab];
+    if (!pane) return;
+    pane.addEventListener("click", e => {
+      const month = e.target.closest(".months .col[data-m], .mlabels > span[data-m]");
+      if (month) selectCompetitorsPeriod(month.dataset.m, true);
+    });
+    pane.addEventListener("keydown", e => {
+      if ((e.key === "Enter" || e.key === " ") && e.target.matches(".months .col[data-m], .mlabels > span[data-m]")) {
+        e.preventDefault();
+        selectCompetitorsPeriod(e.target.dataset.m, true);
+      }
+    });
+  });
+
+  function updateSourceLabels(tab) {
+    const srcLabel = document.getElementById("srcLabel");
+    const foot = document.getElementById("foot");
+    if (isCompetitorsTab(tab)) {
+      const comp = PAYLOAD.competitors;
+      const compUpd = formatAlmatyDateTime(comp?.updatedAt);
+      if (srcLabel) {
+        if (comp?.stale && compUpd) srcLabel.textContent = `госзакупки · открытые конкурсы · не обновлены с ${compUpd}`;
+        else if (compUpd) srcLabel.textContent = `госзакупки · открытые конкурсы · обновлены ${compUpd}`;
+        else srcLabel.textContent = "госзакупки · открытые конкурсы · Дата обновления неизвестна";
+      }
+      if (foot) foot.innerHTML = `<span>Источник: открытые конкурсы procurement.gov.kz, протоколы итогов и ТС заказчиков</span><span>Обновляется раз в день, утром</span>`;
+    } else if (isPlansTab(tab)) {
+      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · госзакупки";
+      if (foot) foot.innerHTML = `<span>Источник: сделки планов в Битрикс24 (scrape2lead-gz-plans) и сверка с zakup.gov.kz</span>`;
+    } else if (isRadarTab(tab)) {
+      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · радар лотов";
+      if (foot) foot.innerHTML = `<span>Источник: сделки лотов (воронка 43) и планов (9, 41, 29) Битрикс24</span>`;
+    } else if (tab === "ip" || tab === "kt") {
+      const mk = PAYLOAD.market;
+      const mkUpd = formatAlmatyDateTime(mk?.updatedAt);
+      if (srcLabel) {
+        if (mk?.stale && mkUpd) srcLabel.textContent = `госзакупки · zakup.gov.kz · не обновлены с ${mkUpd}`;
+        else if (mkUpd) srcLabel.textContent = `госзакупки · zakup.gov.kz · обновлено ${mkUpd}`;
+        else srcLabel.textContent = "госзакупки · zakup.gov.kz · Дата обновления неизвестна";
+      }
+      if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
+    } else {
+      if (srcLabel) {
+        if (P.closedMonth) {
+          const opPart = P.contractSource?.available
+            ? (P.contractSource.asOf ? ` · ОП по ${ddmm(P.contractSource.asOf)}` : " · ОП за месяц")
+            : " · без ОП";
+          srcLabel.textContent = `Архив: CRM по ${ddmm(P.asOfDate)}${opPart}`;
+        } else {
+          const build = formatAlmatyDateTime(PAYLOAD.generatedAt);
+          const opPart = P.contractSource?.available && P.contractSource.asOf
+            ? ` · ОП на ${ddmm(P.contractSource.asOf)}`
+            : "";
+          srcLabel.textContent = `CRM Битрикс24${build ? ` · сборка ${build}` : ""}${opPart}`;
+        }
+      }
+      if (foot) foot.innerHTML = `<span>Источник: Битрикс24 · ft3.bitrix24.kz</span><span>Обновляется каждый час с 09:00 до 19:00 в будни · клавиши 1 2 3 и T</span>`;
+    }
+  }
+
   function setTab(tab, fromUser, marketMonth) {
     if (!Object.prototype.hasOwnProperty.call(tabPanes, tab)) tab = "pult";
     if (isPlansTab(tab)) selectedPlanMonth[tab] = validPlanMonth(tab, marketMonth !== undefined ? marketMonth : selectedPlanMonth[tab]);
+    if (isCompetitorsTab(tab)) selectedCompetitorsPeriod[tab] = validCompetitorsPeriod(tab, marketMonth !== undefined ? marketMonth : selectedCompetitorsPeriod[tab]);
     if (tab === "ip" || tab === "kt") {
       selectedMarketMonth[tab] = validMarketMonth(tab, marketMonth !== undefined ? marketMonth : selectedMarketMonth[tab]);
     }
+    if (document.body.classList.contains("tv") && tab !== "pult") {
+      preTvTab = tab;
+      tab = "pult";
+    }
     currentTab = tab;
+    if (tab !== "pult") product = productOf(tab);
     tabLinks.forEach((link) => {
-      const active = link.dataset.t === tab;
+      const active = link.dataset.t === sectionOf(tab);
+      if (link.dataset.t !== "pult") link.setAttribute("href", "#" + tabFor(link.dataset.t, product));
       link.classList.toggle("active", active);
       if (active) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
@@ -657,25 +1224,26 @@
       if (pane) pane.classList.toggle("on", key === tab);
     });
     if (periodsNav) {
-      periodsNav.hidden = tab !== "pult";
+      if (isRadarTab(tab)) {
+        periodsNav.hidden = false;
+        periodsNav.classList.add("radar-mode");
+      } else {
+        periodsNav.classList.remove("radar-mode");
+        periodsNav.hidden = tab !== "pult";
+      }
+    }
+    if (productSwitch) {
+      productSwitch.hidden = tab === "pult";
+      productSwitch.querySelectorAll("button[data-product]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.product === product)));
     }
     renderTabContent(tab);
     renderMarketMonths(tab);
     renderPlanMonths(tab);
+    renderCompetitorsMonths(tab);
     moveSecInd();
 
-    const srcLabel = document.getElementById("srcLabel");
-    const foot = document.getElementById("foot");
-    if (isPlansTab(tab)) {
-      if (srcLabel) srcLabel.textContent = "CRM Битрикс24 · госзакупки";
-      if (foot) foot.innerHTML = `<span>Источник: сделки планов в Битрикс24 (scrape2lead-gz-plans) и сверка с zakup.gov.kz</span>`;
-    } else if (tab === "ip" || tab === "kt") {
-      if (srcLabel) srcLabel.textContent = "госзакупки · zakup.gov.kz";
-      if (foot) foot.innerHTML = `<span>Источник: API госзакупок, договоры по дате подписания</span><span>Обновляется раз в день, утром</span>`;
-    } else {
-      if (srcLabel) srcLabel.textContent = "CRM Битрикс24";
-      if (foot) foot.innerHTML = `<span>Источник: Битрикс24 · ft3.bitrix24.kz</span><span>Обновляется каждый час с 09:00 до 19:00 в будни · клавиши 1 2 3 и T</span>`;
-    }
+    updateSourceLabels(tab);
+    renderLiveBadge();
 
     if (tab === "pult") {
       setTimeout(moveInd, 0);
@@ -684,7 +1252,7 @@
     if (fromUser) {
       try { localStorage.setItem("pult-tab", tab); } catch (e) {}
       if (history.replaceState) {
-        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : tab + "/" + (isPlansTab(tab) ? selectedPlanMonth[tab] : selectedMarketMonth[tab])}`);
+        history.replaceState(null, "", `#${tab === "pult" ? "pult/" + selectedMonth : isRadarTab(tab) ? tab : tab + "/" + (isPlansTab(tab) ? selectedPlanMonth[tab] : isCompetitorsTab(tab) ? selectedCompetitorsPeriod[tab] : selectedMarketMonth[tab])}`);
       } else {
         location.hash = tab;
       }
@@ -694,23 +1262,37 @@
   tabLinks.forEach((link) => {
     link.addEventListener("click", (e) => {
       e.preventDefault();
-      setTab(link.dataset.t, true);
+      setTab(tabFor(link.dataset.t, product), true);
     });
+  });
+  if (productSwitch) productSwitch.addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-product]");
+    if (button && currentTab !== "pult") setTab(tabFor(sectionOf(currentTab), button.dataset.product), true);
   });
 
   window.addEventListener("hashchange", () => {
-    const [tab, month] = location.hash.replace(/^#/, "").split("/");
-    if (tab === "ip" || tab === "kt" || isPlansTab(tab)) {
+    const [rawTab, month] = location.hash.replace(/^#/, "").split("/");
+    const tab = rawTab === "reg" ? "pult" : rawTab;
+    if (document.body.classList.contains("tv")) {
+      if (tab === "ip" || tab === "kt" || isPlansTab(tab) || isRadarTab(tab) || isCompetitorsTab(tab)) {
+        setTab(tab, false, month || null);
+      } else if (tab === "pult") {
+        preTvTab = "pult";
+        preTvMonth = month === currentMonth || hasClosedMonth(month) ? month : currentMonth;
+      }
+      return;
+    }
+    if (tab === "ip" || tab === "kt" || isPlansTab(tab) || isRadarTab(tab) || isCompetitorsTab(tab)) {
       setTab(tab, false, month || null);
-    } else if (tab === "pult" || tab === "reg") {
-      selectMonth(tab === "pult" ? month || currentMonth : currentMonth);
+    } else if (tab === "pult") {
+      selectMonth(month || currentMonth);
       setTab("pult", false);
     }
   });
 
   /* ================= TV ================= */
   let tvTimer = null;
-  const SCENES = ["month", "sales", "calls", "signals", "tenders"].filter((id) => document.getElementById(id));
+  const SCENES = ["month", "sales", "calls", "signals"].filter((id) => document.getElementById(id));
   function showScene(i) {
     SCENES.forEach((id, k) => document.getElementById(id).classList.toggle("scene", k === i));
     document.getElementById("scenes").innerHTML = SCENES.map((_, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("");
@@ -734,6 +1316,24 @@
   addEventListener("resize", fitTv);
   function toggleTv() {
     const on = document.body.classList.toggle("tv");
+    if (on) {
+      preTvTab = currentTab;
+      preTvMonth = selectedMonth;
+      preTvPeriod = period;
+    }
+    setTvUrlParam(on);
+    const more = document.querySelector("#month .month-more");
+    if (more) more.open = on;
+    const callsMore = document.querySelector("#calls .calls-more");
+    if (callsMore) callsMore.open = on || callsMoreOpen;
+    // В ТВ — вся команда, после выхода снова «Я — …».
+    renderMonth();
+    renderSignals();
+    renderSales(period);
+    const errors = document.querySelector("#signals .outcome-mismatches");
+    if (errors) errors.open = false;
+    const searchModal = document.getElementById("searchModal");
+    if (searchModal && searchModal.open) searchModal.close();
     const tvBtn = document.getElementById("tvBtn");
     if (tvBtn) tvBtn.textContent = on ? "Выйти из ТВ" : "Режим ТВ";
     clearInterval(tvTimer);
@@ -742,7 +1342,6 @@
     fitTv();
     if (on) {
       selectMonth(currentMonth);
-      preTvTab = currentTab;
       if (currentTab !== "pult") setTab("pult", false);
       if (period !== "day") setPeriod("day");
       let i = 0, t0 = Date.now(); const every = 15000;
@@ -753,9 +1352,15 @@
       }, 200);
     } else {
       if (bar) bar.style.width = "0";
-      if (preTvTab && preTvTab !== "pult") {
-        setTab(preTvTab, false);
+      const targetTab = Object.prototype.hasOwnProperty.call(tabPanes, preTvTab) ? preTvTab : "pult";
+      if (targetTab === "pult") {
+        if (preTvMonth && preTvMonth !== selectedMonth) selectMonth(preTvMonth);
+        if (!P.closedMonth && preTvPeriod && preTvPeriod !== period) setPeriod(preTvPeriod, false);
+        setTab("pult", true);
+      } else {
+        setTab(targetTab, true);
       }
+      requestAnimationFrame(() => { moveInd(); moveSecInd(); });
     }
   }
   const tvBtn = document.getElementById("tvBtn");
@@ -788,8 +1393,10 @@
     document.getElementById("signals").hidden = !!P.closedMonth;
     document.getElementById("tasks").hidden = !!P.closedMonth;
     document.getElementById("closedNotice").hidden = !P.closedMonth;
-    renderMonth(); renderSignals(); renderTasks();
-    setPeriod(P.closedMonth ? "month" : period);
+    renderMonth(false); renderSignals(); renderTasks();
+    setPeriod(P.closedMonth ? "month" : period, false, false);
+    if (currentTab === "pult") updateSourceLabels("pult");
+    renderLiveBadge();
     animate(document.getElementById("month"));
     observe();
   }
@@ -806,21 +1413,293 @@
   barsObserver.observe(document.querySelector(".dateline"));
   measureBars();
 
+  const meSelect = document.getElementById("meSelect");
+  const people = VIEWER ? [{ id: VIEWER.managerId, name: VIEWER.name }] : teamPeople();
+  if (me && !people.some((p) => p.id === me)) me = "";
+  if (me) taskFilter = me;
+  meSelect.innerHTML = (VIEWER ? "" : `<option value="">вся команда</option>`) + people.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  meSelect.value = me;
+  meSelect.disabled = Boolean(VIEWER);
+  meSelect.addEventListener("change", () => {
+    me = meSelect.value;
+    showAllTeam = false;
+    try { if (me) localStorage.setItem("pult-me", me); else localStorage.removeItem("pult-me"); } catch (e) {}
+    taskFilter = me || "all"; taskAll = false;
+    renderMonth(); renderSignals(); renderSales(period); renderTasks();
+    if (isRadarTab(currentTab) || isPlansTab(currentTab)) renderTabContent(currentTab);
+    ["month", "signals", "sales", "tasks"].forEach((id) => { const s = document.getElementById(id); if (s && s.classList.contains("in")) animate(s); });
+  });
+
+  /* ================= quick search ================= */
+  function initQuickSearch() {
+    const modal = document.getElementById("searchModal");
+    const input = document.getElementById("quickSearchInput");
+    const results = document.getElementById("searchResults");
+    const searchBtn = document.getElementById("searchBtn");
+    if (!modal || !input || !results) return;
+
+    let selectedIndex = -1;
+    let currentResults = [];
+
+    function buildSearchIndex() {
+      const items = [];
+      const seenDeals = new Set();
+      const root = (typeof PAYLOAD !== "undefined" && PAYLOAD) ? PAYLOAD : P;
+
+      const addDeal = (d, mgrName, context) => {
+        const id = String(d.dealId || d.id || "");
+        if (!id || seenDeals.has(id)) return;
+        seenDeals.add(id);
+        const ct = cleanTitle(d);
+        items.push({
+          type: "deal",
+          id,
+          title: ct.title || d.title || id,
+          planNumber: ct.plan || d.planNumber || "",
+          manager: mgrName || d.managerName || "",
+          amount: d.amount || 0,
+          context: context || "Сделка",
+          url: dealUrl(id)
+        });
+      };
+
+      for (const g of root.groups || []) {
+        for (const m of g.managers || []) {
+          for (const t of m.topTasks || []) addDeal(t, m.name, "Срочная задача");
+          const debts = m.debts || {};
+          for (const d of debts.wonOnPortalNotClosedDeals || []) addDeal(d, m.name, "Выиграно на портале");
+          for (const d of debts.overdueList || []) addDeal(d, m.name, "Просрочено");
+          for (const d of debts.newDealsList || []) addDeal(d, m.name, "Новая без звонка");
+          for (const d of debts.readyToCloseDeals || []) addDeal(d, m.name, "Пора закрыть");
+          for (const d of debts.overdueOverMonthTasks || []) addDeal(d, m.name, "30+ дней");
+        }
+      }
+
+      for (const om of root.outcomeMismatches || []) {
+        addDeal(om, om.managerName, "Ошибка в CRM");
+      }
+
+      for (const group of [root.plans?.ip, root.plans?.kt]) {
+        if (!group) continue;
+        for (const p of group.openPlans || []) {
+          items.push({
+            type: "plan",
+            id: String(p.id || ""),
+            title: `${p.customerName || "Заказчик"} · ${p.itemName || "Товар"}`,
+            planNumber: String(p.planNumber || ""),
+            customerBin: String(p.customerBin || ""),
+            manager: p.managerName || "",
+            sum: p.sum || 0,
+            context: `План ${group.group === "КТ" ? "КТ" : "ИП"} · ${p.portalStatus || "В работе"}`,
+            dealUrl: p.dealUrl || dealUrl(p.id),
+            planUrl: p.planUrl || ""
+          });
+        }
+      }
+
+      for (const [tabKey, group] of [["ip", root.market?.ip], ["kt", root.market?.kt]]) {
+        if (!group) continue;
+        const addCust = (c) => {
+          if (!c || !c.name) return;
+          items.push({
+            type: "market",
+            title: c.name,
+            bin: String(c.bin || ""),
+            manager: "",
+            amount: c.sum || 0,
+            context: `Рынок ${tabKey.toUpperCase()} · Заказчик`,
+            tab: tabKey
+          });
+        };
+        const addSupp = (s) => {
+          if (!s || !s.name) return;
+          items.push({
+            type: "market",
+            title: s.name,
+            bin: String(s.bin || ""),
+            manager: "",
+            amount: s.sum || 0,
+            context: `Рынок ${tabKey.toUpperCase()} · Поставщик${s.us ? " (мы)" : ""}`,
+            tab: tabKey
+          });
+        };
+        (group.customers || []).forEach(addCust);
+        (group.suppliers || []).forEach(addSupp);
+      }
+
+      // 5. Radar lots
+      if (root.radar) {
+        for (const prodKey of ["ip", "kt"]) {
+          const rGroup = root.radar[prodKey];
+          if (!rGroup) continue;
+          const allRadarCards = [
+            ...(rGroup.submitToday || []),
+            ...(rGroup.discussion || []),
+            ...(rGroup.secondChance || [])
+          ];
+          for (const card of allRadarCards) {
+            const id = String(card.id || "");
+            const title = card.itemName ? `${card.itemName}${card.qty ? ` (${card.qty} шт.)` : ""}` : (card.title || id);
+            const lotNo = card.lotNumber || card.planNumber || "";
+            items.push({
+              type: "radar",
+              id,
+              title: `${title}${card.customerName ? ` · ${card.customerName}` : ""}`,
+              planNumber: lotNo,
+              bin: String(card.customerBin || ""),
+              manager: card.managerName || "",
+              amount: card.sum || 0,
+              context: `Радар ${prodKey.toUpperCase()} · ${card.method || "Лот"}`,
+              url: card.dealUrl || (id ? dealUrl(id) : card.lotUrl || "")
+            });
+          }
+        }
+      }
+
+      return items;
+    }
+
+    let searchItems = null;
+
+    function openModal() {
+      if (document.body.classList.contains("tv")) return;
+      if (!searchItems) searchItems = buildSearchIndex();
+      modal.showModal();
+      input.value = "";
+      renderSearchResults("");
+      input.focus();
+    }
+
+    function closeModal() {
+      if (modal.open) modal.close();
+    }
+
+    function renderSearchResults(query) {
+      const q = String(query || "").trim().toLowerCase();
+      if (!q) {
+        currentResults = [];
+        results.innerHTML = `<div class="search-empty">Введите номер сделки, плана, БИН или название…</div>`;
+        selectedIndex = -1;
+        return;
+      }
+
+      currentResults = searchItems.filter(item => {
+        const hay = `${item.title} ${item.id || ""} ${item.planNumber || ""} ${item.customerBin || item.bin || ""} ${item.manager || ""} ${item.context || ""}`.toLowerCase();
+        return hay.includes(q);
+      }).slice(0, 25);
+
+      if (!currentResults.length) {
+        results.innerHTML = `<div class="search-empty">Ничего не найдено по запросу «${esc(query)}»</div>`;
+        selectedIndex = -1;
+        return;
+      }
+
+      selectedIndex = 0;
+      results.innerHTML = currentResults.map((item, idx) => {
+        const meta = [];
+        if (item.context) meta.push(esc(item.context));
+        if (item.amount || item.sum) meta.push(money(item.amount || item.sum));
+        if (item.manager) meta.push(esc(item.manager));
+        if (item.planNumber) meta.push(`план ${esc(item.planNumber)}`);
+        if (item.customerBin || item.bin) meta.push(`БИН ${esc(item.customerBin || item.bin)}`);
+        return `
+          <div class="search-item ${idx === 0 ? "selected" : ""}" role="option" data-idx="${idx}" tabindex="-1">
+            <div class="title">${esc(item.title)}</div>
+            <div class="meta">${meta.join(" · ")}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function selectResult(index) {
+      const all = results.querySelectorAll(".search-item");
+      all.forEach((el, i) => el.classList.toggle("selected", i === index));
+      const target = all[index];
+      if (target) target.scrollIntoView({ block: "nearest" });
+      selectedIndex = index;
+    }
+
+    function activateResult(index) {
+      const item = currentResults[index];
+      if (!item) return;
+      closeModal();
+      if ((item.type === "deal" || item.type === "radar") && item.url) {
+        window.open(item.url, "_blank", "noopener");
+      } else if (item.type === "plan") {
+        if (item.dealUrl) window.open(item.dealUrl, "_blank", "noopener");
+      } else if (item.type === "market") {
+        setTab(item.tab, true);
+      }
+    }
+
+    if (searchBtn) searchBtn.addEventListener("click", openModal);
+
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
+
+    input.addEventListener("input", () => {
+      renderSearchResults(input.value);
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (currentResults.length) {
+          selectResult((selectedIndex + 1) % currentResults.length);
+        }
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (currentResults.length) {
+          selectResult((selectedIndex - 1 + currentResults.length) % currentResults.length);
+        }
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (selectedIndex >= 0 && selectedIndex < currentResults.length) {
+          activateResult(selectedIndex);
+        }
+      } else if (e.key === "Escape") {
+        closeModal();
+      }
+    });
+
+    results.addEventListener("click", (e) => {
+      const itemEl = e.target.closest(".search-item");
+      if (itemEl && itemEl.dataset.idx) {
+        activateResult(Number(itemEl.dataset.idx));
+      }
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (document.body.classList.contains("tv")) return;
+      const isInput = e.target.closest("input, textarea, select") || e.target.isContentEditable;
+      if (!isInput && e.key === "/") {
+        e.preventDefault();
+        openModal();
+      } else if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K" || e.key === "л" || e.key === "Л")) {
+        e.preventDefault();
+        openModal();
+      }
+    });
+  }
+
   /* ================= boot ================= */
   renderChrome(); renderSignals(); renderMonth(); renderTasks();
+  initQuickSearch();
   let saved = null; try { saved = localStorage.getItem("pult-period"); } catch (e) {}
   setPeriod(/period=(day|week|month)/.exec(location.search)?.[1] || saved || "day");
   
-  let hashTab = location.hash.replace(/^#/, "").split("/")[0];
+  const [hashTabRaw, hashMonthRaw] = location.hash.replace(/^#/, "").split("/");
+  let hashTab = hashTabRaw;
   if (hashTab === "reg") hashTab = "pult";
   let savedTab = null; try { savedTab = localStorage.getItem("pult-tab"); } catch (e) {}
   if (savedTab === "reg") savedTab = "pult";
   const hasTab = tab => Object.prototype.hasOwnProperty.call(tabPanes, tab);
   const initialTab = hasTab(hashTab) ? hashTab : (hasTab(savedTab) ? savedTab : "pult");
-  setTab(initialTab, false, location.hash.split("/")[1] || null);
-  selectMonth(hashTab === "pult" ? location.hash.split("/")[1] || currentMonth : currentMonth);
+  setTab(initialTab, false, hashMonthRaw || null);
+  selectMonth(hashTab === "pult" ? hashMonthRaw || currentMonth : currentMonth);
 
   observe();
-  if (/tv=1/.test(location.search)) toggleTv();
+  if (hasTvParam()) toggleTv();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { moveInd(); moveSecInd(); });
 })();

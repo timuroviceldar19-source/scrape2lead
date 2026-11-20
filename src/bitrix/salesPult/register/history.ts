@@ -1,13 +1,15 @@
-import { buildRegisterView } from "./buildView.js";
+import { buildRegisterView, listedPlanManagers } from "./buildView.js";
 import { zakupListAll, zakupGet, type ZakupPage, type ZakupApiOptions } from "../../../kz/zakupPublicApi.js";
 import type { MarketConfig } from "../../../kz/market/types.js";
 import { isExcludedStatus, loadMarketConfig } from "../../../kz/market/config.js";
 import fs from "node:fs";
 import path from "node:path";
-import { parseRegisterExcel } from "./parseExcel.js";
+import { isPartnerSale, parseRegisterExcel } from "./parseExcel.js";
 import { groupRegisterContracts, calculateNameSimilarity, matchRegisterWithCrm } from "./matchCrm.js";
 import { compareRegisterFiles, getFileRevision } from "./diskClient.js";
 import { getNextMonth } from "./fetchCrmWon.js";
+import { REGISTER_HISTORY_VERSION } from "./crypto.js";
+import { formatSafeErrorStatus } from "../safeLog.js";
 
 interface ZakupDictItem {
   id: number;
@@ -82,6 +84,18 @@ export function formatMonthLabel(yearMonth: string): string {
   return `${name} ${y}`;
 }
 
+/** Договоры по всем строкам месяца: партнёрская строка в том же договоре второго договора не даёт. */
+function countContractsWithPartner(rows: RegisterRow[]): NonNullable<RegisterMonthSummary["contractsWithPartner"]> {
+  const contracts = groupRegisterContracts(rows);
+  const byManager: Record<string, number> = {};
+  const daily: Record<string, number> = {};
+  for (const c of contracts) {
+    byManager[c.manager] = (byManager[c.manager] ?? 0) + 1;
+    daily[c.date] = (daily[c.date] ?? 0) + 1;
+  }
+  return { total: contracts.length, byManager, daily };
+}
+
 export function buildRegisterMonthSummary(params: {
   month: string;
   label?: string;
@@ -89,10 +103,13 @@ export function buildRegisterMonthSummary(params: {
   rows: RegisterRow[];
   plans: Record<string, number>;
   hasValColumn?: boolean;
+  hiddenManagers?: string[];
 }): RegisterMonthSummary {
-  const { month, fileName, rows, plans } = params;
+  const { month, fileName, rows: allRows, plans, hiddenManagers } = params;
   const label = params.label || formatMonthLabel(month);
-  const hasVal = params.hasValColumn ?? (rows.length === 0 || rows.some((r) => r.val !== null));
+  const hasVal = params.hasValColumn ?? (allRows.length === 0 || allRows.some((r) => r.val !== null));
+  const rows = allRows.filter((r) => !isPartnerSale(r));
+  const partnerRows = allRows.filter(isPartnerSale);
 
   const contracts = groupRegisterContracts(rows);
   const totalSale = rows.reduce((s, r) => s + r.sale, 0);
@@ -103,7 +120,7 @@ export function buildRegisterMonthSummary(params: {
 
   // By Manager breakdown
   const allManagers = new Set<string>([
-    ...Object.keys(plans).filter((m) => m !== "B2B"),
+    ...listedPlanManagers(plans, hiddenManagers),
     ...rows.map((r) => r.manager)
   ]);
 
@@ -144,7 +161,12 @@ export function buildRegisterMonthSummary(params: {
     plan,
     planPct,
     hasVal,
-    byManager
+    byManager,
+    ...(partnerRows.length ? {
+      partnerSale: partnerRows.reduce((s, r) => s + r.sale, 0),
+      partnerContracts: groupRegisterContracts(partnerRows).length,
+      contractsWithPartner: countContractsWithPartner(allRows)
+    } : {})
   };
 }
 
@@ -782,7 +804,7 @@ export async function searchOrganizationByBin(
     }
     return null;
   } catch (err) {
-    console.warn(`[Портал] Ошибка поиска организации по БИН ${bin}:`, err);
+    console.warn(`[Портал] Ошибка поиска организации по БИН ${bin} (${formatSafeErrorStatus(err)})`);
     return null;
   }
 }
@@ -861,8 +883,10 @@ export async function resolveGroupSupplierOrgIds(
     }
   }
 
-  // Resolve Partner Bins
-  const partnerBins: string[] = outcomesConfig.partnerBins ? outcomesConfig.partnerBins.map((b: unknown) => String(b).trim()) : [];
+  // Resolve Partner Bins. Сверка с реестром ОП берёт свой список: не все партнёры итогов
+  // закупок проводят продажи через реестр отдела.
+  const registerPartners = outcomesConfig.registerPartnerBins ?? outcomesConfig.partnerBins;
+  const partnerBins: string[] = registerPartners ? registerPartners.map((b: unknown) => String(b).trim()) : [];
   for (const bin of partnerBins) {
     let orgId = binToId.get(bin);
     if (!orgId) {
@@ -992,6 +1016,7 @@ export interface BuildFullRegisterHistoryOptions {
     updateTime?: string;
   }>;
   managerAliases?: Record<string, string>;
+  hiddenManagers?: string[];
   todayAlmaty: string;
   crmWonDealsByMonth?: Map<string, CrmWonDeal[]>;
   crmWonDeals?: CrmWonDeal[];
@@ -1115,7 +1140,7 @@ export async function buildFullRegisterHistory(
         hasValColumn: p.hasValColumn
       });
     } catch (err) {
-      console.warn(`[Реестр История] Не удалось разобрать ${f.fileName}:`, err);
+      console.warn(`[Реестр История] Не удалось разобрать файл реестра (${formatSafeErrorStatus(err)})`);
     }
   }
 
@@ -1141,13 +1166,18 @@ export async function buildFullRegisterHistory(
       }
     }
 
-    const summary = buildRegisterMonthSummary({
-      month: m,
-      fileName: finalPf.fileName,
-      rows: finalPf.rows,
-      plans: finalPf.plans,
-      hasValColumn: finalPf.hasValColumn
-    });
+    const summaryUpdatedAt = finalPf.updateTime.trim() || undefined;
+    const summary: RegisterMonthSummary = {
+      ...buildRegisterMonthSummary({
+        month: m,
+        fileName: finalPf.fileName,
+        rows: finalPf.rows,
+        plans: finalPf.plans,
+        hasValColumn: finalPf.hasValColumn,
+        hiddenManagers: options.hiddenManagers
+      }),
+      ...(summaryUpdatedAt ? { updatedAt: summaryUpdatedAt } : {})
+    };
 
     const contracts = groupRegisterContracts(finalPf.rows);
     allFinalContracts.push(...contracts);
@@ -1189,11 +1219,15 @@ export async function buildFullRegisterHistory(
       rows: finalPf.rows, plans: finalPf.plans, missing,
       extraDealsCount: summary.reconciliationPerformed ? summary.crmExtra || 0 : 0,
       fileName: finalPf.fileName, asOf: finalPf.dateKey, month: summary.month,
-      hasValColumn: finalPf.hasValColumn
+      hasValColumn: finalPf.hasValColumn, hiddenManagers: options.hiddenManagers
     });
     if (view.error === undefined) {
       const { history, historyError, ...snapshot } = view;
-      monthViews[summary.month] = snapshot;
+      const monthUpdatedAt = finalPf.updateTime.trim() || undefined;
+      monthViews[summary.month] = {
+        ...snapshot,
+        ...(monthUpdatedAt ? { updatedAt: monthUpdatedAt } : {})
+      };
     }
   }
 
@@ -1288,7 +1322,7 @@ export async function buildFullRegisterHistory(
         };
       }
     } catch (err) {
-      console.warn(`[Реестр История] Ошибка сверки с порталом:`, err);
+      console.warn(`[Реестр История] Ошибка сверки с порталом (${formatSafeErrorStatus(err)})`);
       portalMissing = {
         currentMonth: sortedMonths[sortedMonths.length - 1] || "",
         previousMonth: sortedMonths[sortedMonths.length - 2] || "",
@@ -1319,6 +1353,7 @@ export async function buildFullRegisterHistory(
   });
 
   return {
+    version: REGISTER_HISTORY_VERSION,
     asOf: options.todayAlmaty,
     months,
     monthViews,

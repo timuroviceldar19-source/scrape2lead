@@ -91,23 +91,20 @@ describe("Долги in payload and manager view", () => {
 });
 
 describe("debt signals", () => {
-  it("shows red per-manager signals and one gray «пора закрыть» line", () => {
+  it("does not repeat per-manager debts or ready-to-close in urgent", () => {
     const signals = buildSignals(payload([
       manager("1", "Турар", debts({ newStaleDeals: 25, readyToCloseDealIds: ["a", "b", "c"] })),
       manager("2", "Нурбол", debts({ overdueOngoing: 3, readyToCloseDealIds: ["c", "d"] }))
     ]));
-    expect(signals).toContainEqual({ color: "red", text: "<b>Турар</b>: 25\u00A0новых сделок без звонка больше суток" });
-    expect(signals).toContainEqual({ color: "red", text: "<b>Нурбол</b>: 3\u00A0дела по идущим закупкам просрочено" });
-    const gray = signals.filter((s) => s.color === "gray");
-    expect(gray).toEqual([{ color: "gray", text: "Пора закрыть 5\u00A0сделок: закупка уже прошла, а сделки ещё в работе" }]);
+    expect(signals).toEqual([]);
   });
 
-  it("uses the singular verb form and no debt signals when there is nothing", () => {
+  it("omits a single overdue debt and keeps the empty signals empty", () => {
     const one = buildSignals(payload([manager("1", "Нурбол", debts({ overdueOngoing: 1 }))]));
-    expect(one).toContainEqual({ color: "red", text: "<b>Нурбол</b>: 1\u00A0дело по идущим закупкам просрочено" });
+    expect(one).toEqual([]);
 
     const none = buildSignals(payload([manager("1", "Нурбол", debts({}))]));
-    expect(none).toEqual([{ color: "green", text: "Сегодня без происшествий" }]);
+    expect(none).toEqual([]);
   });
 
   it("does not signal fresh new deals (only older than a working day)", () => {

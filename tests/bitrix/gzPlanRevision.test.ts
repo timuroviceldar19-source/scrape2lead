@@ -4,6 +4,7 @@ import {
   buildGzPlanRevisionFields,
   detectGzPlanRevision,
   findAmbiguousRevisionDealIds,
+  findOutdatedRevisionIndexes,
   type GzPlanRevisionDeal,
   type GzPlanRevisionRow
 } from "../../src/bitrix/gzPlanRevision.js";
@@ -144,5 +145,28 @@ describe("findAmbiguousRevisionDealIds", () => {
 
   it("returns nothing when every deal is revised once", () => {
     expect(findAmbiguousRevisionDealIds(["44245", "42793"]).size).toBe(0);
+  });
+});
+
+describe("findOutdatedRevisionIndexes", () => {
+  it("holds a revision when a newer point of the same deal is in the run", () => {
+    // Сделка 46147: старый пункт 80758527 откатил бы сумму, новый 88607772 с ней совпадает.
+    const items = [
+      { dealId: "46147", planPointId: "80758527", revises: true },
+      { dealId: "46147", planPointId: "88607772", revises: false },
+      { dealId: "56381", planPointId: "88690032", revises: true }
+    ];
+
+    expect(findOutdatedRevisionIndexes(items)).toEqual(new Set([0]));
+  });
+
+  it("lets the newest point revise its deal", () => {
+    const items = [
+      { dealId: "45863", planPointId: "87807905", revises: false },
+      { dealId: "45863", planPointId: "88696961", revises: true },
+      { dealId: null, planPointId: "88700001", revises: false }
+    ];
+
+    expect(findOutdatedRevisionIndexes(items).size).toBe(0);
   });
 });

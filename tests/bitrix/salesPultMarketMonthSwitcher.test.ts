@@ -23,7 +23,7 @@ const units: MarketUnit[] = ["ИП", "КТ"].flatMap((group, gi) => months.flatM
 
 function payload() {
   const p: SalesPultPayload = JSON.parse(fs.readFileSync("tests/fixtures/sales-pult/midday.json", "utf8"));
-  p.market = { asOf: "2026-11-03", ip: buildMarketGroupView("ИП", units, "2026-11-03", cfg), kt: buildMarketGroupView("КТ", units, "2026-11-03", cfg) };
+  p.market = { asOf: "2026-11-03", educationPending: {}, ip: buildMarketGroupView("ИП", units, "2026-11-03", cfg), kt: buildMarketGroupView("КТ", units, "2026-11-03", cfg) };
   return p;
 }
 
@@ -164,7 +164,7 @@ describe("переключатель месяцев рынка в браузер
       expect(await page.locator(`#tab-${tab} .mlabels`).textContent()).not.toContain("окт · по");
       await page.locator('.sections [data-t="pult"]').click();
       expect(await page.locator("#marketMonths").isVisible()).toBe(false);
-      await page.locator(`.sections [data-t="${tab}"]`).click();
+      await page.locator('.sections [data-t="market"]').click(); await page.locator(`#productSwitch [data-product="${tab}"]`).click();
       await assertMonth(page, tab, "2026-09");
       expect(errors).toEqual([]);
     } finally { await page.close(); }

@@ -1,0 +1,115 @@
+/* страница «Финансы» (fin.html): подключается после pult.css только на ней */
+/* Контраст >= 4.5:1 для мелкого текста (WCAG AA) на #ffffff (--sheet), #f4f6f8 (--paper) и #fffbeb (--warn-t):
+   #b45309: 5.02:1 на #ffffff, 4.64:1 на #f4f6f8, 4.84:1 на #fffbeb (вместо #d97706, дающего 3.19:1 / 2.94:1).
+   #b91c1c: 6.47:1 на #ffffff, 5.97:1 на #f4f6f8 (вместо #dc2626, дающего 4.46:1 на #f4f6f8). */
+:root {
+  --warn-ink: #b45309;
+  --bad-ink: #b91c1c;
+}
+.warn { color: var(--warn-ink); }
+.bad { color: var(--bad-ink); }
+.fin-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: var(--sheet); border: 1px solid var(--rule-2); border-radius: 10px; box-shadow: var(--card-shadow); overflow: hidden; }
+.fin-tile { padding: 16px 18px 18px; border-top: 1px solid var(--rule); border-left: 1px solid var(--rule); min-width: 0; margin: -1px 0 0 -1px; }
+.fin-tile .v { font-weight: 300; font-size: 34px; letter-spacing: -0.04em; line-height: 1.1; margin-top: 6px; white-space: nowrap; }
+.fin-tile .v small { font: 400 12px var(--mono); color: var(--ink-3); letter-spacing: 0; }
+.fin-tile .sub { margin-top: 6px; font: 400 12px/1.45 var(--mono); color: var(--ink-3); overflow-wrap: break-word; }
+.fin-tile .sub .warn { display: inline-block; margin-top: 2px; padding: 3px 7px; background: var(--warn-t); border-left: 2px solid var(--warn-ink); border-radius: 4px; color: var(--warn-ink); font-weight: 500; max-width: 100%; overflow-wrap: break-word; }
+.fin-tile.is-bad .v { color: var(--bad-ink); }
+.fin-spark { display: block; width: 100%; max-width: 160px; height: 26px; margin-top: 8px; }
+.fin-spark polyline { fill: none; stroke: var(--ink-3); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.fin-note { font-size: 13px; color: var(--ink-2); margin: 14px 0 0; max-width: 92ch; line-height: 1.5; }
+.fin-note b { color: var(--ink); font-weight: 500; }
+.fin-sub { font-size: 16px; font-weight: 500; margin: 28px 0 4px; letter-spacing: -0.01em; }
+.fin-sub .dim, .fin-more summary .dim { font: 400 12px var(--mono); color: var(--ink-3); margin-left: 6px; letter-spacing: 0; }
+.fin-more { margin-top: 18px; border-top: 1px solid var(--rule-2); padding-top: 6px; }
+.fin-more summary { cursor: pointer; font-weight: 500; font-size: 15px; padding: 8px 0; }
+.fin-showall { margin-top: 12px; }
+.fin-scroll { overflow-x: auto; }
+.r.total { border-top: 1px solid var(--rule-3); border-bottom: 0; }
+.r.total .nm, .r.total .num { font-weight: 500; }
+.r > .num, .r.head > .label.n { text-align: right; }
+.r .num.bad { color: var(--bad-ink); } .r .num.warn { color: var(--warn-ink); }
+.fin-pnl { min-width: 640px; }
+.fin-pnl .r { grid-template-columns: minmax(120px, 1.4fr) repeat(5, minmax(0, 1fr)); }
+.fin-pay .r { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) 110px; }
+.fin-pay .r .nm { white-space: normal; }
+.fin-debt .r { grid-template-columns: minmax(0, 3fr) minmax(90px, .8fr) 100px 96px 90px; }
+.fin-debt .r .nm { white-space: normal; }
+/* колонки из файла (дата оплаты, дни до оплаты, иск): ширины — в --debt-extra из fin.client.js */
+.fin-debt.wide { min-width: 880px; }
+.fin-debt.wide .r { grid-template-columns: minmax(140px, 2.4fr) minmax(70px, .8fr) 88px 78px 74px var(--debt-extra); gap: 12px; }
+.fin-debt-claim { font-size: 13px; line-height: 1.35; color: var(--ink-2); white-space: normal; overflow-wrap: anywhere; }
+.fin-debt-m { display: none; }
+.fin-debt-note { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--ink-3); }
+.fin-sort { border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; padding: 2px 0; white-space: nowrap; }
+.fin-sort:hover, [aria-sort="ascending"] > .fin-sort, [aria-sort="descending"] > .fin-sort { color: var(--ink); }
+.fin-sort .ar { display: inline-block; min-width: 1ch; }
+[aria-sort="none"] > .fin-sort .ar { opacity: .4; }
+.fin-sort:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
+.fin-more > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
+.chips button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+#debtMain > .fin-debt-filters { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.fin-debt-filter-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.fin-debt-filter-group .chips { margin-bottom: 0; }
+.fin-debt-meta { margin: 8px 0 6px; font: 400 12px/1.45 var(--mono); color: var(--ink-2); }
+.fin-debt-empty { padding: 14px 0; font: 400 13px/1.45 var(--mono); color: var(--ink-2); }
+.fin-cash { min-width: 640px; }
+/* склад: материальные ведомости */
+.fin-stock-search { display: flex; align-items: center; gap: 12px; margin: 4px 0; }
+.fin-stock-search > .dim { font: 400 12px var(--mono); color: var(--ink-3); white-space: nowrap; }
+#f-stock .chips { margin-bottom: 10px; }
+.fin-wh > .fin-note { margin: 2px 0 6px; }
+.fin-stock .r { grid-template-columns: minmax(0, 3fr) 90px 90px 110px; }
+.fin-stock.moves .r { grid-template-columns: minmax(0, 3fr) 84px 84px 84px 84px 110px; }
+.fin-stock .r .nm { white-space: normal; }
+.fin-stock .r.is-gone .nm, .fin-stock .r.is-gone .num { color: var(--ink-3); }
+.fin-stock-m { display: none; }
+/* у .r свой display: grid, без этого атрибут hidden не прячет строку */
+.fin-stock .r[hidden], .fin-wh[hidden] { display: none; }
+.fin-in .r { grid-template-columns: minmax(0, 3fr) minmax(90px, 1fr) 140px; }
+.fin-bal .r { grid-template-columns: minmax(0, 1.3fr) minmax(0, 2fr) 110px; }
+.note-warn { line-height: 1.5; overflow-wrap: anywhere; border-left-color: var(--warn-ink); }
+.page > .tab > .note-warn { margin-top: 0; }
+
+@media (max-width: 900px) {
+  .fin-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fin-tile .v { font-size: 28px; }
+}
+@media (max-width: 760px) {
+  .fin-pay .r.head, .fin-debt .r.head, .fin-in .r.head, .fin-bal .r.head { display: none; }
+  .fin-pay .r, .fin-debt .r, .fin-in .r, .fin-bal .r { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
+  .fin-pay .r > :nth-child(1), .fin-debt .r > :nth-child(1), .fin-in .r > :nth-child(1), .fin-bal .r > :nth-child(1) { grid-column: 1; grid-row: 1; }
+  .fin-pay .r > :nth-child(3), .fin-debt .r > :nth-child(3), .fin-in .r > :nth-child(3), .fin-bal .r > :nth-child(3) { grid-column: 2; grid-row: 1; }
+  .fin-pay .r > :nth-child(2), .fin-debt .r > :nth-child(2), .fin-in .r > :nth-child(2), .fin-bal .r > :nth-child(2) { grid-column: 1; grid-row: 2; }
+  .fin-debt .r > :nth-child(4) { display: none; }
+  .fin-debt .r > :nth-child(5) { grid-column: 2; grid-row: 2; font-size: 12px; }
+  .fin-debt.wide { min-width: 0; }
+  .fin-debt.wide .r { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
+  .fin-debt .r.body > :nth-child(n+6) { display: none; }
+  .fin-debt-m { display: block; margin-top: 2px; font: 400 12px/1.45 var(--mono); color: var(--ink-3); }
+  .fin-pay .r.total > :nth-child(2) { display: none; }
+  /* на телефоне шапка дебиторов — только кнопки сортировки */
+  .fin-debt .r.head.fin-sortable { display: flex; justify-content: flex-end; align-items: center; gap: 18px; padding-bottom: 8px; }
+  .fin-debt .r.head.fin-sortable > span:not([role="columnheader"]) { display: none; }
+  .fin-debt .r.head.fin-sortable::before { content: "Сортировка"; margin-right: auto; font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+  /* кнопок больше двух — переносятся строками, как у склада */
+  .fin-debt.wide .r.head.fin-sortable { flex-wrap: wrap; justify-content: flex-start; gap: 0 16px; padding-bottom: 6px; }
+  .fin-debt.wide .r.head.fin-sortable::before { flex-basis: 100%; margin-right: 0; margin-bottom: 2px; }
+  .fin-sort { padding: 6px 0; }
+  /* склад на телефоне: название и сумма, количество строкой ниже */
+  /* шапка склада на телефоне — строка кнопок сортировки по всем столбцам */
+  .fin-stock .r.head.fin-sortable { display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; padding-bottom: 6px; }
+  .fin-stock .r.head.fin-sortable::before { content: "Сортировка"; flex-basis: 100%; margin-bottom: 2px; font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+  .fin-stock .r, .fin-stock.moves .r { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
+  .fin-stock .r > .num { display: none; }
+  .fin-stock .r > .num:last-child { display: block; grid-column: 2; grid-row: 1; }
+  .fin-stock-m { display: block; margin-top: 2px; font: 400 12px var(--mono); color: var(--ink-3); }
+  .fin-stock-search { flex-wrap: wrap; gap: 4px 12px; }
+  #stockQ { font-size: 16px; max-width: none; }
+}
+@media (max-width: 480px) {
+  .fin-tile { padding: 12px 12px 14px; }
+  .fin-tile .v { font-size: 23px; }
+  .fin-tile .sub { font-size: 12px; line-height: 1.45; }
+  .fin-tile .sub .warn { display: block; font-size: 12px; line-height: 1.45; padding: 4px 7px; }
+}

@@ -242,7 +242,7 @@ describe("buildMarketGroupView", () => {
     // Group ranking: exactly 1 row for our group with combined sum
     const ourSuppliers = view.suppliers.filter((s) => s.us);
     expect(ourSuppliers).toHaveLength(1);
-    expect(ourSuppliers[0].name).toBe("Группа F3");
+    expect(ourSuppliers[0].name).toBe("F3 и партнёры");
     expect(ourSuppliers[0].sum).toBe(88200000 + 11800000);
     expect(ourSuppliers[0].details).toContain("F3");
     expect(ourSuppliers[0].details).toContain("Amanat Asia");

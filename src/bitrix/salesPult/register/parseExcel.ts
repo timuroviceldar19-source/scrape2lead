@@ -3,8 +3,8 @@ import type { RegisterRow, ProductGroup } from "./types.js";
 
 const PRODUCT_GROUP: Record<string, [ProductGroup, string]> = {
   "панель": ["ИП", "Интерактивные панели"],
-  "мульт система": ["ИП", "Мультимедийные системы"],
-  "мульт комплекс": ["ИП", "Мультимедийные системы"],
+  // В реестре пишут «мульт сист», «мульт система», «мульт комплекс».
+  "мульт": ["ИП", "Мультимедийные системы"],
   "моноблок": ["КТ", "Моноблоки"],
   "пк": ["КТ", "Компьютеры"],
   "компьютер": ["КТ", "Компьютеры"],
@@ -14,6 +14,17 @@ const PRODUCT_GROUP: Record<string, [ProductGroup, string]> = {
   "принтер": ["КТ", "МФУ и принтеры"],
   "монитор": ["КТ", "Мониторы"]
 };
+
+/**
+ * Мультимедийные системы F3 перепродаёт через партнёра с валом около 5–6%. Такие строки
+ * не входят в выручку, вал, бонусы и план отдела, а показываются отдельным блоком
+ * «Партнёрские продажи».
+ */
+export const PARTNER_SALE_KINDS: ReadonlySet<string> = new Set(["Мультимедийные системы"]);
+
+export function isPartnerSale(row: { partner?: boolean }): boolean {
+  return row.partner === true;
+}
 
 const CHANNELS: Record<string, string> = {
   "ом": "Электронный магазин",
@@ -199,7 +210,8 @@ export function parseRegisterWorkbook(
       note: null,
       group,
       kind,
-      channel
+      channel,
+      partner: PARTNER_SALE_KINDS.has(kind)
     });
   }
 

@@ -38,12 +38,15 @@ describe("loadGzPlansConfig", () => {
       // «Компьютер персональный» не находит: в сентябре 2026 так прошли мимо
       // планы на 3,75 и 3,43 млн, по которым потом подписаны договоры.
       "Компьютер",
-      "Монитор",
       "Моноблок",
       "Ноутбук"
     ]);
-    expect(config.keywords).not.toContain("Устройство многофункциональное");
-    expect(config.includeTruCodePrefixes).toEqual(["262011.", "262013.", "262017.100."]);
+    // Мониторы отдел продаж не берёт (13.11.2026), МФУ и принтеры — тоже (17.11.2026, сняли партнёрскую карточку):
+    // ни слов, ни кодов 262017.100 / 262018.900 / 262016.300.
+    for (const keyword of ["Монитор", "Устройство многофункциональное", "Принтер", "МФУ"]) {
+      expect(config.keywords).not.toContain(keyword);
+    }
+    expect(config.includeTruCodePrefixes).toEqual(["262011.", "262013."]);
     expect(config.excludeKeywords).toEqual([
       "Уголок",
       "Стойка",
@@ -52,10 +55,7 @@ describe("loadGzPlansConfig", () => {
       "Плинтус",
       "Источник бесперебойного питания",
       "Услуги",
-      "Коммутационная панель",
-      "МФУ",
-      "Принтер",
-      "Устройство многофункциональное"
+      "Коммутационная панель"
     ]);
   });
 
@@ -64,6 +64,20 @@ describe("loadGzPlansConfig", () => {
 
     expect(config.statuses).toEqual(["Утвержден", "На проверке камерального контроля"]);
     expect(config.includeTruCodePrefixes).toEqual([]);
+  });
+
+  it("reads both daily plan searches from zakup.gov.kz", () => {
+    // С 13.11.2026 реестр планов procurement.gov.kz не пополняется, новые пункты есть только на zakup.gov.kz.
+    expect(loadGzPlansConfig("config/gz-plans.json").source).toBe("zakup");
+    expect(loadGzPlansConfig("config/gz-plans.pk.json").source).toBe("zakup");
+    // Пункты до 88654473 были в реестре портала; номер исходного пункта для них знал только портал.
+    expect(loadGzPlansConfig("config/gz-plans.json").zakupMinPlanPointId).toBe(88654474);
+    expect(loadGzPlansConfig("config/gz-plans.pk.json").zakupMinPlanPointId).toBe(88654474);
+  });
+
+  it("keeps the portal search as the default source for other configs", () => {
+    expect(loadGzPlansConfig(writeTempConfig({ keywords: ["Панель интерактивная"] })).source).toBe("portal");
+    expect(() => loadGzPlansConfig(writeTempConfig({ keywords: ["Панель"], source: "ows" }))).toThrow();
   });
 
   it("loads and validates config from JSON file", () => {
@@ -168,6 +182,13 @@ describe("mergeGzPlansExportOptions", () => {
 
     expect(merged.minAmount).toBe(500000);
     expect(merged.excludeKeywords).toEqual(["Уголок"]);
+  });
+
+  it("threads the plan source into export options", () => {
+    const configPath = writeTempConfig({ keywords: ["Панель интерактивная"], source: "zakup" });
+
+    expect(mergeGzPlansExportOptions(loadGzPlansConfig(configPath)).source).toBe("zakup");
+    expect(mergeGzPlansExportOptions(loadGzPlansConfig(writeTempConfig({ keywords: ["Панель"], zakupMinPlanPointId: 5 }))).minPlanPointId).toBe(5);
   });
 });
 

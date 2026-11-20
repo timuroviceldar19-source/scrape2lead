@@ -70,10 +70,13 @@ jobs:
           # затем падает в 06:30 — и сторож рапортует «всё хорошо», хотя не
           # собрано ничего.
           #
-          # Поэтому спускаемся до job'а, который делает работу. Реальный сбор
-          # даёт job "<name> / run" (вложенный вызов gz-automation.yml) с
-          # conclusion=success; пропуск guard'ом — job "<name>" с
-          # conclusion=skipped. Префикс имени ловит оба, фильтр по success
+          # Поэтому спускаемся до job'ов вложенного gz-automation.yml. Сбор идёт
+          # цепочкой машин: "<name> / machine-N / run" (N = 1..3) и итоговый
+          # "<name> / collection-result". Машина, передавшая сбор дальше, тоже
+          # завершается с success, но весь run зелёный, только если
+          # collection-result увидел выполненный сбор, — поэтому выше отобраны
+          # run с conclusion=success. Пропуск guard'ом — job "<name>" с
+          # conclusion=skipped. Префикс имени ловит оба вида, фильтр по success
           # оставляет только настоящую работу.
           check() {
             workflow="$1"; job="$2"; since="$3"; work_ok=0

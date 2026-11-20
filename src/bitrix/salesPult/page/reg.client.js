@@ -4,6 +4,8 @@
 
   const P = typeof PAYLOAD !== "undefined" ? PAYLOAD : {};
   const R = P.register;
+  // Менеджеру «Радар», «Финансы» и «Конкуренты» не показываются: в его варианте пульта этих вкладок нет.
+  if (P.viewer) document.querySelectorAll('a[href="./#radar-ip"], a[href="./#competitors-ip"], a[href="./fin.html"]').forEach((a) => a.remove());
   const regEl = document.getElementById("tab-reg");
 
   function animate(root) {
@@ -52,6 +54,13 @@
     }
   }
 
+  function syncStickyHeights() {
+    const bar = document.querySelector(".bar");
+    const dateline = document.querySelector(".dateline");
+    if (bar) document.documentElement.style.setProperty("--bar-height", bar.offsetHeight + "px");
+    if (dateline) document.documentElement.style.setProperty("--period-height", dateline.offsetHeight + "px");
+  }
+
   let renderedMonth;
   let rendered = false;
   function renderMonth() {
@@ -61,7 +70,7 @@
     rendered = true;
     renderedMonth = selected;
     const activeView = window.__registerViewForMonth(R, selected);
-    window.__renderRegisterTab(activeView, regEl);
+    window.__renderRegisterTab(activeView, regEl, selected === P.asOfDate?.slice(0, 7) ? (P.reconciliation || { closedNotInRegister: [], possibleDuplicates: [] }) : null, P.portal);
     buttons.forEach((button, month) => button.setAttribute("aria-pressed", String(month === selected)));
     const dateLabel = document.getElementById("dateLabel");
     if (dateLabel) dateLabel.textContent = `Данные на ${activeView?.asOf || P.asOfDate || ""}`;
@@ -71,6 +80,7 @@
     if (footSource && activeView?.file) footSource.textContent = `Источник: реестр РОПа «${activeView.file}», папка «Реестр ОП» на Диске Битрикс24 · сверка со сделками Битрикс24`;
     animate(regEl);
     observe();
+    syncStickyHeights();
   }
   addEventListener("hashchange", renderMonth);
   renderMonth();
@@ -86,13 +96,42 @@
     }
   }
 
-  addEventListener("resize", moveInd);
+  addEventListener("resize", () => {
+    moveInd();
+    syncStickyHeights();
+  });
   if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(moveInd);
+    document.fonts.ready.then(() => {
+      moveInd();
+      syncStickyHeights();
+    });
   }
-  setTimeout(moveInd, 0);
+  setTimeout(() => {
+    moveInd();
+    syncStickyHeights();
+  }, 0);
 
   document.addEventListener("click", (e) => {
+    const anchor = e.target.closest('a[href^="#r-"]');
+    if (anchor && regEl && regEl.contains(anchor)) {
+      const target = document.getElementById(anchor.getAttribute("href").slice(1));
+      if (target) {
+        e.preventDefault();
+        syncStickyHeights();
+        const revealSec = target.closest(".reveal");
+        if (revealSec) {
+          revealSec.classList.add("in");
+          animate(revealSec);
+        }
+        const barBottom = document.querySelector(".bar")?.getBoundingClientRect().bottom || 0;
+        const datelineBottom = document.querySelector(".dateline")?.getBoundingClientRect().bottom || 0;
+        const stickyBottom = Math.max(barBottom, datelineBottom, 0);
+        const top = Math.max(0, window.scrollY + target.getBoundingClientRect().top - stickyBottom - 16);
+        window.scrollTo({ top, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+      }
+      return;
+    }
+    if (e.target.closest("a, button")) return;
     const row = e.target.closest(".r.body[role='button']");
     if (row) {
       const open = row.getAttribute("aria-expanded") !== "true";
@@ -102,7 +141,9 @@
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && e.target.matches(".r.body[role='button']")) {
+    if (e.target.closest("a, button")) return;
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches(".r.body[role='button']")) {
+      if (e.key === " ") e.preventDefault();
       e.target.click();
     }
   });

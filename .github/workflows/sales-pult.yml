@@ -12,18 +12,81 @@ on:
           - site
           - morning
           - evening
+      market_reseed:
+        description: "Restore market history from market-seed and strictly refresh the recent window (site only)"
+        required: false
+        default: false
+        type: boolean
+      market_import_education:
+        description: "Add verified 2026 education kits while preserving existing market history"
+        required: false
+        default: false
+        type: boolean
       market_backfill_from:
         description: "Initial market backfill start date (YYYY-MM-DD, e.g. 2026-01-01)"
         required: false
         type: string
+      competitors_backfill_from:
+        description: "Initial competitors backfill start date (YYYY-MM-DD, e.g. 2026-01-01)"
+        required: false
+        type: string
+      competitors_seed:
+        description: "Load the competitors database from the encrypted competitors-seed draft release into the cache"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: sales-pult-${{ github.event.inputs.mode || 'site' }}
   cancel-in-progress: false
 
 jobs:
-  run-pult:
+  # Первая заливка базы конкурентов: полный сбор с IP GitHub не укладывается в лимит задачи,
+  # поэтому базу собирают локально и кладут зашифрованной в черновик релиза competitors-seed
+  # (scripts/competitors-seed.mjs). Черновик виден только с правом записи, поэтому у этой задачи
+  # contents: write; npm-пакеты она не ставит и других секретов, кроме ключа копии, не получает.
+  seed-competitors:
+    if: ${{ inputs.competitors_seed == true }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download and decrypt competitors seed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPETITORS_SEED_KEY: ${{ secrets.COMPETITORS_SEED_KEY }}
+        run: |
+          set -eu
+          if [ -z "${COMPETITORS_SEED_KEY:-}" ]; then
+            echo "::error::Копия базы конкурентов: не задан секрет COMPETITORS_SEED_KEY"
+            exit 1
+          fi
+          SEED_DIR="${RUNNER_TEMP:-/tmp}/competitors-seed"
+          mkdir -p "$SEED_DIR" data/competitors
+          gh release download competitors-seed --repo "${GITHUB_REPOSITORY:-timuroviceldar19-source/scrape2lead}" --pattern competitors.db.enc --dir "$SEED_DIR" --clobber
+          node scripts/competitors-seed.mjs unpack "$SEED_DIR/competitors.db.enc" data/competitors/competitors.db --expect-sqlite
+
+      - name: Save competitors seed to cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/competitors
+          key: gz-competitors-v1-seed-${{ github.run_id }}
+
+  run-pult:
+    needs: seed-competitors
+    # Без заливки seed-competitors пропускается, а пульт собирается как обычно.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ (github.event.inputs.competitors_backfill_from || '') != '' && 240 || 35 }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,6 +99,18 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Validate market reseed
+        if: ${{ inputs.market_reseed == true }}
+        env:
+          MODE: ${{ inputs.mode || 'site' }}
+          MARKET_BACKFILL: ${{ inputs.market_backfill_from || '' }}
+        run: |
+          set -eu
+          if [ "$MODE" != "site" ] || [ -n "$MARKET_BACKFILL" ]; then
+            echo "::error::market_reseed requires mode=site and cannot be combined with market_backfill_from"
+            exit 1
+          fi
 
       - name: Cache register history
         uses: actions/cache@v4
@@ -61,29 +136,93 @@ jobs:
           restore-keys: |
             gz-market-v1-
 
+      - name: Cache competitors data
+        uses: actions/cache@v4
+        with:
+          path: data/competitors
+          key: gz-competitors-v1-${{ github.run_id }}
+          restore-keys: |
+            gz-competitors-v1-
+
+      # Шаблоны ТС — куски текста ТС заказчиков, в публичный репозиторий их не кладём.
+      # Секрет SPEC_TEMPLATES (JSON, тексты внутри поля text) пишется в data/, содержимое в лог не попадает.
+      - name: Spec templates from secret
+        env:
+          SPEC_TEMPLATES: ${{ secrets.SPEC_TEMPLATES }}
+        run: |
+          set -eu
+          if [ -z "${SPEC_TEMPLATES:-}" ]; then
+            echo "::warning::Шаблоны ТС: секрет SPEC_TEMPLATES не задан, блок «Шаблоны ТС» будет пустым"
+            exit 0
+          fi
+          mkdir -p data
+          printf '%s' "$SPEC_TEMPLATES" > data/spec-templates.json
+          if COUNT=$(node -e 'const c=JSON.parse(require("fs").readFileSync("data/spec-templates.json","utf8"));if(!Array.isArray(c.templates))throw 0;console.log(c.templates.length)' 2>/dev/null); then
+            echo "Шаблоны ТС: из секрета, шаблонов $COUNT"
+          else
+            rm -f data/spec-templates.json
+            echo "::warning::Шаблоны ТС: секрет SPEC_TEMPLATES не читается как JSON с полем templates, блок будет пустым"
+          fi
+
+      - name: Reset market history
+        if: ${{ inputs.market_reseed == true }}
+        run: |
+          set -eu
+          COUNT=$(npx tsx -e 'import { loadStoredMarketUnits } from "./src/kz/market/fetchMarket.ts"; console.log(loadStoredMarketUnits().length)')
+          echo "[Рынок] Перед восстановлением: позиций в кэше $COUNT"
+          rm -f data/market/units-2026.json
+
       # Кэша рынка ещё нет: берём файл, скачанный локально (API госзакупок днём не всегда отвечает GitHub).
       # Когда кэш появится, шаг пропускается, а утренний прогон дальше обновляет последние 45 дней.
       - name: Seed market data
         if: hashFiles('data/market/units-2026.json') == ''
         env:
           GH_TOKEN: ${{ github.token }}
+          MARKET_RESEED: ${{ inputs.market_reseed }}
         run: |
           set -eu
           mkdir -p data/market
           if gh release download market-seed --pattern units-2026.json --dir data/market; then
             echo "Рынок: кэша нет, взят файл из релиза market-seed"
           else
+            if [ "$MARKET_RESEED" = "true" ]; then
+              echo "::error::Рынок: восстановление остановлено, не удалось скачать market-seed"
+              exit 1
+            fi
             echo "::warning::Рынок: кэша нет и файла market-seed нет, вкладки рынка будут пустыми"
           fi
+          if [ "$MARKET_RESEED" = "true" ]; then
+            COUNT=$(npx tsx -e 'import { loadStoredMarketUnits } from "./src/kz/market/fetchMarket.ts"; console.log(loadStoredMarketUnits().length)')
+            echo "MARKET_SEED_COUNT=$COUNT" >> "$GITHUB_ENV"
+          fi
+
+      - name: Import verified education history
+        if: ${{ inputs.market_import_education == true || inputs.market_reseed == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release download market-seed --pattern education-kits-2026.json --dir data/market --clobber
+          npx tsx scripts/market-import-education.mts data/market/education-kits-2026.json
+
+      - name: Count restored education history
+        if: ${{ inputs.market_reseed == true }}
+        run: |
+          set -eu
+          COUNT=$(npx tsx -e 'import { loadStoredMarketUnits } from "./src/kz/market/fetchMarket.ts"; console.log(loadStoredMarketUnits().length)')
+          echo "MARKET_EDUCATION_COUNT=$COUNT" >> "$GITHUB_ENV"
 
       - name: Run Sales Pult
         env:
           BITRIX24_WEBHOOK_URL: ${{ secrets.BITRIX24_WEBHOOK_URL }}
           GOSZAKUP_TOKEN: ${{ secrets.GOSZAKUP_TOKEN }}
           REGISTER_HISTORY_KEY: ${{ secrets.REGISTER_HISTORY_KEY }}
+          MARKET_RESEED: ${{ inputs.market_reseed }}
           MODE: ${{ github.event.inputs.mode || 'site' }}
           MARKET_BACKFILL: ${{ github.event.inputs.market_backfill_from || '' }}
+          COMPETITORS_BACKFILL: ${{ github.event.inputs.competitors_backfill_from || '' }}
           PULT_CHAT_ENABLED: ${{ vars.PULT_CHAT_ENABLED }}
+          NODE_EXTRA_CA_CERTS: certs/rapidssl-tls-rsa-ca-g1.crt
         run: |
           set -eu
           echo "Running sales pult in mode: $MODE"
@@ -91,8 +230,16 @@ jobs:
           if [ -n "$MARKET_BACKFILL" ]; then
             BACKFILL_FLAG="--market-backfill-from $MARKET_BACKFILL"
           fi
+          COMP_BACKFILL_FLAG=""
+          if [ -n "${COMPETITORS_BACKFILL:-}" ]; then
+            COMP_BACKFILL_FLAG="--competitors-backfill-from $COMPETITORS_BACKFILL"
+          fi
           if [ "$MODE" = "site" ]; then
-            npm run bitrix:sales-pult -- --mode site $BACKFILL_FLAG
+            RESEED_FLAGS=""
+            if [ "$MARKET_RESEED" = "true" ]; then
+              RESEED_FLAGS="--market-update --market-update-strict"
+            fi
+            npm run bitrix:sales-pult -- --mode site $BACKFILL_FLAG $RESEED_FLAGS $COMP_BACKFILL_FLAG
           else
             EXECUTE_FLAG=""
             if [ "${PULT_CHAT_ENABLED:-}" = "true" ]; then
@@ -116,6 +263,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Роли пульта «почта → роль»; без секрета проверка входа выключена (см. AGENTS.md).
+          PULT_ROLES: ${{ secrets.PULT_ROLES }}
         run: |
           set -eu
 
@@ -140,21 +289,25 @@ jobs:
           # 1. Проверка Access ДО деплоя
           check_access "https://f3-pult.pages.dev"
           check_access "https://f3-pult.pages.dev/reg"
+          check_access "https://f3-pult.pages.dev/fin"
 
-          # 2. Подготовка и деплой
-          mkdir -p exports/sales-pult-deploy
-          cp exports/sales-pult/index.html exports/sales-pult-deploy/index.html
-          cp exports/sales-pult/reg.html exports/sales-pult-deploy/reg.html
+          # 2. Подготовка и деплой. Страницы лежат в вариантах _r/<роль>/, их отдаёт по роли
+          # промежуточный код functions/_middleware.ts; выкладка из корня репозитория, чтобы
+          # wrangler нашёл папку functions.
+          npx tsx scripts/pult-gate-config.mts exports/pult-gate/config.json
+          npx tsx scripts/pult-variants.mts exports/sales-pult exports/sales-pult-deploy exports/pult-gate/config.json
           DEPLOY_OUTPUT=$(npx wrangler pages deploy exports/sales-pult-deploy --project-name f3-pult)
           echo "$DEPLOY_OUTPUT"
 
           # 3. Проверка Access ПОСЛЕ деплоя: главный домен
           check_access "https://f3-pult.pages.dev"
           check_access "https://f3-pult.pages.dev/reg"
+          check_access "https://f3-pult.pages.dev/fin"
 
           # 4. Проверка Access ПОСЛЕ деплоя: URL деплоя из вывода wrangler
           DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -Eo 'https://[a-zA-Z0-9.-]+\.pages\.dev' | grep -v '^https://f3-pult\.pages\.dev$' | head -n 1 || true)
           if [ -n "$DEPLOY_URL" ]; then
             check_access "$DEPLOY_URL"
             check_access "$DEPLOY_URL/reg"
+            check_access "$DEPLOY_URL/fin"
           fi

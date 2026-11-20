@@ -42,9 +42,13 @@ import {
 } from "./pace.js";
 
 import type { RegisterView } from "./register/types.js";
+import type { FinanceView } from "./finance/types.js";
 
 const pultHtml = fs.readFileSync(new URL("./page/pult.html", import.meta.url), "utf8");
 const regHtml = fs.readFileSync(new URL("./page/reg.html", import.meta.url), "utf8");
+const finHtml = fs.readFileSync(new URL("./page/fin.html", import.meta.url), "utf8");
+const finCss = fs.readFileSync(new URL("./page/fin.css", import.meta.url), "utf8");
+const finClientJs = fs.readFileSync(new URL("./page/fin.client.js", import.meta.url), "utf8");
 const pultCss = fs.readFileSync(new URL("./page/pult.css", import.meta.url), "utf8");
 const pultClientJs = fs.readFileSync(new URL("./page/pult.client.js", import.meta.url), "utf8");
 const registerClientJs = fs.readFileSync(new URL("./page/register.client.js", import.meta.url), "utf8");
@@ -52,12 +56,16 @@ const regRunnerClientJs = fs.readFileSync(new URL("./page/reg.client.js", import
 const marketClientJs = fs.readFileSync(new URL("./page/market.client.js", import.meta.url), "utf8");
 
 const plansClientJs = fs.readFileSync(new URL("./page/plans.client.js", import.meta.url), "utf8");
-const pultPageClientJs = `${marketClientJs}\n${plansClientJs}\n${pultClientJs}`;
+const radarClientJs = fs.readFileSync(new URL("./page/radar.client.js", import.meta.url), "utf8");
+const competitorsClientJs = fs.readFileSync(new URL("./page/competitors.client.js", import.meta.url), "utf8");
+const pultPageClientJs = `${marketClientJs}\n${plansClientJs}\n${radarClientJs}\n${competitorsClientJs}\n${pultClientJs}`;
 const regPageClientJs = `${registerClientJs}\n${regRunnerClientJs}`;
 
 const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|\/\*__CLIENT_JS__\*\//g;
 
 export interface RegisterPagePayload {
+  viewer?: import("./types.js").PultViewer;
+  reconciliation?: import("./contracts.js").ContractReconciliation;
   asOfDate: string;
   generatedAt: string;
   portal?: string;
@@ -65,8 +73,24 @@ export interface RegisterPagePayload {
   register: RegisterView;
 }
 
+/** Страница «Финансы»: только полный вариант пульта, менеджеру и на ТВ не собирается. */
+export interface FinancePagePayload {
+  asOfDate: string;
+  generatedAt: string;
+  finance: FinanceView;
+}
+
 export function buildSignals(payload: SalesPultPayload): SignalItem[] {
   return buildPultSignals(payload);
+}
+
+export type PultPageView = PultView & { closedMonths: Record<string, PultView | null> };
+
+/** Представление главной вместе с закрытыми месяцами — то, что страница получает как VIEW. */
+export function buildPultPageView(payload: SalesPultPayload): PultPageView {
+  return { ...buildPultView(payload), closedMonths: Object.fromEntries(
+    Object.entries(payload.closedMonths || {}).map(([key, month]) => [key, month ? buildPultView(month) : null])
+  ) };
 }
 
 export function renderPultHtml(payload: SalesPultPayload): string {
@@ -74,9 +98,15 @@ export function renderPultHtml(payload: SalesPultPayload): string {
   if ("register" in safePayload) {
     delete (safePayload as Record<string, unknown>).register;
   }
-  const view = { ...buildPultView(safePayload), closedMonths: Object.fromEntries(
-    Object.entries(payload.closedMonths || {}).map(([key, month]) => [key, month ? buildPultView(month) : null])
-  ) };
+  return renderPultHtmlWithView(safePayload, buildPultPageView(safePayload));
+}
+
+/** Страница из готового представления: вариант роли считает его сам из полного пульта. */
+export function renderPultHtmlWithView(payload: SalesPultPayload, view: PultPageView): string {
+  const safePayload = { ...payload };
+  if ("register" in safePayload) {
+    delete (safePayload as Record<string, unknown>).register;
+  }
   const replacements: Record<string, string> = {
     "/*__CSS__*/": pultCss,
     "__PAYLOAD__": safeJson(safePayload),
@@ -95,6 +125,16 @@ export function renderRegisterHtml(payload: RegisterPagePayload): string {
   };
 
   return regHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
+}
+
+export function renderFinanceHtml(payload: FinancePagePayload): string {
+  const replacements: Record<string, string> = {
+    "/*__CSS__*/": `${pultCss}\n${finCss}`,
+    "__PAYLOAD__": safeJson(payload),
+    "/*__CLIENT_JS__*/": finClientJs
+  };
+
+  return finHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
 }
 
 export {

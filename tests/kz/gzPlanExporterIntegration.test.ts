@@ -1,14 +1,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import ExcelJS from "exceljs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   collectGzPlans: vi.fn(),
+  collectGzPlansFromZakup: vi.fn(),
   collectRegistry: vi.fn()
 }));
 
 vi.mock("../../src/kz/goszakupPlanCollector.js", () => ({ collectGzPlans: mocks.collectGzPlans }));
+vi.mock("../../src/kz/zakupGzPlanCollector.js", () => ({ collectGzPlansFromZakup: mocks.collectGzPlansFromZakup }));
 vi.mock("../../src/kz/goszakupRegistryCollector.js", () => ({ collectGoszakupRegistryForBins: mocks.collectRegistry }));
 
 import { exportGzPlansReport } from "../../src/kz/gzPlanExporter.js";
@@ -20,6 +23,36 @@ const tempDirs: string[] = [];
 afterEach(() => {
   vi.clearAllMocks();
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+describe("export plan source", () => {
+  it("collects from zakup.gov.kz when the config says so and links rows to zakup pages", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "s2l-zakup-source-")); tempDirs.push(dir);
+    const databasePath = path.join(dir, "db.sqlite"); const storage = new KzStorage({ databasePath });
+    const record = parseRegistryProfileHtml(fs.readFileSync("tests/fixtures/goszakup-registry-profile-980840002897.html", "utf8"), "980840002897")!;
+    storage.upsertGoszakupRegistry({ ...record, participant_id: "66013", updated_at: new Date().toISOString(), raw_snapshot_path: null }); storage.close();
+    mocks.collectGzPlansFromZakup.mockResolvedValue({ successfulQueries: 1, skippedQueries: [], items: [{
+      plan_point_id: "88700001", plan_list_number: "88700001", customer_name: "Заказчик", customer_url: null,
+      item_name: "Панель интерактивная", method: "Электронный магазин", unit: "Штука", quantity: "2",
+      unit_price: "750 000.00", planned_amount: "1 500 000.00", planned_month: "Ноябрь", status: "Утвержден",
+      detail_url: "https://zakup.gov.kz/plan-items/1001", keyword: "Панель интерактивная",
+      detail: { plan_point_id: "88700001", customer_bin: "980840002897", name_ru: "Панель интерактивная", ref_enstru_code: "262030.100.000021" }
+    }] });
+    mocks.collectRegistry.mockResolvedValue({ processed: 1, success: 0, not_found: 0, failed: 0, cached: 1, skipped: 0 });
+    const outPath = path.join(dir, "plans.xlsx");
+
+    const result = await exportGzPlansReport({ source: "zakup", databasePath, outPath, partialCollection: true, year: 2026, months: [11] });
+
+    expect(result.rows).toBe(1);
+    expect(mocks.collectGzPlans).not.toHaveBeenCalled();
+    expect(mocks.collectGzPlansFromZakup).toHaveBeenCalledWith(expect.objectContaining({ source: "zakup", prefilterDetails: true, year: 2026 }));
+    const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(outPath);
+    const row = workbook.worksheets[0].getRow(2);
+    const text = (cell: number) => { const value = row.getCell(cell).value as { text?: string } | string; return typeof value === "object" ? value?.text : value; };
+    expect(text(19)).toBe("88700001");
+    expect(text(25)).toBe("https://zakup.gov.kz/plan-items/1001");
+    expect(text(24)).toMatch(/\/ru\/registry\/show_supplier\/66013$/);
+  });
 });
 
 describe("export registry preflight", () => {
