@@ -1,4 +1,5 @@
 import type { FinancePayment, FinanceStockItem, FinanceView } from "./types.js";
+import { stockKeyOfName } from "../stock/classify.js";
 
 const DAY = 86_400_000;
 const elapsed = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY);
@@ -70,7 +71,7 @@ export function buildFinanceInsights(finance: FinanceView, asOfDate?: string) {
   const sheets = report?.stock ?? [];
   const stagnant = sheets.flatMap((sheet) => sheet.warehouses.flatMap((warehouse) =>
     warehouse.items.filter((item) => isStockStagnant(sheet.hasMoves, item))
-      .map((item) => ({ ...item, company: sheet.company, warehouse: warehouse.name }))
+      .map((item) => ({ ...item, company: sheet.company, warehouse: warehouse.name, stockKey: stockKeyOfName(item.name) }))
   )).sort((a, b) => b.endSum - a.endSum);
   const statementTotal = sheets.reduce((sum, sheet) => sum + sheet.total.end, 0);
   const diff = statementTotal - (report?.cash.inventory ?? 0);

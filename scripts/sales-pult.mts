@@ -45,6 +45,7 @@ import {
 } from "../src/bitrix/salesPult/site.js";
 import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
 import { loadFinanceView } from "../src/bitrix/salesPult/finance/load.js";
+import { buildStockAvailability, buildStockDemand, withStockHints } from "../src/bitrix/salesPult/stock/availability.js";
 import { updateMarketWindow } from "../src/kz/market/updateWindow.js";
 import { loadMarketView } from "../src/kz/market/load.js";
 import { buildAllMarketMonthContracts, filterMarketUnitsForView } from "../src/kz/market/aggregate.js";
@@ -781,6 +782,11 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
       radar: radarView,
       outcomeMismatches: collected.outcomeMismatches
     };
+    // Склад 1С из финансового отчёта — штуками по видам, без сумм и названий: теги на Радаре и в Планах, спрос на «Финансах».
+    const stockView = buildStockAvailability(financeView, todayAlmaty);
+    payload.stock = stockView && withStockHints(stockView, radarView, plansView);
+    const stockDemand = buildStockDemand(stockView, radarView, plansView);
+    console.log(`[Склад] строк по видам: ${stockView?.rows.length ?? 0}, карточек с подсказкой: ${payload.stock?.hints?.reduce((s, h) => s + h.ids.length, 0) ?? 0}, строк спроса: ${stockDemand.length}${stockView?.stale ? ", отчёт устарел" : ""}`);
 
     payload.closedMonths = await loadClosedMonths(todayAlmaty, "data/pult-months", JSON.stringify(config) + ":contracts-op-v1", async (month) => {
       const started = performance.now();
@@ -852,7 +858,7 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
     fs.writeFileSync(path.join(outDir, "payload-reg.json"), JSON.stringify(regPayload, null, 2), "utf8");
 
     // 3. Финансы: только в полный вариант (pult-variants.mts), менеджеру и на ТВ не идёт
-    const finPayload: FinancePagePayload = { asOfDate: todayAlmaty, generatedAt: generatedTimeStr, finance: financeView };
+    const finPayload: FinancePagePayload = { asOfDate: todayAlmaty, generatedAt: generatedTimeStr, finance: financeView, stockDemand };
     fs.writeFileSync(path.join(outDir, "fin.html"), renderFinanceHtml(finPayload), "utf8");
     fs.writeFileSync(path.join(outDir, "payload-fin.json"), JSON.stringify(finPayload, null, 2), "utf8");
 
