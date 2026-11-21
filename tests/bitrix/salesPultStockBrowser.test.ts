@@ -212,8 +212,10 @@ describe("вид менеджера: склад только штуками и �
     for (const sum of STOCK_SUMS) {
       for (const text of [String(sum), sum.toLocaleString("ru-RU"), sum.toLocaleString("ru-RU").replace(/\s/g, " ")]) expect(html).not.toContain(text);
     }
-    // Подсказки — только по своему плану 6101: чужой план и лоты Радара (его у менеджера нет) не попадают.
-    for (const id of ["6102", "6103", "5101", "5102", "5103", "5105", "5106", "5107"]) expect(html, id).not.toContain(`"${id}"`);
+    // Подсказки — только по своим карточкам: свой план 6101 и свои лоты Радара (менеджер «s»: 5101, 5103, 5107).
+    // Чужие планы и лоты (6102, 6103; 5102, 5105, 5106 у «t») не попадают ни в Радар, ни в подсказки склада.
+    for (const id of ["6101", "5101"]) expect(html, id).toContain(`"${id}"`);
+    for (const id of ["6102", "6103", "5102", "5105", "5106"]) expect(html, id).not.toContain(`"${id}"`);
   });
 
   for (const width of [375, 1440]) {

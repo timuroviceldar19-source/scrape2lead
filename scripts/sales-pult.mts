@@ -58,7 +58,7 @@ import { backfillCompetitors } from "../src/kz/competitors/collector.js";
 import { updateCompetitorsWindow, loadCompetitorsView, resolveBackfillBudgetMs } from "../src/kz/competitors/load.js";
 import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
 import { collectRadarView } from "../src/bitrix/salesPult/radar/collect.js";
-import { buildMorningPulse, lossPulseItems, pulseForPayload, selectHotLots, type PulseItem, type PulseView } from "../src/bitrix/salesPult/pulse.js";
+import { buildMorningPulse, lossPulseItems, pulseForPayload, selectHotLots, stockDemandPulseItems, type PulseItem, type PulseView } from "../src/bitrix/salesPult/pulse.js";
 import { summarizeRecentCheaperRejections } from "../src/kz/competitors/losses.js";
 import type { RadarView } from "../src/bitrix/salesPult/radar/types.js";
 import type { FinanceView } from "../src/bitrix/salesPult/finance/types.js";
@@ -852,7 +852,10 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
     }
     payload.pulse = buildPulseSafely(() => pulseForPayload(payload, {
       nowIso, finance: financeView, register: registerView,
-      extraItems: lossPulseItems(summarizeRecentCheaperRejections(competitorsView, todayAlmaty))
+      extraItems: [
+        ...lossPulseItems(summarizeRecentCheaperRejections(competitorsView, todayAlmaty)),
+        ...stockDemandPulseItems(payload.stock, stockDemand)
+      ]
     }));
 
     const outDir = path.resolve("exports/sales-pult");
@@ -915,19 +918,26 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
         return undefined;
       });
       // «Конкуренты» — из локальной базы, обновлённой выше в этом же запуске; сбой здесь дайджест не отменяет.
-      let morningLosses: PulseItem[] = [];
+      let morningExtras: PulseItem[] = [];
       try {
         const loadCompetitors = options?.loadCompetitors
           ?? (options?.skipUpdates ? () => null : (day: string) => loadCompetitorsView({ todayAlmaty: day }));
         const competitors = loadCompetitors(todayAlmaty);
-        if (competitors) morningLosses = lossPulseItems(summarizeRecentCheaperRejections(competitors, todayAlmaty));
+        if (competitors) morningExtras = lossPulseItems(summarizeRecentCheaperRejections(competitors, todayAlmaty));
       } catch (err) {
         console.warn(`[Конкуренты] Потери для дайджеста не собраны (${formatSafeErrorStatus(err)})`);
+      }
+      // Склад без расхода × открытые лоты радара (планы утром не грузятся — только лоты).
+      try {
+        const morningStock = buildStockAvailability(morningFinance, todayAlmaty);
+        morningExtras.push(...stockDemandPulseItems(morningStock, buildStockDemand(morningStock, morningRadar, null)));
+      } catch (err) {
+        console.warn(`[Склад] Спрос для дайджеста не собран (${formatSafeErrorStatus(err)})`);
       }
       try {
         const pulse = buildMorningPulse({
           asOfDate: todayAlmaty, nowIso, finance: morningFinance, radar: morningRadar,
-          outcomeMismatchesCount: collected.outcomeMismatches?.length ?? 0, extraItems: morningLosses
+          outcomeMismatchesCount: collected.outcomeMismatches?.length ?? 0, extraItems: morningExtras
         });
         // Только сборка: чата директора нет, отправка — по прямой команде владельца. Текст в публичный лог не идёт.
         const digest = buildDirectorDigest(pulse, config.pultUrl);

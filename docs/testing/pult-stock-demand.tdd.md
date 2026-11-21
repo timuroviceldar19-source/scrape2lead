@@ -86,3 +86,16 @@
 `page/plans.client.js` (хук в ячейке «Товар / вид»), `page/pult.css` (блок `.stock-tag` после `.win-price`),
 `scripts/sales-pult.mts` (режим site: блок после литерала `payload`, `stockDemand` в `finPayload`),
 `scripts/pult-variants.mts`, `finance/insights.ts` (`stockKey`), `page/fin.client.js`, `page/fin.css`.
+
+## Интеграция с Радаром менеджера и пульсом (ветка `feat/pult-decision`)
+
+- RED: `tests/bitrix/salesPultPulseSources.test.ts` — `stockDemandPulseItems` нет; `buildManagerVariant` оставлял
+  в `stock.hints` ID чужих сделок (обрезка была только в `scripts/pult-variants.mts`).
+- GREEN: обрезка `stockForViewer` перенесена в `buildManagerVariant` (семантический слой): вид менеджера безопасен
+  при любой сборке; в `pult-variants.mts` осталась только zod-проверка `payload.stock`.
+- После слияния с агентом «Радар» у менеджера есть свой Радар, поэтому в его странице теперь есть свои лоты
+  (5101 в фикстуре) и подсказки склада к ним; чужие лоты и планы по-прежнему не попадают
+  (`salesPultStockBrowser.test.ts` обновлён).
+- Пульс: пункт «Склад без расхода нужен в лотах» (`stock-demand`, жёлтый, закрытый, ссылка на склад «Финансов»):
+  только виды, где есть и товар без расхода (`stagnantQty`), и спрос открытых лотов и планов; штуки, без денег,
+  поэтому от порога суммы неподвижного склада не зависит. Утром спрос считается только по лотам радара.

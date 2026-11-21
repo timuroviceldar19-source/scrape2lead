@@ -78,7 +78,7 @@ function card(id: string, extra: Partial<RadarCard>): RadarCard {
   };
 }
 
-const kpis = { totalCount: 0, totalSum: 0, submitCount: 0, submitSum: 0, discussionCount: 0, discussionSum: 0, secondChanceCount: 0, secondChanceSum: 0 };
+const kpis = { totalCount: 0, totalSum: 0, submitCount: 0, submitSum: 0, discussionCount: 0, discussionSum: 0, secondChanceCount: 0, secondChanceSum: 0, missedCount: 0, missedSum: 0 };
 
 /** Лоты: 5101 — панель 75″ (на 10 шт, номер плана 70001), 5102 — 86″ на 20 шт, 5103 — панель без диагонали,
  *  5104 — доска (склада нет), 5105 — второй шанс 75″ (в спрос не входит), 5106 — компьютеры, 5107 — ноутбуки. */
@@ -97,7 +97,8 @@ export function stockRadar(): RadarView {
       ],
       secondChance: [
         card("5105", { itemName: "Интерактивная панель 75", qty: 3, column: "secondChance", status: "Закупка не состоялась", managerId: "t", managerName: "Борис Тестовый" })
-      ]
+      ],
+      missed: []
     },
     kt: {
       group: "КТ", kpis,
@@ -107,7 +108,8 @@ export function stockRadar(): RadarView {
       discussion: [
         card("5107", { itemName: "Ноутбук для учителя", qty: 40, group: "КТ", kind: "Ноутбуки", column: "discussion", status: "Опубликован" })
       ],
-      secondChance: []
+      secondChance: [],
+      missed: []
     }
   };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildManagerPulse, buildMorningPulse, lossPulseItems } from "../../src/bitrix/salesPult/pulse.js";
+import { buildManagerPulse, buildMorningPulse, lossPulseItems, stockDemandPulseItems } from "../../src/bitrix/salesPult/pulse.js";
+import type { StockAvailability } from "../../src/bitrix/salesPult/stock/availability.js";
 import { buildDirectorDigest } from "../../src/bitrix/salesPult/chatReport.js";
 import type { RecentCheaperRejectionsSummary } from "../../src/kz/competitors/losses.js";
 import { buildManagerVariant, renderManagerVariant } from "../../src/bitrix/salesPult/variants/manager.js";
@@ -87,5 +88,62 @@ describe("пульс менеджера из его личного радара 
     expect(html).toContain("LOT-501");
     expect(html).not.toContain("LOT-502");
     expect(html).not.toContain("Борис Тестовый");
+  });
+});
+
+describe("пульс: склад без расхода нужен в открытых лотах (пункты 1 и 4 вместе)", () => {
+  const stock: StockAvailability = {
+    asOf: "2026-11-16", stale: false,
+    rows: [
+      { key: "ИП|Интерактивные панели|75", group: "ИП", kind: "Интерактивные панели", diagonal: 75, qty: 12, stagnantQty: 9 },
+      { key: "КТ|Ноутбуки|", group: "КТ", kind: "Ноутбуки", diagonal: null, qty: 30, stagnantQty: 0 },
+      { key: "КТ|Мониторы|", group: "КТ", kind: "Мониторы", diagonal: null, qty: 5, stagnantQty: 5 }
+    ]
+  };
+  const demand = [
+    { key: "ИП|Интерактивные панели|75", lots: 3, qty: 14, approxLots: 1 },
+    { key: "КТ|Ноутбуки|", lots: 4, qty: 60, approxLots: 0 }
+  ];
+
+  it("берёт только виды, где есть и товар без расхода, и спрос; ведёт на склад «Финансов»", () => {
+    const items = stockDemandPulseItems(stock, demand);
+    expect(items).toHaveLength(1);
+    const [item] = items;
+    expect(item).toMatchObject({ key: "stock-demand", severity: "yellow", area: "stock", finance: true, href: "./fin.html#f-stock" });
+    expect(item.value).toBe("3 лота");
+    expect(item.detail).toContain("без расхода 9 шт");
+    expect(item.detail).toContain("панели 75″");
+    // ноутбуки — спрос есть, но всё продаётся; мониторы — лежат, но спроса нет
+    expect(item.detail).not.toMatch(/ноутбук|монитор/i);
+  });
+
+  it("нет склада, нет спроса или отчёт устарел — без пункта или с пометкой даты", () => {
+    expect(stockDemandPulseItems(null, demand)).toEqual([]);
+    expect(stockDemandPulseItems(stock, [])).toEqual([]);
+    expect(stockDemandPulseItems({ ...stock, stale: true }, demand)[0].detail).toContain("на 16.11");
+  });
+});
+
+describe("вид менеджера: подсказки склада только по его карточкам", () => {
+  it("buildManagerVariant сам выкидывает ID чужих сделок из stock.hints", () => {
+    const f = fixture();
+    const mk = (id: string, managerId: string): RadarCard => ({
+      id, dealUrl: "", sourceType: "lot", lotNumber: `LOT-${id}`, title: "", itemName: "Интерактивная панель 75", qty: 2, sum: 1,
+      method: "", status: "Опубликован (прием заявок)", group: "ИП", kind: "Интерактивные панели", customerName: "", customerBin: "",
+      managerId, managerName: managerId, startAt: null, endAt: null, hoursLeft: null, isToday: false, isWithin48h: false, column: "submitToday"
+    });
+    const submitToday = [mk("601", "s"), mk("602", "t")];
+    f.payload.radar = { asOf: f.payload.asOfDate, ip: { ...emptyRadarGroup("ИП"), submitToday }, kt: emptyRadarGroup("КТ") };
+    f.payload.stock = {
+      asOf: "2026-10-27", stale: false,
+      rows: [{ key: "ИП|Интерактивные панели|75", group: "ИП", kind: "Интерактивные панели", diagonal: 75, qty: 5, stagnantQty: 0 }],
+      hints: [{ qty: 5, diagonal: 75, approx: false, ids: ["601", "602"] }]
+    };
+    const variant = buildManagerVariant({
+      pult: f.payload, reg: { asOfDate: f.payload.asOfDate, generatedAt: f.payload.generatedAt, register: f.register },
+      planDeals: null, managerId: "s", aliases: f.aliases
+    })!;
+    expect(variant.pult.stock?.hints).toEqual([{ qty: 5, diagonal: 75, approx: false, ids: ["601"] }]);
+    expect(renderManagerVariant(variant).index).not.toContain("\"602\"");
   });
 });

@@ -14,6 +14,7 @@ import { buildRegisterRisks } from "./register/risks.js";
 import type { RegisterView } from "./register/types.js";
 import type { SalesPultPayload, SignalItem } from "./types.js";
 import type { RecentCheaperRejectionsSummary } from "../../kz/competitors/losses.js";
+import type { StockAvailability, StockDemandRow } from "./stock/availability.js";
 
 export type PulseSeverity = "red" | "yellow" | "green";
 export type PulseArea = "cash" | "debt" | "tender" | "margin" | "stock" | "crm" | "losses";
@@ -272,6 +273,38 @@ export function lossPulseItems(summary: RecentCheaperRejectionsSummary | null | 
     value: plural(summary.count, ["заявка", "заявки", "заявок"]),
     detail: `${money(summary.sumOur)} за неделю — проверьте документы`,
     amount: summary.sumOur
+  }];
+}
+
+/** «панели 75″», «ноутбуки» — коротко для строки пульса. */
+function stockKindLabel(kind: string, diagonal: number | null): string {
+  const base = kind === "Интерактивные панели" ? "панели" : kind.toLowerCase();
+  return diagonal ? `${base} ${diagonal}″` : base;
+}
+
+/**
+ * Склад без расхода, который нужен в открытых лотах и планах (`payload.stock` × `buildStockDemand`): директор
+ * ведёт залежь в конкретные лоты. Только виды, где есть и товар без расхода, и спрос. Штуки, без денег —
+ * поэтому пункт не зависит от порога суммы неподвижного склада; закрытый, как всё со страницы «Финансы».
+ */
+export function stockDemandPulseItems(
+  stock: StockAvailability | null | undefined,
+  demand: readonly StockDemandRow[] | null | undefined
+): PulseItem[] {
+  if (!stock || !demand?.length) return [];
+  const byKey = new Map(demand.map((d) => [d.key, d]));
+  const hits = stock.rows
+    .filter((row) => row.stagnantQty > 0 && (byKey.get(row.key)?.lots ?? 0) > 0)
+    .map((row) => ({ row, d: byKey.get(row.key)! }))
+    .sort((a, b) => b.d.lots - a.d.lots || b.row.stagnantQty - a.row.stagnantQty);
+  if (!hits.length) return [];
+  const lotsTotal = hits.reduce((s, h) => s + h.d.lots, 0);
+  const stagnant = hits.reduce((s, h) => s + h.row.stagnantQty, 0);
+  const kinds = hits.slice(0, 2).map((h) => stockKindLabel(h.row.kind, h.row.diagonal)).join(", ");
+  return [{
+    key: "stock-demand", severity: "yellow", area: "stock", finance: true, href: PULSE_LINKS.stock,
+    title: "Склад без расхода нужен в лотах", value: lots(lotsTotal),
+    detail: join(`без расхода ${stagnant} шт`, kinds + (hits.length > 2 ? ` и ещё ${hits.length - 2}` : ""), stock.stale && `на ${ddmm(stock.asOf)}`)
   }];
 }
 
