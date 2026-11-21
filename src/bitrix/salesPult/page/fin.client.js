@@ -5,6 +5,7 @@
   const P = typeof PAYLOAD !== "undefined" ? PAYLOAD : {};
   const F = P.finance || { snapshots: [] };
   const R = F.report;
+  const I = INSIGHTS;
   const el = document.getElementById("tab-fin");
 
   const MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
@@ -45,9 +46,7 @@
     const d = new Date(ms + 5 * 3600000).toISOString();
     return `${d.slice(8, 10)}.${d.slice(5, 7)} ${d.slice(11, 16)}`;
   };
-  let blockNo = 0;
-  const idx = () => String(++blockNo).padStart(2, "0");
-  const head = (title, meta = "") => `<div class="block-head"><h2><span class="idx">${idx()}</span>${title}</h2><span class="meta">${meta}</span></div>`;
+  const head = (idx, title, meta = "") => `<div class="block-head"><h2><span class="idx">${idx}</span>${title}</h2><span class="meta">${meta}</span></div>`;
   const today = (P.asOfDate || (R && R.dataDate) || "").slice(0, 10);
 
   function setLabels() {
@@ -74,9 +73,30 @@
     return `<svg class="fin-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="С ${ddmm(first)} по ${ddmm(last)}: от ${esc(money(min))} до ${esc(money(max))}"><polyline points="${xy.join(" ")}" /></svg>`;
   }
 
+  function tileDeltas(key) {
+    const { prevDay, week } = I.deltas[key];
+    const direction = key === "cash" ? 1 : key === "inventory" ? 0 : -1;
+    const delta = (entry, period) => {
+      const impact = entry.change * direction;
+      return `<span>за ${period} <b class="${impact > 0 ? "good" : impact < 0 ? "bad" : ""}">${entry.change > 0 ? "+" : ""}${money(entry.change)}</b></span>`;
+    };
+    const values = [
+      prevDay && delta(prevDay, prevDay.days === 1 ? "день" : `${prevDay.days} дн.`),
+      week && week.days !== prevDay?.days && delta(week, `${week.days} дн.`)
+    ].filter(Boolean);
+    return values.length ? `<div class="fin-deltas">${values.join("")}</div>` : "";
+  }
+
+  const copyButton = (key, label) => `<button type="button" class="btn" data-fin-copy="${key}">${label}</button><span class="fin-copy-status" role="status"></span>`;
+
+  function taxPosition() {
+    const gap = I.cashGap;
+    return `С учётом КПН к оплате <b>${money(I.totalWithTax)}</b> · ${gap < 0 ? `не хватает <b class="bad">${money(-gap)}</b>` : `запас <b>${money(gap)}</b>`}`;
+  }
+
   function tile(label, value, sub, key, cls = "") {
     return `<div class="fin-tile ${cls}"><span class="label">${label}</span>
-      <div class="v">${value}</div>${spark(key)}${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+      <div class="v">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}${tileDeltas(key)}${spark(key)}</div>`;
   }
 
   /* ---------- 01: деньги и долги ---------- */
@@ -85,8 +105,6 @@
     const due = R.payments[0] ? R.payments[0].total : 0;
     const loans = R.liabilities.filter((x) => /^кредит(?!ор)/i.test(x.label));
     const payables = R.liabilities.find((x) => /^кредитор/i.test(x.label)) || R.balances.find((x) => x.code === "3310");
-    const old = R.debtors.rows.filter((x) => x.saleDate && daysBetween(x.saleDate, today) > 30);
-    const oldSum = old.reduce((s, x) => s + x.amount, 0);
     const cf = R.cashFlow;
     const big = (n) => {
       const unit = (amt(n).match(/(млн|млрд|тыс)$/) || [""])[0];
@@ -97,27 +115,35 @@
       ? `вчера ${money(cf.prev)}${cf.spent != null ? ` · потрачено ${money(cf.spent)}` : ""} · пришло ${money(R.incomingTotal)}`
       : `пришло за день ${money(R.incomingTotal)}`;
     const cover = due ? cash / due : 0;
-    const dueSub = due
+    const calendarSub = due
       ? (cash >= due ? `денег на счетах хватает` : `<span class="warn">на счетах ${Math.round(cover * 100)}% · не хватает ${money(due - cash)}</span>`)
       : "";
-    const debtSub = `старше 30 дней ${money(oldSum)}${R.problemDebts ? ` · проблемные ${money(R.problemDebts.total)}` : ""}`;
+    const dueSub = calendarSub + (R.tax ? `<span class="fin-tax-position">${taxPosition()}</span>` : "");
+    const debtSub = `старше 30 дней ${money(I.debt.over30.total)}${I.debt.over60.count ? `<br><span class="bad">старше 60 дней ${money(I.debt.over60.total)}</span>` : ""}${R.problemDebts ? `<br>проблемные ${money(R.problemDebts.total)}` : ""}`;
+    const stockSub = I.stock.count ? `без расхода ${money(I.stock.total)} (${I.stock.count} поз.)` : "ТМЦ по компаниям";
 
-    let s = `<section class="block" id="f-overview">${head("Деньги и долги", `на ${dayMonth(R.dataDate)}`)}
+    let s = `<section class="block" id="f-overview">${head("01", "Деньги и долги", `на ${dayMonth(R.dataDate)}`)}
       <div class="fin-tiles">
         ${tile("Деньги на счетах", big(cash), cashSub, "cash")}
-        ${tile(esc(R.payments[0] ? R.payments[0].label : "Календарь платежей"), big(due), dueSub, "paymentsDue")}
+        ${tile(esc(R.payments[0] ? R.payments[0].label : "Календарь платежей"), big(due), dueSub, "paymentsDue", cash < due ? "is-bad" : "")}
         ${tile("Дебиторка", big(R.debtors.total), debtSub, "debtors")}
-        ${payables ? tile("Кредиторка", big(payables.total), "долги поставщикам", "payables") : ""}
-        ${loans.length ? tile(esc(loans.map((x) => x.label).join(", ")), big(loans.reduce((s, x) => s + x.total, 0)), "остаток по графику", "loans") : ""}
-        ${tile("Товар на складе", big(R.cash.inventory), "ТМЦ по компаниям", "inventory")}
-      </div>`;
+        ${tile("Кредиторка", payables ? big(payables.total) : "—", payables ? "долги поставщикам" : "", "payables")}
+        ${tile(loans.length ? esc(loans.map((x) => x.label).join(", ")) : "Кредиты", loans.length ? big(loans.reduce((s, x) => s + x.total, 0)) : "—", loans.length ? "остаток по графику" : "", "loans")}
+        ${tile("Товар на складе", big(R.cash.inventory), stockSub, "inventory")}
+      </div>
+      <nav class="fin-jumps" aria-label="Быстрый переход">
+        <a class="btn" href="#f-debtors">Дебиторы &gt;60д</a>
+        ${R.payments.length || R.tax ? '<a class="btn" href="#f-payments">Платежи</a>' : ""}
+        ${R.stock?.length ? `<a class="btn" href="${I.stock.count ? "#stockFocus" : "#f-stock"}">Склад без расхода</a>` : ""}
+        ${R.pnl.current ? '<a class="btn" href="#f-pnl">Прибыль</a>' : ""}
+      </nav>`;
     if ((F.snapshots || []).length < 2) {
       s += `<p class="fin-note">Графики под цифрами появятся, когда в чате накопится несколько дней отчётов.</p>`;
     }
     return s + `</section>`;
   }
 
-  /* ---------- 02: прибыль ---------- */
+  /* ---------- 05: прибыль ---------- */
   function pnl() {
     const cur = R.pnl.current, prev = R.pnl.previous;
     if (!cur) return "";
@@ -131,9 +157,9 @@
     const cell = (n, cls = "") => `<span class="num ${cls}">${has(n) ? esc(amt(n)) : "—"}</span>`;
     const pcls = (n) => (n < 0 ? "bad" : "");
     const margin = cur.revenue.total ? Math.round((cur.profit.total / cur.revenue.total) * 100) : null;
-    let s = `<section class="block" id="f-pnl">${head(`Прибыль: ${curLabel}`, `по счетам бухгалтерии · ${esc(curStart.slice(0, 4))}`)}
+    let s = `<section class="block" id="f-pnl">${head("05", `Прибыль: ${curLabel}`, `по счетам бухгалтерии · ${esc(curStart.slice(0, 4))}`)}
       <p class="lead">Выручка <b>${money(cur.revenue.total)}</b>, прибыль <b class="${pcls(cur.profit.total)}">${money(cur.profit.total)}</b>${margin !== null ? ` (${margin}% выручки)` : ""}.${prev ? ` За ${prevLabel} целиком прибыль была ${money(prev.profit.total)} при выручке ${money(prev.revenue.total)}.` : ""}</p>
-      <div class="fin-scroll"><div class="rows fin-pnl"><div class="r head"><span class="label">Компания</span><span class="label n">Выручка</span><span class="label n">Себестоимость</span><span class="label n">Расходы</span><span class="label n">Прибыль</span>${prev ? `<span class="label n">${esc(prevLabel)}, прибыль</span>` : ""}</div>`;
+      <div class="fin-scroll"><div class="rows fin-pnl${prev ? "" : " no-prev"}"><div class="r head"><span class="label">Компания</span><span class="label n">Выручка</span><span class="label n">Себестоимость</span><span class="label n">Расходы</span><span class="label n">Прибыль</span>${prev ? `<span class="label n">${esc(prevLabel)}, прибыль</span>` : ""}</div>`;
     for (const x of rows) {
       s += `<div class="r body"><span class="nm" data-l="Компания">${esc(x.name)}</span>${cell(x.rev)}${cell(x.cost)}${cell(x.exp)}${cell(x.profit, pcls(x.profit))}${prev ? cell(x.prevProfit, pcls(x.prevProfit)) : ""}</div>`;
     }
@@ -147,28 +173,36 @@
 
   /* ---------- 03: платежи ---------- */
   // Все списки свёрнуты, как просили: сверху итог, раскрывается по клику.
-  function payList(list, isCalendar) {
-    const rows = [...list.items].sort((a, b) => b.amount - a.amount);
-    const word = isCalendar ? ["платёж", "платежа", "платежей"] : ["строка", "строки", "строк"];
+  const paymentRows = (list, index) => list.items.map((item, i) => ({ ...item, hint: I.paymentHints?.[index]?.[i] ?? null }))
+    .sort((a, b) => b.amount - a.amount);
+
+  function payList(list, index) {
+    const rows = paymentRows(list, index);
+    const dueBadge = (hint) => hint
+      ? ` <span class="fin-due${hint.isSoon ? " warn" : ""}">до ${ddmm(hint.date)} · ${hint.days} дн.</span>`
+      : "";
+    const word = index === 0 ? ["платёж", "платежа", "платежей"] : ["строка", "строки", "строк"];
     return `<details class="fin-more"><summary>${esc(list.label)} <span class="dim">${plural(rows.length, word)} · ${money(list.total)}</span></summary>
       <div class="rows fin-pay"><div class="r head"><span class="label">Кому</span><span class="label">За что</span><span class="label n">Сумма</span></div>
-      ${rows.map((x) => `<div class="r body"><span class="nm" title="${esc(x.payee)}">${esc(short(x.payee, 90))}${x.tag ? ` <span class="partner-tag">${esc(x.tag)}</span>` : ""}</span><span class="dim">${esc(x.basis || "")}</span><span class="num">${esc(amt(x.amount))}</span></div>`).join("")}
+      ${rows.map((x) => `<div class="r body"><span class="nm" title="${esc(x.payee)}">${esc(short(x.payee, 90))}${x.tag ? ` <span class="partner-tag">${esc(x.tag)}</span>` : ""}${dueBadge(x.hint)}</span><span class="dim">${esc(x.basis || "")}</span><span class="num">${esc(amt(x.amount))}</span></div>`).join("")}
       <div class="r body total"><span class="nm">Итого</span><span></span><span class="num">${esc(amt(list.total))}</span></div></div></details>`;
   }
 
   function payments() {
-    if (!R.payments.length) return "";
-    const [main, ...rest] = R.payments;
-    let s = `<section class="block" id="f-payments">${head("Платежи", "как в календаре финансиста")}`;
-    if (main.total) {
-      const gap = main.total - R.cash.total;
-      s += `<p class="lead">По календарю к оплате <b>${money(main.total)}</b>, на счетах <b>${money(R.cash.total)}</b>${gap > 0 ? ` — не хватает <b class="bad">${money(gap)}</b>` : " — денег хватает"}.</p>`;
+    if (!R.payments.length && !R.tax) return "";
+    const main = R.payments[0];
+    let s = `<section class="block" id="f-payments">${head("03", "Платежи", "как в календаре финансиста")}`;
+    if (main || R.tax?.total > 0) {
+      const gap = (main?.total ?? 0) - R.cash.total;
+      const calendar = main ? `По календарю к оплате <b>${money(main.total)}</b>, на счетах <b>${money(R.cash.total)}</b>${gap > 0 ? ` — не хватает <b class="bad">${money(gap)}</b>` : " — денег хватает"}.` : "";
+      s += `<p class="lead">${calendar}${R.tax?.total > 0 ? ` <span class="fin-tax-position">${taxPosition()}.</span>` : ""}</p>`;
     }
-    s += payList(main, true) + rest.map((l) => payList(l, false)).join("");
+    s += R.payments.map(payList).join("");
+    s += `<div class="fin-actions">${R.tax ? `<span>КПН к оплате <b>${money(R.tax.total)}</b></span>` : ""}${copyButton("payments", "Скопировать календарь")}</div>`;
     return s + `</section>`;
   }
 
-  /* ---------- 04: дебиторы ---------- */
+  /* ---------- 02: дебиторы ---------- */
   let debtFilter = "";
   let debtAge = 0; // 0 = все, 30 = старше 30 дней, 60 = старше 60 дней
   let debtAll = false;
@@ -246,13 +280,29 @@
   }
   const debtProblemHtml = () => `<div class="rows fin-debt">${debtHead()}${debtRows(R.problemDebts, 0).html}</div>`;
 
+  function debtFocus() {
+    const { over30, over60, top5 } = I.debt;
+    const summary = ({ count, total }) => `${plural(count, ["долг", "долга", "долгов"])} · ${money(total)}`;
+    const age = over60.count ? 60 : 30;
+    const rows = top5.map((x) => `<li><span><strong>${esc(x.name)}</strong><span class="fin-focus-meta">${esc(x.company)} · ${ddmmyyyy(x.saleDate)}</span></span>
+      <span class="fin-focus-value">${money(x.amount)}<span class="fin-focus-meta ${ageCls(x.days)}">${x.days} дн.</span></span></li>`).join("");
+    return `<div class="fin-debt-focus">
+      <h3>Долги с даты реализации</h3>
+      <p class="lead fin-focus-meta">Возраст на ${ddmmyyyy(today)}</p>
+      <div class="fin-age-summary"><span>Старше 30 дней <b>${summary(over30)}</b></span><span>Старше 60 дней <b class="${over60.count ? "bad" : ""}">${summary(over60)}</b></span></div>
+      ${rows ? `<ol class="fin-focus-list" aria-label="Топ-5 должников старше 30 дней">${rows}</ol>
+        <div class="fin-actions"><button type="button" class="btn" data-debt-focus="${age}">Показать всех старше ${age} дн.</button>${copyButton("debt", "Скопировать для чата")}</div>` : ""}
+      </div>`;
+  }
+
   // Как в «Платежах»: шапка с итогом, списки свёрнуты. Перерисовывается только содержимое,
   // поэтому раскрытый блок не закрывается от фильтра или сортировки.
   function debtorsBlock() {
     const D = R.debtors;
     const byCompany = D.companies.map((c, i) => `${esc(c)} ${money(D.totals[i])}`).join(" · ");
-    let s = `${head("Дебиторы", `${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}`)}
-      <p class="lead">${byCompany}. Возраст — сколько дней прошло с даты реализации на ${esc(ddmmyyyy(today))}: больше 30 — оранжевый, больше 60 — красный.</p>
+    let s = `${head("02", "Дебиторы", `${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}`)}
+      ${debtFocus()}
+      ${byCompany ? `<p class="fin-note">${byCompany}.</p>` : ""}
       <details class="fin-more" id="debtMainBox"><summary>Список дебиторов <span class="dim">${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}</span></summary>
         <div id="debtMain">${debtMainHtml()}</div></details>`;
     if (R.problemDebts && R.problemDebts.rows.length) {
@@ -263,13 +313,13 @@
     return s;
   }
 
-  /* ---------- 05: деньги по банкам ---------- */
+  /* ---------- 06: деньги по банкам ---------- */
   function cashBlock() {
     const C = R.cash;
     const used = C.banks.map((_, i) => i).filter((i) => has(C.byBank[i]) || C.rows.some((r) => has(r.byBank[i])));
     const tpl = `grid-template-columns: minmax(120px, 1.3fr) repeat(${used.length + 2}, minmax(0, 1fr));`;
     const cell = (n) => `<span class="num">${has(n) ? esc(amt(n)) : "—"}</span>`;
-    let s = `<section class="block" id="f-cash">${head("Деньги по банкам", `всего ${money(C.total)} · ТМЦ ${money(C.inventory)}`)}
+    let s = `<section class="block" id="f-cash">${head("06", "Деньги по банкам", `всего ${money(C.total)} · ТМЦ ${money(C.inventory)}`)}
       <div class="fin-scroll"><div class="rows fin-cash"><div class="r head" style="${tpl}"><span class="label">Компания</span>${used.map((i) => `<span class="label n">${esc(C.banks[i])}</span>`).join("")}<span class="label n">Всего</span><span class="label n">ТМЦ</span></div>`;
     for (const r of C.rows) {
       s += `<div class="r body" style="${tpl}"><span class="nm">${esc(r.company)}</span>${used.map((i) => cell(r.byBank[i])).join("")}${cell(r.total)}${cell(r.inventory)}</div>`;
@@ -282,15 +332,21 @@
     return s + `</section>`;
   }
 
-  /* ---------- 06: склад по материальным ведомостям 1С ---------- */
+  /* ---------- 04: склад по материальным ведомостям 1С ---------- */
   // Листы «Мат вед …» из того же файла: компания — кнопкой, склады — свёрнутыми списками,
   // поиск по названию товара раскрывает склады, где он есть.
   const nfq = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 });
   let stockPick = "";
   let stockQuery = "";
+  let stockMode = "all";
   const stockList = () => [...(R.stock || [])].sort((a, b) => b.total.end - a.total.end);
   const qty = (n, unit) => (n ? `${nfq.format(n)}${unit ? NB + esc(unit) : ""}` : "—");
   const searchKey = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+  const stockGone = (item) => !item.endQty && !item.endSum;
+  const stockStagnant = (moves, item) => moves === true && item.startQty > 0 && !(item.outQty > 0) && item.endSum > 0;
+  const matchesStock = (words, name, stagnant, gone) =>
+    (stockMode !== "stagnant" || stagnant) && (stockMode !== "present" || !gone) && words.every((word) => name.includes(word));
+
   function stockSums(x, moves) {
     return `на начало ${money(x.start)}${moves ? ` · приход ${money(x.in || 0)} · расход ${money(x.out || 0)}` : ""} · на конец <b>${money(x.end)}</b>`;
   }
@@ -306,16 +362,30 @@
     s += whs.map((w) => {
       const items = [...w.items].sort((a, b) => b.endSum - a.endSum || b.startSum - a.startSum);
       const rows = items.map((x) => {
-        const gone = !x.endQty && !x.endSum;
+        const gone = stockGone(x);
+        const stagnant = stockStagnant(moves, x);
         const q0 = (n) => `${nfq.format(n || 0)}${x.unit ? NB + esc(x.unit) : ""}`;
-        const mob = `остаток ${nfq.format(x.startQty || 0)} → ${q0(x.endQty)}${x.inQty ? ` · приход ${nfq.format(x.inQty)}` : ""}${x.outQty ? ` · расход ${nfq.format(x.outQty)}` : ""}`;
-        return `<div class="r body${gone ? " is-gone" : ""}" data-n="${esc(searchKey(x.name))}"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 110))}<span class="fin-stock-m">${mob}</span></span>
+        const mob = `остаток ${nfq.format(x.startQty || 0)} → ${q0(x.endQty)}${x.inQty ? ` · приход ${nfq.format(x.inQty)}` : ""}${x.outQty ? ` · расход ${nfq.format(x.outQty)}` : ""}${stagnant ? " · без расхода" : ""}`;
+        return `<div class="r body${gone ? " is-gone" : ""}${stagnant ? " is-stagnant" : ""}" data-n="${esc(searchKey(x.name))}"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 110))}<span class="fin-stock-m">${mob}</span></span>
           <span class="num dim">${qty(x.startQty, x.unit)}</span>${moves ? `<span class="num dim">${qty(x.inQty)}</span><span class="num dim">${qty(x.outQty)}</span>` : ""}<span class="num">${qty(x.endQty, x.unit)}</span><span class="num">${has(x.endSum) ? esc(amt(x.endSum)) : "—"}</span></div>`;
       }).join("");
       return `<details class="fin-more fin-wh"><summary>${esc(w.name)} <span class="dim">${plural(items.length, ["позиция", "позиции", "позиций"])} · ${money(w.sums.end)}</span></summary>
         <p class="fin-note">${stockSums(w.sums, moves)}</p><div class="${cls}">${headRow}${rows}</div></details>`;
     }).join("");
     return s;
+  }
+
+  function stockFocus() {
+    const { count, total, top5 } = I.stock;
+    if (!count) return "";
+    return `<div class="fin-stock-stagnant" id="stockFocus">
+      <h3>Без расхода за период · ${money(total)}</h3>
+      <div class="fin-focus-meta">${plural(count, ["позиция", "позиции", "позиций"])}</div>
+      <ol class="fin-focus-list" aria-label="Топ-5 позиций без расхода">${top5.map((x) => `<li>
+        <span><strong>${esc(x.name)}</strong><span class="fin-focus-meta">${esc(x.company)} · ${esc(x.warehouse)} · ${qty(x.endQty, x.unit)}</span></span>
+        <span class="fin-focus-value">${money(x.endSum)}</span></li>`).join("")}</ol>
+      <div class="fin-actions">${copyButton("stock", "Скопировать для ОП")}</div>
+    </div>`;
   }
 
   function stockBlock() {
@@ -326,9 +396,16 @@
     const chips = list.length > 1
       ? `<div class="chips" id="stockChips" role="group" aria-label="Компания">${list.map((x) => `<button type="button" data-c="${esc(x.company)}" aria-pressed="${String(x.company === stockPick)}">${esc(x.company)}</button>`).join("")}</div>`
       : "";
-    return `<section class="block" id="f-stock">${head("Склад", `материальная ведомость 1С${period}`)}
+    return `<section class="block" id="f-stock">${head("04", "Склад", `материальная ведомость 1С${period}`)}
       <p class="lead">Остаток на конец периода: ${list.map((x) => `${esc(x.company)} <b>${money(x.total.end)}</b>`).join(" · ")}. Склады свёрнуты, поиск раскрывает те, где есть товар.</p>
-      ${chips}<div class="fin-stock-search"><input type="search" id="stockQ" class="plan-search-input" placeholder="Найти товар: ноутбук, монитор, RTX…" aria-label="Найти товар на складе" value="${esc(stockQuery)}" autocomplete="off"><span id="stockFound" class="dim" aria-live="polite"></span></div>
+      ${stockFocus()}
+      ${I.stock.mismatch ? `<p class="note-warn">Сверка с листом «Ежед.»: по ведомостям ${full(I.stock.statementTotal)}, ТМЦ ${full(R.cash.inventory)}. Разница ${full(Math.abs(I.stock.diff))}.</p>` : ""}
+      ${chips}<div class="chips" id="stockModeChips" role="group" aria-label="Позиции склада">
+        <button type="button" data-mode="all" aria-pressed="true">Все</button>
+        <button type="button" data-mode="stagnant" aria-pressed="false">Без расхода</button>
+        <button type="button" data-mode="present" aria-pressed="false">Скрыть выбывшие</button>
+      </div>
+      <div class="fin-stock-search"><input type="search" id="stockQ" class="plan-search-input" placeholder="Найти товар: ноутбук, монитор, RTX…" aria-label="Найти товар на складе" value="${esc(stockQuery)}" autocomplete="off"><span id="stockFound" class="dim" aria-live="polite"></span></div>
       <div id="stockBody">${stockBodyHtml()}</div></section>`;
   }
 
@@ -339,32 +416,34 @@
     const found = document.getElementById("stockFound");
     if (!body) return;
     const words = searchKey(stockQuery).split(" ").filter(Boolean);
+    const filtered = words.length > 0 || stockMode !== "all";
     let hits = 0;
     for (const box of body.querySelectorAll("details.fin-wh")) {
       let boxHits = 0;
       for (const row of box.querySelectorAll(".r.body")) {
-        const ok = !words.length || words.every((w) => row.dataset.n.includes(w));
+        const ok = matchesStock(words, row.dataset.n, row.classList.contains("is-stagnant"), row.classList.contains("is-gone"));
         row.hidden = !ok;
         if (ok) boxHits++;
       }
-      box.hidden = words.length > 0 && !boxHits;
-      if (words.length && boxHits && !box.open) { box.open = true; box.dataset.auto = "1"; }
-      if (!words.length && box.dataset.auto) { box.open = false; delete box.dataset.auto; }
-      hits += words.length ? boxHits : 0;
+      box.hidden = filtered && !boxHits;
+      if (filtered && boxHits && !box.open) { box.open = true; box.dataset.auto = "1"; }
+      if (!filtered && box.dataset.auto) { box.open = false; delete box.dataset.auto; }
+      hits += boxHits;
     }
-    if (found) found.textContent = words.length ? (hits ? `найдено: ${plural(hits, ["позиция", "позиции", "позиций"])}` : "ничего не найдено") : "";
+    if (found) found.textContent = filtered ? (hits ? `найдено: ${plural(hits, ["позиция", "позиции", "позиций"])}` : "ничего не найдено") : "";
     // на кнопках компаний — сколько найдено у каждой, чтобы не переключать вслепую
     for (const b of document.querySelectorAll("#stockChips button")) {
       const S = stockList().find((x) => x.company === b.dataset.c);
       if (!S) continue;
-      const n = words.length ? S.warehouses.reduce((a, w) => a + w.items.filter((x) => words.every((wd) => searchKey(x.name).includes(wd))).length, 0) : null;
+      const n = filtered ? S.warehouses.reduce((a, w) => a + w.items.filter((x) =>
+        matchesStock(words, searchKey(x.name), stockStagnant(S.hasMoves, x), stockGone(x))).length, 0) : null;
       b.textContent = n === null ? S.company : `${S.company} · ${n}`;
     }
   }
 
   /* ---------- 07: поступления ---------- */
   function incomingBlock() {
-    let s = `<section class="block" id="f-incoming">${head("Поступления за день", money(R.incomingTotal))}`;
+    let s = `<section class="block" id="f-incoming">${head("07", "Поступления за день", money(R.incomingTotal))}`;
     if (!R.incoming.length) return s + `<p class="lead">Поступлений в отчёте нет.</p></section>`;
     s += `<div class="rows fin-in"><div class="r head"><span class="label">От кого</span><span class="label">Кому</span><span class="label n">Сумма</span></div>
       ${[...R.incoming].sort((a, b) => b.amount - a.amount).map((x) => `<div class="r body"><span class="nm" title="${esc(x.payer)}">${esc(short(x.payer, 90))}</span><span class="dim">${esc(x.company)}</span><span class="num">${esc(full(x.amount))}</span></div>`).join("")}</div>`;
@@ -375,7 +454,7 @@
   function balanceBlock() {
     const lines = R.balances.filter((x) => x.total);
     if (!lines.length && !R.rates.length) return "";
-    let s = `<section class="block" id="f-balance">${head("Счета на конец дня", `данные на ${ddmm(R.dataDate)}`)}`;
+    let s = `<section class="block" id="f-balance">${head("08", "Счета на конец дня", `данные на ${ddmm(R.dataDate)}`)}`;
     if (lines.length) {
       s += `<div class="rows fin-bal"><div class="r head"><span class="label">Счёт</span><span class="label">По компаниям</span><span class="label n">Всего</span></div>
         ${lines.map((x) => `<div class="r body"><span class="nm">${esc(x.label)} <span class="dim">${esc(x.code)}</span></span><span class="dim">${R.companies.map((c, i) => (x.values[i] ? `${esc(c)} ${esc(amt(x.values[i]))}` : "")).filter(Boolean).join(" · ")}</span><span class="num">${esc(amt(x.total))}</span></div>`).join("")}</div>`;
@@ -393,7 +472,6 @@
 
   function render() {
     if (!el) return;
-    blockNo = 0;
     if (!R) {
       el.innerHTML = `<section class="block"><p class="lead">${esc(F.error || "Финансового отчёта пока нет.")}</p>${F.notice ? `<div class="note-warn">${esc(F.notice)}</div>` : ""}</section>`;
       return;
@@ -402,9 +480,9 @@
     let s = "";
     if (F.notice) s += `<div class="note-warn">${esc(F.notice)}</div>`;
     if (stale) s += `<div class="note-warn">Отчёт старый: данные на ${ddmm(R.dataDate)}. Свежего файла в чате нет.</div>`;
-    s += overview() + pnl() + payments();
+    s += warningsBlock() + overview();
     s += `<section class="block" id="f-debtors">${debtorsBlock()}</section>`;
-    s += cashBlock() + stockBlock() + incomingBlock() + balanceBlock() + warningsBlock();
+    s += payments() + stockBlock() + pnl() + cashBlock() + incomingBlock() + balanceBlock();
     el.innerHTML = s;
     if (stockQuery) applyStockSearch();
   }
@@ -422,7 +500,77 @@
     applyStockSearch();
   });
 
+  function copyText(key) {
+    if (key === "debt") {
+      return [`Должники старше 30 дней с даты реализации · на ${ddmmyyyy(today)}`,
+        ...I.debt.top10.map((x, i) => `${i + 1}. ${x.name} · ${x.company} · ${full(x.amount)} · реализация ${ddmmyyyy(x.saleDate)} · ${x.days} дн.`)].join("\n");
+    }
+    if (key === "stock") {
+      return [`Без расхода за период · ${full(I.stock.total)} (${I.stock.count} поз.)`,
+        ...I.stock.top5.map((x, i) => `${i + 1}. ${x.name} · ${x.company} · ${x.warehouse} · ${nfq.format(x.endQty)}${x.unit ? " " + x.unit : ""} · ${full(x.endSum)}`)].join("\n");
+    }
+    const main = R.payments[0];
+    return [`Календарь платежей · на ${ddmmyyyy(today)}`,
+      ...(main ? paymentRows(main, 0).map((x) => [x.payee, full(x.amount), x.basis, x.hint && `до ${ddmmyyyy(x.hint.date)}`].filter(Boolean).join(" · ")) : []),
+      `По календарю ${full(main?.total ?? 0)} · на счетах ${full(R.cash.total)}`,
+      ...(R.tax ? [`КПН ${full(R.tax.total)} · всего к оплате ${full(I.totalWithTax)}`,
+        I.cashGap < 0 ? `Не хватает ${full(-I.cashGap)}` : `Запас ${full(I.cashGap)}`] : [])
+    ].join("\n");
+  }
+
+  async function copyFinance(button) {
+    const status = button.nextElementSibling;
+    const content = copyText(button.dataset.finCopy);
+    try {
+      await navigator.clipboard.writeText(content);
+      status.textContent = "Скопировано";
+    } catch {
+      // Для локального файла и браузеров без Clipboard API.
+      const field = document.createElement("textarea");
+      field.value = content;
+      field.readOnly = true;
+      field.className = "fin-copy-field";
+      field.setAttribute("aria-label", "Текст для копирования");
+      button.parentElement.append(field);
+      field.select();
+      let copied = false;
+      try { copied = document.execCommand("copy"); } catch { /* Текст остаётся доступен для ручного копирования. */ }
+      if (copied) {
+        field.remove();
+        button.focus();
+      } else {
+        field.classList.add("is-visible");
+      }
+      status.textContent = copied ? "Скопировано" : "Выделенный текст можно скопировать вручную";
+    }
+  }
+
   el?.addEventListener("click", (e) => {
+    const copy = e.target.closest("[data-fin-copy]");
+    if (copy) {
+      copy.parentElement.querySelector(".fin-copy-field")?.remove();
+      copyFinance(copy);
+      return;
+    }
+    const debtAction = e.target.closest("[data-debt-focus]");
+    if (debtAction) {
+      debtAge = Number(debtAction.dataset.debtFocus);
+      debtFilter = "";
+      debtAll = true;
+      const box = document.getElementById("debtMainBox");
+      if (box) box.open = true;
+      rerenderDebtors();
+      box?.scrollIntoView({ block: "start" });
+      box?.querySelector(`[data-age="${debtAge}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    const mode = e.target.closest("#stockModeChips button");
+    if (mode) {
+      stockMode = mode.dataset.mode;
+      for (const b of mode.parentElement.children) b.setAttribute("aria-pressed", String(b === mode));
+      applyStockSearch();
+      return;
+    }
     const stockChip = e.target.closest("#stockChips button");
     if (stockChip) {
       stockPick = stockChip.dataset.c || "";
@@ -470,13 +618,29 @@
     const ind = document.querySelector(".sections .ind");
     const link = document.querySelector(".sections a[aria-current='page']");
     if (ind && link) {
-      ind.style.left = link.offsetLeft + 14 + "px";
-      ind.style.width = link.offsetWidth - 28 + "px";
+      const css = getComputedStyle(link);
+      const left = parseFloat(css.paddingLeft);
+      const right = parseFloat(css.paddingRight);
+      ind.style.left = link.offsetLeft + left + "px";
+      ind.style.width = link.offsetWidth - left - right + "px";
     }
   }
 
   setLabels();
   render();
+  const bar = document.querySelector(".bar");
+  const dateline = document.querySelector(".dateline");
+  function measureHeader() {
+    if (bar) document.documentElement.style.setProperty("--bar-height", bar.getBoundingClientRect().height + "px");
+    if (dateline) document.documentElement.style.setProperty("--fin-date-height", dateline.getBoundingClientRect().height + "px");
+    moveInd();
+  }
+  measureHeader();
+  if (typeof ResizeObserver !== "undefined") {
+    const headerObserver = new ResizeObserver(measureHeader);
+    if (bar) headerObserver.observe(bar);
+    if (dateline) headerObserver.observe(dateline);
+  }
   addEventListener("resize", moveInd);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(moveInd);
   setTimeout(moveInd, 0);
