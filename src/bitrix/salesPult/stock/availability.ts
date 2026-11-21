@@ -192,13 +192,16 @@ export function withStockHints(
  * Спрос по строкам склада: открытые лоты Радара (подать сегодня и обсуждение) и открытые планы.
  * План, по которому уже есть лот (тот же номер плана), считается один раз. Строки без спроса не возвращаются.
  */
-export function buildStockDemand(
-  availability: StockAvailability | null | undefined,
+/**
+ * Открытые лоты (приём и обсуждение) и планы со строками склада, которые им подходят. Каждая позиция один раз:
+ * план, у которого уже есть лот, не повторяется. Общий обход для спроса по строкам и сводки пульса.
+ */
+function demandMatches(
+  availability: StockAvailability,
   radar: RadarView | null | undefined,
   plans: PlansMonitorView | null | undefined
-): StockDemandRow[] {
-  if (!availability) return [];
-  const demand = new Map<string, StockDemandRow>();
+): Array<{ item: OpenItem; match: RowsMatch }> {
+  const out: Array<{ item: OpenItem; match: RowsMatch }> = [];
   const lotPlans = new Set<string>();
   const seen = new Set<string>();
   // Сначала лоты, затем планы: номера планов с лотами уже известны, когда доходим до планов.
@@ -207,10 +210,27 @@ export function buildStockDemand(
     seen.add(item.id);
     if (item.source === "plan" && item.planNumber && lotPlans.has(item.planNumber)) continue;
     if (item.source === "lot" && item.planNumber) lotPlans.add(item.planNumber);
-    const m = matchRows(availability, item);
-    if (!m) continue;
-    const approx = DIAGONAL_KINDS.has(item.kind) && !m.exact;
-    for (const row of m.rows) {
+    const match = matchRows(availability, item);
+    if (match) out.push({ item, match });
+  }
+  return out;
+}
+
+/**
+ * Спрос по строкам склада — для строки «спрос: …» у позиции на «Финансах». Лот без диагонали подходит всем
+ * строкам своего вида и виден у каждой (`approxLots`), поэтому строки между собой НЕ складываются:
+ * итог по лотам — `summarizeStagnantDemand`.
+ */
+export function buildStockDemand(
+  availability: StockAvailability | null | undefined,
+  radar: RadarView | null | undefined,
+  plans: PlansMonitorView | null | undefined
+): StockDemandRow[] {
+  if (!availability) return [];
+  const demand = new Map<string, StockDemandRow>();
+  for (const { item, match } of demandMatches(availability, radar, plans)) {
+    const approx = DIAGONAL_KINDS.has(item.kind) && !match.exact;
+    for (const row of match.rows) {
       const d = demand.get(row.key) ?? { key: row.key, lots: 0, qty: 0, approxLots: 0 };
       d.lots += 1;
       d.qty = round(d.qty + item.qty);
@@ -219,6 +239,47 @@ export function buildStockDemand(
     }
   }
   return availability.rows.flatMap((r) => demand.get(r.key) ?? []);
+}
+
+/** Склад без расхода, нужный в открытых лотах и планах: каждый лот или план — один раз. */
+export interface StagnantDemandSummary {
+  asOf: string;
+  stale: boolean;
+  /** Открытых лотов и планов, которым подходит хотя бы одна строка с товаром без расхода. */
+  lots: number;
+  /** Штук в этих лотах и планах. */
+  qty: number;
+  /** Штук без расхода в строках, которые нужны хотя бы одному лоту (строки не пересекаются). */
+  stagnantQty: number;
+  /** Строки с товаром без расхода и спросом, больше лотов — выше. */
+  rows: Array<{ key: string; group: StockGroup; kind: string; diagonal: number | null; lots: number; stagnantQty: number }>;
+}
+
+export function summarizeStagnantDemand(
+  availability: StockAvailability | null | undefined,
+  radar: RadarView | null | undefined,
+  plans: PlansMonitorView | null | undefined
+): StagnantDemandSummary | null {
+  if (!availability) return null;
+  const perRow = new Map<string, number>();
+  let lots = 0;
+  let qty = 0;
+  for (const { item, match } of demandMatches(availability, radar, plans)) {
+    const hits = match.rows.filter((r) => r.stagnantQty > 0);
+    if (!hits.length) continue;
+    lots += 1;
+    qty = round(qty + item.qty);
+    for (const r of hits) perRow.set(r.key, (perRow.get(r.key) ?? 0) + 1);
+  }
+  if (!lots) return null;
+  const rows = availability.rows
+    .filter((r) => perRow.has(r.key))
+    .map((r) => ({ key: r.key, group: r.group, kind: r.kind, diagonal: r.diagonal, lots: perRow.get(r.key)!, stagnantQty: r.stagnantQty }))
+    .sort((a, b) => b.lots - a.lots || b.stagnantQty - a.stagnantQty);
+  return {
+    asOf: availability.asOf, stale: availability.stale, lots, qty,
+    stagnantQty: round(rows.reduce((s, r) => s + r.stagnantQty, 0)), rows
+  };
 }
 
 export type PayloadStockResult =

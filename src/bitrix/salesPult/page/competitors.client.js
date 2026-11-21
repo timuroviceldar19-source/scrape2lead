@@ -102,8 +102,16 @@
       : "";
 
     const main = R.byReason.find((r) => r.key !== "other");
+    // Что делать по главной причине: у каждой категории своё действие (несоответствие ТС — не про документы).
+    const LOSS_ACTIONS = {
+      tech_mismatch: "Сверяйте характеристики товара с ТС заказчика до подачи.",
+      software_docs: "Подготовьте документы на ПО заранее, до следующих подач.",
+      manufacturer_letter: "Запросите письма производителя заранее, до следующих подач.",
+      security: "Проверяйте обеспечение заявки до подачи.",
+      documents: "Исправьте этот пакет документов до следующих подач."
+    };
     const actionHtml = main
-      ? `<p class="loss-action">Главная причина — <b>«${esc(main.label)}»</b>: ${plural(main.count, ["лот", "лота", "лотов"])} на ${money(main.sumOur)}. Исправьте этот пакет документов до следующих подач.</p>`
+      ? `<p class="loss-action">Главная причина — <b>«${esc(main.label)}»</b>: ${plural(main.count, ["лот", "лота", "лотов"])} на ${money(main.sumOur)}. ${esc(LOSS_ACTIONS[main.key] || LOSS_ACTIONS.documents)}</p>`
       : "";
 
     const reasonsHtml = R.byReason.map((r) => {

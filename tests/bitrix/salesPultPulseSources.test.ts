@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildManagerPulse, buildMorningPulse, lossPulseItems, stockDemandPulseItems } from "../../src/bitrix/salesPult/pulse.js";
-import type { StockAvailability } from "../../src/bitrix/salesPult/stock/availability.js";
+import { buildStockDemand, summarizeStagnantDemand, type StockAvailability } from "../../src/bitrix/salesPult/stock/availability.js";
 import { buildDirectorDigest } from "../../src/bitrix/salesPult/chatReport.js";
 import type { RecentCheaperRejectionsSummary } from "../../src/kz/competitors/losses.js";
 import { buildManagerVariant, renderManagerVariant } from "../../src/bitrix/salesPult/variants/manager.js";
 import { emptyRadarGroup, computeRadarKpis } from "../../src/bitrix/salesPult/radar/aggregate.js";
-import type { RadarCard } from "../../src/bitrix/salesPult/radar/types.js";
+import type { RadarCard, RadarView } from "../../src/bitrix/salesPult/radar/types.js";
 import { fixture } from "../fixtures/sales-pult/contracts.js";
 
 // Все данные выдуманные: лоты, суммы, компании.
@@ -96,31 +96,52 @@ describe("пульс: склад без расхода нужен в откры�
     asOf: "2026-11-16", stale: false,
     rows: [
       { key: "ИП|Интерактивные панели|75", group: "ИП", kind: "Интерактивные панели", diagonal: 75, qty: 12, stagnantQty: 9 },
+      { key: "ИП|Интерактивные панели|86", group: "ИП", kind: "Интерактивные панели", diagonal: 86, qty: 4, stagnantQty: 4 },
       { key: "КТ|Ноутбуки|", group: "КТ", kind: "Ноутбуки", diagonal: null, qty: 30, stagnantQty: 0 },
       { key: "КТ|Мониторы|", group: "КТ", kind: "Мониторы", diagonal: null, qty: 5, stagnantQty: 5 }
     ]
   };
-  const demand = [
-    { key: "ИП|Интерактивные панели|75", lots: 3, qty: 14, approxLots: 1 },
-    { key: "КТ|Ноутбуки|", lots: 4, qty: 60, approxLots: 0 }
-  ];
+  const lotCard = (id: string, group: "ИП" | "КТ", kind: string, itemName: string, qty: number): RadarCard => ({
+    id, dealUrl: "", sourceType: "lot", lotNumber: `LOT-${id}`, title: "", itemName, qty, sum: 1, method: "",
+    status: "Опубликован (прием заявок)", group, kind, customerName: "", customerBin: "", managerId: "s", managerName: "s",
+    startAt: null, endAt: null, hoursLeft: null, isToday: false, isWithin48h: false, column: "submitToday"
+  });
+  const radar = (): RadarView => ({
+    asOf: "2026-11-17",
+    ip: { ...emptyRadarGroup("ИП"), submitToday: [
+      lotCard("701", "ИП", "Интерактивные панели", "Интерактивная панель 75", 3),
+      // без диагонали: подходит и 75″, и 86″ — но это один лот
+      lotCard("702", "ИП", "Интерактивные панели", "Интерактивная панель", 6)
+    ] },
+    kt: { ...emptyRadarGroup("КТ"), submitToday: [lotCard("703", "КТ", "Ноутбуки", "Ноутбук", 40)] }
+  });
+
+  it("каждый лот считается один раз, даже если подходит нескольким строкам склада", () => {
+    const summary = summarizeStagnantDemand(stock, radar(), null)!;
+    expect(summary).toMatchObject({ lots: 2, qty: 9, stagnantQty: 13 });
+    // для строки спроса на «Финансах» лот без диагонали по-прежнему виден у обеих строк
+    const perRow = buildStockDemand(stock, radar(), null);
+    expect(perRow.find((d) => d.key.endsWith("|75"))?.lots).toBe(2);
+    expect(perRow.find((d) => d.key.endsWith("|86"))?.lots).toBe(1);
+  });
 
   it("берёт только виды, где есть и товар без расхода, и спрос; ведёт на склад «Финансов»", () => {
-    const items = stockDemandPulseItems(stock, demand);
+    const items = stockDemandPulseItems(summarizeStagnantDemand(stock, radar(), null));
     expect(items).toHaveLength(1);
     const [item] = items;
     expect(item).toMatchObject({ key: "stock-demand", severity: "yellow", area: "stock", finance: true, href: "./fin.html#f-stock" });
-    expect(item.value).toBe("3 лота");
-    expect(item.detail).toContain("без расхода 9 шт");
+    expect(item.value).toBe("2 лота");
+    expect(item.detail).toContain("без расхода 13 шт");
     expect(item.detail).toContain("панели 75″");
     // ноутбуки — спрос есть, но всё продаётся; мониторы — лежат, но спроса нет
     expect(item.detail).not.toMatch(/ноутбук|монитор/i);
   });
 
   it("нет склада, нет спроса или отчёт устарел — без пункта или с пометкой даты", () => {
-    expect(stockDemandPulseItems(null, demand)).toEqual([]);
-    expect(stockDemandPulseItems(stock, [])).toEqual([]);
-    expect(stockDemandPulseItems({ ...stock, stale: true }, demand)[0].detail).toContain("на 16.11");
+    expect(summarizeStagnantDemand(null, radar(), null)).toBeNull();
+    expect(stockDemandPulseItems(null)).toEqual([]);
+    expect(stockDemandPulseItems(summarizeStagnantDemand(stock, null, null))).toEqual([]);
+    expect(stockDemandPulseItems(summarizeStagnantDemand({ ...stock, stale: true }, radar(), null))[0].detail).toContain("на 16.11");
   });
 });
 
