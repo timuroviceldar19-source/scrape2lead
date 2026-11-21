@@ -157,7 +157,7 @@ describe("Вкладка «Конкуренты» в браузере и вар�
   afterAll(async () => { await browser?.close(); });
 
   for (const width of [1440, 375]) {
-    it(`renders all 6 blocks, switches ИП/КТ and months without horizontal scroll at ${width}px`, async () => {
+    it(`renders all 7 blocks, switches ИП/КТ and months without horizontal scroll at ${width}px`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
       const errors: string[] = [];
       page.on("pageerror", (e) => errors.push(e.message));
@@ -170,7 +170,10 @@ describe("Вкладка «Конкуренты» в браузере и вар�
         expect(await page.locator("#productSwitch").isVisible()).toBe(true);
         expect(await page.locator("#competitorsMonths").isVisible()).toBe(true);
 
+        // Список «Наших отклонений» свёрнут под <details> (сводка — в «Потерях по причинам»)
+        await paneIp.locator("details.comp-rej-d > summary").click();
         const textIp = await paneIp.innerText();
+        expect(textIp).toContain("Потери по причинам");
         expect(textIp).toContain("Итоги");
         expect(textIp).toContain("Конкуренты");
         expect(textIp).toContain("Где мы встречались");
@@ -272,6 +275,7 @@ describe("Вкладка «Конкуренты» в браузере и вар�
       await page.waitForSelector("#tab-competitors-ip.on .comp-hero");
 
       const pane = page.locator("#tab-competitors-ip");
+      await pane.locator("details.comp-rej-d > summary").click();
       const text = await pane.innerText();
       // Quote normalization
       expect(text).toContain('ТОО "VArMA Tech"');

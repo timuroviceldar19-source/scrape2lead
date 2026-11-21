@@ -1,5 +1,6 @@
 import { calculateQuantile, getPreviousWorkday } from "../market/aggregate.js";
 import { loadCompetitorsConfig } from "./config.js";
+import { buildLossBreakdown } from "./losses.js";
 import { summarizeTemplateWinners } from "./specTemplates.js";
 import type {
   CompetitorBid,
@@ -99,7 +100,8 @@ function buildGroupSlice(
   bids: readonly CompetitorBid[],
   templateMatches: readonly LotTemplateMatch[],
   canonNames: ReadonlyMap<string, string>,
-  cfg: CompetitorsConfig
+  cfg: CompetitorsConfig,
+  asOfDate?: string
 ): CompetitorsGroupSliceView {
   const lotMap = new Map(lots.map((l) => [`${l.annoId}:${l.lotNumber}`, l]));
   const bidsByLot = new Map<string, CompetitorBid[]>();
@@ -381,6 +383,7 @@ function buildGroupSlice(
       annoId: b.annoId,
       lotNumber: b.lotNumber,
       date: b.startDate,
+      ...(lot?.endDate ? { endDate: lot.endDate } : {}),
       ourCompany: b.ourCompany || cfg.ourCompanyNames[b.bidderBin] || b.bidderName,
       ourBin: b.bidderBin,
       customerName: lot?.customerName ?? "",
@@ -400,6 +403,9 @@ function buildGroupSlice(
     });
   }
   ourRejections.sort((a, b) => Number(b.cheaperThanWinner) - Number(a.cheaperThanWinner) || b.date.localeCompare(a.date));
+
+  // 4a. Потери по причинам: из полного списка очных встреч (в headToHead у соперника не больше 50 лотов)
+  const losses = buildLossBreakdown({ ourRejections, headToHead: [...h2hMap.values()] }, { allOurBins: cfg.allOurBins, asOfDate });
 
   // 5. Price benchmarks (strictly single-item non-combined non-kit; kits separated for ИП)
   let excludedTypoCount = 0;
@@ -502,6 +508,7 @@ function buildGroupSlice(
     headToHead,
     ourRejections,
     ourRejectionsCheaperCount: ourRejections.filter((r) => r.cheaperThanWinner).length,
+    losses,
     prices: {
       rows: priceRows,
       kitsRow,
@@ -516,7 +523,8 @@ export function buildCompetitorsGroupView(
   allLots: readonly CompetitorLot[],
   allBids: readonly CompetitorBid[],
   templateMatches: readonly LotTemplateMatch[],
-  cfg: CompetitorsConfig
+  cfg: CompetitorsConfig,
+  asOfDate?: string
 ): CompetitorsGroupView | null {
   const latestLots = allLots.filter((l) => l.isLatestVersion && l.group === group);
   const latestBids = allBids.filter((b) => b.isLatestLotVersion && b.group === group);
@@ -549,13 +557,13 @@ export function buildCompetitorsGroupView(
     };
   });
 
-  const allSlice = buildGroupSlice(group, "all", latestLots, latestBids, templateMatches, canonNames, cfg);
+  const allSlice = buildGroupSlice(group, "all", latestLots, latestBids, templateMatches, canonNames, cfg, asOfDate);
   const monthViews: Record<string, CompetitorsGroupSliceView> = { all: allSlice };
   for (const m of monthKeys) {
     const mLots = byMonthLots.get(m) ?? [];
     const mLotSet = new Set(mLots.map((l) => `${l.annoId}:${l.lotNumber}`));
     const mBids = latestBids.filter((b) => mLotSet.has(`${b.annoId}:${b.lotNumber}`));
-    monthViews[m] = buildGroupSlice(group, m, mLots, mBids, templateMatches, canonNames, cfg);
+    monthViews[m] = buildGroupSlice(group, m, mLots, mBids, templateMatches, canonNames, cfg, asOfDate);
   }
 
   return {
@@ -583,8 +591,8 @@ export function buildCompetitorsView(options: BuildCompetitorsViewOptions): Comp
     ...new Set(latestLots.map((l) => l.startDate.slice(0, 7)).filter((m) => /^\d{4}-\d{2}$/.test(m)))
   ].sort();
 
-  const ip = buildCompetitorsGroupView("ИП", options.lots, options.bids, options.templateMatches, cfg);
-  const kt = buildCompetitorsGroupView("КТ", options.lots, options.bids, options.templateMatches, cfg);
+  const ip = buildCompetitorsGroupView("ИП", options.lots, options.bids, options.templateMatches, cfg, options.asOfDate);
+  const kt = buildCompetitorsGroupView("КТ", options.lots, options.bids, options.templateMatches, cfg, options.asOfDate);
   const updatedAt = options.updatedAt?.trim() || undefined;
   const stale = Boolean(updatedAt && updatedAt.slice(0, 10) < getPreviousWorkday(options.asOfDate));
 
