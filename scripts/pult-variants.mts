@@ -12,6 +12,7 @@ import { buildManagerVariant, renderManagerVariant } from "../src/bitrix/salesPu
 import type { SalesPultPayload } from "../src/bitrix/salesPult/types.js";
 import type { RegisterPagePayload } from "../src/bitrix/salesPult/site.js";
 import type { NormalizedPlanDeal } from "../src/bitrix/salesPult/plans/types.js";
+import { parsePayloadStock, stockForViewer } from "../src/bitrix/salesPult/stock/availability.js";
 
 function readJson<T>(file: string): T | null {
   return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as T) : null;
@@ -66,6 +67,13 @@ export function deployPultVariants(
         console.error("::error::[Роли] нет payload.json или payload-reg.json: виды менеджеров не собрать");
         process.exit(1);
       }
+      // Склад читается из JSON: неверный формат (или лишние поля — суммы, компании) менеджеру не отдаём.
+      const stock = parsePayloadStock(pult.stock);
+      if (stock.ok) pult.stock = stock.stock;
+      else {
+        delete pult.stock;
+        console.warn(`::warning::[Склад] payload.stock не прошёл проверку (ошибок: ${stock.issues}) — склад в видах менеджеров не показан`);
+      }
       const planDeals = readJson<NormalizedPlanDeal[]>(path.join(srcDir, "plan-deals.json"));
       const salesConfig = readJson<{ register?: { managerAliases?: Record<string, string> } }>("config/sales-pult.json");
       for (const managerId of managerIds) {
@@ -74,6 +82,8 @@ export function deployPultVariants(
           console.warn(`::warning::[Роли] сотрудника с ID ${managerId} нет в пульте — его вид не собран, он увидит «ещё не готов»`);
           continue;
         }
+        // Подсказки склада — только по карточкам и планам, которые есть в его виде.
+        if (variant.pult.stock !== undefined) variant.pult.stock = stockForViewer(variant.pult.stock, variant.pult);
         const pages = renderManagerVariant(variant);
         write(`m${managerId}`, "index.html", pages.index);
         write(`m${managerId}`, "reg.html", pages.reg);

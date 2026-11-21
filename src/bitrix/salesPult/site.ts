@@ -59,7 +59,8 @@ const marketClientJs = fs.readFileSync(new URL("./page/market.client.js", import
 const plansClientJs = fs.readFileSync(new URL("./page/plans.client.js", import.meta.url), "utf8");
 const radarClientJs = fs.readFileSync(new URL("./page/radar.client.js", import.meta.url), "utf8");
 const competitorsClientJs = fs.readFileSync(new URL("./page/competitors.client.js", import.meta.url), "utf8");
-const pultPageClientJs = `${marketClientJs}\n${plansClientJs}\n${radarClientJs}\n${competitorsClientJs}\n${pultClientJs}`;
+const stockClientJs = fs.readFileSync(new URL("./page/stock.client.js", import.meta.url), "utf8");
+const pultPageClientJs = `${marketClientJs}\n${stockClientJs}\n${plansClientJs}\n${radarClientJs}\n${competitorsClientJs}\n${pultClientJs}`;
 const regPageClientJs = `${registerClientJs}\n${regRunnerClientJs}`;
 
 const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|__INSIGHTS__|\/\*__CLIENT_JS__\*\//g;
@@ -79,6 +80,8 @@ export interface FinancePagePayload {
   asOfDate: string;
   generatedAt: string;
   finance: FinanceView;
+  /** Спрос открытых лотов и планов по строкам склада: строка «спрос: …» у позиций без расхода. */
+  stockDemand?: import("./stock/availability.js").StockDemandRow[];
 }
 
 export function buildSignals(payload: SalesPultPayload): SignalItem[] {

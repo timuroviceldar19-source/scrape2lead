@@ -148,6 +148,7 @@
 #f-payments .lead .bad { color: var(--bad-ink); }
 .fin-focus-meta.warn { color: var(--warn-ink); }
 .fin-focus-meta.bad { color: var(--bad-ink); }
+.fin-focus-meta.fin-stock-demand { color: var(--ink); font-weight: 500; }
 .fin-focus-value { text-align: right; font: 500 12px/1.5 var(--mono); white-space: nowrap; }
 .fin-due { display: inline-block; border-radius: 4px; margin-top: 2px; padding: 2px 5px; background: var(--sheet); color: var(--ink-2); font: 500 11px var(--mono); }
 .fin-due.warn { background: var(--warn-t); color: var(--warn-ink); }

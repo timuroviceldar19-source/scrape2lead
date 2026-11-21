@@ -135,6 +135,7 @@
           </div>
         </div>
         ${hints?.priceHtml || ""}
+        ${window.__stockHint ? window.__stockHint(card) : ""}
         <div class="radar-card-cust" title="${esc(card.customerName)}">
           <span class="cust-name">${esc(shortCustomerName(card.customerName))}</span>
           ${card.customerBin ? `<span class="dim sub">${esc(card.customerBin)}</span>` : ""}

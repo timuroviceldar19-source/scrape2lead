@@ -381,7 +381,7 @@
         return `<div class="r" role="row" data-plan-id="${esc(d.id)}">
           <span role="cell">${esc(d.month)}<span class="sub">${link(d.dealUrl, `Сделка ${d.id} ↗`)} · ${link(d.planUrl, `План ${d.planNumber} ↗`)}</span></span>
           <span role="cell">${esc(d.customerName)}<span class="dim sub">${esc(d.customerBin)}</span>${hints.customerHtml}</span>
-          <span role="cell">${esc(d.itemName)}<span class="dim sub">${[d.truCode, d.kind].filter(Boolean).map(esc).join(" · ")}</span></span>
+          <span role="cell">${esc(d.itemName)}<span class="dim sub">${[d.truCode, d.kind].filter(Boolean).map(esc).join(" · ")}</span>${window.__stockHint ? window.__stockHint(d) : ""}</span>
           <span role="cell" data-label="Количество">${fmt(d.qty)} шт.</span>
           <span role="cell" class="num" data-label="Сумма">${money(d.sum)}${hints.priceHtml}</span>
           <span role="cell" data-label="Статус портала">${esc(d.portalStatus)}</span>
