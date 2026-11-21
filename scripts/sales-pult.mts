@@ -46,7 +46,7 @@ import {
 } from "../src/bitrix/salesPult/site.js";
 import { loadRegisterView } from "../src/bitrix/salesPult/register/load.js";
 import { loadFinanceView } from "../src/bitrix/salesPult/finance/load.js";
-import { buildStockAvailability, buildStockDemand, withStockHints } from "../src/bitrix/salesPult/stock/availability.js";
+import { buildStockAvailability, buildStockDemand, summarizeStagnantDemand, withStockHints } from "../src/bitrix/salesPult/stock/availability.js";
 import { updateMarketWindow } from "../src/kz/market/updateWindow.js";
 import { loadMarketView } from "../src/kz/market/load.js";
 import { buildAllMarketMonthContracts, filterMarketUnitsForView } from "../src/kz/market/aggregate.js";
@@ -854,7 +854,7 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
       nowIso, finance: financeView, register: registerView,
       extraItems: [
         ...lossPulseItems(summarizeRecentCheaperRejections(competitorsView, todayAlmaty)),
-        ...stockDemandPulseItems(payload.stock, stockDemand)
+        ...stockDemandPulseItems(summarizeStagnantDemand(payload.stock, radarView, plansView))
       ]
     }));
 
@@ -930,7 +930,7 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
       // Склад без расхода × открытые лоты радара (планы утром не грузятся — только лоты).
       try {
         const morningStock = buildStockAvailability(morningFinance, todayAlmaty);
-        morningExtras.push(...stockDemandPulseItems(morningStock, buildStockDemand(morningStock, morningRadar, null)));
+        morningExtras.push(...stockDemandPulseItems(summarizeStagnantDemand(morningStock, morningRadar, null)));
       } catch (err) {
         console.warn(`[Склад] Спрос для дайджеста не собран (${formatSafeErrorStatus(err)})`);
       }

@@ -9,7 +9,7 @@ import { computeRadarKpis } from "../../src/bitrix/salesPult/radar/aggregate.js"
 import { buildStockAvailability, withStockHints } from "../../src/bitrix/salesPult/stock/availability.js";
 import { buildPlansMonitorView } from "../../src/bitrix/salesPult/plans/aggregate.js";
 import { pulseForPayload, lossPulseItems, stockDemandPulseItems } from "../../src/bitrix/salesPult/pulse.js";
-import { buildStockDemand } from "../../src/bitrix/salesPult/stock/availability.js";
+import { summarizeStagnantDemand } from "../../src/bitrix/salesPult/stock/availability.js";
 import { summarizeRecentCheaperRejections } from "../../src/kz/competitors/losses.js";
 import type { RadarView } from "../../src/bitrix/salesPult/radar/types.js";
 import { fixture } from "../fixtures/sales-pult/contracts.js";
@@ -52,7 +52,7 @@ beforeAll(async () => {
     nowIso: "2026-11-21T09:49:30+05:00", finance: stockFinance("2026-11-20"), register: f.register,
     extraItems: [
       ...lossPulseItems(summarizeRecentCheaperRejections(p.competitors, AS_OF)),
-      ...stockDemandPulseItems(p.stock, buildStockDemand(stock, p.radar, p.plans))
+      ...stockDemandPulseItems(summarizeStagnantDemand(p.stock, p.radar, p.plans))
     ]
   });
   file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pult-decision-")), "index.html");
