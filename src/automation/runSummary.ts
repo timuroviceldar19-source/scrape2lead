@@ -43,6 +43,9 @@ export function renderRunSummary(manifest: AutomationManifest): string {
   }
   for (const [name, stage] of Object.entries(manifest.stages)) {
     if (stage.sourceUnreachable) lines.push("", `**Источник полностью недоступен: ${name}**`, "");
+    if (stage.certificateErrors) {
+      lines.push("", `**❌ Ошибка сертификата портала: ${name}, запросов — ${stage.certificateErrors}. Повтор не поможет.**`, "");
+    }
   }
   if (skipped.length) {
     lines.push("", `**⚠️ Частичный сбор: пропущено запросов — ${skipped.length}**`, "",

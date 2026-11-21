@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { acquireRunLock, cleanupSuccessfulRuns, computeRollingPeriod, createRunId, fileSha256, manifestWorkflow, readManifest, releaseRunLock, writeManifestAtomic } from "./core.js";
 import type { AutomationArtifact, AutomationConfig, AutomationDependencies, AutomationExportResult, AutomationManifest, AutomationStage, AutomationStatus, AutomationStepResult, ProcurementCollectResult, RollingPeriod } from "./types.js";
-import { GzSourceUnavailableError, isTransientNetworkError } from "../kz/gzCollection.js";
+import { countCertificateErrors, GzSourceUnavailableError, isCertificateError, isTransientNetworkError } from "../kz/gzCollection.js";
 
 const GZ_BRANCHES = [
   { key: "plans", exportStage: "exportPlans", dryStage: "dryRunPlans", applyStage: "applyPlans", configKey: "plansConfig", reportKey: "plansDryRun" },
@@ -264,18 +264,34 @@ async function runStage<T extends AutomationStepResult | AutomationExportResult>
     const counts = "counts" in result ? result.counts : exportCounts(result);
     const skipped = "skippedQueries" in result ? result.skippedQueries : undefined;
     if (skipped?.length) console.warn(`::warning::${name}: Частичный сбор: пропущено запросов — ${skipped.length}`);
+    const certificateErrors = countCertificateErrors(skipped);
+    reportCertificateErrors(name, certificateErrors);
     manifest.stages[name] = { ...manifest.stages[name], status: "succeeded", finishedAt: new Date().toISOString(), counts,
-      ...(skipped?.length ? { skipped } : {}) }; save(manifestPath, manifest); log(`DONE ${name}`); return result;
+      ...(skipped?.length ? { skipped } : {}), ...(certificateErrors ? { certificateErrors } : {}) };
+    save(manifestPath, manifest); log(`DONE ${name}`); return result;
   } catch (error) {
     manifest.stages[name] = { ...manifest.stages[name], status: "failed", finishedAt: new Date().toISOString(), error: errorMessage(error),
       ...(error instanceof GzSourceUnavailableError ? { skipped: error.skippedQueries } : {}),
       ...(name.startsWith("export") && isTransientNetworkError(error) ? { sourceUnreachable: true } : {}) };
+    const certificateErrors = countCertificateErrors(error instanceof GzSourceUnavailableError ? error.skippedQueries : undefined)
+      + (isCertificateError(error) ? 1 : 0);
+    if (certificateErrors) manifest.stages[name].certificateErrors = certificateErrors;
+    reportCertificateErrors(name, certificateErrors);
     const transient = isTransientNetworkError(error);
     const message = `${transient ? "fetch failed: " : ""}${errorMessage(error)}`;
     save(manifestPath, manifest); log(`FAILED ${name}: ${message}`);
     if (transient) console.warn(`::warning::${name}: временная недоступность; подробности в сводке запуска`);
     console.error(`${name}: ${message}`); throw error;
   }
+}
+
+function reportCertificateErrors(name: string, count: number): void {
+  if (count) console.error(`::error::${name}: ошибка сертификата портала в запросах — ${count}; повтор не поможет, нужна проверка`);
+}
+
+/** Этапы, где сбор сорвался на сертификате портала. Прогон с ними завершается кодом 3, чтобы пришло письмо. */
+export function certificateErrorStages(manifest: AutomationManifest): string[] {
+  return Object.entries(manifest.stages).filter(([, stage]) => (stage.certificateErrors ?? 0) > 0).map(([name]) => name);
 }
 
 function exportCounts(result: AutomationExportResult): Record<string, number> {

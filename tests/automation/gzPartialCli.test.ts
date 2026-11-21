@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ config: vi.fn(), run: vi.fn() }));
+const mocks = vi.hoisted(() => ({ config: vi.fn(), run: vi.fn(), certificateStages: vi.fn(() => [] as string[]) }));
 vi.mock("../../src/automation/config.js", () => ({ loadAutomationConfig: mocks.config }));
 vi.mock("../../src/automation/orchestrator.js", () => ({
-  runScheduledAutomation: mocks.run, approveAutomationRun: vi.fn(), prepareAutomationRun: vi.fn(), pushAutomationRun: vi.fn()
+  runScheduledAutomation: mocks.run, approveAutomationRun: vi.fn(), prepareAutomationRun: vi.fn(), pushAutomationRun: vi.fn(),
+  certificateErrorStages: mocks.certificateStages
 }));
 vi.mock("../../src/automation/realDependencies.js", () => ({ createRealAutomationDependencies: () => ({}) }));
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.resetModules(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.resetModules(); mocks.certificateStages.mockReset().mockReturnValue([]); });
 
 describe("scheduled automation CLI exit codes", () => {
   it.each([
@@ -21,6 +22,23 @@ describe("scheduled automation CLI exit codes", () => {
       await import("../../scripts/automation.mjs");
       await vi.waitFor(() => expect(log).toHaveBeenCalledWith(`automation run: run=mock-run status=${status}`));
       expect(process.exitCode).toBe(expected);
+    } finally { process.argv = argv; process.exitCode = previous; }
+  });
+  it("returns 3 when the pushed run hit a portal certificate error", async () => {
+    // Обёртка не повторяет код 3, job падает с письмом; записанное остаётся записанным.
+    const argv = process.argv; const previous = process.exitCode;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("BITRIX24_WEBHOOK_URL", "https://example.test/mock-only");
+    mocks.config.mockReturnValue({ deliveryMode: "push", runsDir: "unused" });
+    mocks.run.mockResolvedValue({ runId: "mock-run", status: "pushed" });
+    mocks.certificateStages.mockReturnValue(["exportLots"]);
+    try {
+      process.argv = [process.execPath, "automation.mts", "run"]; process.exitCode = 0;
+      await import("../../scripts/automation.mjs");
+      await vi.waitFor(() => expect(log).toHaveBeenCalledWith("automation run: run=mock-run status=pushed"));
+      expect(process.exitCode).toBe(3);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("ошибка сертификата портала (exportLots)"));
     } finally { process.argv = argv; process.exitCode = previous; }
   });
 });

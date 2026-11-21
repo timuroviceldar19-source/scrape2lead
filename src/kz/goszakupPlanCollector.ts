@@ -4,6 +4,7 @@ import { chromium } from "playwright";
 import { sleep } from "./csv.js";
 import { buildGoszakupHtmlPageUrl } from "./goszakupHtmlCollector.js";
 import { isExcludedByName } from "./gzItemFilter.js";
+import { gzPortalLaunchOptions } from "./gzPortalTls.js";
 import { KzStorage } from "./kzStorage.js";
 import {
   fetchPlanDetailFromApi,
@@ -62,7 +63,7 @@ export async function collectGzPlans(options: GzPlanCollectOptions = {}): Promis
       })
     : new Map<string, string>();
 
-  const browser = await chromium.launch({ headless: options.headless ?? true });
+  const browser = await chromium.launch(gzPortalLaunchOptions({ headless: options.headless ?? true }));
   const context = await browser.newContext({
     locale: "ru-RU",
     viewport: { width: 1400, height: 900 }

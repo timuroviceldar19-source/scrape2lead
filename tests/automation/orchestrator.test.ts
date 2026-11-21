@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { approveAutomationRun, prepareAutomationRun, pushAutomationRun, runScheduledAutomation } from "../../src/automation/orchestrator.js";
+import { approveAutomationRun, certificateErrorStages, prepareAutomationRun, pushAutomationRun, runScheduledAutomation } from "../../src/automation/orchestrator.js";
+import { GzSourceUnavailableError } from "../../src/kz/gzCollection.js";
 import { readManifest, writeManifestAtomic } from "../../src/automation/core.js";
 import type { AutomationConfig, AutomationDependencies, AutomationManifest, AutomationWorkflow } from "../../src/automation/types.js";
 
@@ -108,6 +109,43 @@ describe("independent GZ collection branches", () => {
     expect(result.status).toBe("pushed");
     expect(result.stages.exportPlans).toMatchObject({ status: "succeeded", counts: { skipped_queries: 1 }, skipped });
     expect(fs.readFileSync(path.join(runs, result.runId, "summary.txt"), "utf8")).toContain("Панель");
+  });
+  it("pushes plans but marks lots when the portal certificate fails every lot query", async () => {
+    // 19–21.11.2026: просроченный сертификат procurement.gov.kz выглядел как временная недоступность, запуск был зелёным.
+    const runs = root(), d = deps();
+    const query = { stage: "lots" as const, year: 2026, months: [11], failedPage: 1, totalPages: null, keptRows: 0, attempts: 4 };
+    vi.mocked(d.exportLots).mockRejectedValue(new GzSourceUnavailableError([
+      { ...query, query: "262013", reason: "page.goto: net::ERR_CERT_DATE_INVALID at https://procurement.gov.kz/ru/search/lots" },
+      { ...query, query: "262011", reason: "page.goto: net::ERR_CONNECTION_TIMED_OUT at https://procurement.gov.kz/ru/search/lots" },
+      { ...query, query: "265152", attempts: 0, reason: "circuit_breaker: portal unreachable" }
+    ]));
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("pushed");
+    expect(d.applyPlans).toHaveBeenCalledOnce(); expect(d.applyLots).not.toHaveBeenCalled();
+    expect(result.stages.exportLots).toMatchObject({ status: "failed", sourceUnreachable: true, certificateErrors: 1 });
+    expect(result.stages.exportPlans?.certificateErrors).toBeUndefined();
+    expect(certificateErrorStages(result)).toEqual(["exportLots"]);
+    expect(readManifest(path.join(runs, result.runId, "manifest.json")).stages.exportLots?.certificateErrors).toBe(1);
+  });
+  it("marks certificate errors among skipped queries of a successful export", async () => {
+    const runs = root(), d = deps();
+    const skipped = [{ stage: "registry" as const, query: "990640002884", year: 2026, months: [11], failedPage: null,
+      totalPages: null, keptRows: 0, attempts: 3, reason: "page.goto: net::ERR_CERT_DATE_INVALID at https://procurement.gov.kz/ru/registry/supplierreg" }];
+    vi.mocked(d.exportPlans).mockImplementation(async (_cfg, out) => {
+      fs.writeFileSync(out, "plans"); return { path: out, rows: 2, skippedQueries: skipped, successfulQueries: 6 };
+    });
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("pushed");
+    expect(result.stages.exportPlans).toMatchObject({ status: "succeeded", certificateErrors: 1 });
+    expect(certificateErrorStages(result)).toEqual(["exportPlans"]);
+  });
+  it("does not mark ordinary timeouts as certificate errors", async () => {
+    const runs = root(), d = deps();
+    vi.mocked(d.exportLots).mockRejectedValue(new Error("page.goto: net::ERR_CONNECTION_TIMED_OUT at https://procurement.gov.kz/"));
+    const result = await runScheduledAutomation(config(runs), d);
+    expect(result.status).toBe("pushed");
+    expect(result.stages.exportLots?.certificateErrors).toBeUndefined();
+    expect(certificateErrorStages(result)).toEqual([]);
   });
   it("allows preparing and approving only the available lots branch", async () => {
     const runs = root(), d = deps(); vi.mocked(d.exportPlans).mockRejectedValue(new Error("page.goto: Timeout"));

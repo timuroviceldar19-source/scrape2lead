@@ -21,7 +21,8 @@ mkdir -p -- "$(dirname -- "$LOG")" || exit 1
 npm run automation:run -- --config "$CONFIG" >>"$LOG" 2>&1
 code=$?
 
-if [ "$code" -eq 0 ]; then status=pushed; else status=failed; fi
+# 3: прогон записал всё, что смог, но часть сбора сорвалась на сертификате портала.
+if [ "$code" -eq 0 ]; then status=pushed; elif [ "$code" -eq 3 ]; then status=certificate-error; else status=failed; fi
 printf '%s scheduler automation:run status=%s exit=%s config=%s\n' \
   "$(date -Iseconds)" "$status" "$code" "$CONFIG" >>"$LOG"
 

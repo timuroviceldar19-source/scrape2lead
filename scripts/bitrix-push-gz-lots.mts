@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import ExcelJS from "exceljs";
 import { chromium, type Browser, type Page } from "playwright";
+import { gzPortalLaunchOptions } from "../src/kz/gzPortalTls.js";
 import { parseAnnounceCustomer, type AnnounceCustomer } from "../src/kz/goszakupAnnounceCustomer.js";
 import { fetchLotBidWindow, type LotBidWindow } from "../src/kz/goszakupLotWindow.js";
 import { bidWindowComment, bidWindowFields, isPlaceholderWindow } from "../src/bitrix/gzLotDates.js";
@@ -346,7 +347,7 @@ class CustomerResolver {
 
   private async ensurePage(): Promise<Page> {
     if (this.page) return this.page;
-    this.browser = await chromium.launch({ headless: true });
+    this.browser = await chromium.launch(gzPortalLaunchOptions({ headless: true }));
     const context = await this.browser.newContext({ locale: "ru-RU", viewport: { width: 1400, height: 900 } });
     this.page = await context.newPage();
     return this.page;
