@@ -36,6 +36,7 @@
         method: "",
         timeFilter: "all",
         searchQuery: "",
+        missedOpen: false,
         expandedCol: { submitToday: false, discussion: false, secondChance: false }
       };
       radarStates.set(tab, st);
@@ -43,36 +44,74 @@
     return st;
   }
 
-  function formatTimeBadge(card) {
+  // Срок приёма — время Алматы (UTC+5), те же правила, что parseAlmatyTimestamp в radar/aggregate.ts:
+  // «YYYY-MM-DD HH:mm[:ss]»; дата без времени — конец дня 23:59:59; строка со смещением — как есть.
+  const ALMATY_OFFSET_MS = 5 * 3_600_000;
+  function parseAlmatyEnd(value) {
+    const s = String(value || "").trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(s)) {
+      const ms = Date.parse(s);
+      return Number.isFinite(ms) ? ms : null;
+    }
+    const m = /^(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}:\d{2})(?::(\d{2}))?)?/.exec(s);
+    if (!m) return null;
+    const ms = Date.parse(`${m[1]}T${m[2] ? `${m[2]}:${m[3] || "00"}` : "23:59:59"}+05:00`);
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  /** Карточке с понятным сроком нужен живой таймер: срок кладётся в data-end и пересчитывается от часов браузера. */
+  const liveEnd = (card) => card.column !== "secondChance" && card.column !== "missed" && parseAlmatyEnd(card.endAt) !== null ? card.endAt : "";
+
+  // Пороги прежние: меньше 4 ч — красный, меньше 48 ч — жёлтый. Минуты округляются вниз: таймер не обещает лишнего.
+  function badgeState(msLeft, endAt) {
+    if (msLeft == null) return endAt ? { cls: "", text: `до ${endAt.slice(5)}` } : null;
+    if (msLeft <= 0) return { cls: "bad", text: "приём окончен" };
+    const h = msLeft / 3_600_000;
+    const minutes = Math.floor(msLeft / 60_000);
+    const hoursMinutes = `осталось ${Math.floor(minutes / 60)} ч${minutes % 60 ? ` ${minutes % 60} мин` : ""}`;
+    if (h < 1) return { cls: "bad", text: `осталось ${Math.max(1, minutes)} мин` };
+    if (h < 4) return { cls: "bad", text: hoursMinutes };
+    if (h < 24) return { cls: "warn", text: hoursMinutes };
+    if (h <= 48) return { cls: "warn", text: `осталось ${Math.floor(h)} ч` };
+    return { cls: "", text: `до ${endAt ? endAt.slice(5) : "—"}` };
+  }
+
+  function msLeftOf(card, nowMs) {
+    const endMs = parseAlmatyEnd(card.endAt);
+    if (endMs !== null) return endMs - nowMs;
+    return card.hoursLeft == null ? null : card.hoursLeft * 3_600_000;
+  }
+
+  function formatTimeBadge(card, nowMs = Date.now()) {
     if (card.column === "secondChance") {
       return `<span class="radar-badge dim">не состоялась</span>`;
     }
-    if (card.hoursLeft == null) {
-      return card.endAt ? `<span class="radar-badge">до ${esc(card.endAt.slice(5))}</span>` : "";
-    }
-    const h = card.hoursLeft;
-    if (h <= 0) {
-      return `<span class="radar-badge bad">приём окончен</span>`;
-    }
-    if (h < 1) {
-      const mins = Math.max(1, Math.round(h * 60));
-      return `<span class="radar-badge bad">осталось ${mins} мин</span>`;
-    }
-    if (h < 4) {
-      const hours = Math.floor(h);
-      const mins = Math.round((h % 1) * 60);
-      return `<span class="radar-badge bad">осталось ${hours} ч ${mins ? `${mins} мин` : ""}</span>`;
-    }
-    if (h < 24) {
-      const hours = Math.floor(h);
-      const mins = Math.round((h % 1) * 60);
-      return `<span class="radar-badge warn">осталось ${hours} ч ${mins ? `${mins} мин` : ""}</span>`;
-    }
-    if (h <= 48) {
-      const hours = Math.floor(h);
-      return `<span class="radar-badge warn">осталось ${hours} ч</span>`;
-    }
-    return `<span class="radar-badge">до ${esc(card.endAt ? card.endAt.slice(5) : "—")}</span>`;
+    const st = badgeState(msLeftOf(card, nowMs), card.endAt);
+    if (!st) return "";
+    const live = liveEnd(card) ? ` data-radar-timer role="timer"` : "";
+    return `<span class="radar-badge${st.cls ? ` ${st.cls}` : ""}"${live}>${esc(st.text)}</span>`;
+  }
+
+  // Один минутный таймер на страницу: обновляет только текст и цвет бейджей, разметку, поиск и фокус не трогает.
+  // Карточка, у которой приём закрылся уже в браузере, остаётся на месте с бейджем «приём окончен».
+  let liveTimer = null;
+  function refreshLiveBadges() {
+    const now = Date.now();
+    document.querySelectorAll(".radar-card[data-end]").forEach((el) => {
+      const badge = el.querySelector("[data-radar-timer]");
+      const st = badge && badgeState(msLeftOf({ endAt: el.dataset.end, hoursLeft: null }, now), el.dataset.end);
+      if (!st) return;
+      const cls = `radar-badge${st.cls ? ` ${st.cls}` : ""}`;
+      if (badge.className !== cls) badge.className = cls;
+      if (badge.textContent !== st.text) badge.textContent = st.text;
+    });
+  }
+  function ensureLiveTimer() {
+    if (liveTimer !== null) return;
+    liveTimer = setInterval(refreshLiveBadges, 60_000);
+    // Фоновая вкладка получает таймеры с опозданием: при возвращении обновляем сразу.
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshLiveBadges(); });
   }
 
   function renderCard(card, hintsFor) {
@@ -81,9 +120,10 @@
     const dealLabel = `Сделка #${card.id} ↗`;
     const lotLink = card.lotUrl || card.announceUrl;
     const lotLabel = card.sourceType === "plan" ? "План ЭГЗ ↗" : "Лот ЭГЗ ↗";
+    const end = liveEnd(card);
 
     return `
-      <div class="radar-card" data-deal-id="${esc(card.id)}">
+      <div class="radar-card" data-deal-id="${esc(card.id)}"${end ? ` data-end="${esc(end)}"` : ""}>
         <div class="radar-card-head">
           <div class="radar-card-item">
             <strong>${esc(card.itemName)}</strong>${card.qty ? ` <span class="dim">· ${fmt(card.qty)} шт.</span>` : ""}
@@ -144,6 +184,52 @@
     `;
   }
 
+  /** Когда закрылся приём, по Алматы: «20.11 18:00»; для даты без времени — только «20.11». */
+  function formatClosedAt(endAt) {
+    const ms = parseAlmatyEnd(endAt);
+    if (ms === null) return "";
+    const iso = new Date(ms + ALMATY_OFFSET_MS).toISOString();
+    const day = `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
+    return /\d{2}:\d{2}/.test(String(endAt).slice(10)) ? `${day} ${iso.slice(11, 16)}` : day;
+  }
+
+  function renderMissedRow(card) {
+    const lotLink = card.lotUrl || card.announceUrl;
+    const closedAt = formatClosedAt(card.endAt);
+    return `
+      <li class="radar-missed-row" data-deal-id="${esc(card.id)}">
+        <div class="radar-missed-main">
+          <strong>${esc(card.itemName)}</strong>${card.qty ? ` <span class="dim">· ${fmt(card.qty)} шт.</span>` : ""}
+          <span class="radar-missed-cust" title="${esc(card.customerName)}">${esc(shortCustomerName(card.customerName))}</span>
+        </div>
+        <div class="radar-missed-sum num">${money(card.sum)}</div>
+        <div class="radar-missed-foot">
+          ${closedAt ? `<span class="radar-badge bad">приём закрыт ${esc(closedAt)}</span>` : ""}
+          <span class="radar-mgr">${esc(card.managerName)}</span>
+          <span class="radar-links">${card.dealUrl ? link(card.dealUrl, `Сделка #${card.id} ↗`) : ""}${lotLink ? `${card.dealUrl ? " · " : ""}${link(lotLink, "Лот ЭГЗ ↗")}` : ""}</span>
+        </div>
+      </li>
+    `;
+  }
+
+  // Пропущенные сроки за 7 дней: срок подачи прошёл, а сделка так и стоит в «Новой». Без таких лотов блока нет.
+  function renderMissed(baseCount, cards, open) {
+    if (!baseCount) return "";
+    const sum = cards.reduce((acc, c) => acc + (c.sum || 0), 0);
+    return `
+      <details class="radar-missed"${open ? " open" : ""}>
+        <summary>
+          <span class="radar-missed-title">Пропущенные сроки за 7 дней</span>
+          <span class="radar-missed-meta">${fmt(cards.length)} ${lotWord(cards.length)} · <span class="num">${money(sum)}</span></span>
+        </summary>
+        <p class="radar-missed-note">Приём заявок закончился, а сделка осталась в стадии «Новая». Свежие сверху.</p>
+        ${cards.length
+          ? `<ul class="radar-missed-list" role="list">${cards.map(renderMissedRow).join("")}</ul>`
+          : `<p class="muted">Нет закупок</p>`}
+      </details>
+    `;
+  }
+
   window.__renderRadarTab = function (tab, radarView, container) {
     if (!container) return;
     const groupKey = tab === "radar-kt" ? "kt" : "ip";
@@ -155,22 +241,30 @@
     }
 
     const state = getState(tab);
+    const payload = typeof PAYLOAD === "undefined" ? null : PAYLOAD;
+    // Вид менеджера: в радаре уже только его карточки, фильтр «Менеджер» не нужен.
+    const viewer = payload && payload.viewer && payload.viewer.kind === "manager" ? payload.viewer : null;
+    const missedAll = group.missed || [];
 
-    // Sync with global "Я — …" (localStorage "pult-me")
-    let me = "";
-    try { me = localStorage.getItem("pult-me") || ""; } catch (e) {}
-    if (state.lastSyncedMe !== me) {
-      state.lastSyncedMe = me;
-      state.manualFilter = false;
-      state.managerId = me;
+    if (viewer) {
+      state.managerId = "";
+    } else {
+      // Sync with global "Я — …" (localStorage "pult-me")
+      let me = "";
+      try { me = localStorage.getItem("pult-me") || ""; } catch (e) {}
+      if (state.lastSyncedMe !== me) {
+        state.lastSyncedMe = me;
+        state.manualFilter = false;
+        state.managerId = me;
+      }
     }
 
     if (!state.hintsFor && typeof window.__buildWinHintsIndex === "function") {
-      state.hintsFor = window.__buildWinHintsIndex(typeof PAYLOAD === "undefined" ? null : PAYLOAD, groupKey);
+      state.hintsFor = window.__buildWinHintsIndex(payload, groupKey);
     }
 
     // Available managers & methods (over all cards in group)
-    const allCards = [...group.submitToday, ...group.discussion, ...group.secondChance];
+    const allCards = [...group.submitToday, ...group.discussion, ...group.secondChance, ...missedAll];
     const managersMap = new Map();
     for (const c of allCards) {
       if (c.managerId && c.managerName) managersMap.set(String(c.managerId), c.managerName);
@@ -223,8 +317,12 @@
       }
       const discCards = baseDisc.filter(matchesSearch);
       const secondCards = baseSecond.filter(matchesSearch);
+      const baseMissed = missedAll.filter(filterByMgrMethod);
 
       return {
+        missedCount: baseMissed.length,
+        missedSum: sumOf(baseMissed),
+        missedCards: baseMissed.filter(matchesSearch),
         todayCount: todayCards.length,
         todaySum: sumOf(todayCards),
         within48hCount: within48hCards.length,
@@ -273,6 +371,11 @@
         <div class="v good">${fmt(d.secondCount)} <small>${dealWord(d.secondCount)}</small></div>
         <div class="sub">${mln(d.secondSum)} млн ₸</div>
       </div>
+      <div class="tile tile-missed${d.missedCount > 0 ? " is-bad" : ""}" data-radar-counter="missed">
+        <span class="label">Пропущенные сроки</span>
+        <div class="v${d.missedCount > 0 ? " bad" : ""}">${fmt(d.missedCount)} <small>${lotWord(d.missedCount)}</small></div>
+        <div class="sub">${mln(d.missedSum)} млн ₸ · за 7 дней</div>
+      </div>
     `;
 
     const renderGridHtml = (d) => `
@@ -304,6 +407,7 @@
           </div>
 
           <div class="radar-chips-row">
+            ${viewer ? "" : `
             <div class="radar-filter-group">
               <span class="filter-legend">Менеджер:</span>
               <div class="chips">
@@ -311,6 +415,7 @@
                 ${managers.map(([id, name]) => `<button type="button" data-radar-mgr="${esc(id)}" aria-pressed="${String(state.managerId === id)}">${esc(name)}</button>`).join("")}
               </div>
             </div>
+            `}
 
             ${methods.length > 1 ? `
               <div class="radar-filter-group">
@@ -336,6 +441,8 @@
         <div class="radar-grid">
           ${renderGridHtml(initialData)}
         </div>
+
+        <div class="radar-missed-wrap"></div>
       </section>
     `;
 
@@ -343,11 +450,23 @@
 
     const kpisEl = container.querySelector(".radar-kpis");
     const gridEl = container.querySelector(".radar-grid");
+    const missedEl = container.querySelector(".radar-missed-wrap");
+
+    // toggle не всплывает: слушаем каждый новый <details>, чтобы раскрытый список пережил фильтры и поиск.
+    const renderMissedBlock = (d) => {
+      if (!missedEl) return;
+      missedEl.innerHTML = renderMissed(d.missedCount, d.missedCards, state.missedOpen);
+      const details = missedEl.querySelector("details.radar-missed");
+      if (details) details.addEventListener("toggle", () => { state.missedOpen = details.open; });
+    };
+    renderMissedBlock(initialData);
+    ensureLiveTimer();
 
     const updateDynamicContent = () => {
       const d = computeViewData();
       if (kpisEl) kpisEl.innerHTML = renderKpisHtml(d);
       if (gridEl) gridEl.innerHTML = renderGridHtml(d);
+      renderMissedBlock(d);
     };
 
     const syncPressedChips = () => {
@@ -375,6 +494,7 @@
         state.searchQuery = searchInput.value;
         const d = computeViewData();
         if (gridEl) gridEl.innerHTML = renderGridHtml(d);
+        renderMissedBlock(d);
       });
     }
 

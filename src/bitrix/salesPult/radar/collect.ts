@@ -1,7 +1,7 @@
 import { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import { enrichManagerNames } from "../managerNames.js";
 import { formatSafeErrorStatus } from "../safeLog.js";
-import { buildRadarView, type RadarRawDeal } from "./aggregate.js";
+import { buildRadarView, emptyRadarGroup, type RadarRawDeal } from "./aggregate.js";
 import type { RadarView } from "./types.js";
 import type { NormalizedPlanDeal } from "../plans/types.js";
 
@@ -75,7 +75,7 @@ export async function collectRadarView(options: CollectRadarOptions): Promise<Ra
     });
 
     console.log(
-      `[Радар] лотов воронки 43: ${lotRows.length}, ИП (подать: ${view.ip.submitToday.length}, обсуждение: ${view.ip.discussion.length}, 2й шанс: ${view.ip.secondChance.length}), КТ (подать: ${view.kt.submitToday.length}) (${Math.round(performance.now() - started)} мс)`
+      `[Радар] лотов воронки 43: ${lotRows.length}, ИП (подать: ${view.ip.submitToday.length}, обсуждение: ${view.ip.discussion.length}, 2й шанс: ${view.ip.secondChance.length}, пропущено: ${view.ip.missed.length}), КТ (подать: ${view.kt.submitToday.length}, пропущено: ${view.kt.missed.length}) (${Math.round(performance.now() - started)} мс)`
     );
 
     return view;
@@ -84,20 +84,8 @@ export async function collectRadarView(options: CollectRadarOptions): Promise<Ra
     return {
       asOf: options.asOfDate,
       error: "Не удалось загрузить данные Радара из Битрикс24.",
-      ip: {
-        group: "ИП",
-        kpis: { totalCount: 0, totalSum: 0, submitCount: 0, submitSum: 0, discussionCount: 0, discussionSum: 0, secondChanceCount: 0, secondChanceSum: 0 },
-        submitToday: [],
-        discussion: [],
-        secondChance: []
-      },
-      kt: {
-        group: "КТ",
-        kpis: { totalCount: 0, totalSum: 0, submitCount: 0, submitSum: 0, discussionCount: 0, discussionSum: 0, secondChanceCount: 0, secondChanceSum: 0 },
-        submitToday: [],
-        discussion: [],
-        secondChance: []
-      }
+      ip: emptyRadarGroup("ИП"),
+      kt: emptyRadarGroup("КТ")
     };
   }
 }

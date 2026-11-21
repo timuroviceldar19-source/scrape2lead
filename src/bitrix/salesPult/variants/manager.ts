@@ -2,7 +2,7 @@
 // чужих строк, а итоги отдела (плитки месяца, итоги групп) остаются как в полном пульте.
 //
 // Главная: своя строка, свои задачи, долги, сигналы и расхождения итогов; итоги отдела.
-// «Планы»: пересобраны из его сделок. «Рынок»: целиком. «Радар»: скрыт.
+// «Планы»: пересобраны из его сделок. «Рынок»: целиком. «Радар»: только его лоты и пропущенные сроки.
 // «Выручка»: пересобрана из его строк реестра; без бонуса РОП, B2B-плана отдела, сверки с порталом.
 
 import type { PultManagerView, PultViewer, SalesPultPayload } from "../types.js";
@@ -19,6 +19,7 @@ import { buildRegisterView } from "../register/buildView.js";
 import { buildPlansMonitorView } from "../plans/aggregate.js";
 import { buildManagerPulse } from "../pulse.js";
 import type { NormalizedPlanDeal, PlansMonitorView } from "../plans/types.js";
+import { filterRadarForManager } from "../radar/filter.js";
 import type {
   RegisterContract, RegisterDisciplineView, RegisterHistoryPayload, RegisterMonthSummary,
   RegisterRow, RegisterSuccessView, RegisterView
@@ -237,6 +238,8 @@ export function buildManagerVariant(input: ManagerVariantInput): ManagerVariant 
   const pult: SalesPultPayload = {
     ...filterPultPayload(input.pult, viewer),
     plans: managerPlans(input),
+    // filterPultPayload обнуляет «Радар» (и в закрытых месяцах); текущему месяцу отдаём только свои карточки.
+    radar: input.pult.radar ? filterRadarForManager(input.pult.radar, me.id) : null,
     ...(input.pult.closedMonths ? { closedMonths } : {})
   };
   // Пульс полного пульта (финансы, маржа, CRM команды) менеджеру не отдаётся: только тендеры радара его варианта.
