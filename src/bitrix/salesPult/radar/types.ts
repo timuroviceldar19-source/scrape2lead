@@ -1,4 +1,5 @@
-export type RadarColumnKey = "submitToday" | "discussion" | "secondChance";
+/** `missed` — срок подачи прошёл (не раньше 7 дней назад), а сделка так и стоит в стадии «Новая». */
+export type RadarColumnKey = "submitToday" | "discussion" | "secondChance" | "missed";
 
 export interface RadarCard {
   id: string;
@@ -40,6 +41,9 @@ export interface RadarKpis {
   discussionSum: number;
   secondChanceCount: number;
   secondChanceSum: number;
+  /** Пропущенные сроки за 7 дней. В `totalCount`/`totalSum` не входят: это уже не работа на радаре. */
+  missedCount: number;
+  missedSum: number;
 }
 
 export interface RadarGroupView {
@@ -48,6 +52,8 @@ export interface RadarGroupView {
   submitToday: RadarCard[];
   discussion: RadarCard[];
   secondChance: RadarCard[];
+  /** Свежие сверху, при равном сроке — дороже выше. */
+  missed: RadarCard[];
 }
 
 export interface RadarView {

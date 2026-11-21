@@ -86,7 +86,8 @@ describe("Radar Almaty UTC+5 boundary in aggregate.ts", () => {
     expect(earlyMorningCard?.isWithin48h).toBe(true);
 
     // At exact Almaty midnight 2026-11-11 00:00+05:00 (2026-11-10T19:00:00Z):
-    // Lot ending 2026-11-11 00:00 is expired (hoursLeft === 0 -> null); lot ending 2026-11-11 18:00 is isToday: true.
+    // Lot ending 2026-11-11 00:00 is expired (hoursLeft === 0): not active; the deal is still «Новая», so it is a missed deadline.
+    // Lot ending 2026-11-11 18:00 is isToday: true.
     const expiredAtBoundary = parseRadarLotDeal(
       makeLotDeal({
         ID: "5004",
@@ -94,7 +95,7 @@ describe("Radar Almaty UTC+5 boundary in aggregate.ts", () => {
       }),
       { asOfDate: "2026-11-11", asOfTime: "2026-11-10T19:00:00Z", managerNames }
     );
-    expect(expiredAtBoundary).toBeNull();
+    expect(expiredAtBoundary?.column).toBe("missed");
 
     const activeNewDay = parseRadarLotDeal(
       makeLotDeal({

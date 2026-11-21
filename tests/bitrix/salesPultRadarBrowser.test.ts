@@ -49,7 +49,9 @@ function samplePayloadWithRadar(): SalesPultPayload {
         discussionCount: 1,
         discussionSum: 5000000,
         secondChanceCount: 2,
-        secondChanceSum: 10000000
+        secondChanceSum: 10000000,
+        missedCount: 0,
+        missedSum: 0
       },
       submitToday: [
         {
@@ -182,7 +184,8 @@ function samplePayloadWithRadar(): SalesPultPayload {
           isWithin48h: false,
           column: "secondChance"
         }
-      ]
+      ],
+      missed: []
     },
     kt: {
       group: "КТ",
@@ -194,7 +197,9 @@ function samplePayloadWithRadar(): SalesPultPayload {
         discussionCount: 0,
         discussionSum: 0,
         secondChanceCount: 0,
-        secondChanceSum: 0
+        secondChanceSum: 0,
+        missedCount: 0,
+        missedSum: 0
       },
       submitToday: [
         {
@@ -224,7 +229,8 @@ function samplePayloadWithRadar(): SalesPultPayload {
         }
       ],
       discussion: [],
-      secondChance: []
+      secondChance: [],
+      missed: []
     }
   };
 
@@ -274,9 +280,9 @@ describe("Sales Pult Radar Browser UI", () => {
       const dayBtn = page.locator('button[data-p="day"]');
       expect(await dayBtn.isVisible()).toBe(false);
 
-      // Check 4 KPI tiles in tab-radar-ip
+      // 5 KPI tiles in tab-radar-ip: the fifth is «Пропущенные сроки»
       const kpis = radarTab.locator(".radar-kpis .tile, .kpis .tile");
-      expect(await kpis.count()).toBe(4);
+      expect(await kpis.count()).toBe(5);
 
       // Check 3 columns in tab-radar-ip
       const cols = radarTab.locator(".radar-col");

@@ -163,7 +163,14 @@ describe("Radar data parsing", () => {
       portal: "https://f3.bitrix24.kz"
     });
 
-    expect(card).toBeNull();
+    // В активные колонки истёкший лот не попадает. Сделка в «Новой» за последние 7 дней — пропущенный срок
+    // (tests/bitrix/salesPultRadarMissed.test.ts), а взятая в работу — исчезает с радара.
+    expect(card?.column).toBe("missed");
+    expect(parseRadarLotDeal({ ...raw, STAGE_ID: "C43:PREPARATION" }, {
+      asOfDate: AS_OF_DATE,
+      asOfTime: AS_OF_TIME,
+      portal: "https://f3.bitrix24.kz"
+    })).toBeNull();
   });
 });
 

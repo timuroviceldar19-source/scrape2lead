@@ -942,7 +942,9 @@
 
   /* ================= tabs ================= */
   // «Финансы» в вид менеджера не собираются (scripts/pult-variants.mts), ссылку тоже убираем.
-  if (VIEWER) document.querySelectorAll('.sections a[data-t="radar"], .sections a[data-t="competitors"], .sections a[href="./fin.html"]').forEach((a) => a.remove());
+  // «Радар» у менеджера свой (только его лоты); ссылку убираем, только если радара в его сборке нет.
+  if (VIEWER) document.querySelectorAll('.sections a[data-t="competitors"], .sections a[href="./fin.html"]').forEach((a) => a.remove());
+  if (VIEWER && !PAYLOAD.radar) document.querySelectorAll('.sections a[data-t="radar"]').forEach((a) => a.remove());
   const tabLinks = [...document.querySelectorAll(".sections a[data-t]")];
   const tabPanes = {
     pult: document.getElementById("tab-pult"),
@@ -955,9 +957,11 @@
     "competitors-ip": document.getElementById("tab-competitors-ip"),
     "competitors-kt": document.getElementById("tab-competitors-kt")
   };
-  if (VIEWER) {
+  if (VIEWER && !PAYLOAD.radar) {
     delete tabPanes["radar-ip"];
     delete tabPanes["radar-kt"];
+  }
+  if (VIEWER) {
     delete tabPanes["competitors-ip"];
     delete tabPanes["competitors-kt"];
   }

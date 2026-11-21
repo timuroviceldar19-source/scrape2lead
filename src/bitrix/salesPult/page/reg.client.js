@@ -4,9 +4,9 @@
 
   const P = typeof PAYLOAD !== "undefined" ? PAYLOAD : {};
   const R = P.register;
-  // Менеджеру «Радар», «Финансы» и «Конкуренты» не показываются: в его варианте пульта этих вкладок нет.
+  // Менеджеру «Финансы» и «Конкуренты» не показываются: в его варианте пульта этих вкладок нет. «Радар» у него свой.
   if (P.viewer) {
-    document.querySelectorAll('a[href="./#radar-ip"], a[href="./#competitors-ip"], a[href="./fin.html"]').forEach((a) => a.remove());
+    document.querySelectorAll('a[href="./#competitors-ip"], a[href="./fin.html"]').forEach((a) => a.remove());
     const footAudience = document.getElementById("footAudience");
     if (footAudience) footAudience.textContent = "Личный вид менеджера · только ваши договоры";
   }

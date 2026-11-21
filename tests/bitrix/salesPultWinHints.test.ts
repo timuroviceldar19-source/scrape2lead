@@ -197,13 +197,20 @@ it.each([375, 1440])("Радар и вариант менеджера на %s px
       expect(await page.locator(".radar-filter-group .chips").first().evaluate(el => getComputedStyle(el).overflowX)).toBe("auto");
     }
     await page.goto(pathToFileURL(managerFile).href + "#plans-ip");
-    expect(await page.evaluate(() => (0, eval)("[PAYLOAD.competitors, PAYLOAD.radar]"))).toEqual([null, null]);
+    expect(await page.evaluate(() => (0, eval)("PAYLOAD.competitors"))).toBeNull();
+    expect(await page.evaluate(() => (0, eval)("PAYLOAD.radar.ip.discussion.map(c => c.managerId)"))).toEqual(["s"]);
     expect(await page.locator("[data-plan-id]").count()).toBe(1);
     const row = page.locator('[data-plan-id="1"]');
     expect(await row.innerText()).toMatch(/победы ~85\s000/);
     expect(await row.innerText()).toContain("ТОО Макет · 1× · −12%");
     expect(await row.innerText()).not.toContain("Шаблон ТС");
     expect(await page.content()).not.toContain("Макет из объявления");
+    // Свой «Радар» менеджера: цена по «Рынку», без шаблонов ТС из «Конкурентов».
+    await page.goto(pathToFileURL(managerFile).href + "#radar-ip");
+    const own = page.locator('[data-col="discussion"] .radar-card');
+    expect(await own.innerText()).toMatch(/~120\s000\/шт · победы ~85\s000/);
+    expect(await own.innerText()).not.toContain("Шаблон ТС");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);
   } finally {
     await browser.close();
