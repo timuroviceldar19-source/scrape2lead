@@ -28,6 +28,7 @@ import {
 import {
   buildMorningReport,
   buildEveningReport,
+  buildDirectorDigest,
   isReportAlreadySent,
   parseManualReport,
   formatMoney,
@@ -55,6 +56,9 @@ import { backfillCompetitors } from "../src/kz/competitors/collector.js";
 import { updateCompetitorsWindow, loadCompetitorsView, resolveBackfillBudgetMs } from "../src/kz/competitors/load.js";
 import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
 import { collectRadarView } from "../src/bitrix/salesPult/radar/collect.js";
+import { buildMorningPulse, pulseForPayload, selectHotLots, type PulseView } from "../src/bitrix/salesPult/pulse.js";
+import type { RadarView } from "../src/bitrix/salesPult/radar/types.js";
+import type { FinanceView } from "../src/bitrix/salesPult/finance/types.js";
 import {
   backfillMarketByMonths,
   DEFAULT_MARKET_UNITS_PATH,
@@ -251,6 +255,16 @@ export interface SalesPultRunOptions {
   nowIso?: string;
   webhookUrl?: string;
   skipUpdates?: boolean;
+}
+
+/** Пульс не роняет сборку пульта: сбой — страница без пульса, в лог только класс ошибки. */
+function buildPulseSafely(build: () => PulseView | null): PulseView | null {
+  try {
+    return build();
+  } catch (err) {
+    console.warn(`[Пульс] Не собран (${formatSafeErrorStatus(err)})`);
+    return null;
+  }
 }
 
 export async function runSalesPult(args: string[], options?: SalesPultRunOptions): Promise<void> {
@@ -823,6 +837,7 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
     for (const closed of Object.values(payload.closedMonths)) {
       if (closed) attachRegisterContracts(closed, registerView, new Map(), config.register?.managerAliases);
     }
+    payload.pulse = buildPulseSafely(() => pulseForPayload(payload, { nowIso, finance: financeView, register: registerView }));
 
     const outDir = path.resolve("exports/sales-pult");
     fs.mkdirSync(outDir, { recursive: true });
@@ -867,6 +882,36 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
   if (mode === "morning" || mode === "evening") {
     console.log(`\n=== Режим: ${mode.toUpperCase()} (execute: ${execute}) ===\n`);
 
+    // Утро: горящие лоты менеджерам и дайджест директору. Любой сбой здесь утренний режим не роняет.
+    let morningRadar: RadarView | null = null;
+    if (mode === "morning") {
+      morningRadar = await collectRadarView({
+        reader, asOfDate: todayAlmaty, asOfTime: nowIso, portal: config.portal,
+        userProfiles: collected.userProfiles, groups: config.groups
+      }).catch((err: unknown) => {
+        console.warn(`[Радар] Не загрузился (${formatSafeErrorStatus(err)})`);
+        return null;
+      });
+      const morningFinance: FinanceView | undefined = await loadFinanceView({
+        reader, folderId: config.finance?.diskFolderId, localFile: financeFilePath
+      }).catch((err: unknown) => {
+        console.warn(`[Финансы] Не загрузились (${(err as Error)?.name || "Error"})`);
+        return undefined;
+      });
+      try {
+        const pulse = buildMorningPulse({
+          asOfDate: todayAlmaty, nowIso, finance: morningFinance, radar: morningRadar,
+          outcomeMismatchesCount: collected.outcomeMismatches?.length ?? 0
+        });
+        // Только сборка: чата директора нет, отправка — по прямой команде владельца. Текст в публичный лог не идёт.
+        const digest = buildDirectorDigest(pulse, config.pultUrl);
+        console.log(`[DRY-RUN] Дайджест директору сформирован (пунктов ${pulse.items.length}, длина ${digest.length} симв.)`);
+        if (args.includes("--print-digest") && process.env.CI !== "true") process.stdout.write(`${digest}\n`);
+      } catch (err) {
+        console.warn(`[Дайджест] Не собран (${formatSafeErrorStatus(err)})`);
+      }
+    }
+
     // Fetch last 200 messages with pagination by LAST_ID for idempotency check
     let chatMessages = await fetchRecentChatMessages(reader, config.chatDialogId, 200);
 
@@ -898,7 +943,8 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
               tasks: topTasks,
               debts: collected.debtsByManager.get(m.id),
               pultUrl: config.pultUrl,
-              taskError
+              taskError,
+              hotLots: selectHotLots(morningRadar, m.id, todayAlmaty, nowIso)
             })
           : buildEveningReport({
               managerId: m.id,

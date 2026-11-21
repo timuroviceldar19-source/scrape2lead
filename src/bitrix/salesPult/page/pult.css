@@ -95,6 +95,34 @@ section.block { border-top: 1px solid var(--rule-2); margin-top: 48px; padding-t
 .sig b { font-weight: 500; }
 .sig .num { font-size: 14px; }
 
+/* ---------- утренний пульс (над «01»; в ТВ и закрытом месяце скрыт) ---------- */
+#pulse { border-top: 0; margin-top: 18px; padding-top: 0; }
+#pulse[hidden], body.tv #pulse { display: none !important; }
+.pulse-head { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 16px; flex-wrap: wrap; margin-bottom: 10px; }
+.pulse-head h2 { margin: 0; font-weight: 500; font-size: 17px; letter-spacing: -0.015em; }
+.pulse-head .meta { font: 400 12px var(--mono); color: var(--ink-3); }
+.pulse-list { list-style: none; margin: 0; padding: 0; background: var(--sheet); border: 1px solid var(--rule-2); border-radius: 8px; box-shadow: var(--card-shadow); overflow: hidden; }
+.pulse-row + .pulse-row { border-top: 1px solid var(--rule-2); }
+.pulse-link, .pulse-calm { display: grid; grid-template-columns: 8px max-content minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 44px; padding: 11px 16px; }
+.pulse-link { color: inherit; text-decoration: none; transition: background .15s; }
+.pulse-link:hover { background: var(--paper); }
+.pulse-link:focus-visible { outline-offset: -2px; }
+.pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-4); }
+.pulse-red .pulse-dot { background: var(--bad); } .pulse-yellow .pulse-dot { background: var(--warn); } .pulse-green .pulse-dot { background: var(--good); }
+.pulse-title { font-size: 15px; line-height: 1.4; font-weight: 500; white-space: nowrap; }
+.pulse-meta { min-width: 0; font-size: 14px; line-height: 1.4; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pulse-value { font: 500 13px/1.4 var(--mono); color: var(--ink); }
+.pulse-red .pulse-value { color: var(--bad); }
+.pulse-go { color: var(--ink-4); font-size: 14px; }
+.pulse-missing { margin: 8px 0 0; font: 400 12px/1.4 var(--mono); color: var(--ink-3); }
+@media (max-width: 600px) {
+  .pulse-link { grid-template-columns: 8px minmax(0, 1fr) auto; row-gap: 2px; padding: 9px 12px; }
+  .pulse-title { grid-column: 2; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .pulse-meta { grid-column: 2; grid-row: 2; }
+  .pulse-go { grid-column: 3; grid-row: 1 / span 2; }
+  .pulse-calm { grid-template-columns: 8px minmax(0, 1fr); padding: 9px 12px; }
+}
+
 /* ---------- mismatches box (won on portal, lost in CRM) ---------- */
 .mismatches-box { margin-top: 24px; padding: 18px 20px; border-radius: 8px; border: 1px solid rgba(224, 82, 82, 0.4); background: rgba(224, 82, 82, 0.04); }
 .mismatches-box .box-title { font-weight: 600; font-size: 14px; color: var(--bad, #e05252); margin-bottom: 8px; }

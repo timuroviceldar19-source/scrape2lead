@@ -17,6 +17,7 @@ import { escapeHtml } from "../format.js";
 import { matchRegisterManager, type ContractReconciliation, type PultContractSource } from "../contracts.js";
 import { buildRegisterView } from "../register/buildView.js";
 import { buildPlansMonitorView } from "../plans/aggregate.js";
+import { buildManagerPulse } from "../pulse.js";
 import type { NormalizedPlanDeal, PlansMonitorView } from "../plans/types.js";
 import type {
   RegisterContract, RegisterDisciplineView, RegisterHistoryPayload, RegisterMonthSummary,
@@ -238,6 +239,8 @@ export function buildManagerVariant(input: ManagerVariantInput): ManagerVariant 
     plans: managerPlans(input),
     ...(input.pult.closedMonths ? { closedMonths } : {})
   };
+  // Пульс полного пульта (финансы, маржа, CRM команды) менеджеру не отдаётся: только тендеры радара его варианта.
+  pult.pulse = buildManagerPulse(pult.radar ?? null, pult.asOfDate, input.pult.generatedAt);
   const view: PultPageView = { ...filterPultView(fullView, pult, input.pult, me.id), closedMonths: closedViews };
 
   const names = registerNamesFor(input, managers);

@@ -60,6 +60,8 @@ export interface SalesPultPayload {
   generatedAt: string;
   portal: string;
   pultUrl?: string;
+  /** «Утренний пульс» над главной (`pulse.ts`); у закрытых месяцев нет. */
+  pulse?: import("./pulse.js").PulseView | null;
   targets: TargetsConfig;
   callsAvailable: boolean;
   callsError?: string;

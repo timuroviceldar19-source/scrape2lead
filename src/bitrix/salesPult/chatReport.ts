@@ -1,6 +1,8 @@
 import type { ManagerRollups, TopTask, TargetsConfig } from "./metrics.js";
 import type { ManagerDebts } from "./debts.js";
 import { decodeHtmlEntities } from "./site.js";
+import { formatLotDeadline, type PulseView } from "./pulse.js";
+import type { RadarCard } from "./radar/types.js";
 
 export function formatMoney(amount: number): string {
   if (!amount || Number.isNaN(amount)) return "0 ₸";
@@ -46,8 +48,10 @@ export function buildMorningReport(params: {
   debts?: ManagerDebts;
   pultUrl: string;
   taskError?: string | null;
+  /** Свои лоты радара со сроком подачи до 24 ч (`selectHotLots`); нет — отчёт прежний. */
+  hotLots?: RadarCard[];
 }): string {
-  const { managerId, managerName, date, targets, tasks, debts, pultUrl, taskError } = params;
+  const { managerId, managerName, date, targets, tasks, debts, pultUrl, taskError, hotLots } = params;
 
   const lines: string[] = [
     `#автоотчёт ${date} утро ${managerId}`,
@@ -59,6 +63,17 @@ export function buildMorningReport(params: {
     `• Договоры: ${targets.contracts}`,
     ""
   ];
+
+  if (hotLots?.length) {
+    for (const lot of hotLots) {
+      const deadline = formatLotDeadline(lot.endAt, date);
+      const lotTag = lot.lotNumber ? `[${lot.lotNumber}] ` : "";
+      const moneyTag = lot.sum > 0 ? ` — ${formatMoney(lot.sum)}` : "";
+      const timeTag = deadline ? `, до ${deadline}` : "";
+      lines.push(`🔥 Срок подачи ${lot.isToday ? "сегодня" : "завтра"}: ${lotTag}${lot.itemName || lot.title}${moneyTag}${timeTag}`);
+    }
+    lines.push("");
+  }
 
   const hasNewDeals = Boolean(debts && debts.newDeals > 0);
   if (hasNewDeals && debts) {
@@ -173,6 +188,27 @@ export function buildEveningReport(params: {
   lines.push("");
   lines.push(`🔗 Пульт руководителя: ${pultUrl}`);
 
+  return lines.join("\n");
+}
+
+const PULSE_DOT = { red: "🔴", yellow: "🟡", green: "🟢" } as const;
+const plainText = (s: string | undefined) => decodeHtmlEntities(String(s ?? "").replace(/<[^>]*>/g, "")).trim();
+
+/**
+ * Дайджест директору из утреннего пульса: обычный текст для чата, первая строка — маркер.
+ * Только сборка текста: отправки нет (чат директора не настроен, отправка — по прямой команде владельца).
+ */
+export function buildDirectorDigest(pulse: PulseView, pultUrl: string): string {
+  const [y, m, d] = pulse.asOf.split("-");
+  const lines = [`#дайджест ${pulse.asOf} директор`, `☀️ Утренний пульс на ${d}.${m}.${y}`, ""];
+  if (!pulse.items.length) lines.push("✅ Всё спокойно");
+  for (const item of pulse.items) {
+    const detail = plainText(item.detail);
+    lines.push(`${PULSE_DOT[item.severity] ?? "•"} ${plainText(item.title)}: ${plainText(item.value)}${detail ? ` (${detail})` : ""}`);
+  }
+  if (pulse.more) lines.push(`…и ещё ${pulse.more} — на пульте`);
+  if (pulse.missing.length) lines.push("", `Нет данных: ${pulse.missing.map(plainText).join("; ")}`);
+  lines.push("", `🔗 Пульт: ${pultUrl}`);
   return lines.join("\n");
 }
 
