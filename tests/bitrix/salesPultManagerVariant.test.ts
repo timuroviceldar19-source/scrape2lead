@@ -120,8 +120,8 @@ describe("вид менеджера: данные", () => {
     expect(v.view.signals.length).toBeGreaterThan(0);
     expect(v.view.signals.every((sig) => sig.text.startsWith("<b>Алия Тестовая</b>"))).toBe(true);
     expect(v.view.signalsUrgent).toBe(v.view.signals.length + 1);
-    // «Радар» скрыт, «Планы» собраны только из своих сделок.
-    expect(v.pult.radar).toBeNull();
+    // «Радар» — только свои карточки (в образце он пустой), «Планы» собраны только из своих сделок.
+    expect(v.pult.radar).toMatchObject({ asOf: "2026-10-28", ip: { submitToday: [], missed: [] }, kt: { submitToday: [], missed: [] } });
     expect(v.pult.plans!.ip!.total.count).toBe(1);
     expect(v.pult.plans!.kt!.total.count).toBe(0);
     expect(v.pult.plans!.ip!.managers.map((m) => m.id)).toEqual(["s"]);
@@ -187,7 +187,7 @@ describe("вид менеджера: страницы", () => {
   afterAll(async () => { await browser?.close(); });
 
   for (const width of [1440, 375]) {
-    it(`пульт закреплён за менеджером, «Радара» нет, на ${width}`, async () => {
+    it(`пульт закреплён за менеджером, «Радар» свой, на ${width}`, async () => {
       const s = sample();
       const pages = renderManagerVariant(buildManagerVariant({ pult: s.payload, reg: s.reg, planDeals: s.planDeals, managerId: "s", aliases: s.aliases })!);
       const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
@@ -199,26 +199,28 @@ describe("вид менеджера: страницы", () => {
         expect(await select.inputValue()).toBe("s");
         expect(await select.isDisabled()).toBe(true);
         expect(await select.locator("option").allTextContents()).toEqual(["Алия Тестовая"]);
-        expect(await page.locator('.sections a[data-t="radar"]').count()).toBe(0);
+        expect(await page.locator('.sections a[data-t="radar"]').count()).toBe(1);
         expect(await page.locator("#sales .team-all").count()).toBe(0);
         expect(await page.locator("#tasks").innerText()).toContain("Задача Алии");
         expect(await page.locator("body").innerText()).not.toContain("Борис");
         await page.evaluate(() => { location.hash = "#radar-ip"; });
         await page.waitForTimeout(200);
-        expect(await page.locator("#tab-pult").getAttribute("class")).toContain("on");
+        expect(await page.locator("#tab-radar-ip").getAttribute("class")).toContain("on");
+        expect(await page.locator("#tab-radar-ip button[data-radar-mgr]").count()).toBe(0);
+        expect(await page.locator("body").innerText()).not.toContain("Борис");
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         expect(errors).toEqual([]);
       } finally { await page.close(); }
     }, 20000);
 
-    it(`«Выручка» менеджера без «Радара» и бонуса РОП, на ${width}`, async () => {
+    it(`«Выручка» менеджера со ссылкой на свой «Радар», без бонуса РОП, на ${width}`, async () => {
       const s = sample();
       const pages = renderManagerVariant(buildManagerVariant({ pult: s.payload, reg: s.reg, planDeals: s.planDeals, managerId: "s", aliases: s.aliases })!);
       const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
       const errors: string[] = []; page.on("pageerror", (e) => errors.push(e.message));
       try {
         await page.setContent(pages.reg);
-        expect(await page.locator('a[href="./#radar-ip"]').count()).toBe(0);
+        expect(await page.locator('a[href="./#radar-ip"]').count()).toBe(1);
         const text = await page.locator("body").innerText();
         expect(text).not.toContain("Бонус РОП");
         expect(text).not.toContain("Борис");

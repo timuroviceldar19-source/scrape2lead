@@ -2,7 +2,8 @@
 // чужих строк, а итоги отдела (плитки месяца, итоги групп) остаются как в полном пульте.
 //
 // Главная: своя строка, свои задачи, долги, сигналы и расхождения итогов; итоги отдела.
-// «Планы»: пересобраны из его сделок. «Рынок»: целиком. «Радар»: скрыт.
+// «Планы»: пересобраны из его сделок. «Рынок»: целиком. «Радар»: только его лоты и пропущенные сроки.
+// Пульс: только тендеры его радара. Склад: штуками, подсказки только по его карточкам и планам.
 // «Выручка»: пересобрана из его строк реестра; без бонуса РОП, B2B-плана отдела, сверки с порталом.
 
 import type { PultManagerView, PultViewer, SalesPultPayload } from "../types.js";
@@ -17,7 +18,10 @@ import { escapeHtml } from "../format.js";
 import { matchRegisterManager, type ContractReconciliation, type PultContractSource } from "../contracts.js";
 import { buildRegisterView } from "../register/buildView.js";
 import { buildPlansMonitorView } from "../plans/aggregate.js";
+import { buildManagerPulse } from "../pulse.js";
 import type { NormalizedPlanDeal, PlansMonitorView } from "../plans/types.js";
+import { filterRadarForManager } from "../radar/filter.js";
+import { stockForViewer } from "../stock/availability.js";
 import type {
   RegisterContract, RegisterDisciplineView, RegisterHistoryPayload, RegisterMonthSummary,
   RegisterRow, RegisterSuccessView, RegisterView
@@ -236,8 +240,14 @@ export function buildManagerVariant(input: ManagerVariantInput): ManagerVariant 
   const pult: SalesPultPayload = {
     ...filterPultPayload(input.pult, viewer),
     plans: managerPlans(input),
+    // filterPultPayload обнуляет «Радар» (и в закрытых месяцах); текущему месяцу отдаём только свои карточки.
+    radar: input.pult.radar ? filterRadarForManager(input.pult.radar, me.id) : null,
     ...(input.pult.closedMonths ? { closedMonths } : {})
   };
+  // Пульс полного пульта (финансы, маржа, CRM команды) менеджеру не отдаётся: только тендеры радара его варианта.
+  pult.pulse = buildManagerPulse(pult.radar ?? null, pult.asOfDate, input.pult.generatedAt);
+  // Склад — штуками (без цен); подсказки — только по его карточкам Радара и его планам, без ID чужих сделок.
+  if (pult.stock !== undefined) pult.stock = stockForViewer(pult.stock, pult);
   const view: PultPageView = { ...filterPultView(fullView, pult, input.pult, me.id), closedMonths: closedViews };
 
   const names = registerNamesFor(input, managers);

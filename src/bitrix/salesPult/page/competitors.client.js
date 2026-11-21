@@ -83,6 +83,68 @@
     return `<span class="num">${fmt(t.med)}${NBSP}₸</span><span class="dim sub">${fmt(t.min)}–${fmt(t.max)} · n=${fmt(t.n)}</span>`;
   }
 
+  // «Потери по причинам»: только рендер готового V.losses (считает src/kz/competitors/losses.ts).
+  function renderLosses(L, idx, groupKey, period) {
+    const R = L.rejected;
+    const H = L.lostHeadToHead;
+    const headingId = `comp-losses-h-${groupKey}`;
+    const maxSum = Math.max(1, ...R.byReason.map((r) => r.sumOur));
+
+    const totalHtml = R.count
+      ? `<p class="loss-total">Отклонено <b>${plural(R.count, ["заявка", "заявки", "заявок"])}</b> на <b>${money(R.sumOur)}</b>${R.cheaperCount
+          ? `, из них <b class="bad">${fmt(R.cheaperCount)}</b> при цене ниже победителя — это <b class="bad">${money(R.cheaperSumOur)}</b>`
+          : ""}</p>`
+      : `<p class="loss-total">Отклонённых заявок группы за ${period === "all" ? "период" : "месяц"} нет.</p>`;
+
+    const recent = L.recentCheaper;
+    const recentHtml = recent && recent.count
+      ? `<p class="loss-recent"><span class="tag bad">за ${plural(recent.days, ["день", "дня", "дней"])}</span> ${plural(recent.count, ["отклонение", "отклонения", "отклонений"])} при цене ниже победителя на ${money(recent.sumOur)}: ${recent.lots.map((l) => link(l.url, l.lotNumber)).join(", ")}</p>`
+      : "";
+
+    const main = R.byReason.find((r) => r.key !== "other");
+    const actionHtml = main
+      ? `<p class="loss-action">Главная причина — <b>«${esc(main.label)}»</b>: ${plural(main.count, ["лот", "лота", "лотов"])} на ${money(main.sumOur)}. Исправьте этот пакет документов до следующих подач.</p>`
+      : "";
+
+    const reasonsHtml = R.byReason.map((r) => {
+      const w = Math.max(2, (r.sumOur / maxSum) * 100);
+      const lotsHtml = r.lots.map((l) => {
+        const pct = l.cheaper && l.ourPrice != null && l.winnerPrice ? ((l.winnerPrice - l.ourPrice) / l.winnerPrice) * 100 : null;
+        const badge = l.cheaper
+          ? `<span class="tag bad">${pct != null && pct >= 0.05 ? `ниже победителя на ${nf1.format(pct)}%` : "дешевле победителя"}</span>`
+          : "";
+        return `<div class="r loss-lot">
+          <span class="num">${ddmm(l.date)}</span>
+          <span class="cust">${link(l.url, l.lotNumber)} · ${esc(l.ourCompany)}</span>
+          <span>${badge}</span>
+          <span class="num">${l.ourPrice != null ? money(l.ourPrice) : "—"}<span class="dim sub">${l.winnerPrice != null ? `победитель ${money(l.winnerPrice)}` : ""}</span></span>
+        </div>`;
+      }).join("");
+      const more = r.count > r.lots.length
+        ? `<p class="more">и ещё ${plural(r.count - r.lots.length, ["лот", "лота", "лотов"])} — полный список в блоке «Наши отклонения»</p>`
+        : "";
+      return `<details class="cust-d loss-d" data-loss-reason="${esc(r.key)}"><summary class="r loss-row">
+          <span class="cust loss-nm">${esc(r.label)}<span class="dim sub">${r.cheaperCount ? `ниже цены победителя: ${fmt(r.cheaperCount)}` : "все дороже победителя или без итога"}</span></span>
+          <span class="loss-bar" aria-hidden="true"><span class="hbar"><span class="bad" style="width:${w.toFixed(1)}%"></span></span></span>
+          <span class="num">${plural(r.count, ["лот", "лота", "лотов"])}</span>
+          <span class="num">${money(r.sumOur)}</span>
+        </summary><div class="cust-list rows">${lotsHtml}${more}</div></details>`;
+    }).join("");
+
+    const h2hHtml = H.byPrice.count || H.byCondDiscount.count
+      ? `<p class="loss-h2h">Проиграли по цене: <b>${plural(H.byPrice.count, ["лот", "лота", "лотов"])}</b>${H.byPrice.count ? ` на ${money(H.byPrice.sumOur)}, дороже победителей на ${money(Math.max(0, H.byPrice.sumGap))}` : ""} · по условной скидке: <b>${plural(H.byCondDiscount.count, ["лот", "лота", "лотов"])}</b>${H.byCondDiscount.count ? ` на ${money(H.byCondDiscount.sumOur)}` : ""}</p>`
+      : `<p class="loss-h2h">Проигрышей по цене и по условной скидке за ${period === "all" ? "период" : "месяц"} нет.</p>`;
+
+    return `<section class="block reveal in comp-losses" aria-labelledby="${headingId}">
+      <div class="block-head"><h2 id="${headingId}"><span class="idx">${idx}</span>Потери по причинам · ${esc(monthLabel(period))}</h2><span class="meta">F3 и партнёры · без НДС · лот считается один раз</span></div>
+      ${totalHtml}
+      ${recentHtml}
+      ${actionHtml}
+      ${reasonsHtml ? `<div class="loss-reasons rows">${reasonsHtml}</div>` : ""}
+      ${h2hHtml}
+    </section>`;
+  }
+
   const TOP_ROWS_LIMIT = 15;
   const expandedState = new WeakMap();
 
@@ -113,6 +175,11 @@
     }
     const title = isIp ? "интерактивных панелей и комплектов" : "компьютерной техники";
     const S = V.summary;
+    let blockNo = 0;
+    const nextIdx = () => String(++blockNo).padStart(2, "0");
+
+    // 01 Потери по причинам (если в выгрузке есть V.losses; старый кэш без поля — блок пропускается)
+    const lossesHtml = V.losses ? renderLosses(V.losses, nextIdx(), isIp ? "ip" : "kt", activePeriod) : "";
 
     // 01 Итоги + помесячный график
     const months = base.months || [];
@@ -138,8 +205,8 @@
         </div>`
       : "";
 
-    let html = `${freshnessBanner}<section class="block reveal in">
-      ${head("01", `Итоги открытых конкурсов · ${title} · ${esc(monthLabel(activePeriod))}`, "способ «Открытый конкурс» · без НДС · уникальные лоты по последней версии")}
+    let html = `${freshnessBanner}${lossesHtml}<section class="block reveal in">
+      ${head(nextIdx(), `Итоги открытых конкурсов · ${title} · ${esc(monthLabel(activePeriod))}`, "способ «Открытый конкурс» · без НДС · уникальные лоты по последней версии")}
       <div class="hero comp-hero">
         <div>
           <span class="label">Состоялось лотов</span>
@@ -190,7 +257,7 @@
       : "";
 
     html += `<section class="block reveal in">
-      ${head("02", "Конкуренты", `${fmt(V.competitorsTotal)} участников · показаны ${fmt(visibleComps.length)} · строка раскрывает список лотов`)}
+      ${head(nextIdx(), "Конкуренты", `${fmt(V.competitorsTotal)} участников · показаны ${fmt(visibleComps.length)} · строка раскрывает список лотов`)}
       <div class="comp-table rows">
         <div class="r head"><span></span><span class="label">Участник / БИН</span><span class="label">Заявок</span><span class="label">Доп./Откл.</span><span class="label">Побед (2-х)</span><span class="label">Победы / допуски</span><span class="label">Сумма побед</span><span class="label">Мед. скидка</span><span class="label">Усл. скидка</span><span class="label">ОТП/КТП</span></div>
         ${compRowsHtml || '<p class="muted">Участников за этот период нет</p>'}
@@ -239,7 +306,7 @@
       : "";
 
     html += `<section class="block reveal in">
-      ${head("03", "Где мы встречались", `лоты с участием F3 и партнёров (${fmt(V.headToHead.length)} соперников) · показаны ${fmt(visibleH2h.length)} · причина исхода`)}
+      ${head(nextIdx(), "Где мы встречались", `лоты с участием F3 и партнёров (${fmt(V.headToHead.length)} соперников) · показаны ${fmt(visibleH2h.length)} · причина исхода`)}
       <div class="comp-h2h rows">
         <div class="r head"><span></span><span class="label">Соперник</span><span class="label">Общих лотов</span><span class="label">Обошёл нас</span><span class="label">Мы обошли</span><span class="label">Прочее</span></div>
         ${h2hHtml || '<p class="muted">Совместных лотов за этот период нет</p>'}
@@ -247,7 +314,7 @@
       ${h2hMoreBtn}
     </section>`;
 
-    // 04 Наши отклонения
+    // Наши отклонения: полный список свёрнут, сводка — в «Потерях по причинам»
     const rejHtml = V.ourRejections.map((r) => {
       const hasEqualOrLower = r.status === "Закупка состоялась" && r.ourPrice != null && r.winnerPrice != null && r.winnerPrice > 0;
       const pctStr = r.cheaperByPct != null ? nf1.format(r.cheaperByPct) : "";
@@ -266,14 +333,18 @@
     }).join("");
 
     html += `<section class="block reveal in">
-      ${head("04", "Наши отклонения", `${fmt(V.ourRejections.length)} заявок · ниже цены победителя: ${fmt(V.ourRejectionsCheaperCount)}`)}
-      <div class="comp-rej rows">
-        <div class="r head"><span class="label">Дата</span><span class="label">Лот, компания и причина отклонения</span><span class="label">Итог</span><span class="label">Наша цена / Победитель</span></div>
-        ${rejHtml || '<p class="muted">Отклонённых заявок наших компаний нет</p>'}
-      </div>
+      ${head(nextIdx(), "Наши отклонения", `${fmt(V.ourRejections.length)} заявок · ниже цены победителя: ${fmt(V.ourRejectionsCheaperCount)}`)}
+      ${rejHtml
+        ? `<details class="cust-d comp-rej-d"><summary class="old-tasks-sum">Список отклонённых заявок (${fmt(V.ourRejections.length)})</summary>
+          <div class="comp-rej rows">
+            <div class="r head"><span class="label">Дата</span><span class="label">Лот, компания и причина отклонения</span><span class="label">Итог</span><span class="label">Наша цена / Победитель</span></div>
+            ${rejHtml}
+          </div>
+        </details>`
+        : '<p class="muted">Отклонённых заявок наших компаний нет</p>'}
     </section>`;
 
-    // 05 Цены
+    // Цены
     const renderPriceRow = (row) => `<div class="r">
       <span class="nm">${esc(row.label)} <span class="dim">${plural(row.lotsCount, ["лот", "лота", "лотов"])}</span></span>
       <span data-l="План">${priceCell(row.plan)}</span>
@@ -286,14 +357,14 @@
     const pricesRowsHtml = V.prices.rows.map(renderPriceRow).join("") + (V.prices.kitsRow ? renderPriceRow(V.prices.kitsRow) : "");
 
     html += `<section class="block reveal in">
-      ${head("05", "Цены за единицу", `без НДС · однотоварные лоты без комплектов${V.prices.kitsRow ? " · комплекты отдельно" : ""}${V.prices.excludedTypoCount ? ` · отсечено опечаток: ${fmt(V.prices.excludedTypoCount)}` : ""}`)}
+      ${head(nextIdx(), "Цены за единицу", `без НДС · однотоварные лоты без комплектов${V.prices.kitsRow ? " · комплекты отдельно" : ""}${V.prices.excludedTypoCount ? ` · отсечено опечаток: ${fmt(V.prices.excludedTypoCount)}` : ""}`)}
       <div class="comp-prices rows">
         <div class="r head"><span class="label">${isIp ? "Диагональ / группа" : "Вид техники"}</span><span class="label">План</span><span class="label">Конкуренты допущ.</span><span class="label">Конкуренты победы</span><span class="label">Наши допущ.</span><span class="label">Наши победы</span></div>
         ${pricesRowsHtml || '<p class="muted">Нет однотоварных лотов для расчёта цен</p>'}
       </div>
     </section>`;
 
-    // 06 Шаблоны ТС
+    // Шаблоны ТС
     const tplHtml = V.specTemplates.map((tpl) => {
       const winnersHtml = tpl.winners.length
         ? `<div class="comp-tpl-winners rows">
@@ -332,7 +403,7 @@
     }).join("");
 
     html += `<section class="block reveal in">
-      ${head("06", "Шаблоны ТС", "одинаковые фрагменты в техспецификациях заказчиков")}
+      ${head(nextIdx(), "Шаблоны ТС", "одинаковые фрагменты в техспецификациях заказчиков")}
       ${tplHtml || '<p class="muted">Шаблоны ТС не настроены</p>'}
     </section>`;
 

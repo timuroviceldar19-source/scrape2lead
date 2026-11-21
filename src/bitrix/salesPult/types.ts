@@ -60,6 +60,8 @@ export interface SalesPultPayload {
   generatedAt: string;
   portal: string;
   pultUrl?: string;
+  /** «Утренний пульс» над главной (`pulse.ts`); у закрытых месяцев нет. */
+  pulse?: import("./pulse.js").PulseView | null;
   targets: TargetsConfig;
   callsAvailable: boolean;
   callsError?: string;
@@ -69,6 +71,8 @@ export interface SalesPultPayload {
   holidays?: string[];
   market?: MarketView | null;
   competitors?: CompetitorsView | null;
+  /** Склад 1С штуками по видам товара, без сумм и названий (`stock/availability.ts`). */
+  stock?: import("./stock/availability.js").StockAvailability | null;
   plans?: import("./plans/types.js").PlansMonitorView | null;
   radar?: import("./radar/types.js").RadarView | null;
   outcomeMismatches?: WonLostMismatchDeal[];

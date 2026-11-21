@@ -418,6 +418,18 @@
   const qty = (n, unit) => (n ? `${nfq.format(n)}${unit ? NB + esc(unit) : ""}` : "—");
   const searchKey = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
   const stockGone = (item) => !item.endQty && !item.endSum;
+  // Спрос открытых лотов Радара и планов по строке склада: ключ позиции и спрос считает сервер (stock/availability.ts).
+  const demandByKey = new Map((Array.isArray(P.stockDemand) ? P.stockDemand : []).map((d) => [d.key, d]));
+  const DEMAND_TITLE = "Открытые лоты Радара (подать сегодня и обсуждение) и открытые планы того же вида и диагонали; план, по которому есть лот, — один раз.";
+  function demandText(x) {
+    const d = x.stockKey ? demandByKey.get(x.stockKey) : null;
+    if (!d || !(d.lots > 0)) return "";
+    return `спрос: ${plural(d.lots, ["лот", "лота", "лотов"])} на ${nfq.format(d.qty)} шт${d.approxLots ? ` · из них ${nf0.format(d.approxLots)} без диагонали в названии` : ""}`;
+  }
+  const demandHtml = (x) => {
+    const text = demandText(x);
+    return text ? `<span class="fin-focus-meta fin-stock-demand" title="${esc(DEMAND_TITLE)}">${esc(text)}</span>` : "";
+  };
   const stockStagnant = (moves, item) => moves === true && item.startQty > 0 && !(item.outQty > 0) && item.endSum > 0;
   const matchesStock = (words, name, stagnant, gone) =>
     (stockMode !== "stagnant" || stagnant) && (stockMode !== "present" || !gone) && words.every((word) => name.includes(word));
@@ -501,7 +513,7 @@
       <h3>Без расхода за период · ${money(total)}</h3>
       <div class="fin-focus-meta">${plural(count, ["позиция", "позиции", "позиций"])}</div>
       <ol class="fin-focus-list" aria-label="Топ-5 позиций без расхода">${top5.map((x) => `<li>
-        <span><strong>${esc(x.name)}</strong><span class="fin-focus-meta">${esc(x.company)} · ${esc(x.warehouse)} · ${qty(x.endQty, x.unit)}</span></span>
+        <span><strong>${esc(x.name)}</strong><span class="fin-focus-meta">${esc(x.company)} · ${esc(x.warehouse)} · ${qty(x.endQty, x.unit)}</span>${demandHtml(x)}</span>
         <span class="fin-focus-value">${money(x.endSum)}</span></li>`).join("")}</ol>
       <div class="fin-actions">${copyButton("stock", "Скопировать для ОП")}</div>
     </div>`;
@@ -627,7 +639,7 @@
     }
     if (key === "stock") {
       return [`Без расхода за период · ${full(I.stock.total)} (${I.stock.count} поз.)`,
-        ...I.stock.top5.map((x, i) => `${i + 1}. ${x.name} · ${x.company} · ${x.warehouse} · ${nfq.format(x.endQty)}${x.unit ? " " + x.unit : ""} · ${full(x.endSum)}`)].join("\n");
+        ...I.stock.top5.map((x, i) => `${i + 1}. ${x.name} · ${x.company} · ${x.warehouse} · ${nfq.format(x.endQty)}${x.unit ? " " + x.unit : ""} · ${full(x.endSum)}${[demandText(x)].filter(Boolean).map((t) => ` · ${t}`).join("")}`)].join("\n");
     }
     const main = R.payments[0];
     return [`Календарь платежей · на ${ddmmyyyy(today)}`,

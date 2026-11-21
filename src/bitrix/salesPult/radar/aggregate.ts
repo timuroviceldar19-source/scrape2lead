@@ -9,6 +9,10 @@ export type { RadarCard, RadarColumnKey, RadarGroupView, RadarKpis, RadarView };
 import type { NormalizedPlanDeal } from "../plans/types.js";
 import { loadMarketConfig } from "../../../kz/market/config.js";
 import { toCurrentPortalUrl } from "../../../kz/goszakupOrigin.js";
+import { isPlaceholderWindow } from "../../gzLotDates.js";
+
+/** Сколько часов после конца приёма заявок лот ещё показывается в «Пропущенных сроках». */
+export const RADAR_MISSED_WINDOW_HOURS = 7 * 24;
 
 export interface RadarRawDeal {
   ID: string | number;
@@ -199,7 +203,12 @@ export function parseRadarLotDeal(raw: RadarRawDeal, options: ParseRadarDealOpti
   } else if (!isOpen) {
     return null; // Closed won/lost deals don't stay on active radar
   } else if (hoursLeft !== null && hoursLeft <= 0) {
-    return null; // Expired bid window is no longer active for submission/discussion
+    // Приём заявок закончился. Пропущенный срок — только если сделку так и не взяли в работу («Новая»),
+    // окно закрылось не раньше 7 дней назад и срок настоящий: из строки «Приём заявок» или дата, которую
+    // поставил импорт, а не заглушка Битрикса «день создания + 7 дней». Остальные истёкшие лоты не показываем.
+    const realDeadline = Boolean(windowMatch?.[2] && windowMatch[2] !== "-") || !isPlaceholderWindow(raw);
+    if (!isNewStage || !realDeadline || hoursLeft < -RADAR_MISSED_WINDOW_HOURS) return null;
+    column = "missed";
   } else if (/прием заявок|прием ценовых|дополнение заявок|ожидание проведения аукциона/i.test(statusLower)) {
     column = "submitToday";
   } else if (/опубликован|изменена документация|предварительное обсуждение/i.test(statusLower)) {
@@ -280,6 +289,39 @@ export interface BuildRadarViewOptions extends ParseRadarDealOptions {
   planDeals?: NormalizedPlanDeal[];
 }
 
+export type RadarColumns = Pick<RadarGroupView, RadarColumnKey>;
+
+const sumOf = (cards: readonly RadarCard[]) => cards.reduce((acc, c) => acc + c.sum, 0);
+
+/**
+ * KPI группы Радара по готовым спискам. Одни правила для полного Радара и вида менеджера:
+ * «Сроки подачи» — лоты, у которых приём кончается сегодня или в 48 часов (если таких нет — весь приём);
+ * «В работе» — приём, обсуждение и второй шанс; пропущенные сроки считаются отдельно.
+ */
+export function computeRadarKpis(columns: RadarColumns): RadarKpis {
+  const { submitToday, discussion, secondChance, missed } = columns;
+  const expiringSoon = submitToday.filter(c => c.isToday || c.isWithin48h);
+  const submit = expiringSoon.length > 0 ? expiringSoon : submitToday;
+  return {
+    totalCount: submitToday.length + discussion.length + secondChance.length,
+    totalSum: sumOf(submitToday) + sumOf(discussion) + sumOf(secondChance),
+    submitCount: submit.length,
+    submitSum: sumOf(submit),
+    discussionCount: discussion.length,
+    discussionSum: sumOf(discussion),
+    secondChanceCount: secondChance.length,
+    secondChanceSum: sumOf(secondChance),
+    missedCount: missed.length,
+    missedSum: sumOf(missed)
+  };
+}
+
+/** Пустая группа: заглушка при ошибке сбора и группа, которой нет в старом payload. */
+export function emptyRadarGroup(group: "ИП" | "КТ"): RadarGroupView {
+  const columns: RadarColumns = { submitToday: [], discussion: [], secondChance: [], missed: [] };
+  return { group, kpis: computeRadarKpis(columns), ...columns };
+}
+
 export function buildRadarView(options: BuildRadarViewOptions): RadarView {
   const parsedLots = options.lotDeals
     .map(d => parseRadarLotDeal(d, options))
@@ -296,6 +338,7 @@ export function buildRadarView(options: BuildRadarViewOptions): RadarView {
     const submitToday = groupLots.filter(c => c.column === "submitToday");
     const discussion = groupLots.filter(c => c.column === "discussion");
     const secondChanceLots = groupLots.filter(c => c.column === "secondChance");
+    const missed = groupLots.filter(c => c.column === "missed");
 
     // Deduplicate secondChance lots and plans by planNumber
     const seenPlanNumbers = new Set<string>();
@@ -331,40 +374,11 @@ export function buildRadarView(options: BuildRadarViewOptions): RadarView {
     // Sort secondChance: sum DESC
     secondChance.sort((a, b) => b.sum - a.sum);
 
-    // Calculate KPIs
-    const expiringSoon = submitToday.filter(c => c.isToday || c.isWithin48h);
-    const submitCount = expiringSoon.length > 0 ? expiringSoon.length : submitToday.length;
-    const submitSum = expiringSoon.length > 0
-      ? expiringSoon.reduce((acc, c) => acc + c.sum, 0)
-      : submitToday.reduce((acc, c) => acc + c.sum, 0);
+    // Пропущенные: свежие сверху (у них hoursLeft ближе к нулю), при равном сроке — дороже выше.
+    missed.sort((a, b) => (b.hoursLeft ?? -Infinity) - (a.hoursLeft ?? -Infinity) || b.sum - a.sum);
 
-    const discussionCount = discussion.length;
-    const discussionSum = discussion.reduce((acc, c) => acc + c.sum, 0);
-
-    const secondChanceCount = secondChance.length;
-    const secondChanceSum = secondChance.reduce((acc, c) => acc + c.sum, 0);
-
-    const totalCount = submitToday.length + discussionCount + secondChanceCount;
-    const totalSum = submitToday.reduce((acc, c) => acc + c.sum, 0) + discussionSum + secondChanceSum;
-
-    const kpis: RadarKpis = {
-      totalCount,
-      totalSum,
-      submitCount,
-      submitSum,
-      discussionCount,
-      discussionSum,
-      secondChanceCount,
-      secondChanceSum
-    };
-
-    return {
-      group,
-      kpis,
-      submitToday,
-      discussion,
-      secondChance
-    };
+    const columns: RadarColumns = { submitToday, discussion, secondChance, missed };
+    return { group, kpis: computeRadarKpis(columns), ...columns };
   };
 
   return {
