@@ -166,6 +166,32 @@
     });
   }
 
+  /* ================= утренний пульс ================= */
+  // Пункты собирает pulse.ts при сборке, здесь только рендер. Только текущий месяц; в ТВ скрыт стилями и в сцены не входит.
+  const PULSE_SEVERITY = { red: "Срочно", yellow: "Внимание", green: "Спокойно" };
+  const pulseHref = (href) => /^(#|\.\/|https:\/\/)/.test(String(href || "")) ? String(href) : "#pult";
+  function renderPulse() {
+    const el = document.getElementById("pulse");
+    const data = PAYLOAD.pulse;
+    if (!el || !data) return;
+    // Вид менеджера уже без финансовых пунктов (variants/manager.ts); здесь — вторая защита.
+    const items = (data.items || []).filter((item) => !(VIEWER && item.finance));
+    const rows = items.length
+      ? items.map((item) => {
+        const sev = PULSE_SEVERITY[item.severity] ? item.severity : "yellow";
+        const label = `${PULSE_SEVERITY[sev]}: ${item.title} — ${item.value}${item.detail ? `, ${item.detail}` : ""}`;
+        return `<li class="pulse-row pulse-${sev}"><a class="pulse-link" href="${esc(pulseHref(item.href))}" aria-label="${esc(label)}">` +
+          `<span class="pulse-dot" aria-hidden="true"></span><span class="pulse-title">${esc(item.title)}</span>` +
+          `<span class="pulse-meta"><b class="pulse-value">${esc(item.value)}</b>${item.detail ? `<span class="pulse-detail"> · ${esc(item.detail)}</span>` : ""}</span>` +
+          `<span class="pulse-go" aria-hidden="true">→</span></a></li>`;
+      }).join("")
+      : `<li class="pulse-row pulse-green pulse-calm"><span class="pulse-dot" aria-hidden="true"></span><span class="pulse-title">Всё спокойно</span></li>`;
+    const meta = items.length ? plural(items.length, ["пункт", "пункта", "пунктов"]) + (data.more ? ` из ${fmt(items.length + data.more)}` : "") : "";
+    el.innerHTML = `<div class="pulse-head"><h2 id="pulseTitle">Утренний пульс</h2>${meta ? `<span class="meta">${esc(meta)}</span>` : ""}</div>` +
+      `<ul class="pulse-list" role="list">${rows}</ul>` +
+      ((data.missing || []).length ? `<p class="pulse-missing">Нет данных: ${esc(data.missing.join(" · "))}</p>` : "");
+  }
+
   /* ================= month hero ================= */
   function getUrgentJumpCount() {
     if (P.closedMonth || document.body.classList.contains("tv")) return 0;
@@ -1393,6 +1419,7 @@
     document.getElementById("signals").hidden = !!P.closedMonth;
     document.getElementById("tasks").hidden = !!P.closedMonth;
     document.getElementById("closedNotice").hidden = !P.closedMonth;
+    if (document.getElementById("pulse")) document.getElementById("pulse").hidden = !!P.closedMonth || !PAYLOAD.pulse;
     renderMonth(false); renderSignals(); renderTasks();
     setPeriod(P.closedMonth ? "month" : period, false, false);
     if (currentTab === "pult") updateSourceLabels("pult");
@@ -1684,6 +1711,7 @@
   }
 
   /* ================= boot ================= */
+  renderPulse();
   renderChrome(); renderSignals(); renderMonth(); renderTasks();
   initQuickSearch();
   let saved = null; try { saved = localStorage.getItem("pult-period"); } catch (e) {}
