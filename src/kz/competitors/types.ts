@@ -390,6 +390,8 @@ export interface OurRejectionItem {
   annoId: string;
   lotNumber: string;
   date: string;
+  /** Окончание приёма заявок: ближайшая к протоколу итогов дата, по ней считается свежесть отклонения. */
+  endDate?: string;
   ourCompany: string;
   ourBin: string;
   customerName: string;
@@ -469,6 +471,58 @@ export interface SpecTemplateSummary {
   lots: TemplateLotItem[];
 }
 
+/** Категория причины отклонения заявки (подписи — `LOSS_REASON_LABELS` в `losses.ts`). */
+export type LossReasonKey = "software_docs" | "manufacturer_letter" | "tech_mismatch" | "security" | "documents" | "other";
+
+/** Короткая ссылка на лот в «Потерях по причинам»: без текстов причин и названий заказчиков. */
+export interface LossLotLink {
+  lotNumber: string;
+  date: string;
+  ourCompany: string;
+  ourPrice: number | null;
+  winnerPrice: number | null;
+  cheaper: boolean;
+  url: string;
+}
+
+export interface LossReasonRow {
+  key: LossReasonKey;
+  label: string;
+  count: number;
+  sumOur: number;
+  cheaperCount: number;
+  lots: LossLotLink[];
+}
+
+export interface LossHeadToHeadBucket {
+  count: number;
+  /** Сумма наших заявок (без НДС) в проигранных лотах. */
+  sumOur: number;
+  /** Сумма разрывов «наша цена − цена победителя»; у проигрышей по условной скидке обычно ≤ 0. */
+  sumGap: number;
+}
+
+/** Потери группы F3 в деньгах: отклонения по причинам и проигрыши в очных встречах. Лот считается один раз. */
+export interface LossBreakdown {
+  rejected: {
+    count: number;
+    sumOur: number;
+    cheaperCount: number;
+    cheaperSumOur: number;
+    byReason: LossReasonRow[];
+  };
+  lostHeadToHead: {
+    byPrice: LossHeadToHeadBucket;
+    byCondDiscount: LossHeadToHeadBucket;
+  };
+  recentCheaper: {
+    days: number;
+    count: number;
+    sumOur: number;
+    lots: LossLotLink[];
+  };
+}
+
 export interface CompetitorsGroupSliceView {
   period: string;
   summary: CompetitorsSummaryBlock;
@@ -477,6 +531,7 @@ export interface CompetitorsGroupSliceView {
   headToHead: HeadToHeadRivalRow[];
   ourRejections: OurRejectionItem[];
   ourRejectionsCheaperCount: number;
+  losses: LossBreakdown;
   prices: {
     rows: PriceBenchmarkRow[];
     kitsRow: PriceBenchmarkRow | null;
