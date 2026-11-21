@@ -10,7 +10,7 @@ import type { RadarCard, RadarView } from "../../src/bitrix/salesPult/radar/type
 import type { SalesPultPayload } from "../../src/bitrix/salesPult/types.js";
 
 // Все данные выдуманные.
-const kpis = { totalCount: 0, totalSum: 0, submitCount: 0, submitSum: 0, discussionCount: 0, discussionSum: 0, secondChanceCount: 0, secondChanceSum: 0 };
+const kpis = { totalCount: 0, totalSum: 0, submitCount: 0, submitSum: 0, discussionCount: 0, discussionSum: 0, secondChanceCount: 0, secondChanceSum: 0, missedCount: 0, missedSum: 0 };
 const lot = (id: string, endAt: string, sum: number): RadarCard => ({
   id, dealUrl: "https://example.invalid/crm/deal/details/1/", sourceType: "lot", lotNumber: `L-${id}`, title: "Лот выдуманный",
   itemName: "Панель выдуманная", qty: 1, sum, method: "ЗЦП", status: "Опубликован (прием заявок)", group: "ИП", kind: "Интерактивные панели",
@@ -19,8 +19,8 @@ const lot = (id: string, endAt: string, sum: number): RadarCard => ({
 });
 const radar: RadarView = {
   asOf: "2026-10-28",
-  ip: { group: "ИП", kpis, submitToday: [lot("1", "2026-11-21 11:00", 12_000_000), lot("2", "2026-11-22 15:00", 64_000_000)], discussion: [], secondChance: [] },
-  kt: { group: "КТ", kpis, submitToday: [], discussion: [], secondChance: [] }
+  ip: { group: "ИП", kpis, submitToday: [lot("1", "2026-11-21 11:00", 12_000_000), lot("2", "2026-11-22 15:00", 64_000_000)], discussion: [], secondChance: [], missed: [] },
+  kt: { group: "КТ", kpis, submitToday: [], discussion: [], secondChance: [], missed: [] }
 };
 
 function payload(pulse?: PulseView | null) {

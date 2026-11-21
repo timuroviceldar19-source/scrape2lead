@@ -39,8 +39,8 @@ function card(id: string, extra: Partial<RadarCard> = {}): RadarCard {
   };
 }
 
-const kpis = { totalCount: 0, totalSum: 0, submitCount: 0, submitSum: 0, discussionCount: 0, discussionSum: 0, secondChanceCount: 0, secondChanceSum: 0 };
-const group = (g: "ИП" | "КТ", submitToday: RadarCard[]): RadarGroupView => ({ group: g, kpis, submitToday, discussion: [], secondChance: [] });
+const kpis = { totalCount: 0, totalSum: 0, submitCount: 0, submitSum: 0, discussionCount: 0, discussionSum: 0, secondChanceCount: 0, secondChanceSum: 0, missedCount: 0, missedSum: 0 };
+const group = (g: "ИП" | "КТ", submitToday: RadarCard[]): RadarGroupView => ({ group: g, kpis, submitToday, discussion: [], secondChance: [], missed: [] });
 const radar = (ip: RadarCard[], kt: RadarCard[] = []): RadarView => ({ asOf: AS_OF, ip: group("ИП", ip), kt: group("КТ", kt.map((c) => ({ ...c, group: "КТ" }))) });
 
 function regRow(extra: Partial<RegisterRow>): RegisterRow {
