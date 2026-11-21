@@ -14,6 +14,10 @@
   --warn-t: #fffbeb;
   --bad: #dc2626;
   --bad-t: #fef2f2;
+  /* Текст на светлых плашках (*-t): контраст не ниже 4,5:1 для мелкого шрифта. Точки и полосы — яркие токены выше. */
+  --good-ink: #15803d;
+  --warn-ink: #b45309;
+  --bad-ink: #b91c1c;
   --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
   --display: "Geologica", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -280,8 +284,8 @@ body.tv .debt-button { pointer-events: none; }
 .task .side { text-align: right; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .task .side .num { font-size: 16px; }
 .tag { display: inline-block; font: 400 11px var(--mono); letter-spacing: .02em; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--rule-2); background: #f8fafc; color: var(--ink-2); }
-.tag.warn { border-color: rgba(217, 119, 6, 0.35); background: var(--warn-t); color: var(--warn); }
-.tag.good { border-color: rgba(22, 163, 74, 0.35); background: var(--good-t); color: var(--good); }
+.tag.warn { border-color: rgba(217, 119, 6, 0.35); background: var(--warn-t); color: var(--warn-ink); }
+.tag.good { border-color: rgba(22, 163, 74, 0.35); background: var(--good-t); color: var(--good-ink); }
 .st { font-size: 13px; font-weight: 500; }
 .go { font: 500 12px var(--mono); text-decoration: none; color: var(--ink-2); border-bottom: 1px solid var(--rule-3); padding-bottom: 1px; }
 .go:hover { color: var(--ink); border-color: var(--ink); }
@@ -1096,22 +1100,22 @@ body.tv .plan-search-wrap { display: none !important; }
 .radar-badge.bad {
   background: var(--bad-t);
   border-color: rgba(220, 38, 38, 0.25);
-  color: var(--bad);
+  color: var(--bad-ink);
 }
 .radar-badge.warn {
   background: var(--warn-t);
   border-color: rgba(217, 119, 6, 0.25);
-  color: var(--warn);
+  color: var(--warn-ink);
 }
 .radar-badge.good {
   background: var(--good-t);
   border-color: rgba(22, 163, 74, 0.25);
-  color: var(--good);
+  color: var(--good-ink);
 }
 .radar-badge.dim {
   background: #f1f5f9;
   border-color: var(--rule-2);
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 .radar-card-cust {
   font-size: 12px;
@@ -1288,9 +1292,10 @@ body.tv .radar-col-more {
 .comp-more-wrap { margin-top: 12px; display: flex; justify-content: flex-start; }
 
 .comp-table .r { grid-template-columns: 28px minmax(170px, 2fr) 64px 76px 82px 76px 104px 76px 76px 70px; gap: 10px; }
-.comp-lot-row { grid-template-columns: 56px 1fr 110px 140px; gap: 12px; }
+.comp-lot-row, .comp-table .r.comp-lot-row { grid-template-columns: 56px 1fr 110px 140px; gap: 12px; }
 .comp-h2h .r { grid-template-columns: 28px minmax(170px, 2fr) 86px minmax(120px, 1fr) minmax(120px, 1fr) 76px; gap: 12px; }
-.comp-h2h-lot { grid-template-columns: 56px 1fr auto; gap: 12px; }
+/* Строки лотов внутри таблиц: иначе их перебивает сетка таблицы (`.comp-table .r`, `.comp-h2h .r`) и дата режется. */
+.comp-h2h-lot, .comp-h2h .r.comp-h2h-lot { grid-template-columns: 56px 1fr auto; gap: 12px; }
 .comp-rej .r { grid-template-columns: 56px 1fr auto 150px; gap: 12px; }
 .comp-prices .r { grid-template-columns: minmax(130px, 1.3fr) repeat(5, minmax(0, 1fr)); gap: 12px; }
 
@@ -1325,7 +1330,7 @@ body.tv .radar-col-more {
   .comp-table .r [data-l]::before, .comp-h2h .r [data-l]::before, .comp-prices .r [data-l]::before {
     content: attr(data-l); display: block; font: 500 10px/1.2 var(--mono); color: var(--ink-3); text-transform: uppercase;
   }
-  .comp-lot-row, .comp-h2h-lot, .comp-rej .r, .comp-tpl-lot { grid-template-columns: 1fr auto; gap: 6px 12px; }
+  .comp-lot-row, .comp-table .r.comp-lot-row, .comp-h2h-lot, .comp-h2h .r.comp-h2h-lot, .comp-rej .r, .comp-tpl-lot { grid-template-columns: 1fr auto; gap: 6px 12px; }
   .comp-lot-row > :nth-child(2), .comp-h2h-lot > :nth-child(2), .comp-rej .r > :nth-child(2), .comp-tpl-lot > :nth-child(2) { grid-column: 1 / -1; order: -1; }
   .comp-tpl-winners .r { grid-template-columns: 1fr auto; gap: 4px 10px; }
   .comp-tpl-winners .r > :first-child { grid-column: 1 / -1; }
