@@ -37,6 +37,7 @@
         timeFilter: "all",
         searchQuery: "",
         missedOpen: false,
+        order: "deadline",
         expandedCol: { submitToday: false, discussion: false, secondChance: false }
       };
       radarStates.set(tab, st);
@@ -114,8 +115,11 @@
     document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshLiveBadges(); });
   }
 
-  function renderCard(card, hintsFor) {
-    const hints = hintsFor?.(card, card.qty > 0 ? card.sum / card.qty : 0);
+  // Вердикт и подсказки считает сервер (bid/assess.ts), здесь только разметка.
+  const bidHtml = (card) => window.__bidHtml ? window.__bidHtml(card.bid) : { verdictHtml: "", customerHtml: "", priceHtml: "" };
+
+  function renderCard(card) {
+    const hints = bidHtml(card);
 
     const dealLabel = `Сделка #${card.id} ↗`;
     const lotLink = card.lotUrl || card.announceUrl;
@@ -127,19 +131,19 @@
         <div class="radar-card-head">
           <div class="radar-card-item">
             <strong>${esc(card.itemName)}</strong>${card.qty ? ` <span class="dim">· ${fmt(card.qty)} шт.</span>` : ""}
-            <div class="radar-card-meta"><span class="tag method">${esc(card.method)}</span>${card.kind ? ` <span class="dim">${esc(card.kind)}</span>` : ""}</div>
+            <div class="radar-card-meta">${hints.verdictHtml}<span class="tag method">${esc(card.method)}</span>${card.kind ? ` <span class="dim">${esc(card.kind)}</span>` : ""}</div>
           </div>
           <div class="radar-card-right">
             ${formatTimeBadge(card)}
             <div class="radar-card-sum num">${money(card.sum)}</div>
           </div>
         </div>
-        ${hints?.priceHtml || ""}
+        ${hints.priceHtml}
         ${window.__stockHint ? window.__stockHint(card) : ""}
         <div class="radar-card-cust" title="${esc(card.customerName)}">
           <span class="cust-name">${esc(shortCustomerName(card.customerName))}</span>
           ${card.customerBin ? `<span class="dim sub">${esc(card.customerBin)}</span>` : ""}
-          ${hints?.customerHtml || ""}
+          ${hints.customerHtml}
         </div>
         <div class="radar-card-foot">
           <span class="radar-mgr">${esc(card.managerName)}</span>
@@ -161,7 +165,7 @@
     return a > 10 && a < 20 ? "закупок" : b === 1 ? "закупка" : b > 1 && b < 5 ? "закупки" : "закупок";
   };
 
-  function renderColumn(colKey, title, idx, cards, state, hintsFor) {
+  function renderColumn(colKey, title, idx, cards, state) {
     const limit = state.expandedCol[colKey] ? cards.length : 6;
     const visibleCards = cards.slice(0, limit);
     const sum = cards.reduce((acc, c) => acc + (c.sum || 0), 0);
@@ -175,7 +179,7 @@
         </div>
         <div class="radar-card-list">
           ${visibleCards.length > 0
-            ? visibleCards.map(c => renderCard(c, hintsFor)).join("")
+            ? visibleCards.map(c => renderCard(c)).join("")
             : `<p class="muted">Нет закупок</p>`}
         </div>
         ${cards.length > 6 && !state.expandedCol[colKey]
@@ -260,9 +264,13 @@
       }
     }
 
-    if (!state.hintsFor && typeof window.__buildWinHintsIndex === "function") {
-      state.hintsFor = window.__buildWinHintsIndex(payload, groupKey);
-    }
+    // Порядок «по ценности» (сумма × вес вердикта) — только когда вердикты вынесены: у вида менеджера их нет.
+    const hasVerdicts = [...group.submitToday, ...group.discussion, ...group.secondChance]
+      .some(c => c.bid && c.bid.verdict && c.bid.verdict !== "unknown");
+    if (!hasVerdicts) state.order = "deadline";
+    const ordered = (cards) => state.order === "value"
+      ? cards.map((c, i) => [c, i]).sort((a, b) => ((b[0].bid && b[0].bid.value) || 0) - ((a[0].bid && a[0].bid.value) || 0) || a[1] - b[1]).map(x => x[0])
+      : cards;
 
     // Available managers & methods (over all cards in group)
     const allCards = [...group.submitToday, ...group.discussion, ...group.secondChance, ...missedAll];
@@ -316,8 +324,9 @@
       } else if (state.timeFilter === "48h") {
         submitCards = submitCards.filter(c => c.isToday || c.isWithin48h);
       }
-      const discCards = baseDisc.filter(matchesSearch);
-      const secondCards = baseSecond.filter(matchesSearch);
+      submitCards = ordered(submitCards);
+      const discCards = ordered(baseDisc.filter(matchesSearch));
+      const secondCards = ordered(baseSecond.filter(matchesSearch));
       const baseMissed = missedAll.filter(filterByMgrMethod);
 
       return {
@@ -380,9 +389,9 @@
     `;
 
     const renderGridHtml = (d) => `
-      ${renderColumn("submitToday", d.submitColTitle, "01", d.submitCards, state, state.hintsFor)}
-      ${renderColumn("discussion", "Успеть с замечанием", "02", d.discCards, state, state.hintsFor)}
-      ${renderColumn("secondChance", "Второй шанс", "03", d.secondCards, state, state.hintsFor)}
+      ${renderColumn("submitToday", d.submitColTitle, "01", d.submitCards, state)}
+      ${renderColumn("discussion", "Успеть с замечанием", "02", d.discCards, state)}
+      ${renderColumn("secondChance", "Второй шанс", "03", d.secondCards, state)}
     `;
 
     const prevInput = container.querySelector(".radar-search-input");
@@ -436,6 +445,15 @@
                 <button type="button" data-radar-time="today" aria-pressed="${String(state.timeFilter === "today")}">Сегодня</button>
               </div>
             </div>
+            ${hasVerdicts ? `
+            <div class="radar-filter-group">
+              <span class="filter-legend" title="Ценность — сумма лота × вес вердикта: идём 1, осторожно и без вердикта 0,5, не идём 0,1">Порядок:</span>
+              <div class="chips">
+                <button type="button" data-radar-order="deadline" aria-pressed="${String(state.order === "deadline")}">по сроку</button>
+                <button type="button" data-radar-order="value" aria-pressed="${String(state.order === "value")}">по ценности</button>
+              </div>
+            </div>
+            ` : ""}
           </div>
         </div>
 
@@ -479,6 +497,9 @@
       });
       container.querySelectorAll("button[data-radar-time]").forEach(btn => {
         btn.setAttribute("aria-pressed", String((btn.dataset.radarTime || "all") === state.timeFilter));
+      });
+      container.querySelectorAll("button[data-radar-order]").forEach(btn => {
+        btn.setAttribute("aria-pressed", String(btn.dataset.radarOrder === state.order));
       });
     };
 
@@ -532,6 +553,15 @@
         state.timeFilter = timeBtn.dataset.radarTime || "all";
         syncPressedChips();
         updateDynamicContent();
+        return;
+      }
+
+      const orderBtn = e.target.closest("button[data-radar-order]");
+      if (orderBtn) {
+        state.order = orderBtn.dataset.radarOrder === "value" ? "value" : "deadline";
+        syncPressedChips();
+        const d = computeViewData();
+        if (gridEl) gridEl.innerHTML = renderGridHtml(d);
         return;
       }
     };

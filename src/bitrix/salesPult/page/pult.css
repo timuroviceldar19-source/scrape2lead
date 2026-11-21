@@ -679,8 +679,15 @@ body.tv .plan-filters, body.tv .plan-quick-filters { display: none !important; }
 .plans-table .win-hints, .radar-card .win-hints { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .plans-table .win-hints .tag, .radar-card .win-hints .tag { max-width: 100%; overflow-wrap: anywhere; }
 .plans-table .win-price, .radar-card .win-price { display: block; font: 400 11px/1.4 var(--mono); margin-top: 3px; overflow-wrap: anywhere; }
-.plans-table .win-price.good, .radar-card .win-price.good { color: var(--good); }
-.plans-table .win-price.bad, .radar-card .win-price.bad { color: var(--bad); }
+.plans-table .win-price.good, .radar-card .win-price.good { color: var(--good-ink); }
+.plans-table .win-price.bad, .radar-card .win-price.bad { color: var(--bad-ink); }
+/* Вердикт «идём / осторожно / не идём» (bid.client.js): считается на сервере; на ТВ не нужен. */
+.bid-verdict { display: inline-block; font: 600 10px/1.4 var(--mono); letter-spacing: .02em; padding: 2px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; cursor: help; }
+.bid-verdict.go { color: var(--good-ink); background: var(--good-t); border-color: rgba(22, 163, 74, 0.35); }
+.bid-verdict.caution { color: var(--warn-ink); background: var(--warn-t); border-color: rgba(217, 119, 6, 0.35); }
+.bid-verdict.nogo { color: var(--bad-ink); background: var(--bad-t); border-color: rgba(220, 38, 38, 0.35); }
+.plans-table .bid-verdict { display: block; width: fit-content; margin-top: 5px; }
+body.tv .bid-verdict { display: none !important; }
 /* Склад 1С на карточке и в строке плана (stock.client.js): штуки без цен; на ТВ не нужен. */
 .stock-tag { position: relative; max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
 .radar-card .stock-tag { align-self: flex-start; }
