@@ -198,6 +198,7 @@ export function summarizeTemplateWinners(
       lotNumber: lot.lotNumber,
       date: lot.startDate,
       customerName: lot.customerName,
+      customerBin: lot.customerBin || undefined,
       kind: lot.kind,
       status: lot.status,
       strength: match.strength,

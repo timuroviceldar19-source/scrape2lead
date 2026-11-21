@@ -75,11 +75,8 @@
     return `<span class="radar-badge">до ${esc(card.endAt ? card.endAt.slice(5) : "—")}</span>`;
   }
 
-  function renderCard(card, custIndex) {
-    const isBought = custIndex ? custIndex.isBought(card.customerBin, card.customerName) : false;
-    const isLost = custIndex ? custIndex.isLost(card.customerName) : false;
-    const boughtTag = isBought ? ' <span class="tag good">покупал у нас</span>' : '';
-    const lostTag = isLost ? ' <span class="tag warn">ранее забрал конкурент</span>' : '';
+  function renderCard(card, hintsFor) {
+    const hints = hintsFor?.(card, card.qty > 0 ? card.sum / card.qty : 0);
 
     const dealLabel = `Сделка #${card.id} ↗`;
     const lotLink = card.lotUrl || card.announceUrl;
@@ -97,9 +94,11 @@
             <div class="radar-card-sum num">${money(card.sum)}</div>
           </div>
         </div>
+        ${hints?.priceHtml || ""}
         <div class="radar-card-cust" title="${esc(card.customerName)}">
-          <span class="cust-name">${esc(shortCustomerName(card.customerName))}</span>${boughtTag}${lostTag}
+          <span class="cust-name">${esc(shortCustomerName(card.customerName))}</span>
           ${card.customerBin ? `<span class="dim sub">${esc(card.customerBin)}</span>` : ""}
+          ${hints?.customerHtml || ""}
         </div>
         <div class="radar-card-foot">
           <span class="radar-mgr">${esc(card.managerName)}</span>
@@ -121,7 +120,7 @@
     return a > 10 && a < 20 ? "закупок" : b === 1 ? "закупка" : b > 1 && b < 5 ? "закупки" : "закупок";
   };
 
-  function renderColumn(colKey, title, idx, cards, state, custIndex) {
+  function renderColumn(colKey, title, idx, cards, state, hintsFor) {
     const limit = state.expandedCol[colKey] ? cards.length : 6;
     const visibleCards = cards.slice(0, limit);
     const sum = cards.reduce((acc, c) => acc + (c.sum || 0), 0);
@@ -135,7 +134,7 @@
         </div>
         <div class="radar-card-list">
           ${visibleCards.length > 0
-            ? visibleCards.map(c => renderCard(c, custIndex)).join("")
+            ? visibleCards.map(c => renderCard(c, hintsFor)).join("")
             : `<p class="muted">Нет закупок</p>`}
         </div>
         ${cards.length > 6 && !state.expandedCol[colKey]
@@ -166,10 +165,9 @@
       state.managerId = me;
     }
 
-    const plansBase = typeof PAYLOAD !== "undefined" ? (groupKey === "kt" ? PAYLOAD?.plans?.kt : PAYLOAD?.plans?.ip) : null;
-    const custIndex = typeof window.__buildCustomerIndices === "function"
-      ? window.__buildCustomerIndices(plansBase, typeof PAYLOAD !== "undefined" ? PAYLOAD?.market : null)
-      : null;
+    if (!state.hintsFor && typeof window.__buildWinHintsIndex === "function") {
+      state.hintsFor = window.__buildWinHintsIndex(typeof PAYLOAD === "undefined" ? null : PAYLOAD, groupKey);
+    }
 
     // Available managers & methods (over all cards in group)
     const allCards = [...group.submitToday, ...group.discussion, ...group.secondChance];
@@ -278,9 +276,9 @@
     `;
 
     const renderGridHtml = (d) => `
-      ${renderColumn("submitToday", d.submitColTitle, "01", d.submitCards, state, custIndex)}
-      ${renderColumn("discussion", "Успеть с замечанием", "02", d.discCards, state, custIndex)}
-      ${renderColumn("secondChance", "Второй шанс", "03", d.secondCards, state, custIndex)}
+      ${renderColumn("submitToday", d.submitColTitle, "01", d.submitCards, state, state.hintsFor)}
+      ${renderColumn("discussion", "Успеть с замечанием", "02", d.discCards, state, state.hintsFor)}
+      ${renderColumn("secondChance", "Второй шанс", "03", d.secondCards, state, state.hintsFor)}
     `;
 
     const prevInput = container.querySelector(".radar-search-input");

@@ -33,7 +33,7 @@ export interface NormalizedPlanDeal extends PlanDealItem {
 export interface PlanLostTo { name: string; bin: string; contractSum: number | null }
 export interface PlanLostDealItem {
   id: string; dealUrl: string; planNumber: string; planUrl: string; month: string;
-  customerName: string; itemName: string; managerName: string; planSum: number; contractSum: number | null;
+  customerName: string; customerBin?: string; itemName: string; managerName: string; planSum: number; contractSum: number | null;
 }
 export interface PlanCompetitorItem {
   bin: string; name: string; count: number; planSum: number;
@@ -77,7 +77,9 @@ export interface PlansGroupSliceView {
   lostTo: PlanLostToView;
 }
 export interface PlansGroupView extends PlansGroupSliceView {
-  openPlans: Array<PlanDealItem & { managerId: string }>;
+  openPlans: Array<PlanDealItem & { managerId: string; isFormerManager?: boolean }>;
+  /** История побед по заказчикам, включая сделки вне ограниченных списков для таблиц. */
+  wonCustomers?: Array<{ bin: string; name: string }>;
   group: "ИП" | "КТ";
   months: PlanMonthBarItem[];
   monthViews: Record<string, PlansGroupSliceView>;
