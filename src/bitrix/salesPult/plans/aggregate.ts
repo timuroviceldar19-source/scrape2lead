@@ -28,7 +28,7 @@ function lostToView(lost: NormalizedPlanDeal[]): PlanLostToView {
       cheaperCount: withSum.filter((d) => d.sum > 0 && d.lostTo!.contractSum! < d.sum * CHEAPER_THAN_PLAN).length,
       deals: largest([...ds]).slice(0, 20).map((d) => ({
         id: d.id, dealUrl: d.dealUrl, planNumber: d.planNumber, planUrl: d.planUrl, month: d.month,
-        customerName: d.customerName, itemName: d.itemName, managerName: d.managerName,
+        customerName: d.customerName, customerBin: d.customerBin || undefined, itemName: d.itemName, managerName: d.managerName,
         planSum: d.sum, contractSum: d.lostTo!.contractSum
       }))
     };
@@ -96,7 +96,12 @@ function buildGroupView(group: "ИП" | "КТ", deals: NormalizedPlanDeal[], asO
     return { m, sum: sum(ds), count: ds.length, activeSum: sum(ds.filter(d => d.isOpen || d.outcomeCategory === "won")),
       wonSum: monthViews[m].total.wonSum, newCount: monthViews[m].total.newCount };
   });
-  return { group, ...all, months, monthViews, openPlans: largest(items.filter(d => d.isOpen)).map(d => ({ ...planItem(d), managerId: d.managerId })) };
+  const wonCustomers = buckets(items.filter(d => d.outcomeCategory === "won"), customerKey)
+    .map(([d]) => ({ bin: d.customerBin, name: d.customerName }));
+  const openPlans = largest(items.filter(d => d.isOpen)).map(d => ({
+    ...planItem(d), managerId: d.managerId, isFormerManager: former.has(d.managerId) || undefined
+  }));
+  return { group, ...all, months, monthViews, wonCustomers, openPlans };
 }
 
 /** `formerManagerIds` — ушедшие сотрудники: из таблицы менеджеров убираются, итоги не меняются. */

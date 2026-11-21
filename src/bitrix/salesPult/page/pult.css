@@ -617,7 +617,15 @@ body.tv #planMonths { display: none !important; }
   .plans-summary .share .cust-list, .plans-customers .cust-list { margin-left: 0; }
   .plans-summary .readout { grid-template-columns: 1fr; }
   .plans-summary .readout > div + div { border-left: 0; padding-left: 0; }
-  .plans-summary .plans-outcomes { grid-template-columns: 1fr 1fr; }
+  .plans-summary .plans-outcomes { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+  .plans-summary .plans-outcomes > div { min-width: 0; padding-right: 0; overflow-wrap: anywhere; }
+  .plans-summary .share > .r.head, .plans-breakdown .meth .r.head { display: none; }
+  .plans-summary .share .r > .rk { display: none; }
+  .plans-summary .share .r > .nm, .plans-summary .plan-win-share, .plans-summary .plan-win-counts,
+  .plans-breakdown .r:not(.head) > :first-child { grid-column: 1 / -1; }
+  .plans-summary .share .r > .nm { white-space: normal; overflow-wrap: anywhere; }
+  .plans-summary .share .r > [data-l]:not(.plan-win-share)::before,
+  .plans-breakdown .r > [data-l]::before { content: attr(data-l); display: block; font: 10px var(--mono); color: var(--ink-3); margin-bottom: 4px; }
   .plans-months .months, .plans-months .mlabels { min-width: 360px; }
 }
 
@@ -632,7 +640,14 @@ body.tv #planMonths { display: none !important; }
 }
 
 /* Фильтры относятся только к открытой таблице и прокручиваются со страницей. */
-body.tv .plan-filters { display: none !important; }
+body.tv .plan-filters, body.tv .plan-quick-filters { display: none !important; }
+.plan-quick-filters.chips { flex-wrap: nowrap; overflow-x: auto; min-width: 0; margin: 10px 0 4px; padding: 2px 2px 6px; }
+.plan-quick-filters button { flex: 0 0 auto; white-space: nowrap; }
+.plans-table .win-hints, .radar-card .win-hints { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.plans-table .win-hints .tag, .radar-card .win-hints .tag { max-width: 100%; overflow-wrap: anywhere; }
+.plans-table .win-price, .radar-card .win-price { display: block; font: 400 11px/1.4 var(--mono); margin-top: 3px; overflow-wrap: anywhere; }
+.plans-table .win-price.good, .radar-card .win-price.good { color: var(--good); }
+.plans-table .win-price.bad, .radar-card .win-price.bad { color: var(--bad); }
 .plan-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 8px 0 24px; }
 .plan-filter-group { min-width: 0; margin: 0; padding: 0; border: 0; }
 .plan-filter-group legend { font: 12px var(--mono); margin-bottom: 8px; color: var(--ink-2); }
@@ -653,8 +668,7 @@ body.tv .plan-filters { display: none !important; }
   .plans-table .r:not(.head) > [data-label]::before { content: attr(data-label); display: block; font: 10px var(--mono); color: var(--ink-2); margin-bottom: 4px; }
 }
 
-@media (max-width: 600px) {
-  .plans-summary .plan-win-share, .plans-summary .plan-win-counts { grid-column: 1 / -1; }
+@media (max-width: 760px) {
   .plans-summary .plan-win-share::before { content: attr(data-l); color: var(--ink-3); }
   .plans-summary .plan-win-share .hbar { flex: 0 1 64px; }
   .plans-summary .plan-win-desktop { display: none; }
@@ -809,11 +823,14 @@ body.tv .search-btn, body.tv .search-modal { display: none !important; }
 body.tv .plans-summary-actions { display: none !important; }
 .plans-open, .plan-search-input { scroll-margin-top: calc(var(--bar-height, 64px) + var(--period-height, 100px) + 18px); }
 .plans-open .block-head { margin-bottom: 8px; }
-.plan-search-wrap { margin: 0 0 6px; }
+.plan-search-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 6px; }
+.plan-copy-status { color: var(--ink-2); font-size: 12px; }
+.plan-search-wrap button:disabled { opacity: .55; cursor: default; }
 .plan-search-input { width: 100%; max-width: 480px; height: 32px; padding: 4px 10px; font: 400 12px var(--display); background: var(--sheet); border: 1px solid var(--rule-2); border-radius: 6px; color: var(--ink); box-sizing: border-box; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02); }
 .plan-search-input:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
 body.tv .plan-search-wrap { display: none !important; }
 @media (max-width: 760px) {
+  .plan-search-input { font-size: 16px; }
   .plans-open .plan-filters { margin: 6px 0 16px; }
 }
 
@@ -1114,11 +1131,19 @@ body.tv .radar-col-more {
 
 @media (max-width: 960px) {
   .radar-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .radar-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+@media (max-width: 760px) {
+  .radar-search-input { font-size: 16px; }
+  .radar-filter-group { width: 100%; min-width: 0; align-items: flex-start; flex-direction: column; gap: 4px; }
+  .radar-filter-group .chips { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; padding: 2px 2px 4px; }
+  .radar-filter-group .chips button { flex: 0 0 auto; white-space: nowrap; }
+  .radar-card-head { flex-direction: column; gap: 6px; }
+  .radar-card-right { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
 }
 @media (max-width: 480px) {
   .radar-kpis {

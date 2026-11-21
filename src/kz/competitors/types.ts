@@ -306,6 +306,7 @@ export interface CompetitorLotEntry {
   annoId: string;
   lotNumber: string;
   date: string;
+  customerBin?: string;
   customerName: string;
   kind: string;
   status: string;
@@ -347,6 +348,7 @@ export interface HeadToHeadLotItem {
   annoId: string;
   lotNumber: string;
   date: string;
+  customerBin?: string;
   customerName: string;
   kind: string;
   status: string;
@@ -357,6 +359,7 @@ export interface HeadToHeadLotItem {
   winnerBin: string;
   winnerName: string;
   winnerPrice: number | null;
+  winnerDiscountPct?: number | null;
   winnerCondDisc: number | null;
   rivalAdmitted: string;
   rivalPrice: number | null;
@@ -435,6 +438,7 @@ export interface TemplateLotItem {
   annoId: string;
   lotNumber: string;
   date: string;
+  customerBin?: string;
   customerName: string;
   kind: string;
   status: string;
