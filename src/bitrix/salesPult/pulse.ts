@@ -13,6 +13,7 @@ import type { RadarCard, RadarGroupView, RadarView } from "./radar/types.js";
 import { buildRegisterRisks } from "./register/risks.js";
 import type { RegisterView } from "./register/types.js";
 import type { SalesPultPayload, SignalItem } from "./types.js";
+import type { RecentCheaperRejectionsSummary } from "../../kz/competitors/losses.js";
 
 export type PulseSeverity = "red" | "yellow" | "green";
 export type PulseArea = "cash" | "debt" | "tender" | "margin" | "stock" | "crm" | "losses";
@@ -26,7 +27,7 @@ export interface PulseItem {
   detail?: string;
   /** Конкретный блок: `./fin.html#…`, `./reg.html#…`, `#radar-ip`, `#signals`. */
   href: string;
-  /** Пункт из финансов, себестоимости или маржи: не для менеджера и не для ТВ. */
+  /** Закрытый пункт (финансы, себестоимость, маржа, данные «Конкурентов»): не для менеджера и не для ТВ. */
   finance: boolean;
   /** Деньги пункта в ₸ — порядок внутри одного цвета; нет — пункт в конце своего цвета. */
   amount?: number;
@@ -253,6 +254,24 @@ function crmItems(contractSignals: readonly SignalItem[] | undefined, outcomeMis
   return [{
     key: "crm-errors", severity: "yellow", area: "crm", finance: false, href: PULSE_LINKS.crm,
     title: "Ошибки в CRM", value: plural(count, ["сделка", "сделки", "сделок"]), detail: "стадии и суммы — в «Срочно»", amount: 0
+  }];
+}
+
+/**
+ * Свежие отклонения заявок группы при цене ниже победителя (`summarizeRecentCheaperRejections`): самая
+ * болезненная потеря, поэтому красный пункт. Ссылка — на «Конкурентов» той группы, где денег больше.
+ */
+export function lossPulseItems(summary: RecentCheaperRejectionsSummary | null | undefined): PulseItem[] {
+  if (!summary || summary.count <= 0) return [];
+  const byGroup = { "ИП": 0, "КТ": 0 };
+  for (const item of summary.items) byGroup[item.group] += Math.max(0, item.ourPrice ?? 0);
+  return [{
+    key: "losses-cheaper", severity: "red", area: "losses", finance: true,
+    href: byGroup["КТ"] > byGroup["ИП"] ? "#competitors-kt" : "#competitors-ip",
+    title: "Отклонены при цене ниже победителя",
+    value: plural(summary.count, ["заявка", "заявки", "заявок"]),
+    detail: `${money(summary.sumOur)} за неделю — проверьте документы`,
+    amount: summary.sumOur
   }];
 }
 

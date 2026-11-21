@@ -52,11 +52,13 @@ import { buildAllMarketMonthContracts, filterMarketUnitsForView } from "../src/k
 import { loadMarketConfig } from "../src/kz/market/config.js";
 import { loadEducationVerdicts } from "../src/kz/market/educationVerdicts.js";
 import type { MarketConfig } from "../src/kz/market/types.js";
+import type { CompetitorsView } from "../src/kz/competitors/types.js";
 import { backfillCompetitors } from "../src/kz/competitors/collector.js";
 import { updateCompetitorsWindow, loadCompetitorsView, resolveBackfillBudgetMs } from "../src/kz/competitors/load.js";
 import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
 import { collectRadarView } from "../src/bitrix/salesPult/radar/collect.js";
-import { buildMorningPulse, pulseForPayload, selectHotLots, type PulseView } from "../src/bitrix/salesPult/pulse.js";
+import { buildMorningPulse, lossPulseItems, pulseForPayload, selectHotLots, type PulseItem, type PulseView } from "../src/bitrix/salesPult/pulse.js";
+import { summarizeRecentCheaperRejections } from "../src/kz/competitors/losses.js";
 import type { RadarView } from "../src/bitrix/salesPult/radar/types.js";
 import type { FinanceView } from "../src/bitrix/salesPult/finance/types.js";
 import {
@@ -255,6 +257,11 @@ export interface SalesPultRunOptions {
   nowIso?: string;
   webhookUrl?: string;
   skipUpdates?: boolean;
+  /**
+   * «Конкуренты» для утреннего дайджеста. Не задано: при `skipUpdates` (тесты) локальная база не читается,
+   * иначе — `loadCompetitorsView` из `data/competitors`.
+   */
+  loadCompetitors?: (todayAlmaty: string) => CompetitorsView | null;
 }
 
 /** Пульс не роняет сборку пульта: сбой — страница без пульса, в лог только класс ошибки. */
@@ -837,7 +844,10 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
     for (const closed of Object.values(payload.closedMonths)) {
       if (closed) attachRegisterContracts(closed, registerView, new Map(), config.register?.managerAliases);
     }
-    payload.pulse = buildPulseSafely(() => pulseForPayload(payload, { nowIso, finance: financeView, register: registerView }));
+    payload.pulse = buildPulseSafely(() => pulseForPayload(payload, {
+      nowIso, finance: financeView, register: registerView,
+      extraItems: lossPulseItems(summarizeRecentCheaperRejections(competitorsView, todayAlmaty))
+    }));
 
     const outDir = path.resolve("exports/sales-pult");
     fs.mkdirSync(outDir, { recursive: true });
@@ -898,10 +908,20 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
         console.warn(`[Финансы] Не загрузились (${(err as Error)?.name || "Error"})`);
         return undefined;
       });
+      // «Конкуренты» — из локальной базы, обновлённой выше в этом же запуске; сбой здесь дайджест не отменяет.
+      let morningLosses: PulseItem[] = [];
+      try {
+        const loadCompetitors = options?.loadCompetitors
+          ?? (options?.skipUpdates ? () => null : (day: string) => loadCompetitorsView({ todayAlmaty: day }));
+        const competitors = loadCompetitors(todayAlmaty);
+        if (competitors) morningLosses = lossPulseItems(summarizeRecentCheaperRejections(competitors, todayAlmaty));
+      } catch (err) {
+        console.warn(`[Конкуренты] Потери для дайджеста не собраны (${formatSafeErrorStatus(err)})`);
+      }
       try {
         const pulse = buildMorningPulse({
           asOfDate: todayAlmaty, nowIso, finance: morningFinance, radar: morningRadar,
-          outcomeMismatchesCount: collected.outcomeMismatches?.length ?? 0
+          outcomeMismatchesCount: collected.outcomeMismatches?.length ?? 0, extraItems: morningLosses
         });
         // Только сборка: чата директора нет, отправка — по прямой команде владельца. Текст в публичный лог не идёт.
         const digest = buildDirectorDigest(pulse, config.pultUrl);

@@ -6,6 +6,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BitrixClient } from "../../src/bitrix/client.js";
 import { runSalesPult, type PultConfig } from "../../scripts/sales-pult.mjs";
 import { financeWorkbookBuffer } from "../fixtures/sales-pult/financeWorkbook.js";
+import type { CompetitorsView } from "../../src/kz/competitors/types.js";
 
 // Утренний режим: дайджест директору собирается, но не отправляется и не печатается в публичный лог.
 // Все имена, суммы, лоты и адреса вымышленные.
@@ -136,6 +137,43 @@ describe("утренний режим: дайджест директору (dry-
     expect(out.stdout).toContain("#дайджест 2026-10-28 директор");
     expect(out.stdout).toContain("🔴 Подать сегодня · ИП: 1 лот · 61,2 млн ₸");
     expect(out.stdout).toContain("🔴 Кассовый разрыв");
+  });
+
+  it("свежие отклонения ниже цены победителя попадают в дайджест, а номера лотов — нет в лог; сбой «Конкурентов» дайджест не отменяет", async () => {
+    delete process.env.CI;
+    const rejection = {
+      annoId: "A-1", lotNumber: "LOSS-LOT-31337", date: "2026-10-20", endDate: "2026-10-27", ourCompany: "ТОО «Демо Ф3»",
+      ourBin: "900000000001", customerName: "Школа Тест", kind: "Интерактивные панели", status: "Завершена",
+      rejectionShort: "Не предоставлено письмо производителя", rejectionDetail: "", ourPrice: 4_000_000, ourUnitPrice: 4_000_000,
+      winnerName: "ТОО «Соперник»", winnerBin: "900000000101", winnerPrice: 4_500_000, winnerUnitPrice: 4_500_000,
+      cheaperThanWinner: true, cheaperByPct: 11.1, url: "https://example.invalid/lot"
+    };
+    const competitors = {
+      asOf: "2026-10-28", months: [], kt: null,
+      ip: { group: "ИП", competitors: [], ourRejections: [rejection] }
+    } as unknown as CompetitorsView;
+    const calls: string[] = [];
+    const { client } = fakeBitrix();
+    const out = await capture(() => runSalesPult(["--mode", "morning", "--finance-file", financeFile, "--print-digest"], {
+      config: config(), rawClient: client, webhookUrl: WEBHOOK, nowIso: NOW_ISO, skipUpdates: true,
+      loadCompetitors: (day) => { calls.push(day); return competitors; }
+    }));
+    expect(calls).toEqual(["2026-10-28"]);
+    expect(out.stdout).toContain("Отклонены при цене ниже победителя");
+
+    process.env.CI = "true";
+    const ci = await capture(() => runSalesPult(["--mode", "morning", "--finance-file", financeFile], {
+      config: config(), rawClient: fakeBitrix().client, webhookUrl: WEBHOOK, nowIso: NOW_ISO, skipUpdates: true,
+      loadCompetitors: () => competitors
+    }));
+    expect(ci.combined).not.toContain("LOSS-LOT-31337");
+
+    const broken = await capture(() => runSalesPult(["--mode", "morning"], {
+      config: config(), rawClient: fakeBitrix().client, webhookUrl: WEBHOOK, nowIso: NOW_ISO, skipUpdates: true,
+      loadCompetitors: () => { throw new Error("db locked"); }
+    }));
+    expect(broken.stdout).toMatch(/\[DRY-RUN\] Дайджест директору сформирован/);
+    expect(process.exitCode).toBeUndefined();
   });
 
   it("радар упал, финансов нет — утренний режим не падает, дайджест всё равно собран", async () => {
