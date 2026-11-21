@@ -13,6 +13,7 @@ import {
   parseContractUnitsHtml
 } from "./goszakupContractParser.js";
 import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
+import { gzPortalLaunchOptions } from "./gzPortalTls.js";
 
 const BASE_URL = GZ_PORTAL_ORIGIN;
 const DEFAULT_RECORDS_PER_PAGE = 50;
@@ -295,10 +296,10 @@ async function createBrowserPageLoader(options: GoszakupContractExportOptions): 
   load: ContractPageLoader;
   close: () => Promise<void>;
 }> {
-  const browser: Browser = await chromium.launch({
+  const browser: Browser = await chromium.launch(gzPortalLaunchOptions({
     headless: options.headless ?? true,
     slowMo: options.slowMoMs ?? 0
-  });
+  }));
   const context = await browser.newContext({ locale: "ru-RU", viewport: { width: 1400, height: 900 } });
   const page: Page = await context.newPage();
   const timeout = options.pageLoadTimeoutMs ?? 45_000;

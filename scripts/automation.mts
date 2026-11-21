@@ -2,7 +2,7 @@ import path from "node:path";
 import dotenv from "dotenv";
 import { loadAutomationConfig } from "../src/automation/config.js";
 import { readManifest } from "../src/automation/core.js";
-import { approveAutomationRun, prepareAutomationRun, pushAutomationRun, runScheduledAutomation } from "../src/automation/orchestrator.js";
+import { approveAutomationRun, certificateErrorStages, prepareAutomationRun, pushAutomationRun, runScheduledAutomation } from "../src/automation/orchestrator.js";
 import { createRealAutomationDependencies } from "../src/automation/realDependencies.js";
 
 dotenv.config();
@@ -40,7 +40,14 @@ async function main(): Promise<void> {
     console.log(`automation run: run=${manifest.runId} status=${manifest.status}`);
     console.log(`report=${path.resolve(config.runsDir,manifest.runId,"summary.txt")}`);
     const expectedStatus = config.deliveryMode === "prepare" ? "ready" : "pushed";
-    if(manifest.status!==expectedStatus) process.exitCode=1; return;
+    if(manifest.status!==expectedStatus){process.exitCode=1;return;}
+    // Прогон дошёл до конца, но часть сбора сорвалась на сертификате портала: письмо должно прийти, а повтор не нужен.
+    const certificateStages=certificateErrorStages(manifest);
+    if(certificateStages.length){
+      console.error(`automation run: ошибка сертификата портала (${certificateStages.join(", ")}); остальное записано, повтор не поможет`);
+      process.exitCode=CERTIFICATE_EXIT_CODE;
+    }
+    return;
   }
   if(!args.runId) throw new Error("--run <run-id> is required");
   if(args.command==="status"){
@@ -61,6 +68,8 @@ async function main(): Promise<void> {
   throw new Error(`unknown automation command: ${args.command}`);
 }
 
+/** Совпадает с кодом в run-automation-with-retry.sh: обёртка не повторяет такой прогон. */
+const CERTIFICATE_EXIT_CODE=3;
 function requireEnv(name:string):void{if(!process.env[name]?.trim())throw new Error(`${name} is required`);}
 function requireAiEnv():void{
   const provider=(process.env.SPEC_ANALYSIS_PROVIDER??"opencode").toLowerCase();

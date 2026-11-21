@@ -6,6 +6,7 @@ import { sleep } from "./csv.js";
 import { filterGzItems } from "./gzItemFilter.js";
 import { parseGoszakupLotsHtml, parseGoszakupPagination, type GoszakupLotItem } from "./goszakupHtmlParser.js";
 import { GZ_PORTAL_ORIGIN } from "./goszakupOrigin.js";
+import { gzPortalLaunchOptions } from "./gzPortalTls.js";
 import { assertPortalHtmlAvailable, assertPortalResponse, GzCollectionState, isTransientNetworkError, type GzCollectionReport } from "./gzCollection.js";
 
 const BASE_URL = GZ_PORTAL_ORIGIN;
@@ -248,10 +249,10 @@ export async function exportGoszakupLotsByNstru(
   const pageLoadRetryDelayMs = options.pageLoadRetryDelayMs ?? DEFAULT_PAGE_LOAD_RETRY_DELAY_MS;
   const collection = options.partialCollection ? new GzCollectionState(options.maxConsecutiveNetworkFailures) : undefined;
 
-  const browser = await chromium.launch({
+  const browser = await chromium.launch(gzPortalLaunchOptions({
     headless: options.headless ?? true,
     slowMo: options.slowMoMs ?? 0
-  });
+  }));
   const context = await browser.newContext({
     locale: "ru-RU",
     viewport: { width: 1400, height: 900 }

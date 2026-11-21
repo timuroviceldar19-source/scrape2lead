@@ -27,6 +27,8 @@ export type AutomationDeliveryMode = "prepare" | "push";
 export interface AutomationStage {
   skipped?: GzSkippedQuery[];
   sourceUnreachable?: boolean;
+  /** Запросы, сорвавшиеся на сертификате портала: повтор не поможет, прогон в конце падает с кодом 3. */
+  certificateErrors?: number;
   status: StageStatus;
   startedAt: string;
   finishedAt?: string;

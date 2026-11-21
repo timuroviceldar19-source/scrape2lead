@@ -33,6 +33,30 @@ export function isTransientNetworkError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Портал ответил, но с недействительным сертификатом. Для сетевого шаблона выше это тоже `net::ERR_`, поэтому
+ * сбор считает её временной и не роняет остальной прогон, но повтор через час её не исправит. 19–21.11.2026
+ * просроченный сертификат procurement.gov.kz так и проходил как временная недоступность: три дня лоты не
+ * приходили, а запуски оставались зелёными. Теперь такие ошибки отмечаются отдельно, и прогон в конце падает.
+ */
+const CERTIFICATE_ERROR = /net::ERR_CERT_|ERR_SSL_PINNED_KEY|CERT_HAS_EXPIRED|CERT_NOT_YET_VALID|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT|SELF_SIGNED_CERT|ERR_TLS_CERT_ALTNAME_INVALID/;
+
+export function isCertificateError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  while (error != null && !seen.has(error)) {
+    seen.add(error);
+    const item = typeof error === "object" ? error as { message?: string; code?: string; cause?: unknown } : null;
+    const message = typeof error === "string" ? error : `${item?.message ?? ""} ${item?.code ?? ""}`;
+    if (CERTIFICATE_ERROR.test(message)) return true;
+    error = item?.cause;
+  }
+  return false;
+}
+
+export function countCertificateErrors(skipped: readonly GzSkippedQuery[] | undefined): number {
+  return skipped?.filter((query) => isCertificateError(query.reason)).length ?? 0;
+}
+
 export function collectionErrorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").slice(0, 500);
 }

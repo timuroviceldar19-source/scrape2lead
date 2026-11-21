@@ -3,6 +3,7 @@ import { isValidBin, sleep } from "./csv.js";
 import { KzStorage } from "./kzStorage.js";
 import { fetchRegistryForBin, type RegistryFetchResult } from "./goszakupRegistryFetcher.js";
 import { isTransientNetworkError } from "./gzCollection.js";
+import { gzPortalLaunchOptions } from "./gzPortalTls.js";
 
 export interface RegistryCollectOptions {
   /** В automation ошибки кода не должны превращаться в отсутствие карточки. */
@@ -135,10 +136,10 @@ export async function collectGoszakupRegistryForBins(
       }
 
       if (!browser) {
-        browser = await chromium.launch({
+        browser = await chromium.launch(gzPortalLaunchOptions({
           headless: options.headless ?? true,
           slowMo: options.headless ? 0 : 50
-        });
+        }));
         const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
         page = await context.newPage();
       }

@@ -13,7 +13,7 @@ const PROBE_OK = "portal probe: ok (HTTP 200, 0 s)";
 const PROBE_FAILURE = "portal probe: unreachable: fetch failed ENOTFOUND";
 
 /** Изолированный runner: оба процесса подставные, ни npm, ни сети, ни Bitrix. */
-async function run(failures: number, message: string, probeFailures = 0, oldLog = "", probeCode = 75) {
+async function run(failures: number, message: string, probeFailures = 0, oldLog = "", probeCode = 75, failureCode = 1) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "s2l-retry-sh-")); dirs.push(dir);
   const scripts = path.join(dir, "scripts"); fs.mkdirSync(scripts);
   fs.copyFileSync("scripts/run-automation-with-retry.sh", path.join(scripts, "run-automation-with-retry.sh"));
@@ -21,8 +21,8 @@ async function run(failures: number, message: string, probeFailures = 0, oldLog 
 n=$(cat "${dir}/calls" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "${dir}/calls"
 if [ "$n" -le ${failures} ]; then
   echo '${message}' >> "$2"
-  echo 'scheduler automation:run status=failed exit=1' >> "$2"
-  exit 1
+  echo 'scheduler automation:run status=failed exit=${failureCode}' >> "$2"
+  exit ${failureCode}
 fi
 echo 'scheduler automation:run status=pushed exit=0' >> "$2"
 `);
@@ -92,6 +92,14 @@ describe.skipIf(process.platform === "win32")("scheduler runner with retry (posi
     expect(result.code).toBe(1);
     expect(result.probes).toBe(2);
     expect(result.calls).toBe(1);
+  });
+  it("returns 3 at once when the run hit a portal certificate error", async () => {
+    // Робот уже записал всё, что смог; повтор через RETRY_PAUSE_SECONDS сертификат не исправит.
+    const result = await run(99, "page.goto: net::ERR_CERT_DATE_INVALID at https://procurement.gov.kz/", 0, "", 75, 3);
+    expect(result.code).toBe(3);
+    expect(result.calls).toBe(1);
+    expect(result.probes).toBe(1);
+    expect(result.log).not.toContain("retry");
   });
   it.each([1, 2])("starts automation when the probe itself fails (exit %i)", async probeCode => {
     const result = await run(0, TIMEOUT, 99, "", probeCode);

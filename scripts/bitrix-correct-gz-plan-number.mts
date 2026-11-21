@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import dotenv from "dotenv";
 import { chromium, type Browser, type Page } from "playwright";
+import { gzPortalLaunchOptions } from "../src/kz/gzPortalTls.js";
 import { BitrixClient } from "../src/bitrix/client.js";
 import {
   GZ_CANONICAL_PLAN_PAGE_DIR,
@@ -92,7 +93,7 @@ async function loadCanonicalPage(page: Page, url: string): Promise<PageLoad> {
 }
 
 async function withBrowser<T>(headless: boolean, run: (page: Page) => Promise<T>): Promise<T> {
-  const browser: Browser = await chromium.launch({ headless });
+  const browser: Browser = await chromium.launch(gzPortalLaunchOptions({ headless }));
   const context = await browser.newContext({ locale: "ru-RU", viewport: { width: 1400, height: 900 } });
   const page = await context.newPage();
   try {
