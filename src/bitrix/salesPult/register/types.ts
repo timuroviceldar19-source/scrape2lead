@@ -228,6 +228,22 @@ export interface RegisterHistoryPayload {
   error?: string;
 }
 
+export interface RegisterRiskRow {
+  date: string;
+  manager: string;
+  customer: string;
+  product: string;
+  sale: number;
+  val: number | null;
+  margin: number | null;
+}
+
+export interface RegisterRisksSummary {
+  belowCost: { count: number; loss: number; rows: Array<RegisterRiskRow & { loss: number }> };
+  lowMargin: { count: number; sale: number; rows: RegisterRiskRow[] };
+  portalMismatch: { count: number; difference: number; rows: Array<RegisterRiskRow & { portal: number; difference: number }> };
+}
+
 export interface RegisterSuccessView {
   crmDeals?: CrmWonDeal[];
   file: string;
@@ -247,6 +263,7 @@ export interface RegisterSuccessView {
   crmExtra: number;
   /** Все строки файла, включая партнёрские (`partner: true`). */
   rows: RegisterRow[];
+  risks?: RegisterRisksSummary;
   history?: RegisterHistoryPayload;
   historyError?: string;
   error?: undefined;

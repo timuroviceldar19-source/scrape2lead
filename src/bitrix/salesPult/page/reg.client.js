@@ -5,7 +5,11 @@
   const P = typeof PAYLOAD !== "undefined" ? PAYLOAD : {};
   const R = P.register;
   // Менеджеру «Радар», «Финансы» и «Конкуренты» не показываются: в его варианте пульта этих вкладок нет.
-  if (P.viewer) document.querySelectorAll('a[href="./#radar-ip"], a[href="./#competitors-ip"], a[href="./fin.html"]').forEach((a) => a.remove());
+  if (P.viewer) {
+    document.querySelectorAll('a[href="./#radar-ip"], a[href="./#competitors-ip"], a[href="./fin.html"]').forEach((a) => a.remove());
+    const footAudience = document.getElementById("footAudience");
+    if (footAudience) footAudience.textContent = "Личный вид менеджера · только ваши договоры";
+  }
   const regEl = document.getElementById("tab-reg");
 
   function animate(root) {
@@ -54,13 +58,18 @@
     }
   }
 
-  function syncStickyHeights() {
-    const bar = document.querySelector(".bar");
+  function stickyPeriodHeight() {
     const dateline = document.querySelector(".dateline");
-    if (bar) document.documentElement.style.setProperty("--bar-height", bar.offsetHeight + "px");
-    if (dateline) document.documentElement.style.setProperty("--period-height", dateline.offsetHeight + "px");
+    return dateline && getComputedStyle(dateline).position === "sticky" ? dateline.offsetHeight : 0;
   }
 
+  function syncStickyHeights() {
+    const bar = document.querySelector(".bar");
+    if (bar) document.documentElement.style.setProperty("--bar-height", bar.offsetHeight + "px");
+    document.documentElement.style.setProperty("--period-height", stickyPeriodHeight() + "px");
+  }
+
+  let resizeChart;
   let renderedMonth;
   let rendered = false;
   function renderMonth() {
@@ -70,7 +79,7 @@
     rendered = true;
     renderedMonth = selected;
     const activeView = window.__registerViewForMonth(R, selected);
-    window.__renderRegisterTab(activeView, regEl, selected === P.asOfDate?.slice(0, 7) ? (P.reconciliation || { closedNotInRegister: [], possibleDuplicates: [] }) : null, P.portal);
+    resizeChart = window.__renderRegisterTab(activeView, regEl, selected === P.asOfDate?.slice(0, 7) ? (P.reconciliation || { closedNotInRegister: [], possibleDuplicates: [] }) : null, P.portal, months[0]);
     buttons.forEach((button, month) => button.setAttribute("aria-pressed", String(month === selected)));
     const dateLabel = document.getElementById("dateLabel");
     if (dateLabel) dateLabel.textContent = `Данные на ${activeView?.asOf || P.asOfDate || ""}`;
@@ -91,12 +100,16 @@
     const secInd = document.querySelector(".sections .ind");
     const activeLink = document.querySelector(".sections a[aria-current='page']");
     if (secInd && activeLink) {
-      secInd.style.left = activeLink.offsetLeft + 14 + "px";
-      secInd.style.width = activeLink.offsetWidth - 28 + "px";
+      const linkStyle = getComputedStyle(activeLink);
+      const left = parseFloat(linkStyle.paddingLeft);
+      const right = parseFloat(linkStyle.paddingRight);
+      secInd.style.left = activeLink.offsetLeft + left + "px";
+      secInd.style.width = activeLink.offsetWidth - left - right + "px";
     }
   }
 
   addEventListener("resize", () => {
+    resizeChart?.();
     moveInd();
     syncStickyHeights();
   });
@@ -124,8 +137,7 @@
           animate(revealSec);
         }
         const barBottom = document.querySelector(".bar")?.getBoundingClientRect().bottom || 0;
-        const datelineBottom = document.querySelector(".dateline")?.getBoundingClientRect().bottom || 0;
-        const stickyBottom = Math.max(barBottom, datelineBottom, 0);
+        const stickyBottom = Math.max(barBottom, 0) + stickyPeriodHeight();
         const top = Math.max(0, window.scrollY + target.getBoundingClientRect().top - stickyBottom - 16);
         window.scrollTo({ top, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
       }

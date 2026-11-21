@@ -12,6 +12,7 @@ import type {
   RegisterPartnerSales
 } from "./types.js";
 import { isPartnerSale } from "./parseExcel.js";
+import { buildRegisterRisks } from "./risks.js";
 
 function sumBy<T>(items: T[], fn: (item: T) => number | null | undefined): number {
   return items.reduce((s, x) => s + (fn(x) || 0), 0);
@@ -231,6 +232,7 @@ export function buildRegisterView(params: {
     ...(partner ? { partner } : {}),
     missing: sortedMissing,
     crmExtra: extraDealsCount,
+    risks: buildRegisterRisks(allRows, hasVal),
     rows: [...allRows].sort((a, b) => b.date.localeCompare(a.date) || b.sale - a.sale),
     history,
     historyError,
