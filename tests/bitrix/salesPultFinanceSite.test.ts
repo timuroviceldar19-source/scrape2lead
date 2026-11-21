@@ -208,7 +208,7 @@ describe("страница «Финансы»", () => {
       await page.locator('#debtChips button[data-c="Бета"]').click();
       expect(await rows()).toBe(1);
       expect(await page.locator('#debtChips button[data-c="Бета"]').getAttribute("aria-pressed")).toBe("true");
-      expect(await text(page, "#f-debtors .block-head .idx")).toBe("04");
+      expect(await text(page, "#f-debtors .block-head .idx")).toBe("02");
       // продажа 01.06, сегодня 17.11 — больше 60 дней, красным
       expect(await page.locator("#f-debtors .fin-debt .r.body .num.bad").count()).toBeGreaterThan(0);
       expect(errors).toEqual([]);

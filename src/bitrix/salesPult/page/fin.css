@@ -113,3 +113,68 @@
   .fin-tile .sub { font-size: 12px; line-height: 1.45; }
   .fin-tile .sub .warn { display: block; font-size: 12px; line-height: 1.45; padding: 4px 7px; }
 }
+
+:root { --fin-sticky-date: var(--fin-date-height, 46px); }
+#tab-fin > section[id], #debtMainBox, #stockFocus {
+  scroll-margin-top: calc(var(--bar-height, 64px) + var(--fin-sticky-date) + 12px);
+}
+#f-overview, #f-warnings { margin-top: 0; padding-top: 0; border-top: 0; }
+#f-warnings .note-warn { margin-top: 0; }
+.fin-tax-position { display: block; margin-top: 4px; }
+.fin-deltas { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 6px; font: 400 11px/1.45 var(--mono); color: var(--ink-2); }
+.fin-deltas .good { color: #166534; }
+.fin-jumps, .fin-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 12px; }
+.fin-jumps a { color: var(--ink); text-decoration: none; }
+.fin-copy-status { font: 400 12px var(--mono); color: var(--ink-2); }
+.fin-copy-status:empty { display: none; }
+.fin-copy-field { position: fixed; inset: 0 auto auto 0; width: 1px; height: 1px; opacity: 0; }
+.fin-copy-field.is-visible { position: static; flex: 0 1 100%; min-width: 0; height: 8em; opacity: 1; }
+.fin-debt-focus, .fin-stock-stagnant {
+  padding: 14px 16px;
+  border: 1px solid var(--rule-2);
+  border-radius: 10px;
+  background: var(--sheet);
+  overflow-wrap: anywhere;
+}
+.fin-stock-stagnant { margin-bottom: 14px; }
+.fin-debt-focus h3, .fin-stock-stagnant h3 { margin: 0 0 6px; font-size: 15px; font-weight: 500; }
+.fin-age-summary { display: flex; flex-wrap: wrap; gap: 4px 22px; font-size: 13px; }
+.fin-age-summary b { margin-left: 4px; }
+.fin-focus-list { list-style: none; padding: 0; margin: 10px 0 0; }
+.fin-focus-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-top: 1px solid var(--rule); font-size: 13px; }
+.fin-focus-list strong { font-weight: 500; }
+.fin-focus-meta { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px; }
+.fin-debt-focus .lead { margin: 0 0 6px; font-size: 12px; }
+#f-payments .lead .bad { color: var(--bad-ink); }
+.fin-focus-meta.warn { color: var(--warn-ink); }
+.fin-focus-meta.bad { color: var(--bad-ink); }
+.fin-focus-value { text-align: right; font: 500 12px/1.5 var(--mono); white-space: nowrap; }
+.fin-due { display: inline-block; border-radius: 4px; margin-top: 2px; padding: 2px 5px; background: var(--sheet); color: var(--ink-2); font: 500 11px var(--mono); }
+.fin-due.warn { background: var(--warn-t); color: var(--warn-ink); }
+.fin-pnl.no-prev { min-width: 540px; }
+.fin-pnl.no-prev .r { grid-template-columns: minmax(120px, 1.4fr) repeat(4, minmax(0, 1fr)); }
+
+@media (max-width: 760px) {
+  :root { --fin-sticky-date: 0px; }
+  .dateline { position: static; }
+  #f-overview .block-head { gap: 6px 12px; margin-bottom: 10px; }
+  .fin-tile .label { display: block; overflow-wrap: anywhere; }
+  .fin-tile .fin-spark { height: 16px; margin-top: 4px; }
+  .fin-pnl .r > :first-child, .fin-cash .r > :first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--paper);
+    padding-right: 8px;
+    box-shadow: 8px 0 0 var(--paper);
+  }
+  .fin-debt-focus, .fin-stock-stagnant { padding: 10px 12px; }
+}
+
+@media (max-width: 480px) {
+  .sections a { padding-inline: 1px; }
+  .fin-tile { padding-block: 10px; }
+  .fin-tile .sub { font-size: 11px; line-height: 1.4; }
+  #f-debtors { margin-top: 24px; padding-top: 14px; }
+  #f-debtors .block-head { gap: 6px 12px; margin-bottom: 10px; }
+}

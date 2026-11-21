@@ -11,6 +11,96 @@
 <style>
 /*__CSS__*/
 </style>
+<style>
+#r-risks .block-head { margin-bottom: 14px; }
+.reg-risk-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr));
+  gap: 10px;
+}
+.reg-risk-detail, .reg-risk-link {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--rule-2);
+  border-radius: 8px;
+  background: var(--sheet);
+}
+.reg-risk-detail[open] { grid-column: 1 / -1; }
+.reg-risk-detail summary { cursor: pointer; }
+.reg-risk-detail summary strong { margin-left: 4px; }
+.reg-risk-detail summary > span, .reg-risk-link > span {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink-2);
+  font: 400 12px/1.45 var(--mono);
+}
+.reg-risk-detail summary > span { margin-left: 20px; }
+.reg-risk-link { display: block; text-underline-offset: 3px; }
+.reg-risk-link > strong { text-decoration: underline; }
+.reg-risk-link > span { text-decoration: none; }
+.reg-risk-link:hover, .reg-risk-detail:has(summary:hover) { border-color: var(--ink-3); }
+.reg-risk-rows .r {
+  grid-template-columns: repeat(var(--risk-columns), minmax(0, 1fr));
+  gap: 12px;
+  font-size: 13px;
+}
+.reg-risk-rows .r > span { overflow-wrap: anywhere; }
+.reg-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 12px 0; }
+.reg-copy [role="status"] { color: var(--ink-2); font-size: 12px; }
+#r-discipline .gsum { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+#r-discipline .rows .r > *, .mismatch-row .info, #srcLabel { overflow-wrap: anywhere; }
+.portal-miss .r { grid-template-columns: 55px 95px minmax(0, 2.5fr) 115px minmax(0, 1.2fr) minmax(140px, 1.4fr); }
+.reg-contract-number { font: 400 12px/1.5 var(--mono); overflow-wrap: anywhere; }
+#r-history .deals { padding: 10px 14px 18px 24px; }
+#r-history .deals .r {
+  grid-template-columns: minmax(140px, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) 70px 50px minmax(0, 1fr) 70px;
+}
+#r-history .deals .r:not(.head) { padding: 6px 0; }
+.r.body[aria-expanded="true"] .chev { transform: rotate(180deg); }
+
+@media (max-width: 760px) {
+  .dateline { position: static; }
+  #registerMonths { width: 100%; flex-wrap: nowrap; overflow-x: auto; padding: 2px 2px 5px; }
+  #registerMonths button { flex: 0 0 auto; white-space: nowrap; }
+  #tab-reg .gsum, #tab-reg .readout { grid-template-columns: minmax(0, 1fr); }
+  #tab-reg .gsum > div + div, #tab-reg .readout > div + div {
+    padding-left: 0;
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+  }
+  #r-month .readout > div { padding: 9px 0; }
+  #r-month .hero-num { flex-wrap: wrap; }
+  #r-month .hero-num .big { font-size: clamp(56px, 16vw, 96px); }
+  #tab-reg .r:not(.head) { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px 12px; }
+  #tab-reg .r.head { display: none; }
+  #tab-reg .r > [data-l] {
+    min-width: 0;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  #tab-reg .r:not(.head) > [data-l]:not([data-l=""])::before {
+    display: block;
+    content: attr(data-l);
+    margin-bottom: 3px;
+    color: var(--ink-3);
+    font: 400 11px/1.3 var(--mono);
+  }
+  #tab-reg .r > [data-l="Заказчик"], #tab-reg .r > [data-l="Что изменилось"] { grid-column: 1 / -1; }
+  .portal-miss .r > [data-l="Договор"] { grid-column: 1 / -1; }
+  .mgr .r.body, #r-history .hist > .r.body { position: relative; }
+  .mgr .r .who { display: grid; grid-template-columns: auto minmax(0, 1fr); justify-content: start; gap: 0 10px; }
+  .mgr .r .who::before { grid-column: 1 / -1; }
+  .mgr .who .nm { white-space: normal; overflow-wrap: anywhere; }
+  .mgr .r.body > :first-child, #r-history .hist > .r.body > :first-child { padding-right: 32px; }
+  .mgr .r.body .chev, #r-history .r.body .chev {
+    display: grid;
+    position: absolute;
+    right: 0;
+    top: 10px;
+  }
+}
+</style>
 </head>
 <body>
 <header class="bar">
@@ -47,7 +137,7 @@
 
   <footer id="foot">
     <span id="footSource">Источник: реестр РОПа на Диске Битрикс24 · сверка со сделками Битрикс24</span>
-    <span>Только для руководства · отдельная страница, на ТВ не выводится</span>
+    <span id="footAudience">Только для руководства · отдельная страница, на ТВ не выводится</span>
   </footer>
 </main>
 

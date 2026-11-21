@@ -1,3 +1,4 @@
+import { buildFinanceInsights } from "./finance/insights.js";
 import fs from "node:fs";
 import {
   buildPultView,
@@ -61,7 +62,7 @@ const competitorsClientJs = fs.readFileSync(new URL("./page/competitors.client.j
 const pultPageClientJs = `${marketClientJs}\n${plansClientJs}\n${radarClientJs}\n${competitorsClientJs}\n${pultClientJs}`;
 const regPageClientJs = `${registerClientJs}\n${regRunnerClientJs}`;
 
-const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|\/\*__CLIENT_JS__\*\//g;
+const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|__INSIGHTS__|\/\*__CLIENT_JS__\*\//g;
 
 export interface RegisterPagePayload {
   viewer?: import("./types.js").PultViewer;
@@ -131,6 +132,7 @@ export function renderFinanceHtml(payload: FinancePagePayload): string {
   const replacements: Record<string, string> = {
     "/*__CSS__*/": `${pultCss}\n${finCss}`,
     "__PAYLOAD__": safeJson(payload),
+    "__INSIGHTS__": safeJson(buildFinanceInsights(payload.finance, payload.asOfDate)),
     "/*__CLIENT_JS__*/": finClientJs
   };
 
