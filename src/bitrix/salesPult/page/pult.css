@@ -121,8 +121,9 @@ section.block { border-top: 1px solid var(--rule-2); margin-top: 48px; padding-t
 .pulse-missing { margin: 8px 0 0; font: 400 12px/1.4 var(--mono); color: var(--ink-3); }
 @media (max-width: 600px) {
   .pulse-link { grid-template-columns: 8px minmax(0, 1fr) auto; row-gap: 2px; padding: 9px 12px; }
-  .pulse-title { grid-column: 2; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .pulse-meta { grid-column: 2; grid-row: 2; }
+  /* На телефоне директора суть пункта важнее высоты строки: переносим, а не режем многоточием. */
+  .pulse-title { grid-column: 2; grid-row: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .pulse-meta { grid-column: 2; grid-row: 2; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
   .pulse-go { grid-column: 3; grid-row: 1 / span 2; }
   .pulse-calm { grid-template-columns: 8px minmax(0, 1fr); padding: 9px 12px; }
 }

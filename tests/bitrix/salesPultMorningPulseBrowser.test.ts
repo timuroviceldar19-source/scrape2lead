@@ -77,7 +77,9 @@ describe("утренний пульс на главной", () => {
           const line = parseFloat(getComputedStyle(a.querySelector(".pulse-title")!).lineHeight);
           return (a.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)) / line;
         }));
-        for (const lines of heights) expect(lines).toBeLessThanOrEqual(width === 375 ? 2.2 : 1.2);
+        // На 375 px заголовок и детали переносятся, а не режутся многоточием (суть пункта важнее высоты):
+        // до двух строк на каждую часть. На компьютере — одна строка.
+        for (const lines of heights) expect(lines).toBeLessThanOrEqual(width === 375 ? 4.2 : 1.2);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         // С клавиатуры: Tab идёт по строкам пульса.
         await links.first().focus();

@@ -8,6 +8,9 @@ import { renderPultHtml } from "../../src/bitrix/salesPult/site.js";
 import { computeRadarKpis } from "../../src/bitrix/salesPult/radar/aggregate.js";
 import { buildStockAvailability, withStockHints } from "../../src/bitrix/salesPult/stock/availability.js";
 import { buildPlansMonitorView } from "../../src/bitrix/salesPult/plans/aggregate.js";
+import { pulseForPayload, lossPulseItems, stockDemandPulseItems } from "../../src/bitrix/salesPult/pulse.js";
+import { buildStockDemand } from "../../src/bitrix/salesPult/stock/availability.js";
+import { summarizeRecentCheaperRejections } from "../../src/kz/competitors/losses.js";
 import type { RadarView } from "../../src/bitrix/salesPult/radar/types.js";
 import { fixture } from "../fixtures/sales-pult/contracts.js";
 import { radarMissedView } from "../fixtures/sales-pult/radarMissed.js";
@@ -45,6 +48,13 @@ beforeAll(async () => {
   p.competitors = buildLossesSampleView(AS_OF);
   const stock = buildStockAvailability(stockFinance("2026-11-20"), AS_OF);
   p.stock = stock && withStockHints(stock, p.radar, p.plans);
+  p.pulse = pulseForPayload(p, {
+    nowIso: "2026-11-21T09:49:30+05:00", finance: stockFinance("2026-11-20"), register: f.register,
+    extraItems: [
+      ...lossPulseItems(summarizeRecentCheaperRejections(p.competitors, AS_OF)),
+      ...stockDemandPulseItems(p.stock, buildStockDemand(stock, p.radar, p.plans))
+    ]
+  });
   file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pult-decision-")), "index.html");
   fs.writeFileSync(file, renderPultHtml(p));
   browser = await chromium.launch();
@@ -78,6 +88,18 @@ describe("раскладка после слияния пунктов 1–4", ()
       } finally { await page.close(); }
     }, 30000);
   }
+
+  it("пульс на телефоне 375 px: заголовки и детали переносятся, а не обрезаются многоточием", async () => {
+    const { page, errors } = await open("#pult", 375);
+    try {
+      const rows = await page.evaluate(() => [...document.querySelectorAll("#pulse .pulse-title, #pulse .pulse-meta")]
+        .map((e) => ({ text: e.textContent ?? "", cut: e.scrollWidth > e.clientWidth + 1 || getComputedStyle(e).textOverflow === "ellipsis" && getComputedStyle(e).whiteSpace === "nowrap" })));
+      expect(rows.length).toBeGreaterThanOrEqual(8);
+      expect(rows.filter((r) => r.cut).map((r) => r.text)).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 30000);
 
   it("бейджи сроков Радара и теги склада: контраст текста не ниже 4,5:1", async () => {
     const { page, errors } = await open("#radar-ip", 1440);
