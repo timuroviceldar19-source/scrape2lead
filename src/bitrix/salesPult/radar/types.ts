@@ -30,6 +30,8 @@ export interface RadarCard {
   isWithin48h: boolean;
   column: RadarColumnKey;
   isNewStage?: boolean;
+  /** Вердикт «идём / осторожно / не идём» (`bid/assess.ts`); ставится при сборке страницы, у `missed` нет. */
+  bid?: import("../bid/types.js").BidAssessment;
 }
 
 export interface RadarKpis {

@@ -42,6 +42,7 @@ import {
   type PultTenderManagerView
 } from "./pace.js";
 
+import { withBids } from "./bid/assess.js";
 import type { RegisterView } from "./register/types.js";
 import type { FinanceView } from "./finance/types.js";
 
@@ -60,7 +61,8 @@ const plansClientJs = fs.readFileSync(new URL("./page/plans.client.js", import.m
 const radarClientJs = fs.readFileSync(new URL("./page/radar.client.js", import.meta.url), "utf8");
 const competitorsClientJs = fs.readFileSync(new URL("./page/competitors.client.js", import.meta.url), "utf8");
 const stockClientJs = fs.readFileSync(new URL("./page/stock.client.js", import.meta.url), "utf8");
-const pultPageClientJs = `${marketClientJs}\n${stockClientJs}\n${plansClientJs}\n${radarClientJs}\n${competitorsClientJs}\n${pultClientJs}`;
+const bidClientJs = fs.readFileSync(new URL("./page/bid.client.js", import.meta.url), "utf8");
+const pultPageClientJs = `${marketClientJs}\n${stockClientJs}\n${bidClientJs}\n${plansClientJs}\n${radarClientJs}\n${competitorsClientJs}\n${pultClientJs}`;
 const regPageClientJs = `${registerClientJs}\n${regRunnerClientJs}`;
 
 const PLACEHOLDER_RE = /\/\*__CSS__\*\/|__PAYLOAD__|__VIEW__|__INSIGHTS__|\/\*__CLIENT_JS__\*\//g;
@@ -105,9 +107,12 @@ export function renderPultHtml(payload: SalesPultPayload): string {
   return renderPultHtmlWithView(safePayload, buildPultPageView(safePayload));
 }
 
-/** Страница из готового представления: вариант роли считает его сам из полного пульта. */
+/**
+ * Страница из готового представления: вариант роли считает его сам из полного пульта.
+ * Вердикт «идём / осторожно / не идём» считается здесь, из этого же payload: в него не попадёт то, чего нет в странице.
+ */
 export function renderPultHtmlWithView(payload: SalesPultPayload, view: PultPageView): string {
-  const safePayload = { ...payload };
+  const safePayload = withBids({ ...payload });
   if ("register" in safePayload) {
     delete (safePayload as Record<string, unknown>).register;
   }

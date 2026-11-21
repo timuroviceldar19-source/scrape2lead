@@ -58,6 +58,7 @@ import { backfillCompetitors } from "../src/kz/competitors/collector.js";
 import { updateCompetitorsWindow, loadCompetitorsView, resolveBackfillBudgetMs } from "../src/kz/competitors/load.js";
 import { collectPlansMonitor } from "../src/bitrix/salesPult/plans/collect.js";
 import { collectRadarView } from "../src/bitrix/salesPult/radar/collect.js";
+import { formatBidSummary } from "../src/bitrix/salesPult/bid/assess.js";
 import { buildMorningPulse, lossPulseItems, pulseForPayload, selectHotLots, stockDemandPulseItems, type PulseItem, type PulseView } from "../src/bitrix/salesPult/pulse.js";
 import { summarizeRecentCheaperRejections } from "../src/kz/competitors/losses.js";
 import type { RadarView } from "../src/bitrix/salesPult/radar/types.js";
@@ -860,6 +861,9 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
 
     const outDir = path.resolve("exports/sales-pult");
     fs.mkdirSync(outDir, { recursive: true });
+
+    // Вердикт «идём / осторожно / не идём» ставится при рендере страницы (bid/assess.ts); в лог — только числа.
+    console.log(`[Вердикт] ${formatBidSummary(payload)}`);
 
     // 1. Main pult page (no register in payload or DOM)
     const html = renderPultHtml(payload);
