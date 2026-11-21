@@ -121,6 +121,80 @@ describe("финансы: разбор ежедневного отчёта", () 
     expect(r.payments[2].items[0].payee).toBe("Подрядчик Один Договор №1");
   });
 
+  it("колонки дебиторов как в файле 20.11: дата оплаты, иск, пустая строка между компаниями", () => {
+    const debtors = [
+      ...DEFAULT_DEBTORS.slice(0, 2),
+      { ...DEFAULT_DEBTORS[2], claimDate: "2026-11-13", claimNo: "Иск подан в суд Пример" }
+    ];
+    const r = parseFinanceWorkbook(financeWorkbook({ debtors, debtorColumns: true, debtorGap: true }));
+    expect(r.warnings).toEqual([]);
+    expect(r.debtors.columns).toEqual(["paymentDate", "daysToPay", "claimDate", "claimNumber"]);
+    // «Дней до оплаты» из файла не хранится: он посчитан на день сохранения, страница считает сама
+    expect(r.debtors.rows).toEqual([
+      { name: "Школа Тест №1", company: "Альфа", amount: 5_000_000, saleDate: "2026-11-05", paymentDate: "2026-12-05" },
+      { name: "Колледж Пример", company: "Альфа", amount: 3_000_000, saleDate: "2026-09-01", paymentDate: "2026-10-01" },
+      {
+        name: "Учреждение Образец", company: "Бета", amount: 2_000_000, saleDate: "2026-06-01", paymentDate: "2026-07-01",
+        claimDate: "2026-11-13", claimNumber: "Иск подан в суд Пример", note: "претензия 01.09.2026"
+      }
+    ]);
+    expect(r.debtors.totals).toEqual([8_000_000, 2_000_000]);
+    // ниже пустой строки «Кредиторы» — не должник
+    expect(r.problemDebts?.columns).toEqual(r.debtors.columns);
+    expect(r.problemDebts?.rows.map((x) => [x.name, x.paymentDate, x.note ?? ""])).toEqual([
+      ["ТОО Должник", "2024-03-31", "Решение суда 01.04.2025"],
+      ["ИП Пропавший", "2025-02-09", ""]
+    ]);
+    expect(r.liabilities.map((x) => [x.label, x.total])).toEqual([["Кредиторы", 4_100_000], ["Кредит Банк Один", 12_000_000]]);
+    // календарь сдвинулся вправо вместе со всем остальным
+    expect(r.payments.map((l) => [l.label, l.items.length, l.total])).toEqual([
+      ["Календарь платежей", 2, 2_200_000],
+      ["Прочие платежи", 2, 1_200_000],
+      ["Топ-3 расходов с бюджета", 2, 70_000]
+    ]);
+    expect(r.payments[0].items[0]).toEqual({ tag: "А1", payee: "Поставщик Север", amount: 1_500_000, basis: "ТМЦ" });
+    expect(r.cash.total).toBeCloseTo(1_550_000.27, 2);
+    expect(r.incomingTotal).toBe(850_000);
+  });
+
+  it("только колонки иска (файлы до 19.11): даты оплаты нет", () => {
+    const debtors = [{ ...DEFAULT_DEBTORS[0], claimNo: "Решение суда" }, ...DEFAULT_DEBTORS.slice(1)];
+    const r = parseFinanceWorkbook(financeWorkbook({ debtors, claimColumnsOnly: true }));
+    expect(r.warnings).toEqual([]);
+    expect(r.debtors.columns).toEqual(["claimDate", "claimNumber"]);
+    expect(r.debtors.rows[0]).toEqual({ name: "Школа Тест №1", company: "Альфа", amount: 5_000_000, saleDate: "2026-11-05", claimNumber: "Решение суда" });
+    expect(r.debtors.rows.some((x) => x.paymentDate)).toBe(false);
+    // без необязательных колонок поля нет совсем
+    expect(parseFinanceWorkbook(financeWorkbook()).debtors.columns).toBeUndefined();
+  });
+
+  it("пустая строка без должника за ней заканчивает список", () => {
+    // в обычном образце после проблемных долгов пустая строка и «Кредиторы» без даты реализации
+    const r = parseFinanceWorkbook(financeWorkbook({ debtorGap: true }));
+    expect(r.debtors.rows.map((x) => x.name)).toEqual(["Школа Тест №1", "Колледж Пример", "Учреждение Образец"]);
+    expect(r.problemDebts?.rows).toHaveLength(2);
+    expect(r.warnings).toEqual([]);
+  });
+
+  for (const debtorColumns of [false, true]) {
+    it(`«Прочие платежи» с подписью и «Топ» на колонку правее календаря${debtorColumns ? " (и колонки дебиторов)" : ""}`, () => {
+      const r = parseFinanceWorkbook(financeWorkbook({ labeledLists: true, debtorColumns }));
+      expect(r.warnings).toEqual([]);
+      expect(r.payments.map((l) => [l.label, l.items.length, l.total])).toEqual([
+        ["Календарь платежей", 2, 2_200_000],
+        ["Прочие платежи", 2, 1_200_000],
+        ["Топ-3 расходов с бюджета", 2, 70_000]
+      ]);
+      expect(r.payments[0].items[0].basis).toBe("ТМЦ");
+      // правее сдвинутых списков основания нет — там уже блоки счетов
+      expect(r.payments[1].items).toEqual([
+        { tag: "А1", payee: "Аренда офиса (1-е)", amount: 300_000 },
+        { payee: "Зарплата (1-е число)", amount: 900_000 }
+      ]);
+      expect(r.payments[2].items[0].payee).toBe("Подрядчик Один Договор №1");
+    });
+  }
+
   it("длинный список дебиторов сдвигает блоки ниже — они всё равно находятся", () => {
     const many = Array.from({ length: 40 }, (_, i) => ({ name: `Должник ${i + 1}`, company: (i % 2) as 0 | 1, amount: 100_000 + i, date: "2026-10-01" }));
     const r = parseFinanceWorkbook(financeWorkbook({ debtors: [...DEFAULT_DEBTORS, ...many] }));

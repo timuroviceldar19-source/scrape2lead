@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyProcurementRecords } from "../../src/kz/procurement/filter.js";
+import { classifyProcurementRecords, isPlanDetailCandidate } from "../../src/kz/procurement/filter.js";
 import type { ProcurementRecord } from "../../src/kz/procurement/types.js";
 import { buildPlanPeriodWindow, EMPTY_PLAN_PERIOD } from "../../src/kz/procurement/planPeriod.js";
 
@@ -156,6 +156,56 @@ describe("procurement product and CRM eligibility filters", () => {
     ]);
     expect(result.review).toHaveLength(0);
     expect(result.rejected[0]).toMatchObject({ reason: "irrelevant_product" });
+  });
+
+  it("restricts B2B collection to interactive panels, monoblocks, and laptops from 700 000 KZT", () => {
+    const options = {
+      minAmount: 700_000,
+      pkTruPrefixes: ["262011.", "262013."],
+      pkTruKeywordFilters: { "262013.": ["моноблок*", "all-in-one", "all in one"] },
+      pkNameWords: ["моноблок*", "ноутбук*", "all-in-one", "all in one"]
+    };
+    const result = classifyProcurementRecords([
+      row({ externalId: "laptop-biz", amount: 6_941_264, productName: "Бизнес-ноутбук", truCode: "262011.100.000008" }),
+      row({ externalId: "laptop-generic-title", amount: 1_540_270, productName: "Оргтехника", truCode: "262011.100.000002" }),
+      row({ externalId: "monoblock-in-desc", amount: 2_100_000, productName: "Компьютер", description: "Компьютер, форм-фактор моноблок", truCode: "262013.000.000011" }),
+      row({ externalId: "monoblock-plural", amount: 1_200_000, productName: "Моноблоки 24", truCode: "262013.000.000012" }),
+      row({ externalId: "panel-interactive", amount: 2_400_000, productName: "Панель интерактивная", truCode: "262030.100.000021" }),
+      row({ externalId: "pc-desktop", amount: 3_000_000, productName: "Компьютер", description: "кеңселік (әмбебап)", truCode: "262013.000.000011" }),
+      row({ externalId: "pc-mixed-lot-title", amount: 1_500_000, productName: "Приобретение компьютерной техники (ноутбук, системный блок, монитор)", description: "форм-фактор вертикальный", truCode: "262013.000.000011" }),
+      row({ externalId: "workstation", amount: 2_166_125, productName: "Оргтехника", description: "графическая", truCode: "262013.000.000025" }),
+      row({ externalId: "monitor", amount: 1_800_000, productName: "Монитор", truCode: "262017.100.000001" }),
+      row({ externalId: "below-700k", amount: 699_999, productName: "Ноутбук", truCode: "262011.100.000002" })
+    ], options);
+
+    expect(result.data.map((item) => [item.record.externalId, item.product])).toEqual([
+      ["laptop-biz", "pk"],
+      ["laptop-generic-title", "pk"],
+      ["monoblock-in-desc", "pk"],
+      ["monoblock-plural", "pk"],
+      ["panel-interactive", "panel"]
+    ]);
+    expect(result.review).toHaveLength(0);
+    expect(result.rejected.map((item) => [item.record.externalId, item.reason])).toEqual([
+      ["pc-desktop", "irrelevant_product"],
+      ["pc-mixed-lot-title", "irrelevant_product"],
+      ["workstation", "irrelevant_product"],
+      ["monitor", "irrelevant_product"],
+      ["below-700k", "below_min_amount"]
+    ]);
+  });
+
+  it("skips plan-detail fetches for regular desktop PCs and monitors when pkNameWords is narrowed", () => {
+    const options = {
+      minAmount: 700_000,
+      pkNameWords: ["моноблок*", "ноутбук*", "all-in-one", "all in one"]
+    };
+    expect(isPlanDetailCandidate(row({ productName: "Компьютер", description: "кеңселік", amount: 2_000_000 }), options)).toBe(false);
+    expect(isPlanDetailCandidate(row({ productName: "Монитор", amount: 2_000_000 }), options)).toBe(false);
+    expect(isPlanDetailCandidate(row({ productName: "Компьютер", description: "Моноблоки 24\"", amount: 2_000_000 }), options)).toBe(true);
+    expect(isPlanDetailCandidate(row({ productName: "Ноутбук", amount: 799_000 }), options)).toBe(true);
+    expect(isPlanDetailCandidate(row({ productName: "Панель интерактивная", amount: 2_400_000 }), options)).toBe(true);
+    expect(isPlanDetailCandidate(row({ productName: "Ноутбук", amount: 699_999 }), options)).toBe(false);
   });
 });
 

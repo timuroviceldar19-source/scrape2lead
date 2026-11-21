@@ -93,12 +93,13 @@ describe("вердикты учебных комплектов", () => {
     expect(log.mock.calls.flat().join(" ")).not.toMatch(/7654321|1234567|Поставщик|Заказчик/);
   });
 
-  it("maxDate берётся до фильтра, если метаданных даты нет; полностью исключённый кэш даёт нули", () => {
+  it("оставляет дату обновления неизвестной для кэша без метаданных и сохраняет нулевые итоги", () => {
     const input = [unit(2, 500, { month: "2026-11", date: "2026-11-05" })];
     const opts = files(input);
-    vi.spyOn(fs, "statSync").mockImplementation(() => { throw new Error("Нет даты файла"); });
+    const copiedAt = new Date("2026-11-06T09:00:00Z");
+    fs.utimesSync(opts.unitsFilePath, copiedAt, copiedAt);
     const view = loadMarketView(opts);
-    expect(view.updatedAt).toBe("2026-11-05");
+    expect(view.updatedAt).toBeUndefined();
     expect(view.ip!.total.sum).toBe(0);
     expect(view.kt).toEqual(buildMarketView(input, opts.todayAlmaty, cfg).kt);
   });

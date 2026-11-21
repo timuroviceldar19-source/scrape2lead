@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { MarketConfig, MarketView } from "./types.js";
 import { loadMarketConfig } from "./config.js";
 import { DEFAULT_MARKET_UNITS_PATH, loadStoredMarketData } from "./fetchMarket.js";
@@ -23,19 +21,7 @@ export function loadMarketView(options: LoadMarketOptions): MarketView {
   // Даже пустой кэш не должен скрывать ошибку обязательного файла решений.
   const verdicts = loadEducationVerdicts(options.educationVerdictsFilePath);
 
-  const storedData = loadStoredMarketData(unitsFilePath);
-  const storedUnits = storedData.units;
-  let updatedAt = storedData.updatedAt;
-
-  if (!updatedAt) {
-    const resolved = path.resolve(unitsFilePath);
-    if (fs.existsSync(resolved)) {
-      try {
-        const stat = fs.statSync(resolved);
-        updatedAt = stat.mtime.toISOString().slice(0, 10);
-      } catch {}
-    }
-  }
+  const { units: storedUnits, updatedAt } = loadStoredMarketData(unitsFilePath);
 
   if (storedUnits.length === 0) {
     console.log(`[Рынок] Кэш ${unitsFilePath} не найден или пуст`);
@@ -47,11 +33,6 @@ export function loadMarketView(options: LoadMarketOptions): MarketView {
       months: [],
       error: "Данные рынка ещё собираются."
     };
-  }
-
-  const maxDate = storedUnits.reduce((m, u) => (u.date > m ? u.date : m), "");
-  if (!updatedAt && maxDate) {
-    updatedAt = maxDate;
   }
 
   const hiddenKinds = new Set(cfg.hiddenKinds ?? []);

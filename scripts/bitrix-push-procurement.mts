@@ -3,7 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { BitrixClient } from "../src/bitrix/client.js";
 import { ProcurementBitrixClient } from "../src/bitrix/procurementClient.js";
-import { planProcurementPush } from "../src/bitrix/procurementPush.js";
+import { createProcurementCustomerResolver } from "../src/bitrix/procurementCustomer.js";
+import { planProcurementPush, type ProcurementPushItem } from "../src/bitrix/procurementPush.js";
+import { createZakupRegistryContactLookup } from "../src/kz/procurement/registryContact.js";
 import { waitForProcurementAssignments } from "../src/bitrix/procurementAssignmentControl.js";
 import { loadProcurementConfig } from "../src/kz/procurement/config.js";
 import { evaluateProcurementCollectionGate, evaluateProcurementReleaseGate, type ProcurementManualRun } from "../src/kz/procurement/releaseGate.js";
@@ -32,7 +34,12 @@ if (args.execute) {
 
 const transport = new BitrixClient(webhook, { requestDelayMs: 550, maxRetries: 5 });
 const client = new ProcurementBitrixClient(transport);
-const result = await planProcurementPush(records, client, { execute: args.execute });
+// Компания заказчика с телефоном из реестра: без неё в карточке не горит кнопка звонка.
+const resolveCustomer = args.customers
+  ? createProcurementCustomerResolver(client, createZakupRegistryContactLookup(), { execute: args.execute })
+  : undefined;
+const result = await planProcurementPush(records, client, { execute: args.execute, resolveCustomer });
+const customers = summarizeCustomers(result.items);
 const createdDealIds = args.execute
   ? result.items.filter((item) => item.action === "create" && item.dealId).map((item) => String(item.dealId))
   : [];
@@ -54,9 +61,9 @@ const outputPath = args.output
   : `${path.resolve(args.report).replace(/\.json$/i, "")}.bitrix-${args.execute ? "push" : "dry-run"}.json`;
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 fs.writeFileSync(outputPath, JSON.stringify({ generatedAt: new Date().toISOString(), execute: args.execute,
-  inputRecords: records.length, counts: result.counts, assignmentGate, items: result.items }, null, 2), "utf8");
+  inputRecords: records.length, counts: result.counts, customers: customers.counts, assignmentGate, items: result.items }, null, 2), "utf8");
 console.log(JSON.stringify({ mode: args.execute ? "execute" : "dry-run", inputRecords: records.length,
-  counts: result.counts, assignmentGate, outputPath }, null, 2));
+  counts: result.counts, customers: customers.counts, assignmentGate, outputPath }, null, 2));
 
 const criticalErrors = [
   ...(result.counts.failed > 0 ? [`push_failed:${result.counts.failed}`] : []),
@@ -65,9 +72,24 @@ const criticalErrors = [
 // Единственная машинно-читаемая строка для оркестратора.
 console.log(`AUTOMATION_RESULT_JSON=${JSON.stringify({
   stage: args.execute ? "f3-apply" : "f3-dry-run",
-  outputPath, inputRecords: records.length, counts: result.counts, criticalErrors, warnings: []
+  outputPath, inputRecords: records.length, counts: result.counts, criticalErrors, warnings: customers.warnings
 })}`);
 if (criticalErrors.length) process.exitCode = 1;
+
+/** Нет телефона в реестре — не авария: сделка и компания создаются, менеджер допишет номер сам. */
+function summarizeCustomers(items: ProcurementPushItem[]): { counts: Record<string, number>; warnings: string[] } {
+  const counts = { linkedExisting: 0, created: 0, withoutCustomer: 0 };
+  const warnings = new Set<string>();
+  for (const item of items) {
+    if (item.action !== "create" && item.action !== "update") continue;
+    if (!item.customer) continue;
+    if (item.customer.action === "existing") counts.linkedExisting += 1;
+    else if (item.customer.action === "create") counts.created += 1;
+    else counts.withoutCustomer += 1;
+    if (item.customer.warning) warnings.add(item.customer.warning);
+  }
+  return { counts, warnings: [...warnings] };
+}
 
 function readManualRuns(filePath: string): ProcurementManualRun[] {
   if (!fs.existsSync(filePath)) return [];
@@ -75,10 +97,10 @@ function readManualRuns(filePath: string): ProcurementManualRun[] {
   return Array.isArray(value) ? value as ProcurementManualRun[] : [];
 }
 function parseArgs(argv: string[]): { report: string; config: string; execute: boolean; gateFile: string;
-  output: string; verifyDealIds: string[]; assignmentTimeoutMs: number; limit: number | null } {
+  output: string; verifyDealIds: string[]; assignmentTimeoutMs: number; limit: number | null; customers: boolean } {
   const result = { report: "", config: "config/procurement-sources.json", execute: false,
     gateFile: "data/procurement-manual-runs.json", output: "", verifyDealIds: [] as string[],
-    assignmentTimeoutMs: 30_000, limit: null as number | null };
+    assignmentTimeoutMs: 30_000, limit: null as number | null, customers: true };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]; const value = argv[index + 1];
     if (arg === "--report" && value) { result.report = value; index++; }
@@ -97,7 +119,8 @@ function parseArgs(argv: string[]): { report: string; config: string; execute: b
       }
     }
     else if (arg === "--execute") result.execute = true;
-    else if (arg === "--help") { console.log("tsx scripts/bitrix-push-procurement.mts --report file.json [--output file.json] [--limit n] [--verify-deal-ids 1,2] [--assignment-timeout-ms 30000] [--execute]"); process.exit(0); }
+    else if (arg === "--no-customers") result.customers = false;
+    else if (arg === "--help") { console.log("tsx scripts/bitrix-push-procurement.mts --report file.json [--output file.json] [--limit n] [--verify-deal-ids 1,2] [--assignment-timeout-ms 30000] [--no-customers] [--execute]"); process.exit(0); }
     else throw new Error(`Unknown or incomplete argument: ${arg}`);
   }
   if (!result.report) throw new Error("--report is required");

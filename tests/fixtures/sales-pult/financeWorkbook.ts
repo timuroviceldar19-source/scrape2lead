@@ -13,6 +13,9 @@ export interface FinanceDebtorFixture {
   amount: number;
   date: string;
   note?: string;
+  /** Для колонок иска (`debtorColumns`): дата подачи и номер. */
+  claimDate?: string;
+  claimNo?: string;
 }
 
 export const DEFAULT_DEBTORS: FinanceDebtorFixture[] = [
@@ -36,7 +39,21 @@ export interface FinanceWorkbookOptions {
   stockSheets?: boolean;
   /** Итог «Склада Один» в ведомости «Альфы» больше суммы товаров на 1 000. */
   stockMismatch?: boolean;
+  /**
+   * Как файл 20.11.2026: после «Даты реализации» вставлены четыре колонки («Дата оплаты»,
+   * «Дней до оплаты», «Дата подачи иска», «Номер иска») — всё правее сдвигается на 4.
+   * Дата оплаты — дата реализации + 30 дней.
+   */
+  debtorColumns?: boolean;
+  /** Только колонки иска, как в файлах до 19.11.2026 (были скрыты). */
+  claimColumnsOnly?: boolean;
+  /** Пустая строка между должниками первой и второй компании. */
+  debtorGap?: boolean;
+  /** «Прочие платежи» с подписью и вместе с «Топ» сдвинуты на колонку правее календаря. */
+  labeledLists?: boolean;
 }
+
+const plusDays = (iso: string, days: number) => new Date(Date.parse(`${iso}T00:00:00.000Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
 /** Выдуманная выгрузка 1С «Материальная ведомость» той же формы. */
 function addStockSheet(wb: ExcelJS.Workbook, kind: "alpha" | "beta", mismatch = false, name?: string): ExcelJS.Worksheet {
@@ -266,7 +283,10 @@ export function financeWorkbook(options: FinanceWorkbookOptions = {}): ExcelJS.W
     set("C32", f(beta));
     set("E32", f(alpha + beta));
     r = 33;
+    let prevCompany = debtors[0]?.company;
     for (const x of debtors) {
+      if (options.debtorGap && x.company !== prevCompany) r++;
+      prevCompany = x.company;
       set(`A${r}`, x.name);
       set(`${x.company === 0 ? "B" : "C"}${r}`, x.amount);
       set(`D${r}`, d(x.date));
@@ -296,21 +316,25 @@ export function financeWorkbook(options: FinanceWorkbookOptions = {}): ExcelJS.W
   set(`B${r + 1}`, f(12_000_000));
   set(`E${r + 1}`, f(12_000_000));
 
-  // Прочие платежи и «Топ» ниже
+  // Прочие платежи и «Топ» ниже (с подписями — на колонку правее)
   const p = Math.max(r + 8, 60);
-  set(`F${p}`, "А1");
-  set(`G${p}`, "Аренда офиса (1-е)");
-  set(`H${p}`, 300_000);
-  set(`F${p + 1}`, "А1");
-  set(`G${p + 2}`, "Зарплата (1-е число)");
-  set(`H${p + 2}`, f(900_000));
-  set(`G${p + 3}`, "Топ-3 расходов с бюджета");
-  set(`G${p + 4}`, "\nПодрядчик Один\nДоговор №1");
-  set(`H${p + 4}`, 50_000);
-  set(`G${p + 5}`, "Подрядчик Два");
-  set(`H${p + 5}`, 20_000);
-  set(`G${p + 6}`, "Итого");
-  set(`H${p + 6}`, f(70_000));
+  const [tg, pe, am] = options.labeledLists ? ["G", "H", "I"] : ["F", "G", "H"];
+  if (options.labeledLists) set(`${pe}${p - 1}`, "Прочие платежи");
+  set(`${tg}${p}`, "А1");
+  set(`${pe}${p}`, "Аренда офиса (1-е)");
+  set(`${am}${p}`, 300_000);
+  set(`${tg}${p + 1}`, "А1");
+  set(`${pe}${p + 2}`, "Зарплата (1-е число)");
+  set(`${am}${p + 2}`, f(900_000));
+  set(`${pe}${p + 3}`, "Топ-3 расходов с бюджета");
+  if (options.labeledLists) set(`${am}${p + 3}`, "Ноябрь");
+  set(`${pe}${p + 4}`, "\nПодрядчик Один\nДоговор №1");
+  set(`${am}${p + 4}`, 50_000);
+  set(`${pe}${p + 5}`, "Подрядчик Два");
+  set(`${am}${p + 5}`, 20_000);
+  set(`${pe}${p + 6}`, "Итого");
+  set(`${am}${p + 6}`, f(70_000));
+  if (!options.omitDebtors && (options.debtorColumns || options.claimColumnsOnly)) addDebtorColumns(ws, options);
   if (options.stockSheets) {
     addStockSheet(wb, "beta");
     addStockSheet(wb, "alpha", options.stockMismatch);
@@ -326,6 +350,32 @@ export function financeWorkbook(options: FinanceWorkbookOptions = {}): ExcelJS.W
     other.getCell("C4").value = 1;
   }
   return wb;
+}
+
+/**
+ * Вставляет колонки после «Даты реализации» (D), как это сделал финансист: всё правее
+ * сдвигается. Значения ставятся по имени должника в колонке A.
+ */
+function addDebtorColumns(ws: ExcelJS.Worksheet, options: FinanceWorkbookOptions): void {
+  const all = options.claimColumnsOnly ? ["Дата подачи иска", "Номер иска"] : ["Дата оплаты", "Дней до оплаты", "Дата подачи иска", "Номер иска"];
+  ws.spliceColumns(5, 0, ...all.map(() => []));
+  const col = (label: string) => String.fromCharCode("E".charCodeAt(0) + all.indexOf(label));
+  all.forEach((label) => (ws.getCell(`${col(label)}31`).value = label));
+  const byName = new Map((options.debtors ?? DEFAULT_DEBTORS).map((x) => [x.name, x]));
+  for (let r = 33; r <= ws.rowCount; r++) {
+    const name = ws.getCell(`A${r}`).value;
+    const sale = ws.getCell(`D${r}`).value;
+    if (typeof name !== "string" || !(sale instanceof Date)) continue;
+    if (!options.claimColumnsOnly) {
+      const pay = plusDays(sale.toISOString().slice(0, 10), 30);
+      ws.getCell(`${col("Дата оплаты")}${r}`).value = { formula: `D${r}+30`, result: d(pay) } as ExcelJS.CellValue;
+      // в файле «Дней до оплаты» = дата оплаты − СЕГОДНЯ() на день сохранения; страница считает сама
+      ws.getCell(`${col("Дней до оплаты")}${r}`).value = { formula: `E${r}-TODAY()`, result: -999 } as ExcelJS.CellValue;
+    }
+    const x = byName.get(name);
+    if (x?.claimDate) ws.getCell(`${col("Дата подачи иска")}${r}`).value = d(x.claimDate);
+    if (x?.claimNo) ws.getCell(`${col("Номер иска")}${r}`).value = x.claimNo;
+  }
 }
 
 export async function financeWorkbookBuffer(options?: FinanceWorkbookOptions): Promise<Buffer> {

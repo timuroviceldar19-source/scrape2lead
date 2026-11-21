@@ -15,6 +15,7 @@ import type {
   FinanceCashFlow,
   FinanceCompanyValues,
   FinanceDebtor,
+  FinanceDebtorColumn,
   FinanceDebtors,
   FinanceIncoming,
   FinanceLiability,
@@ -335,20 +336,77 @@ interface DebtorLayout {
   companies: string[];
   dateCol: number;
   totalCol: number;
+  /** Необязательные колонки между датой реализации и «ИТОГО», найденные по подписи. */
+  extra: Partial<Record<FinanceDebtorColumn, number>>;
+}
+
+// Подписи необязательных колонок. С 20.11.2026 их четыре; раньше были только две про иск
+// (скрытые). Незнакомая колонка просто пропускается.
+const DEBTOR_COLUMNS: Array<[FinanceDebtorColumn, (key: string) => boolean]> = [
+  ["paymentDate", (k) => k.startsWith("дата оплат")],
+  ["daysToPay", (k) => k.startsWith("дней до оплат") || k.startsWith("дни до оплат")],
+  ["claimDate", (k) => k.startsWith("дата подачи иска") || k.startsWith("дата иска")],
+  ["claimNumber", (k) => k.startsWith("номер иска") || k.startsWith("№ иска")]
+];
+/** Сколько колонок после даты реализации может занять шапка до «ИТОГО». */
+const DEBTOR_MAX_EXTRA = 10;
+
+/** Дата из ячейки: настоящая дата или текст «дд.мм.гггг». */
+function dateLike(g: Grid, r: number, c: number): string | undefined {
+  const asDate = g.date(r, c);
+  if (asDate) return asDate;
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})/.exec(g.text(r, c) ?? "");
+  return m ? `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}` : undefined;
+}
+
+function textLike(g: Grid, r: number, c: number): string | undefined {
+  const v = g.get(r, c);
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  return undefined;
 }
 
 function readDebtorRows(g: Grid, layout: DebtorLayout, headerRow: number, title: string, warnings: string[]): { list: FinanceDebtors; endRow: number } {
   const totalsRow = headerRow + 1;
   const rows: FinanceDebtor[] = [];
+  const { extra } = layout;
+  // С 20.11.2026 дебиторы компаний разделены пустой строкой. Пустую строку перешагиваем, только
+  // если за ней снова должник: есть дата реализации и сумма по компании. Так список не
+  // захватывает «Кредиторы» и строки ниже (у них даты нет).
+  const isDebtorRow = (row: number) => {
+    const name = g.text(row, layout.nameCol);
+    return !!name && !labelKey(name).startsWith("кредит") && !!g.date(row, layout.dateCol) && layout.companyCols.some((col) => !!g.num(row, col));
+  };
   let r = headerRow + 2;
   for (; r <= g.maxRow; r++) {
-    const name = g.text(r, layout.nameCol);
-    if (!name) break;
+    let name = g.text(r, layout.nameCol);
+    if (!name) {
+      const blank = (row: number) => layout.companyCols.every((col) => g.get(row, col) === null) && g.get(row, layout.dateCol) === null;
+      let next = r;
+      while (next <= Math.min(g.maxRow, r + 1) && !g.text(next, layout.nameCol) && blank(next)) next++;
+      if (next === r || next > g.maxRow || !isDebtorRow(next)) break;
+      r = next;
+      name = g.text(r, layout.nameCol)!;
+    }
     const saleDate = g.date(r, layout.dateCol) ?? undefined;
+    const paymentDate = extra.paymentDate ? dateLike(g, r, extra.paymentDate) : undefined;
+    const claimDate = extra.claimDate ? dateLike(g, r, extra.claimDate) : undefined;
+    const claimNumber = extra.claimNumber ? textLike(g, r, extra.claimNumber) : undefined;
     const note = g.text(r, layout.totalCol) ?? undefined;
     layout.companyCols.forEach((col, i) => {
       const amount = g.num(r, col);
-      if (amount) rows.push({ name, company: layout.companies[i], amount, ...(saleDate ? { saleDate } : {}), ...(note ? { note } : {}) });
+      if (amount) {
+        rows.push({
+          name,
+          company: layout.companies[i],
+          amount,
+          ...(saleDate ? { saleDate } : {}),
+          ...(paymentDate ? { paymentDate } : {}),
+          ...(claimDate ? { claimDate } : {}),
+          ...(claimNumber ? { claimNumber } : {}),
+          ...(note ? { note } : {})
+        });
+      }
     });
   }
   const totals = layout.companies.map((company) => sum(rows.filter((x) => x.company === company).map((x) => x.amount)));
@@ -371,12 +429,23 @@ function parseDebtors(g: Grid, warnings: string[]): { debtors: FinanceDebtors; p
   if (!companyCols.length || !g.key(r, k).startsWith("дата")) throw new FinanceParseError("в шапке «Дебиторы» нет компаний и «Даты реализации»");
   const dateCol = k;
   let totalCol = 0;
-  for (let t = dateCol + 1; t <= Math.min(g.maxCol, dateCol + 3) && !totalCol; t++) if (g.key(r, t) === "итого") totalCol = t;
+  const extra: DebtorLayout["extra"] = {};
+  for (let t = dateCol + 1; t <= Math.min(g.maxCol, dateCol + 1 + DEBTOR_MAX_EXTRA) && !totalCol; t++) {
+    const key = g.key(r, t);
+    if (key === "итого") {
+      totalCol = t;
+      break;
+    }
+    const known = DEBTOR_COLUMNS.find(([id, test]) => !extra[id] && test(key));
+    if (known) extra[known[0]] = t;
+  }
   if (!totalCol) throw new FinanceParseError("в шапке «Дебиторы» нет «ИТОГО»");
-  const layout: DebtorLayout = { nameCol: c, companyCols, companies: companyCols.map((col) => g.text(r, col)!), dateCol, totalCol };
+  const layout: DebtorLayout = { nameCol: c, companyCols, companies: companyCols.map((col) => g.text(r, col)!), dateCol, totalCol, extra };
+  const columns = DEBTOR_COLUMNS.map(([id]) => id).filter((id) => extra[id]);
 
   const main = readDebtorRows(g, layout, r, "Дебиторы", warnings);
   if (!main.list.rows.length) throw new FinanceParseError("в блоке «Дебиторы» нет строк");
+  if (columns.length) main.list.columns = columns;
 
   // Ниже, без подписи слева, — второй список с той же шапкой: долги в суде и у юристов.
   const companyKeys = layout.companies.map(labelKey);
@@ -385,6 +454,7 @@ function parseDebtors(g: Grid, warnings: string[]): { debtors: FinanceDebtors; p
     const same = g.key(rr, totalCol) === "итого" && companyCols.every((col, i) => g.key(rr, col) === companyKeys[i]);
     if (same) {
       problem = readDebtorRows(g, layout, rr, "Проблемные долги", warnings).list;
+      if (columns.length) problem.columns = columns;
       break;
     }
   }
@@ -411,14 +481,28 @@ function parsePayments(g: Grid, warnings: string[]): FinancePaymentList[] {
     warnings.push("Не найден блок «Календарь»");
     return [];
   }
-  const payeeCol = start.c;
-  const amountCol = payeeCol + 1;
-  const basisCol = payeeCol + 2;
-  const tagCol = payeeCol - 1;
-  const item = (r: number): FinancePayment => {
-    const tag = g.text(r, tagCol) ?? undefined;
-    const basis = g.text(r, basisCol) ?? undefined;
-    return { ...(tag ? { tag } : {}), payee: g.text(r, payeeCol)!, amount: g.num(r, amountCol)!, ...(basis ? { basis } : {}) };
+  // Колонки списка считаются от колонки получателя: слева пометка, справа сумма и основание.
+  // Основание есть, только если над ним в шапке «Календаря» подпись «Основание…»: правее
+  // сдвинутых списков начинаются блоки счетов, их подписи основанием не считаются.
+  interface PayCols {
+    tag: number;
+    payee: number;
+    amount: number;
+    basis: number | null;
+  }
+  const colsAt = (payee: number): PayCols => ({
+    tag: payee - 1,
+    payee,
+    amount: payee + 1,
+    basis: g.key(start.r, payee + 2).startsWith("основание") ? payee + 2 : null
+  });
+  const calendarCols = colsAt(start.c);
+  const payeeCol = calendarCols.payee;
+  const amountCol = calendarCols.amount;
+  const item = (r: number, cols: PayCols = calendarCols): FinancePayment => {
+    const tag = g.text(r, cols.tag) ?? undefined;
+    const basis = cols.basis ? g.text(r, cols.basis) ?? undefined : undefined;
+    return { ...(tag ? { tag } : {}), payee: g.text(r, cols.payee)!, amount: g.num(r, cols.amount)!, ...(basis ? { basis } : {}) };
   };
   const finish = (list: FinancePaymentList, fileTotal: number | null) => {
     const total = sum(list.items.map((x) => x.amount));
@@ -447,29 +531,44 @@ function parsePayments(g: Grid, warnings: string[]): FinancePaymentList[] {
   }
   lists.push(finish(main, mainTotal));
 
-  // Ниже в тех же колонках: блок «КПН к оплате» (его берём из блока счетов), прочие платежи
-  // и список «Топ-… расходов» со своим «Итого».
+  // Ниже: блок «КПН к оплате» (его берём из блока счетов), прочие платежи и список «Топ-…
+  // расходов» со своим «Итого». До 19.11.2026 они шли в колонках календаря, «Прочие платежи»
+  // без подписи; с 20.11 у обоих списков подпись, и они сдвинуты на колонку вправо — поэтому
+  // колонки списка берутся от его подписи.
+  const isTopLabel = (key: string) => /^топ\s*-?\s*\d/.test(key);
+  const isOtherLabel = (key: string) => key === "прочие платежи";
+  const listLabelAt = (r: number): { c: number; text: string; key: string } | null => {
+    for (let c = Math.max(1, payeeCol - 1); c <= Math.min(g.maxCol, payeeCol + 3); c++) {
+      const text = g.text(r, c);
+      const key = labelKey(text);
+      if (text && (isTopLabel(key) || isOtherLabel(key))) return { c, text, key };
+    }
+    return null;
+  };
+  let cols = calendarCols;
   let current: FinancePaymentList = { label: "Прочие платежи", items: [], total: 0 };
   let skipping = false;
   const flush = (fileTotal: number | null) => {
     if (current.items.length) lists.push(finish(current, fileTotal));
   };
   for (; r <= g.maxRow; r++) {
-    const payee = g.text(r, payeeCol);
-    const amount = g.num(r, amountCol);
-    const key = labelKey(payee);
     if (skipping) {
-      if (!payee && amount !== null) skipping = false;
+      if (!g.text(r, payeeCol) && g.num(r, amountCol) !== null) skipping = false;
       continue;
     }
+    const label = listLabelAt(r);
+    if (label) {
+      flush(null);
+      cols = colsAt(label.c);
+      current = { label: isOtherLabel(label.key) ? "Прочие платежи" : label.text.trim(), items: [], total: 0 };
+      continue;
+    }
+    const payee = g.text(r, cols.payee);
+    const amount = g.num(r, cols.amount);
+    const key = labelKey(payee);
     if (!payee) continue;
     if (key.startsWith("кпн")) {
       skipping = true;
-      continue;
-    }
-    if (key.startsWith("топ")) {
-      flush(null);
-      current = { label: payee, items: [], total: 0 };
       continue;
     }
     if (key === "итого") {
@@ -477,7 +576,7 @@ function parsePayments(g: Grid, warnings: string[]): FinancePaymentList[] {
       current = { label: "Прочие платежи", items: [], total: 0 };
       continue;
     }
-    if (amount !== null && amount !== 0) current.items.push(item(r));
+    if (amount !== null && amount !== 0) current.items.push(item(r, cols));
   }
   flush(null);
   return lists;
