@@ -1,9 +1,92 @@
-import type { FinancePayment, FinanceStockItem, FinanceView } from "./types.js";
+import type { FinanceDebtor, FinanceDebtors, FinancePayment, FinanceStockItem, FinanceView } from "./types.js";
 import { stockKeyOfName } from "../stock/classify.js";
 
 const DAY = 86_400_000;
 const elapsed = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY);
 const metrics = ["cash", "paymentsDue", "debtors", "payables", "loans", "inventory"] as const;
+
+export interface FinanceDebtorCompanyTotal {
+  company: string;
+  count: number;
+  total: number;
+}
+
+export interface FinanceOverdueDebtor extends FinanceDebtor {
+  paymentDate: string;
+  overdueDays: number;
+}
+
+export interface FinanceDebtorsByPayment {
+  overdue: {
+    count: number;
+    total: number;
+    byCompany: FinanceDebtorCompanyTotal[];
+    top5: FinanceOverdueDebtor[];
+    top10: FinanceOverdueDebtor[];
+  };
+  current: {
+    count: number;
+    total: number;
+    byCompany: FinanceDebtorCompanyTotal[];
+    undated: { count: number; total: number };
+  };
+}
+
+/**
+ * Делит основной список дебиторов на просроченные (дата оплаты строго раньше `asOfDate`)
+ * и непросроченные (оплата сегодня/позже или без даты). Возвращает `null`, если в отчёте
+ * нет колонки «Дата оплаты» и ни у одного долга нет даты оплаты.
+ */
+export function classifyDebtorsByPayment(debtors: FinanceDebtors | undefined, asOfDate: string): FinanceDebtorsByPayment | null {
+  const date = asOfDate.slice(0, 10);
+  if (!debtors || !date || !Number.isFinite(Date.parse(date))) return null;
+  const hasPaymentDates = (debtors.columns ?? []).includes("paymentDate") || debtors.rows.some((row) => Boolean(row.paymentDate));
+  if (!hasPaymentDates) return null;
+
+  const overdueRows: FinanceOverdueDebtor[] = [];
+  const currentRows: FinanceDebtor[] = [];
+  const undatedRows: FinanceDebtor[] = [];
+  for (const row of debtors.rows) {
+    if (row.paymentDate) {
+      const daysToPay = elapsed(date, row.paymentDate);
+      if (daysToPay < 0) {
+        overdueRows.push({ ...row, paymentDate: row.paymentDate, overdueDays: -daysToPay });
+        continue;
+      }
+    } else {
+      undatedRows.push(row);
+    }
+    currentRows.push(row);
+  }
+
+  overdueRows.sort((a, b) => b.amount - a.amount || b.overdueDays - a.overdueDays);
+  const sum = (rows: FinanceDebtor[]) => rows.reduce((total, row) => total + row.amount, 0);
+  const byCompany = (rows: FinanceDebtor[]): FinanceDebtorCompanyTotal[] => {
+    const order = [...debtors.companies, ...rows.map((r) => r.company).filter((c) => !debtors.companies.includes(c))];
+    const out: FinanceDebtorCompanyTotal[] = [];
+    for (const company of new Set(order)) {
+      const own = rows.filter((row) => row.company === company);
+      if (own.length) out.push({ company, count: own.length, total: sum(own) });
+    }
+    return out;
+  };
+
+  return {
+    overdue: {
+      count: overdueRows.length,
+      total: sum(overdueRows),
+      byCompany: byCompany(overdueRows),
+      top5: overdueRows.slice(0, 5),
+      top10: overdueRows.slice(0, 10)
+    },
+    current: {
+      count: currentRows.length,
+      total: sum(currentRows),
+      byCompany: byCompany(currentRows),
+      undated: { count: undatedRows.length, total: sum(undatedRows) }
+    }
+  };
+}
 
 export function parsePaymentDueHint(payment: Pick<FinancePayment, "tag" | "payee">, asOfDate: string) {
   const base = new Date(asOfDate);
@@ -59,7 +142,7 @@ export function buildFinanceInsights(finance: FinanceView, asOfDate?: string) {
     return { prevDay, week };
   };
   const deltas = Object.fromEntries(metrics.map((key) => [key, delta(key)]));
-  const date = asOfDate || report?.dataDate || "";
+  const date = (asOfDate || report?.dataDate || "").slice(0, 10);
   const due = report?.payments[0]?.total ?? 0;
   const totalWithTax = due + (report?.tax?.total ?? 0);
   const aged = (report?.debtors.rows ?? []).flatMap((row) => {
@@ -68,6 +151,7 @@ export function buildFinanceInsights(finance: FinanceView, asOfDate?: string) {
     return days > 30 ? [{ ...row, saleDate: row.saleDate, days }] : [];
   }).sort((a, b) => Number(b.days > 60) - Number(a.days > 60) || b.amount - a.amount);
   const summarize = (rows: typeof aged) => ({ count: rows.length, total: rows.reduce((sum, row) => sum + row.amount, 0) });
+  const byPayment = classifyDebtorsByPayment(report?.debtors, date);
   const sheets = report?.stock ?? [];
   const stagnant = sheets.flatMap((sheet) => sheet.warehouses.flatMap((warehouse) =>
     warehouse.items.filter((item) => isStockStagnant(sheet.hasMoves, item))
@@ -80,7 +164,13 @@ export function buildFinanceInsights(finance: FinanceView, asOfDate?: string) {
     totalWithTax,
     cashGap: (report?.cash.total ?? 0) - totalWithTax,
     paymentHints: (report?.payments ?? []).map((list) => list.items.map((item) => parsePaymentDueHint(item, date))),
-    debt: { over30: summarize(aged), over60: summarize(aged.filter((row) => row.days > 60)), top5: aged.slice(0, 5), top10: aged.slice(0, 10) },
+    debt: {
+      over30: summarize(aged),
+      over60: summarize(aged.filter((row) => row.days > 60)),
+      top5: aged.slice(0, 5),
+      top10: aged.slice(0, 10),
+      byPayment
+    },
     stock: { count: stagnant.length, total: stagnant.reduce((sum, item) => sum + item.endSum, 0), top5: stagnant.slice(0, 5), statementTotal, diff, mismatch: sheets.length > 0 && Math.abs(diff) > 1000 }
   };
 }

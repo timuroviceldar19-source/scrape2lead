@@ -121,7 +121,10 @@
       ? (cash >= due ? `денег на счетах хватает` : `<span class="warn">на счетах ${Math.round(cover * 100)}% · не хватает ${money(due - cash)}</span>`)
       : "";
     const dueSub = calendarSub + (R.tax ? `<span class="fin-tax-position">${taxPosition()}</span>` : "");
-    const debtSub = `старше 30 дней ${money(I.debt.over30.total)}${I.debt.over60.count ? `<br><span class="bad">старше 60 дней ${money(I.debt.over60.total)}</span>` : ""}${R.problemDebts ? `<br>проблемные ${money(R.problemDebts.total)}` : ""}`;
+    const byPay = I.debt.byPayment;
+    const debtSub = byPay
+      ? `${byPay.overdue.count ? `<span class="bad">просрочено ${money(byPay.overdue.total)} (${byPay.overdue.count})</span>` : "просроченных нет"}<br>непросрочено ${money(byPay.current.total)}${R.problemDebts ? `<br>проблемные ${money(R.problemDebts.total)}` : ""}`
+      : `старше 30 дней ${money(I.debt.over30.total)}${I.debt.over60.count ? `<br><span class="bad">старше 60 дней ${money(I.debt.over60.total)}</span>` : ""}${R.problemDebts ? `<br>проблемные ${money(R.problemDebts.total)}` : ""}`;
     const stockSub = I.stock.count ? `без расхода ${money(I.stock.total)} (${I.stock.count} поз.)` : "ТМЦ по компаниям";
 
     let s = `<section class="block" id="f-overview">${head("Деньги и долги", `на ${dayMonth(R.dataDate)}`)}
@@ -134,7 +137,7 @@
         ${tile("Товар на складе", big(R.cash.inventory), stockSub, "inventory")}
       </div>
       <nav class="fin-jumps" aria-label="Быстрый переход">
-        <a class="btn" href="#f-debtors">Дебиторы &gt;60д</a>
+        <a class="btn" href="#f-debtors">${byPay ? "Просрочка" : "Дебиторы &gt;60д"}</a>
         ${R.payments.length || R.tax ? '<a class="btn" href="#f-payments">Платежи</a>' : ""}
         ${R.stock?.length ? `<a class="btn" href="${I.stock.count ? "#stockFocus" : "#f-stock"}">Склад без расхода</a>` : ""}
         ${R.pnl.current ? '<a class="btn" href="#f-pnl">Прибыль</a>' : ""}
@@ -208,6 +211,10 @@
   let debtFilter = "";
   let debtAge = 0; // 0 = все, 30 = старше 30 дней, 60 = старше 60 дней
   let debtAll = false;
+  const debtGroups = {
+    overdue: { company: "", all: false },
+    current: { company: "", all: false }
+  };
   const AGE_FILTERS = [
     { days: 0, label: "Все" },
     { days: 30, label: "Старше 30 дней" },
@@ -222,6 +229,10 @@
   const debtDays = (x) => (x.saleDate && today ? daysBetween(x.saleDate, today) : null);
   /** Дней до даты оплаты на дату сборки; меньше нуля — просрочено. */
   const payDays = (x) => (x.paymentDate && today ? daysBetween(today, x.paymentDate) : null);
+  const isOverdueDebtor = (x) => {
+    const n = payDays(x);
+    return n !== null && n < 0;
+  };
   const dayValue = (iso) => (iso ? Date.parse(iso) : null);
   const debtCollator = new Intl.Collator("ru", { sensitivity: "base", numeric: true });
   const DEBT_SORTS = {
@@ -286,6 +297,17 @@
     if (x.claimDate || x.claimNumber) parts.push(`иск${x.claimDate ? " " + esc(shortDate(x.claimDate)) : ""}${x.claimNumber ? " · " + esc(short(x.claimNumber, 60)) : ""}`);
     return parts.length ? `<span class="fin-debt-m">${parts.join(" · ")}</span>` : "";
   }
+  function debtRowHtml(x, extras) {
+    const days = debtDays(x);
+    return `<div class="r body"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 80))}${x.note ? `<span class="fin-debt-note">${esc(x.note)}</span>` : ""}${debtMobileLine(x, extras)}</span>
+      <span class="dim">${esc(x.company)}</span><span class="num">${esc(amt(x.amount))}</span>
+      <span class="num dim">${shortDate(x.saleDate)}</span>
+      <span class="num ${days !== null ? ageCls(days) : ""}">${days !== null ? plural(days, ["день", "дня", "дней"]) : "—"}</span>${extras.map((k) => extraCell(k, x)).join("")}</div>`;
+  }
+  function debtTotalRow(list, count, totalSum) {
+    const extras = debtExtras(list);
+    return `<div class="r total"><span class="nm">Итого</span><span class="dim">${plural(count, ["долг", "долга", "долгов"])}</span><span class="num">${esc(amt(totalSum))}</span><span></span><span></span>${extras.map(() => "<span></span>").join("")}</div>`;
+  }
   // Фильтры по компании и возрасту — только для основного списка: кнопки стоят внутри него.
   function debtRows(list, limit, byCompany) {
     const extras = debtExtras(list);
@@ -298,14 +320,17 @@
       return true;
     }).sort(debtCompare);
     const shown = limit ? rows.slice(0, limit) : rows;
-    const html = shown.map((x) => {
-      const days = debtDays(x);
-      return `<div class="r body"><span class="nm" title="${esc(x.name)}">${esc(short(x.name, 80))}${x.note ? `<span class="fin-debt-note">${esc(x.note)}</span>` : ""}${debtMobileLine(x, extras)}</span>
-        <span class="dim">${esc(x.company)}</span><span class="num">${esc(amt(x.amount))}</span>
-        <span class="num dim">${shortDate(x.saleDate)}</span>
-        <span class="num ${days !== null ? ageCls(days) : ""}">${days !== null ? plural(days, ["день", "дня", "дней"]) : "—"}</span>${extras.map((k) => extraCell(k, x)).join("")}</div>`;
-    }).join("");
+    const html = shown.map((x) => debtRowHtml(x, extras)).join("");
     return { html, total: rows.length, sum: rows.reduce((s, x) => s + x.amount, 0) };
+  }
+  function debtGroupRows(list, kind, limit) {
+    const state = debtGroups[kind];
+    const extras = debtExtras(list);
+    const inGroup = list.rows.filter((x) => (kind === "overdue" ? isOverdueDebtor(x) : !isOverdueDebtor(x)));
+    const rows = inGroup.filter((x) => !state.company || x.company === state.company).sort(debtCompare);
+    const shown = limit ? rows.slice(0, limit) : rows;
+    const html = shown.map((x) => debtRowHtml(x, extras)).join("");
+    return { html, total: rows.length, sum: rows.reduce((s, x) => s + x.amount, 0), groupTotal: inGroup.length, inGroup };
   }
   // Как сортировка на «Планах»: заголовок колонки с aria-sort, внутри кнопка, стрелки ↓ ↑ ↕.
   function sortBtn(key, label, what, full) {
@@ -353,11 +378,53 @@
     }
     return s;
   }
+  function debtGroupHtml(kind) {
+    const D = R.debtors;
+    const state = debtGroups[kind];
+    const res = debtGroupRows(D, kind, state.all ? 0 : 12);
+    if (!res.groupTotal) {
+      return `<div class="fin-debt-empty">${kind === "overdue" ? "Просроченных долгов нет." : "Непросроченных долгов нет."}</div>`;
+    }
+    const companies = D.companies.filter((c) => res.inGroup.some((x) => x.company === c));
+    const companyGroup = companies.length > 1
+      ? `<div class="fin-debt-filters"><div class="fin-debt-filter-group"><span class="label">Компания</span><div class="chips" role="group" aria-label="Компания">${["", ...companies].map((c) => `<button type="button" data-debt-group="${kind}" data-c="${esc(c)}" aria-pressed="${String(c === state.company)}">${c ? esc(c) : "Все"}</button>`).join("")}</div></div></div>`
+      : "";
+    const undated = kind === "current" ? res.inGroup.filter((x) => !x.paymentDate && (!state.company || x.company === state.company)) : [];
+    const undatedSum = undated.reduce((s, x) => s + x.amount, 0);
+    const baseMeta = kind === "overdue"
+      ? `Срок оплаты прошёл до ${esc(ddmmyyyy(today))}`
+      : `Срок оплаты от ${esc(ddmmyyyy(today))}`;
+    const undatedMeta = undated.length ? ` · без даты оплаты: ${undated.length} на ${money(undatedSum)}` : "";
+    const filterMeta = state.company ? ` · по фильтру: ${plural(res.total, ["долг", "долга", "долгов"])} на ${money(res.sum)}` : "";
+    const bodyHtml = res.html
+      ? `${res.html}${debtTotalRow(D, res.total, res.sum)}`
+      : `<div class="fin-debt-empty">По выбранной компании долгов нет.</div>`;
+    let s = `${companyGroup}<div class="fin-debt-meta">${baseMeta}${undatedMeta}${filterMeta}</div>`;
+    s += debtTable(D, `${debtHead(D)}${bodyHtml}`);
+    if (res.total > 12) {
+      s += `<button type="button" class="btn fin-showall" data-debt-all="${kind}">${state.all ? "Свернуть" : `Показать все ${res.total} на ${money(res.sum)}`}</button>`;
+    }
+    return s;
+  }
   const debtProblemHtml = () => debtTable(R.problemDebts, `${debtHead(R.problemDebts)}${debtRows(R.problemDebts, 0).html}`);
 
   function debtFocus() {
-    const { over30, over60, top5 } = I.debt;
+    const byPay = I.debt.byPayment;
     const summary = ({ count, total }) => `${plural(count, ["долг", "долга", "долгов"])} · ${money(total)}`;
+    if (byPay) {
+      const { overdue, current } = byPay;
+      const rows = overdue.top5.map((x) => `<li><span><strong>${esc(x.name)}</strong><span class="fin-focus-meta">${esc(x.company)} · оплата ${ddmmyyyy(x.paymentDate)}</span></span>
+        <span class="fin-focus-value">${money(x.amount)}<span class="fin-focus-meta bad">−${plural(x.overdueDays, ["день", "дня", "дней"])}</span></span></li>`).join("");
+      return `<div class="fin-debt-focus">
+        <h3>Дебиторы по сроку оплаты</h3>
+        <p class="lead fin-focus-meta">На ${ddmmyyyy(today)}${debtExtras(R.debtors).includes("toPay") ? " · «До оплаты» — дней до даты оплаты, с минусом и красным — просрочено" : ""}</p>
+        <div class="fin-age-summary"><span>Просроченная <b class="${overdue.count ? "bad" : ""}">${summary(overdue)}</b></span><span>Непросроченная <b>${summary(current)}</b></span></div>
+        ${rows ? `<ol class="fin-focus-list" aria-label="Топ-5 просроченных должников">${rows}</ol>
+          <div class="fin-actions"><button type="button" class="btn" data-debt-open="overdue">Открыть просроченные (${overdue.count})</button>${copyButton("debt", "Скопировать для чата")}</div>`
+          : `<p class="fin-note">Просроченных долгов на ${ddmmyyyy(today)} нет.</p>`}
+        </div>`;
+    }
+    const { over30, over60, top5 } = I.debt;
     const age = over60.count ? 60 : 30;
     const rows = top5.map((x) => `<li><span><strong>${esc(x.name)}</strong><span class="fin-focus-meta">${esc(x.company)} · ${ddmmyyyy(x.saleDate)}</span></span>
       <span class="fin-focus-value">${money(x.amount)}<span class="fin-focus-meta ${ageCls(x.days)}">${x.days} дн.</span></span></li>`).join("");
@@ -374,12 +441,28 @@
   // поэтому раскрытый блок не закрывается от фильтра или сортировки.
   function debtorsBlock() {
     const D = R.debtors;
+    const byPay = I.debt.byPayment;
     const byCompany = D.companies.map((c, i) => `${esc(c)} ${money(D.totals[i])}`).join(" · ");
+    const companyList = (xs) => xs.map((x) => `${esc(x.company)} ${money(x.total)}`).join(" · ");
     let s = `${head("Дебиторы", `${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}`)}
       ${debtFocus()}
-      ${byCompany ? `<p class="fin-note">${byCompany}.</p>` : ""}
-      <details class="fin-more" id="debtMainBox"><summary>Список дебиторов <span class="dim">${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}</span></summary>
+      ${byCompany ? `<p class="fin-note">${byCompany}.</p>` : ""}`;
+    if (byPay) {
+      const { overdue, current } = byPay;
+      const overMeta = overdue.count
+        ? `<span class="bad">${plural(overdue.count, ["долг", "долга", "долгов"])} · ${money(overdue.total)}</span>${overdue.byCompany.length > 1 ? ` · ${companyList(overdue.byCompany)}` : ""}`
+        : `нет · 0${NB}₸`;
+      const curMeta = current.count
+        ? `${plural(current.count, ["долг", "долга", "долгов"])} · ${money(current.total)}${current.byCompany.length > 1 ? ` · ${companyList(current.byCompany)}` : ""}`
+        : `нет · 0${NB}₸`;
+      s += `<details class="fin-more" id="debtOverdueBox"><summary>Просроченная задолженность <span class="dim">${overMeta}</span></summary>
+          <div id="debtOverdue">${debtGroupHtml("overdue")}</div></details>
+        <details class="fin-more" id="debtCurrentBox"><summary>Непросроченная задолженность <span class="dim">${curMeta}</span></summary>
+          <div id="debtCurrent">${debtGroupHtml("current")}</div></details>`;
+    } else {
+      s += `<details class="fin-more" id="debtMainBox"><summary>Список дебиторов <span class="dim">${plural(D.rows.length, ["долг", "долга", "долгов"])} · ${money(D.total)}</span></summary>
         <div id="debtMain">${debtMainHtml()}</div></details>`;
+    }
     if (R.problemDebts && R.problemDebts.rows.length) {
       const pd = R.problemDebts.rows;
       s += `<details class="fin-more" id="debtProblemBox"><summary>Проблемные долги <span class="dim">${plural(pd.length, ["долг", "долга", "долгов"])} · ${money(pd.reduce((a, x) => a + x.amount, 0))} · суды, исполнительные листы, списания</span></summary>
@@ -622,6 +705,10 @@
   function rerenderDebtors() {
     const main = document.getElementById("debtMain");
     if (main) main.innerHTML = debtMainHtml();
+    const overdue = document.getElementById("debtOverdue");
+    if (overdue) overdue.innerHTML = debtGroupHtml("overdue");
+    const current = document.getElementById("debtCurrent");
+    if (current) current.innerHTML = debtGroupHtml("current");
     const problem = document.getElementById("debtProblem");
     if (problem) problem.innerHTML = debtProblemHtml();
   }
@@ -634,6 +721,12 @@
 
   function copyText(key) {
     if (key === "debt") {
+      const byPay = I.debt.byPayment;
+      if (byPay) {
+        if (!byPay.overdue.count) return `Просроченных долгов на ${ddmmyyyy(today)} нет.`;
+        return [`Просроченная задолженность · ${full(byPay.overdue.total)} (${plural(byPay.overdue.count, ["долг", "долга", "долгов"])}) · на ${ddmmyyyy(today)}`,
+          ...byPay.overdue.top10.map((x, i) => `${i + 1}. ${x.name} · ${x.company} · ${full(x.amount)} · оплата ${ddmmyyyy(x.paymentDate)} · просрочено ${x.overdueDays} дн.`)].join("\n");
+      }
       return [`Должники старше 30 дней с даты реализации · на ${ddmmyyyy(today)}`,
         ...I.debt.top10.map((x, i) => `${i + 1}. ${x.name} · ${x.company} · ${full(x.amount)} · реализация ${ddmmyyyy(x.saleDate)} · ${x.days} дн.`)].join("\n");
     }
@@ -682,6 +775,44 @@
     if (copy) {
       copy.parentElement.querySelector(".fin-copy-field")?.remove();
       copyFinance(copy);
+      return;
+    }
+    const debtOpen = e.target.closest("[data-debt-open]");
+    if (debtOpen) {
+      const kind = debtOpen.dataset.debtOpen;
+      if (debtGroups[kind]) {
+        debtGroups[kind].company = "";
+        debtGroups[kind].all = true;
+        const boxId = kind === "overdue" ? "debtOverdueBox" : "debtCurrentBox";
+        const box = document.getElementById(boxId);
+        if (box) box.open = true;
+        rerenderDebtors();
+        box?.scrollIntoView({ block: "start" });
+        (box?.querySelector(`[data-debt-group="${kind}"][data-c=""]`) || box?.querySelector("summary"))?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    const groupChip = e.target.closest("[data-debt-group]");
+    if (groupChip) {
+      const kind = groupChip.dataset.debtGroup;
+      const c = groupChip.dataset.c || "";
+      if (debtGroups[kind]) {
+        debtGroups[kind].company = c;
+        rerenderDebtors();
+        [...document.querySelectorAll(`[data-debt-group="${kind}"]`)].find((b) => (b.dataset.c || "") === c)?.focus();
+      }
+      return;
+    }
+    const groupAll = e.target.closest("[data-debt-all]");
+    if (groupAll) {
+      const kind = groupAll.dataset.debtAll;
+      if (debtGroups[kind]) {
+        debtGroups[kind].all = !debtGroups[kind].all;
+        rerenderDebtors();
+        const boxId = kind === "overdue" ? "debtOverdueBox" : "debtCurrentBox";
+        if (!debtGroups[kind].all) document.getElementById(boxId)?.scrollIntoView({ block: "start" });
+        document.querySelector(`[data-debt-all="${kind}"]`)?.focus();
+      }
       return;
     }
     const debtAction = e.target.closest("[data-debt-focus]");
@@ -744,7 +875,7 @@
     if (sort) {
       const key = sort.dataset.sort;
       debtSort = debtSort.key === key ? { key, dir: -debtSort.dir } : { key, dir: firstDir(key) };
-      const box = sort.closest("#debtMain, #debtProblem");
+      const box = sort.closest("#debtMain, #debtOverdue, #debtCurrent, #debtProblem");
       rerenderDebtors();
       // кнопку перерисовали — фокус возвращаем на новую, чтобы клавиатура не теряла место
       box?.querySelector(`.fin-sort[data-sort="${key}"]`)?.focus();
