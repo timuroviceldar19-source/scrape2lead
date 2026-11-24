@@ -77,7 +77,8 @@ export interface PlansGroupSliceView {
   lostTo: PlanLostToView;
 }
 export interface PlansGroupView extends PlansGroupSliceView {
-  openPlans: Array<PlanDealItem & { managerId: string; isFormerManager?: boolean }>;
+  /** `bid` — вердикт «идём / осторожно / не идём» (`bid/assess.ts`), ставится при сборке страницы. */
+  openPlans: Array<PlanDealItem & { managerId: string; isFormerManager?: boolean; bid?: import("../bid/types.js").BidAssessment }>;
   /** История побед по заказчикам, включая сделки вне ограниченных списков для таблиц. */
   wonCustomers?: Array<{ bin: string; name: string }>;
   group: "ИП" | "КТ";

@@ -85,6 +85,9 @@ npm run cloudflare:check  # wrangler deploy --dry-run
   Вид менеджера (`src/bitrix/salesPult/variants/manager.ts`) режет данные при сборке: свои строки, итоги отдела как в полном
   пульте, «Планы» из его сделок (`exports/sales-pult/plan-deals.json`), «Радар» только с его лотами (`radar/filter.ts`), «Выручка» из его строк реестра без
   бонуса РОП и сверки с порталом. Вида `tv` пока нет. Ответы с `cache-control: private, no-store`.
+- Вердикт «идём / осторожно / не идём» у карточек Радара и открытых планов (`src/bitrix/salesPult/bid/`) считается в
+  `renderPultHtmlWithView` из payload той же страницы: у вида менеджера нет «Конкурентов», поэтому вердикта нет, остаются
+  метки и цена. Браузер только рисует (`page/bid.client.js`). См. `docs/testing/pult-bid-verdict.tdd.md`.
 - «Финансы» (`fin.html`, адреса `/fin`, `/fin.html`) есть только в варианте `all`: виду менеджера и ТВ страница не
   собирается, проверка входа отвечает «недоступна», ссылка в меню у менеджера убирается.
 - Проверить локально: `PULT_ROLES= npx tsx scripts/pult-gate-config.mts exports/pult-gate/config.json`,

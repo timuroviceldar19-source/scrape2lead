@@ -51,225 +51,6 @@
   const tableStates = new Map();
   const filterLabels = { managerId: "Менеджер", kind: "Вид товара", portalStatus: "Статус портала", method: "Способ закупки" };
 
-  const validBin = value => /^\d{12}$/.test(String(value ?? "").trim()) ? String(value).trim() : "";
-  const normalizeName = value => {
-    let name = " " + String(value || "").toLowerCase().replace(/ё/g, "е").replace(/["«»„“]/g, " ").replace(/\s+/g, " ") + " ";
-    name = name.replace(/ коммунальное государственное казенное предприятие /g, " кгкп ");
-    name = name.replace(/ коммунальное государственное учреждение /g, " кгу ");
-    name = name.replace(/ государственное коммунальное казенное предприятие /g, " гккп ");
-    name = name.replace(/ государственное коммунальное предприятие /g, " гкп ");
-    name = name.replace(/ товарищество с ограниченной ответственностью /g, " тоо ");
-    name = name.replace(/ некоммерческое акционерное общество /g, " нао ");
-    return name.replace(/\s+/g, " ").trim();
-  };
-  function append(map, key, item) {
-    if (!key) return;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(item);
-  }
-  function customerIndex() {
-    const byBin = new Map(), byName = new Map(), withoutBin = new Map();
-    return {
-      add(bin, name, item) {
-        const key = validBin(bin);
-        const norm = normalizeName(name);
-        append(byBin, key, item);
-        append(byName, norm, item);
-        if (!key) append(withoutBin, norm, item);
-      },
-      find(bin, name) {
-        const key = validBin(bin);
-        const norm = normalizeName(name);
-        return key ? byBin.get(key) || withoutBin.get(norm) || [] : byName.get(norm) || [];
-      }
-    };
-  }
-
-  const views = group => group ? [group, ...Object.entries(group.monthViews || {}).filter(([key]) => key !== "all").map(([, view]) => view)] : [];
-  function buildCustomerIndices(plans, market, competitors) {
-    const bought = customerIndex();
-    const lost = customerIndex();
-    const rememberPurchase = (bin, name) => bought.add(bin, name, true);
-    const crmLosses = new Map(), protocolLosses = new Map();
-    const rememberProtocolLoss = (lot, bin, name, diff) => {
-      if ((!bin && !name) || (!lot.annoId && !lot.lotNumber)) return;
-      const key = JSON.stringify([lot.annoId, lot.lotNumber, bin || normalizeName(name)]);
-      const prev = protocolLosses.get(key);
-      protocolLosses.set(key, {
-        bin, name: prev?.name || name,
-        customerBin: validBin(prev?.customerBin) || lot.customerBin,
-        customerName: prev?.customerName || lot.customerName, diff: prev?.diff ?? diff
-      });
-    };
-    for (const key of ["ip", "kt"]) {
-      for (const c of plans?.[key]?.wonCustomers || []) rememberPurchase(c.bin, c.name);
-      for (const slice of views(plans?.[key])) {
-        for (const c of slice.customers || []) {
-          if (c.wonCount > 0 || c.planList?.some(p => p.outcomeCategory === "won")) rememberPurchase(c.bin, c.name);
-        }
-        for (const c of slice.lostTo?.competitors || []) {
-          for (const d of c.deals || []) {
-            if (crmLosses.has(d.id)) continue;
-            crmLosses.set(d.id, {
-              bin: c.bin, name: c.name, customerBin: d.customerBin, customerName: d.customerName,
-              diff: d.contractSum == null ? null : pct(d.contractSum, d.planSum)
-            });
-          }
-        }
-      }
-      for (const slice of views(market?.[key])) {
-        for (const c of slice.customers || []) {
-          if (c.us > 0 || c.contractList?.some(item => item.us)) rememberPurchase(c.bin, c.name);
-        }
-        for (const supplier of slice.suppliers || []) {
-          if (!supplier.us) continue;
-          for (const c of supplier.contractList || []) rememberPurchase(c.customerBin, c.customer);
-        }
-      }
-      for (const slice of views(competitors?.[key])) {
-        for (const c of slice.competitors || []) {
-          for (const lot of c.lotList || []) {
-            if (!lot.isWinner) continue;
-            if (c.us) rememberPurchase(lot.customerBin, lot.customerName);
-            else {
-              const diff = Number.isFinite(lot.discountPct) ? -lot.discountPct :
-                lot.bidTotalPrice == null ? null : pct(lot.bidTotalPrice, lot.plannedSum);
-              rememberProtocolLoss(lot, c.bin, c.name, diff);
-            }
-          }
-        }
-        for (const rival of slice.headToHead || []) {
-          for (const lot of rival.lots || []) {
-            if (lot.weWon) rememberPurchase(lot.customerBin, lot.customerName);
-            else if (lot.rivalWon) {
-              const diff = Number.isFinite(lot.winnerDiscountPct) ? -lot.winnerDiscountPct : null;
-              rememberProtocolLoss(lot, lot.winnerBin || rival.bin, lot.winnerName || rival.name, diff);
-            }
-          }
-        }
-      }
-    }
-    for (const d of [...protocolLosses.values(), ...crmLosses.values()]) {
-      lost.add(d.customerBin, d.customerName, d);
-    }
-    return { bought, lost };
-  }
-
-  function buildTemplateIndex(group) {
-    const customers = customerIndex();
-    const byLot = new Map(), byAnnouncement = new Map();
-    for (const template of group?.specTemplates || []) {
-      for (const lot of template.lots || []) {
-        const match = { template, lot };
-        append(byLot, lot.lotNumber, match);
-        append(byAnnouncement, lot.annoId, match);
-        customers.add(lot.customerBin, lot.customerName, match);
-      }
-    }
-    return item => {
-      const announcement = item.annoId || String(item.announceUrl || item.lotUrl || "").match(/\/announce\/index\/(\d+)(?:[/?#]|$)/)?.[1];
-      const history = customers.find(item.customerBin, item.customerName);
-      const direct = byLot.get(item.lotNumber) || byAnnouncement.get(announcement);
-      const match = (direct || history).reduce((best, match) => {
-        if (!best) return match;
-        if (match.lot.strength !== best.lot.strength) return match.lot.strength === "strong" ? match : best;
-        return match.lot.sharePct > best.lot.sharePct ? match : best;
-      }, null);
-      if (!match) return null;
-      return {
-        template: match.template,
-        historical: !direct,
-        strong: match.lot.strength === "strong" || history.some(m => m.template === match.template && m.lot.strength === "strong")
-      };
-    };
-  }
-
-  const diagonal = value => String(value || "").match(/(?:^|\D)(65|75|86)\s*(?:["″”»]|дюйм|$)/i)?.[1];
-  function priceKind(label) {
-    const name = normalizeName(label);
-    if (name === "компьютеры и моноблоки") return name;
-    const kinds = [
-      [/панел|^(65|75|86)\b/, "панель"], [/доск/, "доска"], [/учебн.*комплект/, "учебный комплект"],
-      [/системн.*блок/, "системный блок"], [/моноблок/, "моноблок"], [/компьютер/, "компьютер"],
-      [/ноутбук/, "ноутбук"], [/монитор/, "монитор"], [/мфу|многофункциональн/, "мфу"], [/принтер/, "принтер"]
-    ];
-    return kinds.find(([pattern]) => pattern.test(name))?.[1] || name;
-  }
-  function priceKey(label) {
-    const kind = priceKind(label);
-    const size = kind === "панель" && diagonal(label);
-    return size ? `панель ${size}` : kind;
-  }
-  function buildPriceIndex(group, market) {
-    const prices = new Map();
-    for (const row of market?.kinds || []) {
-      const med = [row.med, row.usMed].find(value => Number.isFinite(value) && value > 0);
-      if (med) prices.set(priceKey(row.kind), med);
-    }
-    const compRows = group ? [...(group.prices?.rows || []), group.prices?.kitsRow].filter(Boolean) : [];
-    for (const row of compRows) {
-      const med = [row.compWinner?.med, row.ourWinner?.med].find(value => Number.isFinite(value) && value > 0);
-      if (med) prices.set(priceKey(row.label || row.kind), med);
-    }
-    return item => {
-      let kind = priceKind(item.kind);
-      if (item.kind === "МФУ и принтеры" || item.kind === "Компьютеры и системные блоки") {
-        const type = priceKind(item.itemName);
-        if (["мфу", "принтер", "компьютер", "системный блок"].includes(type)) kind = type;
-        else if (item.truCode?.startsWith("262016")) kind = "принтер";
-        else if (item.truCode?.startsWith("262040")) kind = "системный блок";
-        else if (item.kind === "Компьютеры и системные блоки") kind = "компьютер";
-      }
-      const size = kind === "панель" && (diagonal(item.itemName) || diagonal(item.kind));
-      return (size && prices.get(`панель ${size}`)) || prices.get(kind) ||
-        (["компьютер", "моноблок"].includes(kind) && prices.get("компьютеры и моноблоки"));
-    };
-  }
-
-  function lossTags(losses, customerBin) {
-    const rivals = new Map();
-    for (const loss of losses) append(rivals, loss.bin || normalizeName(loss.name), loss);
-    const labels = [...rivals.values()].sort((a, b) => b.length - a.length).map(items => {
-      const known = items.map(d => d.diff).filter(Number.isFinite);
-      const average = known.length ? Math.round(known.reduce((sum, value) => sum + value, 0) / known.length) : null;
-      return [items[0].name || items[0].bin, `${fmt(items.length)}×`, signedPct(average)].filter(Boolean).join(" · ");
-    });
-    if (!losses.length) return "";
-    const title = label => `${esc(label)}. Процент — среднее отклонение цены победы от плана по известным ценам.`;
-    if (!customerBin || !losses.some(d => validBin(d.customerBin) === customerBin)) {
-      return `<span class="tag warn" title="${title(labels.join("; "))}">ранее забрал конкурент</span>`;
-    }
-    return labels.map(label => `<span class="tag warn" title="${title(label)}">забирал ${esc(label)}</span>`).join("");
-  }
-
-  window.__buildWinHintsIndex = function (payload, key) {
-    const { plans, market, competitors } = payload || {};
-    const { bought, lost } = buildCustomerIndices(plans, market, competitors);
-    const findTemplate = buildTemplateIndex(competitors?.[key]);
-    const findPrice = buildPriceIndex(competitors?.[key], market?.[key]);
-    const cache = new WeakMap();
-    return (item, unitPrice) => {
-      if (cache.has(item)) return cache.get(item);
-      const losses = lost.find(item.customerBin, item.customerName);
-      const match = findTemplate(item);
-      const winner = match?.template.winners?.[0];
-      const template = match ? `<span class="tag warn"${match.historical ? ' title="Ранее найден у этого заказчика"' : ""}>Шаблон ТС: ${esc(match.template.templateName)}${winner ? ` · побеждал ${esc(winner.name)} (${esc(winner.sharePct)}%)` : ""}${match.strong ? " · сильное совпадение" : ""}</span>` : "";
-      const customerTags = [
-        bought.find(item.customerBin, item.customerName).length ? '<span class="tag good">покупал у нас</span>' : "",
-        lossTags(losses, validBin(item.customerBin)), template
-      ].join("");
-      const median = findPrice(item);
-      const status = unitPrice * 100 >= median * 115 ? "good" : unitPrice * 100 < median * 90 ? "bad" : "";
-      const statusText = status === "good" ? "запас" : status === "bad" ? "низкая цена" : "";
-      const result = {
-        risk: Boolean(losses.length || match),
-        customerHtml: customerTags ? `<span class="win-hints">${customerTags}</span>` : "",
-        priceHtml: unitPrice > 0 && median > 0 ? `<span class="win-price ${status}">~${fmt(unitPrice)}/шт · победы ~${fmt(median)}${statusText ? ` · ${statusText}` : ""}</span>` : ""
-      };
-      cache.set(item, result);
-      return result;
-    };
-  };
 
   function readTableState(key) {
     let saved;
@@ -304,7 +85,8 @@
     for (const key of Object.keys(filterLabels)) if (!choicesByKey.get(key).has(state.filters[key])) state.filters[key] = "";
     saveTableState(state);
 
-    const hintsFor = d => state.winHintsIndex(d, d.price || (d.qty > 0 ? d.sum / d.qty : 0));
+    // Вердикт и подсказки считает сервер (bid/assess.ts), здесь только разметка.
+    const hintsFor = d => window.__bidHtml(d.bid);
     const quickChecks = {
       all: () => true,
       new: d => d.isNewStage,
@@ -380,7 +162,7 @@
         const hints = hintsFor(d);
         return `<div class="r" role="row" data-plan-id="${esc(d.id)}">
           <span role="cell">${esc(d.month)}<span class="sub">${link(d.dealUrl, `Сделка ${d.id} ↗`)} · ${link(d.planUrl, `План ${d.planNumber} ↗`)}</span></span>
-          <span role="cell">${esc(d.customerName)}<span class="dim sub">${esc(d.customerBin)}</span>${hints.customerHtml}</span>
+          <span role="cell">${esc(d.customerName)}<span class="dim sub">${esc(d.customerBin)}</span>${hints.verdictHtml}${hints.customerHtml}</span>
           <span role="cell">${esc(d.itemName)}<span class="dim sub">${[d.truCode, d.kind].filter(Boolean).map(esc).join(" · ")}</span>${window.__stockHint ? window.__stockHint(d) : ""}</span>
           <span role="cell" data-label="Количество">${fmt(d.qty)} шт.</span>
           <span role="cell" class="num" data-label="Сумма">${money(d.sum)}${hints.priceHtml}</span>
@@ -521,10 +303,6 @@
     if (state.month !== active) state.limit = 50;
     state.month = active;
     const payload = typeof PAYLOAD === "undefined" ? {} : PAYLOAD;
-    if (state.plans !== PLANS) {
-      state.plans = PLANS;
-      state.winHintsIndex = window.__buildWinHintsIndex({ ...payload, plans: PLANS }, stateKey === "plans-ip" ? "ip" : "kt");
-    }
     const asOfMonth = String(PLANS.asOf || payload.asOfDate || "").slice(0, 7);
     renderOpenPlans(base, el, active, state, asOfMonth);
     const findOpenBtn = el.querySelector("[data-plan-find-open]");
