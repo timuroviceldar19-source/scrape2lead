@@ -1,5 +1,6 @@
 // Раскладывает страницы пульта по вариантам ролей для выкладки на Cloudflare Pages:
 // _r/all — полный пульт (с «Финансами»), _r/rop — вид РОП (без «Финансов»),
+// _r/rto — вид РТО (без «Финансов» и «Выручки»),
 // _r/m<ID> — вид каждого менеджера из конфига ролей (без «Финансов» и «Конкурентов»).
 // Почты не печатает: лог workflow публичный.
 //
@@ -11,6 +12,7 @@ import { pathToFileURL } from "node:url";
 import type { PultGateConfig } from "../src/bitrix/salesPult/gate/config.js";
 import { buildManagerVariant, renderManagerVariant } from "../src/bitrix/salesPult/variants/manager.js";
 import { buildRopVariant, renderRopVariant } from "../src/bitrix/salesPult/variants/rop.js";
+import { buildRtoVariant, renderRtoVariant } from "../src/bitrix/salesPult/variants/rto.js";
 import type { SalesPultPayload } from "../src/bitrix/salesPult/types.js";
 import type { RegisterPagePayload } from "../src/bitrix/salesPult/site.js";
 import type { NormalizedPlanDeal } from "../src/bitrix/salesPult/plans/types.js";
@@ -62,11 +64,13 @@ export function deployPultVariants(
   if (config) {
     const roles = Object.values(config.users);
     const hasRop = roles.some((r) => r.kind === "rop");
+    const hasRto = roles.some((r) => r.kind === "rto");
     const managerIds = [...new Set(roles.flatMap((r) => (r.kind === "manager" ? [r.managerId] : [])))];
-    if (hasRop || managerIds.length) {
+    if (hasRop || hasRto || managerIds.length) {
       const pult = readJson<SalesPultPayload>(path.join(srcDir, "payload.json"));
-      const reg = readJson<RegisterPagePayload>(path.join(srcDir, "payload-reg.json"));
-      if (!pult || !reg) {
+      const needReg = hasRop || managerIds.length > 0;
+      const reg = needReg ? readJson<RegisterPagePayload>(path.join(srcDir, "payload-reg.json")) : null;
+      if (!pult || (needReg && !reg)) {
         console.error("::error::[Роли] нет payload.json или payload-reg.json: варианты ролей не собрать");
         process.exit(1);
       }
@@ -77,14 +81,20 @@ export function deployPultVariants(
         delete pult.stock;
         console.warn(`::warning::[Склад] payload.stock не прошёл проверку (ошибок: ${stock.issues}) — склад в видах ролей не показан`);
       }
-      if (hasRop) {
+      if (hasRop && reg) {
         const ropPages = renderRopVariant(buildRopVariant({ pult, reg }));
         write("rop", "index.html", ropPages.index);
         write("rop", "reg.html", ropPages.reg);
         copyMarketFiles(marketSrcDir, path.join(outDir, "_r", "rop", "market"));
         built.push("rop");
       }
-      if (managerIds.length) {
+      if (hasRto) {
+        const rtoPages = renderRtoVariant(buildRtoVariant({ pult }));
+        write("rto", "index.html", rtoPages.index);
+        copyMarketFiles(marketSrcDir, path.join(outDir, "_r", "rto", "market"));
+        built.push("rto");
+      }
+      if (managerIds.length && reg) {
         const planDeals = readJson<NormalizedPlanDeal[]>(path.join(srcDir, "plan-deals.json"));
         const salesConfig = readJson<{ register?: { managerAliases?: Record<string, string> } }>("config/sales-pult.json");
         for (const managerId of managerIds) {

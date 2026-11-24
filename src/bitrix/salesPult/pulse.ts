@@ -348,12 +348,27 @@ export function isFinancePagePulseItem(item: PulseItem): boolean {
   return FINANCE_PULSE_AREAS.has(item.area) || item.href.startsWith("./fin.html");
 }
 
+/** Пункт относится к странице «Выручка» (реестр ОП, маржа) и не должен попадать к РТО. */
+export function isRegisterPagePulseItem(item: PulseItem): boolean {
+  return item.area === "margin" || item.href.startsWith("./reg.html");
+}
+
 /** Пульс для РОП: без пунктов страницы «Финансы» и заметок о финотчёте, с маржей реестра, тендерами, CRM и конкурентами. */
 export function buildRopPulse(pulse: PulseView | null | undefined): PulseView | null | undefined {
   if (!pulse) return pulse;
   const items = pulse.items.filter((item) => !isFinancePagePulseItem(item));
   const removed = pulse.items.length - items.length;
   const missing = pulse.missing.filter((note) => !/^Финансы(?::|\b)/i.test(note.trim()));
+  const more = removed === 0 && pulse.more ? pulse.more : undefined;
+  return { asOf: pulse.asOf, items, missing, ...(more ? { more } : {}) };
+}
+
+/** Пульс для РТО: без пунктов «Финансов» и «Выручки», с тендерами, CRM и конкурентами. */
+export function buildRtoPulse(pulse: PulseView | null | undefined): PulseView | null | undefined {
+  if (!pulse) return pulse;
+  const items = pulse.items.filter((item) => !isFinancePagePulseItem(item) && !isRegisterPagePulseItem(item));
+  const removed = pulse.items.length - items.length;
+  const missing = pulse.missing.filter((note) => !/^(?:Финансы|Реестр)(?::|\b)/i.test(note.trim()));
   const more = removed === 0 && pulse.more ? pulse.more : undefined;
   return { asOf: pulse.asOf, items, missing, ...(more ? { more } : {}) };
 }

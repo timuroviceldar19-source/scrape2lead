@@ -4,6 +4,7 @@
 export type PultRole =
   | { kind: "all" }
   | { kind: "rop" }
+  | { kind: "rto" }
   | { kind: "manager"; managerId: string }
   | { kind: "tv" };
 
@@ -23,13 +24,14 @@ const fail = (message: string): never => {
 function parseRole(email: string, value: unknown): PultRole {
   if (value === "all") return { kind: "all" };
   if (value === "rop") return { kind: "rop" };
+  if (value === "rto") return { kind: "rto" };
   if (value === "tv") return { kind: "tv" };
   if (typeof value === "string" && value.startsWith("manager:")) {
     const managerId = value.slice("manager:".length).trim();
     if (!/^\d+$/.test(managerId)) fail(`у ${email} роль manager без числового ID сотрудника Битрикса`);
     return { kind: "manager", managerId };
   }
-  return fail(`у ${email} неизвестная роль ${JSON.stringify(value)}: допустимы all, rop, tv, manager:<ID>`);
+  return fail(`у ${email} неизвестная роль ${JSON.stringify(value)}: допустимы all, rop, rto, tv, manager:<ID>`);
 }
 
 /**
