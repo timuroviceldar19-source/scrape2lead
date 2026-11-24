@@ -60,7 +60,9 @@ function filterReconciliation(r: ContractReconciliation, name: string): Contract
   };
 }
 
-function filterContractSource(cs: PultContractSource, viewer: PultViewer): PultContractSource {
+type ManagerViewer = Extract<PultViewer, { kind: "manager" }>;
+
+function filterContractSource(cs: PultContractSource, viewer: ManagerViewer): PultContractSource {
   // Сигналы договоров всегда начинаются с имени менеджера: «<b>Имя</b>: …».
   const prefix = `<b>${escapeHtml(viewer.name)}</b>:`;
   return {
@@ -71,7 +73,7 @@ function filterContractSource(cs: PultContractSource, viewer: PultViewer): PultC
   };
 }
 
-function filterPultPayload(p: SalesPultPayload, viewer: PultViewer): SalesPultPayload {
+function filterPultPayload(p: SalesPultPayload, viewer: ManagerViewer): SalesPultPayload {
   const { closedMonths: _closed, plans: _plans, radar: _radar, competitors: _competitors, ...rest } = p;
   return {
     ...rest,

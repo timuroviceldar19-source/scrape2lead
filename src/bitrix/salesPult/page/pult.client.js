@@ -3,8 +3,9 @@
 
   let P = PAYLOAD;
   let V = VIEW;
-  // Вариант для одного менеджера: «Я — …» закреплено за ним, «Радара» нет (данные уже урезаны при сборке).
+  // Вариант для одного менеджера: «Я — …» закреплено за ним (данные уже урезаны при сборке).
   const VIEWER = PAYLOAD.viewer && PAYLOAD.viewer.kind === "manager" ? PAYLOAD.viewer : null;
+  const HIDE_FINANCE = Boolean(PAYLOAD.viewer);
   const currentMonth = PAYLOAD.asOfDate.slice(0, 7);
   let selectedMonth = currentMonth;
 
@@ -174,8 +175,8 @@
     const el = document.getElementById("pulse");
     const data = PAYLOAD.pulse;
     if (!el || !data) return;
-    // Вид менеджера уже без финансовых пунктов (variants/manager.ts); здесь — вторая защита.
-    const items = (data.items || []).filter((item) => !(VIEWER && item.finance));
+    // Виды менеджера и РОП уже без пунктов «Финансов» при сборке; здесь — вторая защита.
+    const items = (data.items || []).filter((item) => !(VIEWER && item.finance) && !(HIDE_FINANCE && String(item.href || "").startsWith("./fin.html")));
     const rows = items.length
       ? items.map((item) => {
         const sev = PULSE_SEVERITY[item.severity] ? item.severity : "yellow";
@@ -967,9 +968,10 @@
   });
 
   /* ================= tabs ================= */
-  // «Финансы» в вид менеджера не собираются (scripts/pult-variants.mts), ссылку тоже убираем.
-  // «Радар» у менеджера свой (только его лоты); ссылку убираем, только если радара в его сборке нет.
-  if (VIEWER) document.querySelectorAll('.sections a[data-t="competitors"], .sections a[href="./fin.html"]').forEach((a) => a.remove());
+  // «Финансы» собираются только в полный вариант (scripts/pult-variants.mts): для РОП и менеджера ссылку убираем.
+  // «Конкуренты» скрыты для менеджера. «Радар» у менеджера свой (только его лоты); ссылку убираем, если его нет.
+  if (HIDE_FINANCE) document.querySelectorAll('.sections a[href="./fin.html"]').forEach((a) => a.remove());
+  if (VIEWER) document.querySelectorAll('.sections a[data-t="competitors"]').forEach((a) => a.remove());
   if (VIEWER && !PAYLOAD.radar) document.querySelectorAll('.sections a[data-t="radar"]').forEach((a) => a.remove());
   const tabLinks = [...document.querySelectorAll(".sections a[data-t]")];
   const tabPanes = {

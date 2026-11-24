@@ -341,6 +341,23 @@ export function pulseForPayload(
   });
 }
 
+const FINANCE_PULSE_AREAS = new Set<PulseArea>(["cash", "debt", "stock"]);
+
+/** Пункт относится к странице «Финансы» (касса, дебиторка, склад) и не должен попадать к РОП. */
+export function isFinancePagePulseItem(item: PulseItem): boolean {
+  return FINANCE_PULSE_AREAS.has(item.area) || item.href.startsWith("./fin.html");
+}
+
+/** Пульс для РОП: без пунктов страницы «Финансы» и заметок о финотчёте, с маржей реестра, тендерами, CRM и конкурентами. */
+export function buildRopPulse(pulse: PulseView | null | undefined): PulseView | null | undefined {
+  if (!pulse) return pulse;
+  const items = pulse.items.filter((item) => !isFinancePagePulseItem(item));
+  const removed = pulse.items.length - items.length;
+  const missing = pulse.missing.filter((note) => !/^Финансы(?::|\b)/i.test(note.trim()));
+  const more = removed === 0 && pulse.more ? pulse.more : undefined;
+  return { asOf: pulse.asOf, items, missing, ...(more ? { more } : {}) };
+}
+
 /** Пульс менеджера: только тендеры переданного (его) радара — без финансов, маржи и CRM команды. */
 export function buildManagerPulse(radar: RadarView | null, asOfDate: string, nowIso: string): PulseView {
   const missing: string[] = [];
