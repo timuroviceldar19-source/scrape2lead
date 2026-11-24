@@ -4,9 +4,13 @@
 
   const P = typeof PAYLOAD !== "undefined" ? PAYLOAD : {};
   const R = P.register;
-  // Менеджеру «Финансы» и «Конкуренты» не показываются: в его варианте пульта этих вкладок нет. «Радар» у него свой.
+  // «Финансы» есть только в полном варианте пульта; менеджеру дополнительно скрываются «Конкуренты».
+  const IS_MANAGER = Boolean(P.viewer && P.viewer.kind === "manager");
   if (P.viewer) {
-    document.querySelectorAll('a[href="./#competitors-ip"], a[href="./fin.html"]').forEach((a) => a.remove());
+    document.querySelectorAll('a[href="./fin.html"]').forEach((a) => a.remove());
+  }
+  if (IS_MANAGER) {
+    document.querySelectorAll('a[href="./#competitors-ip"]').forEach((a) => a.remove());
     const footAudience = document.getElementById("footAudience");
     if (footAudience) footAudience.textContent = "Личный вид менеджера · только ваши договоры";
   }

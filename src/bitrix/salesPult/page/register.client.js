@@ -133,7 +133,7 @@
   const T = R.total;
   const PS = R.partner;
   // Вариант для менеджера: в R только его строки, итоги — его, бонуса РОП и B2B-плана отдела нет.
-  const VIEWER = typeof PAYLOAD !== "undefined" && PAYLOAD && PAYLOAD.viewer ? PAYLOAD.viewer : null;
+  const VIEWER = typeof PAYLOAD !== "undefined" && PAYLOAD && PAYLOAD.viewer && PAYLOAD.viewer.kind === "manager" ? PAYLOAD.viewer : null;
   const M = Number(R.month.slice(5, 7));
   // Номера блоков идут подряд: блок партнёрских продаж есть не в каждом месяце.
   let blockNo = 0;

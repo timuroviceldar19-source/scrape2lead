@@ -44,11 +44,9 @@ export interface PultGroupView {
 }
 
 /** Кто смотрит вариант пульта; нет — полный пульт. */
-export interface PultViewer {
-  kind: "manager";
-  managerId: string;
-  name: string;
-}
+export type PultViewer =
+  | { kind: "manager"; managerId: string; name: string }
+  | { kind: "rop" };
 
 export interface SalesPultPayload {
   /** Вариант для одного человека: страница закрепляет «Я — …» и прячет недоступные разделы. */
