@@ -59,6 +59,21 @@ nav{margin-top:18px;display:flex;gap:16px;flex-wrap:wrap}a{color:inherit}
 
 const LOGOUT = '<a href="/cdn-cgi/access/logout">Войти под другой почтой</a>';
 
+/** Маркер в HTML-шаблонах страниц пульта: промежуточный код подставляет сюда почту и кнопку «Выйти». */
+export const ACCOUNT_MARKER = "<!--__ACCOUNT__-->";
+
+function roleLabel(role: PultRole): string {
+  if (role.kind === "all") return "полный доступ";
+  if (role.kind === "rop") return "РОП";
+  if (role.kind === "rto") return "РТО";
+  if (role.kind === "manager") return "менеджер";
+  return "ТВ";
+}
+
+export function renderAccountBar(email: string, role: PultRole): string {
+  return `<div class="account-bar" aria-label="Учётная запись"><span class="account-who">Вы вошли как <b>${escapeHtml(email)}</b> <span class="account-role">· ${roleLabel(role)}</span></span><a class="btn account-logout" href="/cdn-cgi/access/logout">Выйти</a></div>`;
+}
+
 function denied(email: string | null): Response {
   const who = email ? `Вы вошли как <b>${escapeHtml(email)}</b>.` : "Не удалось проверить вход.";
   return notice(403, "Нет доступа", [who, "Этой почты нет в списке доступа к пульту. Напишите руководителю отдела продаж."], LOGOUT);
@@ -107,12 +122,14 @@ export async function handleGateRequest(request: Request, deps: GateDeps): Promi
 
   let variant = "all";
   let role: PultRole | null = null;
+  let email: string | null = null;
   if (deps.config) {
     const token = tokenFrom(request);
     const who = token
       ? await verifyAccessJwt(token, { team: deps.config.team, aud: deps.config.aud, fetchFn: deps.fetchFn, now: deps.now?.() })
       : null;
     if (!who) return denied(null);
+    email = who.email;
     role = deps.config.users[who.email] ?? null;
     if (!role) return denied(who.email);
     variant = variantOf(role);
@@ -145,5 +162,15 @@ export async function handleGateRequest(request: Request, deps: GateDeps): Promi
   if (!asset.ok) return new Response("upstream error", { status: 502, headers: SECURITY_HEADERS });
 
   const headers = { ...SECURITY_HEADERS, "content-type": asset.headers.get("content-type") ?? "text/html; charset=utf-8" };
-  return new Response(request.method === "HEAD" ? null : asset.body, { status: 200, headers });
+  if (request.method === "HEAD") {
+    return new Response(null, { status: 200, headers });
+  }
+  if (email && role) {
+    const html = await asset.text();
+    const body = html.includes(ACCOUNT_MARKER)
+      ? html.replace(ACCOUNT_MARKER, () => renderAccountBar(email!, role!))
+      : html;
+    return new Response(body, { status: 200, headers });
+  }
+  return new Response(asset.body, { status: 200, headers });
 }
