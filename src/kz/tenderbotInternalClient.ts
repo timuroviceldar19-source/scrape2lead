@@ -171,6 +171,10 @@ const toNumber = (value: string | number | null | undefined): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+/** Просроченный токен: поля приходят, но название/номер/заказчик скрыты. */
+const isDegraded = (lot: RawLot | undefined): boolean =>
+  lot !== undefined && (lot.name_ru === "" || lot.source_id === "hidden" || lot.tender?.gzid === "hidden");
+
 export function mapTenderbotLot(raw: RawLot): TenderbotLot {
   return {
     id: Number(raw.id ?? 0),
@@ -204,6 +208,7 @@ export class TenderbotInternalClient {
   private readonly maxRetries: number;
   private readonly fetchFn: typeof fetch;
   private token: string | null = null;
+  private degradedChecked = false;
 
   constructor(options: TenderbotInternalClientOptions) {
     this.apiBaseUrl = (options.apiBaseUrl ?? TENDERBOT_API_BASE).replace(/\/+$/, "");
@@ -224,6 +229,7 @@ export class TenderbotInternalClient {
     const payload = (await response.json()) as { accessToken?: string; success?: boolean };
     if (!payload.success || !payload.accessToken) throw new TenderbotAuthError(401);
     this.token = payload.accessToken;
+    this.degradedChecked = false;
     return payload.accessToken;
   }
 
@@ -232,7 +238,7 @@ export class TenderbotInternalClient {
     page: number,
     perPage = TENDERBOT_MAX_PER_PAGE
   ): Promise<TenderbotSearchPage> {
-    const token = this.token ?? (await this.login());
+    let token = this.token ?? (await this.login());
     const body = buildTenderbotSearchBody(filters, page, perPage);
     let lastStatus = 0;
 
@@ -256,6 +262,17 @@ export class TenderbotInternalClient {
 
       const payload = (await response.json()) as RawLotsPayload;
       const lots = payload.aData?.lots;
+
+      // Просроченный токен отдаёт 200, но прячет название, номер и заказчика.
+      // Один раз перелогиниваемся, чтобы не собирать пустые строки.
+      if (!this.degradedChecked) {
+        this.degradedChecked = true;
+        if (isDegraded(lots?.data?.[0]) && attempt === 0) {
+          token = await this.login();
+          continue;
+        }
+      }
+
       return {
         total: Number(lots?.total ?? 0),
         perPage: Number(lots?.per_page ?? perPage),

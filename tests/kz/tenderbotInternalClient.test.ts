@@ -110,6 +110,30 @@ describe("TenderbotInternalClient", () => {
     expect(searchCalls).toBe(2);
   });
 
+  it("перелогинивается, если токен отдаёт скрытые поля", async () => {
+    let logins = 0;
+    const auth = new Map<number, string>();
+    let searches = 0;
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      if (href.endsWith("/login")) {
+        logins++;
+        return json({ success: true, accessToken: `jwt-${logins}` });
+      }
+      searches++;
+      auth.set(searches, new Headers(init?.headers).get("authorization") ?? "");
+      if (searches === 1) {
+        return json({ success: true, aData: { lots: { total: 1, per_page: 400, current_page: 1, last_page: 1, data: [{ id: 1, name_ru: "", source_id: "hidden", tender: { gzid: "hidden" } }] } } });
+      }
+      return json({ success: true, aData: { lots: { total: 1, per_page: 400, current_page: 1, last_page: 1, data: [{ id: 1, name_ru: "Ноутбук", source_id: "88811722-ЗЦП2", tender: { gzid: "G18020190-1" } }] } } });
+    }) as unknown as typeof fetch;
+
+    const result = await makeClient(fetcher).searchPage({ searchstr: "ноутбук" }, 1, 400);
+    expect(result.lots[0]).toMatchObject({ name: "Ноутбук", sourceId: "88811722-ЗЦП2", gzid: "G18020190-1" });
+    expect(logins).toBe(2);
+    expect(auth.get(2)).toBe("Bearer jwt-2");
+  });
+
   it("fails with a clear error on bad credentials", async () => {
     const fetcher = vi.fn(async () => json({ success: false, error: "Неверный пароль" }, 200)) as unknown as typeof fetch;
     await expect(makeClient(fetcher).login()).rejects.toThrow(/TENDERBOT_LOGIN/);
