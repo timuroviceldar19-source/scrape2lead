@@ -47,6 +47,28 @@ describe("procurement deal dates", () => {
     expect(String(result.fields.COMMENTS)).toContain("Приём заявок: 2026-07-23 — 2026-07-29");
   });
 
+  it("shows the offer window and the lot link in the card fields of a published tender", () => {
+    const url = "https://zakup.gov.kz/home/lots?q=lot-9&system_id__in=3";
+    const result = buildProcurementDealDecision(row({
+      recordKind: "tender", externalId: "lot-9", parentExternalId: "42", status: "Опубликован", url,
+      startDate: "2026-07-23T00:00:00+00:00", endDate: "2026-07-29T00:00:00+00:00"
+    }), null);
+
+    // BEGINDATE/CLOSEDATE карточка «F3-B2B тендеры» не показывает: срок виден только в этих полях.
+    expect(result.fields).toMatchObject({
+      UF_CRM_1713514302985: url,
+      UF_CRM_1713515014882: "2026-07-23",
+      UF_CRM_1713515048879: "2026-07-29"
+    });
+  });
+
+  it("leaves the tender card fields empty on a plan", () => {
+    const result = buildProcurementDealDecision(row({ planYear: 2026 }), null);
+    expect(result.fields).not.toHaveProperty("UF_CRM_1713514302985");
+    expect(result.fields).not.toHaveProperty("UF_CRM_1713515014882");
+    expect(result.fields).not.toHaveProperty("UF_CRM_1713515048879");
+  });
+
   it("reports the plan year and month from the plan item, never from a load timestamp", () => {
     const result = buildProcurementDealDecision(row({
       planYear: 2026, planMonth: 9, planDetail: planDetail({ financialYear: 2026 })

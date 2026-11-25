@@ -115,9 +115,16 @@ function offerWindowFields(
   existing: ExistingProcurementDeal | null
 ): Record<string, unknown> {
   if (record.recordKind === "tender") {
+    const begin = normalizeBitrixDate(record.startDate);
+    const close = normalizeBitrixDate(record.endDate);
     return {
-      BEGINDATE: normalizeBitrixDate(record.startDate),
-      CLOSEDATE: normalizeBitrixDate(record.endDate)
+      BEGINDATE: begin,
+      CLOSEDATE: close,
+      // Карточка «F3-B2B тендеры» не показывает BEGINDATE/CLOSEDATE: срок и ссылку менеджер видит
+      // только в полях «Тендер», «Начало приема заявок», «Окончание приема заявок».
+      UF_CRM_1713514302985: record.url || undefined,
+      UF_CRM_1713515014882: begin,
+      UF_CRM_1713515048879: close
     };
   }
   return existing && String(existing.BEGINDATE ?? "").trim() ? { BEGINDATE: "" } : {};
