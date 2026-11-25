@@ -92,7 +92,12 @@ export interface ProcurementRecord {
   customerSourceId?: string | null;
   customerName: string | null;
   customerBin: string | null;
+  /** Юридический адрес заказчика из объявления лота: у лотов EPZ мест поставки нет. */
+  customerAddress?: string | null;
   amount: number;
+  /** Количество и цена за единицу из лота EPZ; у плана они живут в `planDetail`. */
+  lotQuantity?: number | null;
+  lotUnitPrice?: number | null;
   currency: string;
   /** Год плана по данным позиции. Для тендеров и Tizilim остаётся null. */
   planYear: number | null;

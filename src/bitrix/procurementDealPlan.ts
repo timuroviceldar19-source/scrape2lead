@@ -41,7 +41,10 @@ export function verifyProcurementAssignmentGate(
 function buildFields(record: ProcurementRecord, existing: ExistingProcurementDeal | null): Record<string, unknown> {
   const detail = record.planDetail;
   const profile = record.customerProfile;
-  const deliveryAddresses = joinDeliveries(record, "address");
+  // У лота нет мест поставки — показываем юридический адрес заказчика из объявления.
+  const deliveryAddresses = joinDeliveries(record, "address") ?? record.customerAddress ?? undefined;
+  const quantity = detail?.quantity ?? record.lotQuantity;
+  const unitPrice = detail?.unitPrice ?? record.lotUnitPrice;
   const customerUrl = procurementCustomerUrl(record);
   const plannedTerm = [detail?.financialYear ?? record.planYear, detail?.deliveryDeadline]
     .filter((value) => value !== null && value !== undefined && value !== "").join("; ") || undefined;
@@ -56,8 +59,8 @@ function buildFields(record: ProcurementRecord, existing: ExistingProcurementDea
     UF_CRM_1711518716644: detail?.unitName,
     UF_CRM_6627AEBD4503E: record.purchaseMethod,
     UF_CRM_6627AEBD54B8D: detail?.nameRu ?? record.productName,
-    UF_CRM_6627AEBD5E68B: scalarText(detail?.unitPrice),
-    UF_CRM_6627AEBD67FFF: scalarText(detail?.quantity),
+    UF_CRM_6627AEBD5E68B: scalarText(unitPrice),
+    UF_CRM_6627AEBD67FFF: scalarText(quantity),
     UF_CRM_6627AEBD72587: record.customerName,
     UF_CRM_6627AEBD7C2D2: record.customerBin,
     UF_CRM_6627AEBD85B4D: record.status,
@@ -80,9 +83,8 @@ function buildFields(record: ProcurementRecord, existing: ExistingProcurementDea
     UF_CRM_DESC_KZ: detail?.shortDescriptionKk,
     UF_CRM_EXTRA_DESC_RU: detail?.extraDescription,
     UF_CRM_UNIT_NAME: detail?.unitName,
-    UF_CRM_COUNT: scalarText(detail?.quantity),
-    UF_CRM_PRICE_PER_UNIT: detail?.unitPrice === null || detail?.unitPrice === undefined
-      ? undefined : `${detail.unitPrice}|${record.currency}`,
+    UF_CRM_COUNT: scalarText(quantity),
+    UF_CRM_PRICE_PER_UNIT: unitPrice === null || unitPrice === undefined ? undefined : `${unitPrice}|${record.currency}`,
     UF_CRM_PREPAYMENT: scalarText(detail?.prepaymentPercent),
     UF_CRM_MONTH: scalarText(record.planMonth ?? detail?.planMonth),
     UF_CRM_SUPPLY_DATE: detail?.deliveryDeadline,
@@ -90,7 +92,7 @@ function buildFields(record: ProcurementRecord, existing: ExistingProcurementDea
     UF_CRM_PLAN_STATUS: record.status,
     UF_CRM_PLAN_LINK: record.url,
     UF_CRM_6A436D598EC82: profile?.reportingAdministrator,
-    UF_CRM_6A436D59AACBF: profile?.fullAddress,
+    UF_CRM_6A436D59AACBF: profile?.fullAddress ?? record.customerAddress ?? undefined,
     UF_CRM_6A436D59CD2B1: profile?.directorName,
     UF_CRM_6A436D5A19612: record.truCode,
     UF_CRM_6A436D5A3614C: record.externalId,
@@ -130,6 +132,8 @@ function buildComments(record: ProcurementRecord): string {
   const approvedAt = detail?.approvedAt ?? record.approvedAt;
   const planYear = record.planYear ?? detail?.financialYear;
   const planMonth = record.planMonth ?? detail?.planMonth;
+  const quantity = detail?.quantity ?? record.lotQuantity;
+  const unitPrice = detail?.unitPrice ?? record.lotUnitPrice;
   return [
     `Источник: ${record.source}`,
     `Тип: ${record.recordKind}`,
@@ -151,8 +155,8 @@ function buildComments(record: ProcurementRecord): string {
     `Наименование RU: ${detail?.nameRu ?? record.productName}`,
     detail?.nameKk ? `Наименование KZ: ${detail.nameKk}` : null,
     detail?.unitName ? `Единица: ${detail.unitName}` : null,
-    detail?.quantity !== null && detail?.quantity !== undefined ? `Количество: ${detail.quantity}` : null,
-    detail?.unitPrice !== null && detail?.unitPrice !== undefined ? `Цена за единицу: ${detail.unitPrice} ${record.currency}` : null,
+    quantity !== null && quantity !== undefined ? `Количество: ${quantity}` : null,
+    unitPrice !== null && unitPrice !== undefined ? `Цена за единицу: ${unitPrice} ${record.currency}` : null,
     `Сумма: ${record.amount} ${record.currency}`,
     record.purchaseMethod ? `Способ закупки: ${record.purchaseMethod}` : null,
     detail?.deliveryDeadline ? `Срок поставки: ${detail.deliveryDeadline}` : null,

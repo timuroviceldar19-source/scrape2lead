@@ -153,6 +153,34 @@ describe("procurement Bitrix lifecycle", () => {
     expect(result.fields).not.toHaveProperty("UF_CRM_6A436D5A5700E");
   });
 
+  it("fills quantity, unit price, customer link and address on a lot deal that has no plan detail", () => {
+    const lot = row({
+      source: "samruk", recordKind: "tender", externalId: "4586672", amount: 1_291_623.55,
+      lotQuantity: 5, lotUnitPrice: 258_324.71, customerSourceId: "59710",
+      customerAddress: "г.Астана, район Есиль, АЛИХАН БОКЕЙХАН, 12"
+    });
+    const result = buildProcurementDealDecision(lot, null);
+    expect(result.fields).toMatchObject({
+      UF_CRM_COUNT: "5",
+      UF_CRM_6627AEBD67FFF: "5",
+      UF_CRM_PRICE_PER_UNIT: "258324.71|KZT",
+      UF_CRM_6627AEBD5E68B: "258324.71",
+      UF_CRM_1782274598760: "https://zakup.gov.kz/registry/pipp/59710",
+      UF_CRM_DELIVERY_ADDRESSES: "г.Астана, район Есиль, АЛИХАН БОКЕЙХАН, 12",
+      UF_CRM_6A436D59AACBF: "г.Астана, район Есиль, АЛИХАН БОКЕЙХАН, 12"
+    });
+    expect(String(result.fields.COMMENTS)).toContain("Количество: 5");
+    expect(String(result.fields.COMMENTS)).toContain("Цена за единицу: 258324.71 KZT");
+  });
+
+  it("prefers the plan delivery places over the customer address", () => {
+    const plan = row({
+      customerAddress: "г.Астана, офис заказчика",
+      planDetail: planDetail({ deliveries: [{ address: "п. Шульбинск", kato: "101065100", quantity: 4 }] })
+    });
+    expect(buildProcurementDealDecision(plan, null).fields).toMatchObject({ UF_CRM_DELIVERY_ADDRESSES: "п. Шульбинск" });
+  });
+
   it("updates the linked plan when its tender is published without resetting manual stage", () => {
     const tender = row({ recordKind: "tender", externalId: "lot-9", parentExternalId: "42", status: "Опубликован" });
     const result = buildProcurementDealDecision(tender, {
