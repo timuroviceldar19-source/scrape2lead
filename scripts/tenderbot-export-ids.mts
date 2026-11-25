@@ -254,6 +254,7 @@ async function main(): Promise<void> {
   console.log(`  Уникальных ID: ${unique.length} (сумма совпадений ${totalHits})`);
   console.log(`  Запросов к API: ${pagesUsed}`);
   console.log(`\nФайлы:\n  ${csvPath}\n  ${lotsPath}\n  ${summaryPath}`);
+  console.log(`\nРазложить по площадкам и оставить только реальный пробел:\n  npx tsx scripts/tenderbot-platform-report.mts --in "${lotsPath}"`);
 }
 
 main().catch((error: unknown) => {
