@@ -57,6 +57,18 @@ describe("EPZ procurement normalization", () => {
       status: "Опубликован"
     });
   });
+
+  it("keeps the lot quantity and its unit price for the deal card", () => {
+    expect(parseEpzLot({
+      system: { id: 3, name: "SKK" }, id: 61955279, external_id: 4586672, lot_number: "4586672",
+      quantity: 5, total_price: 1291623.55, status_name: "Опубликован"
+    })).toMatchObject({ lotQuantity: 5, lotUnitPrice: 258324.71 });
+  });
+
+  it("leaves the unit price empty when the lot publishes no quantity", () => {
+    expect(parseEpzLot({ system: { id: 2 }, id: 1, external_id: 2, total_price: 100, quantity: 0 }))
+      .toMatchObject({ lotQuantity: null, lotUnitPrice: null });
+  });
 });
 
 describe("Tizilim procurement normalization", () => {

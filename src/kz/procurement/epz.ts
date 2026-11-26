@@ -44,6 +44,8 @@ export function parseEpzLot(input: unknown, collectedAt = new Date().toISOString
   const firstPlan = object(planItems[0]);
   const enstrus = Array.isArray(row.enstrus) ? row.enstrus : [];
   const firstEnstru = object(enstrus[0]);
+  const amount = number(row.total_price);
+  const lotQuantity = number(row.quantity) > 0 ? number(row.quantity) : null;
   return {
     source, recordKind: "tender", sourceRecordId: nullableText(row.id), announcementSourceId: nullableText(row.announcement_id), externalId,
     parentExternalId: nullableText(firstPlan.external_id ?? firstPlan.id),
@@ -52,7 +54,9 @@ export function parseEpzLot(input: unknown, collectedAt = new Date().toISOString
     description: text(row.description_ru ?? firstEnstru.short_description_ru),
     truCode: nullableText(row.enstru_key ?? firstEnstru.code),
     customerSourceId: nullableText(row.organization_id), customerName: nullableText(row.organization_name), customerBin: normalizeBin(row.organization_bin ?? row.customer_bin),
-    amount: number(row.total_price), currency: "KZT",
+    amount, currency: "KZT",
+    // Единицу измерения лот EPZ не публикует; цена за штуку выводится из суммы лота.
+    lotQuantity, lotUnitPrice: lotQuantity && amount > 0 ? Math.round((amount / lotQuantity) * 100) / 100 : null,
     ...EMPTY_PLAN_PERIOD, planYearId: firstNumber(row.plan_year_id),
     startDate: nullableText(row.offer_start_date ?? row.announcement_publish_date), endDate: nullableText(row.offer_end_date),
     url: epzSearchUrl("lots", text(row.lot_number ?? externalId), system.id ?? row.system_id),

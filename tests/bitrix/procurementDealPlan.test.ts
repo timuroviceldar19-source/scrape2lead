@@ -47,6 +47,28 @@ describe("procurement deal dates", () => {
     expect(String(result.fields.COMMENTS)).toContain("Приём заявок: 2026-07-23 — 2026-07-29");
   });
 
+  it("shows the offer window and the lot link in the card fields of a published tender", () => {
+    const url = "https://zakup.gov.kz/home/lots?q=lot-9&system_id__in=3";
+    const result = buildProcurementDealDecision(row({
+      recordKind: "tender", externalId: "lot-9", parentExternalId: "42", status: "Опубликован", url,
+      startDate: "2026-07-23T00:00:00+00:00", endDate: "2026-07-29T00:00:00+00:00"
+    }), null);
+
+    // BEGINDATE/CLOSEDATE карточка «F3-B2B тендеры» не показывает: срок виден только в этих полях.
+    expect(result.fields).toMatchObject({
+      UF_CRM_1713514302985: url,
+      UF_CRM_1713515014882: "2026-07-23",
+      UF_CRM_1713515048879: "2026-07-29"
+    });
+  });
+
+  it("leaves the tender card fields empty on a plan", () => {
+    const result = buildProcurementDealDecision(row({ planYear: 2026 }), null);
+    expect(result.fields).not.toHaveProperty("UF_CRM_1713514302985");
+    expect(result.fields).not.toHaveProperty("UF_CRM_1713515014882");
+    expect(result.fields).not.toHaveProperty("UF_CRM_1713515048879");
+  });
+
   it("reports the plan year and month from the plan item, never from a load timestamp", () => {
     const result = buildProcurementDealDecision(row({
       planYear: 2026, planMonth: 9, planDetail: planDetail({ financialYear: 2026 })
@@ -151,6 +173,34 @@ describe("procurement Bitrix lifecycle", () => {
     const result = buildProcurementDealDecision(row({ customerSourceId: null }), null);
     expect(result.fields).not.toHaveProperty("UF_CRM_1782274598760");
     expect(result.fields).not.toHaveProperty("UF_CRM_6A436D5A5700E");
+  });
+
+  it("fills quantity, unit price, customer link and address on a lot deal that has no plan detail", () => {
+    const lot = row({
+      source: "samruk", recordKind: "tender", externalId: "4586672", amount: 1_291_623.55,
+      lotQuantity: 5, lotUnitPrice: 258_324.71, customerSourceId: "59710",
+      customerAddress: "г.Астана, район Есиль, АЛИХАН БОКЕЙХАН, 12"
+    });
+    const result = buildProcurementDealDecision(lot, null);
+    expect(result.fields).toMatchObject({
+      UF_CRM_COUNT: "5",
+      UF_CRM_6627AEBD67FFF: "5",
+      UF_CRM_PRICE_PER_UNIT: "258324.71|KZT",
+      UF_CRM_6627AEBD5E68B: "258324.71",
+      UF_CRM_1782274598760: "https://zakup.gov.kz/registry/pipp/59710",
+      UF_CRM_DELIVERY_ADDRESSES: "г.Астана, район Есиль, АЛИХАН БОКЕЙХАН, 12",
+      UF_CRM_6A436D59AACBF: "г.Астана, район Есиль, АЛИХАН БОКЕЙХАН, 12"
+    });
+    expect(String(result.fields.COMMENTS)).toContain("Количество: 5");
+    expect(String(result.fields.COMMENTS)).toContain("Цена за единицу: 258324.71 KZT");
+  });
+
+  it("prefers the plan delivery places over the customer address", () => {
+    const plan = row({
+      customerAddress: "г.Астана, офис заказчика",
+      planDetail: planDetail({ deliveries: [{ address: "п. Шульбинск", kato: "101065100", quantity: 4 }] })
+    });
+    expect(buildProcurementDealDecision(plan, null).fields).toMatchObject({ UF_CRM_DELIVERY_ADDRESSES: "п. Шульбинск" });
   });
 
   it("updates the linked plan when its tender is published without resetting manual stage", () => {

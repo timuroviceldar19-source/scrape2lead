@@ -24,6 +24,21 @@ describe("EPZ customer enrichment", () => {
     expect(enriched?.customerBin).toBe("050540000581");
     expect(enriched?.enrichment).toMatchObject({ source: "epz-announcement", confidence: "exact" });
   });
+
+  it("keeps the announcement customer's registry id and legal address for the deal card", async () => {
+    const fetchJson = vi.fn(async (_url: string) => ({ customer: {
+      id: 59710, iin_bin: "970740000392", name: "АО \"ИЦА\"",
+      address: { city: "Астана", street: "АЛИХАН БОКЕЙХАН", house: "12", kato: { full_name_ru: "г.Астана, район Есиль" } }
+    } }));
+    const tender = row("lot-2", { recordKind: "tender", customerSourceId: null, announcementSourceId: "41143136",
+      status: "Опубликован", endDate: "2026-12-01T00:00:00Z" });
+    const [enriched] = await enrichEligibleEpzCustomers([tender], { fetchJson });
+    expect(enriched).toMatchObject({
+      customerBin: "970740000392",
+      customerSourceId: "59710",
+      customerAddress: "г.Астана, район Есиль, АЛИХАН БОКЕЙХАН, 12"
+    });
+  });
 });
 
 function row(id: string, overrides: Partial<ProcurementRecord> = {}): ProcurementRecord {
