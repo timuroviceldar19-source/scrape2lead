@@ -160,6 +160,12 @@ npm run cloudflare:check  # wrangler deploy --dry-run
   чата, кэш `data/register/finance.json` зашифрован `REGISTER_HISTORY_KEY`. Названия компаний, банков и контрагентов
   в код, тесты и лог не кладём (только выдуманный `tests/fixtures/sales-pult/financeWorkbook.ts`). Поменяли разбор —
   повысьте `FINANCE_PARSE_VERSION`. Локально: `--finance-file <путь>`. См. `docs/testing/pult-finance.tdd.md`.
+  В тот же чат приходит книга «ФО» (листы «ОПиУ» и «Расш. ОПиУ»): тип файла решают листы, а не имя (лист «ОПиУ» без
+  «Ежед.» — книга ФО), поэтому она не считается «свежим отчётом». Разобранный ОПиУ хранится в том же кэше
+  (`latestStatement`); статья связана с расшифровкой формулой ячейки (`='Расш. ОПиУ'!C4`), без формул — по коду
+  «строка NNN» в заголовке и только при совпадении сумм (коды в заголовках бывают неверные). Раздел «ОПиУ» на
+  «Финансах» (`finance/incomeStatement.ts`), выдуманная книга — `tests/fixtures/sales-pult/incomeStatementWorkbook.ts`.
+  `--finance-file` можно повторить (отчёт и книга ФО). См. `docs/testing/pult-finance-opiu.tdd.md`.
 - **Рынок для пульта** (`src/kz/market/`) берётся из открытого API `zakup.gov.kz/api/core/api/public/` без токена ([src/kz/zakupPublicApi.ts](src/kz/zakupPublicApi.ts)); ows с `GOSZAKUP_TOKEN` — запасной, только если zakup не ответил. Это адреса фронтенда сайта, без документации и лимитов: пауза 100 мс, 4 запроса одновременно, повтор при сбоях. БИН организаций кэшируется в `data/market/orgs.json`. В логе видно, какой источник сработал: `[Рынок] Утреннее обновление (zakup|ows)`. См. `docs/testing/market-zakup-public-api.tdd.md`.
 - **Шаблоны ТС для «Конкурентов»** — куски текста ТС заказчиков, поэтому **не в репозитории** (он публичный). Локально лежат в `data/spec-templates.json`, в GitHub приходят из секрета `SPEC_TEMPLATES` (шаг `Spec templates from secret` в `sales-pult.yml`). Формат — `{"shingleSize": 6, "templates": [{"id", "name", "note", "text", "corePhrases": [{"label", "phrase"}]}]}`. Нет секрета — блок «Шаблоны ТС» пустой. Тексты ТС и их фразы не кладите ни в `config/`, ни в тесты, ни в журналы: в тестах только выдуманный `tests/fixtures/kz/spec-templates.demo.json`.
 - **База конкурентов в GitHub** (`data/competitors/competitors.db`, кэш `gz-competitors-v1-`).

@@ -141,6 +141,7 @@
         ${R.payments.length || R.tax ? '<a class="btn" href="#f-payments">Платежи</a>' : ""}
         ${R.stock?.length ? `<a class="btn" href="${I.stock.count ? "#stockFocus" : "#f-stock"}">Склад без расхода</a>` : ""}
         ${R.pnl.current ? '<a class="btn" href="#f-pnl">Прибыль</a>' : ""}
+        ${ST ? '<a class="btn" href="#f-opiu">ОПиУ</a>' : ""}
       </nav>`;
     if ((F.snapshots || []).length < 2) {
       s += `<p class="fin-note">Графики под цифрами появятся, когда в чате накопится несколько дней отчётов.</p>`;
@@ -173,6 +174,146 @@
       const parts = R.companies.map((n, i) => (R.tax.values[i] ? `${esc(n)} ${money(R.tax.values[i])}` : "")).filter(Boolean).join(" · ");
       s += `<p class="fin-note">${esc(R.tax.label)} к оплате (оценка на ${ddmm(R.tax.date)}): <b>${money(R.tax.total)}</b>${parts ? ` — ${parts}` : ""}.</p>`;
     }
+    return s + `</section>`;
+  }
+
+  /* ---------- ОПиУ из книги ФО: статьи по периодам, расшифровка по клику ---------- */
+  // Книга ФО приходит в тот же чат (листы «ОПиУ» и «Расш. ОПиУ»). Статья со стрелкой — кнопка:
+  // раскрывает свои строки расшифровки под собой, самые крупные за последний период сверху.
+  // Период — «по годам» (как видно в файле) или месяцы одного года.
+  const ST = F.statement;
+  const MON_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  const OPIU_LIMIT = 15;
+  const ROW_WORDS = ["строка", "строки", "строк"];
+  let opiuMode = "years";
+  const opiuOpen = new Set();
+  const opiuAll = new Set();
+  const opiuQuery = new Map();
+
+  function opiuColumns() {
+    const all = ST.periods.map((p, i) => ({ ...p, i }));
+    if (opiuMode === "years") {
+      const years = all.filter((p) => p.kind === "year");
+      return years.length ? years : all.filter((p) => p.kind === "month").slice(-12);
+    }
+    return all.filter((p) => String(p.year) === opiuMode);
+  }
+  const monthOf = (p) => Number(p.key.slice(5, 7)) - 1;
+  const opiuTitle = (p) => (p.kind === "year" ? p.label || String(p.year) : opiuMode === "years" ? `${MON_SHORT[monthOf(p)]} ${p.year}` : MON_SHORT[monthOf(p)]);
+  const opiuTitleFull = (p) => (p.kind === "year" ? p.label || String(p.year) : `${MONTHS[monthOf(p)]} ${p.year}`);
+
+  /** Строка расшифровки за колонку: месяц как есть, год — сумма его месяцев. */
+  function bdValue(row, col) {
+    if (col.kind === "month") return row.months[col.key] || 0;
+    let sum = 0;
+    for (const key in row.months) if (key.slice(0, 4) === col.key) sum += row.months[key];
+    return sum;
+  }
+
+  function opiuCell(line, v) {
+    if (v == null || (line.kind !== "ratio" && !has(v))) return `<td class="num dim">—</td>`;
+    if (line.kind === "ratio") return `<td class="num">${Math.round(v * 100)}%</td>`;
+    return `<td class="num${line.kind === "subtotal" && v < 0 ? " bad" : ""}" title="${esc(full(v))}">${esc(amt(v))}</td>`;
+  }
+
+  function opiuLead() {
+    const years = ST.periods.map((p, i) => ({ ...p, i })).filter((p) => p.kind === "year");
+    const last = years[years.length - 1];
+    const rev = ST.lines.find((l) => l.code === "010") || ST.lines.find((l) => l.kind === "item");
+    const profit = ["300", "200", "100"].map((c) => ST.lines.find((l) => l.code === c)).find(Boolean)
+      || [...ST.lines].reverse().find((l) => l.kind === "subtotal");
+    const r = last && rev ? rev.values[last.i] : null;
+    if (r == null) return "";
+    const p = profit ? profit.values[last.i] : null;
+    const share = p != null && r ? ` (${Math.round((p / r) * 100)}% выручки)` : "";
+    return `<p class="lead">${esc(opiuTitleFull(last))}: выручка <b>${money(r)}</b>${p != null ? `, прибыль <b class="${p < 0 ? "bad" : ""}">${money(p)}</b>${share}` : ""}. Статьи со стрелкой раскрываются строками с листа «Расш. ОПиУ».</p>`;
+  }
+
+  function opiuBdData(i, cols) {
+    const words = searchKey(opiuQuery.get(i) || "").split(" ").filter(Boolean);
+    const rows = ST.lines[i].breakdown.rows
+      .map((r) => ({ r, vals: cols.map((c) => bdValue(r, c)) }))
+      .filter((x) => x.vals.some(has));
+    const lastOf = (x) => x.vals[x.vals.length - 1];
+    const absSum = (x) => x.vals.reduce((a, v) => a + Math.abs(v), 0);
+    rows.sort((a, b) => lastOf(b) - lastOf(a) || absSum(b) - absSum(a) || collator.compare(a.r.label, b.r.label));
+    const matched = words.length ? rows.filter((x) => { const k = searchKey(x.r.label); return words.every((w) => k.includes(w)); }) : rows;
+    return { rows, matched, searching: words.length > 0 };
+  }
+
+  function opiuFoundText(d) {
+    return d.searching ? (d.matched.length ? `найдено: ${plural(d.matched.length, ROW_WORDS)}` : "ничего не найдено") : "";
+  }
+
+  function opiuBdRowsHtml(i, cols, d) {
+    const span = cols.length + 1;
+    const shown = d.searching || opiuAll.has(i) ? d.matched : d.matched.slice(0, OPIU_LIMIT);
+    let s = shown.map((x) => `<tr class="bd-row"><th scope="row"><span class="fin-opiu-name fin-opiu-bd-l" title="${esc(x.r.label)}">${esc(x.r.label)}</span></th>${x.vals.map((v) => (has(v) ? `<td class="num" title="${esc(full(v))}">${esc(amt(v))}</td>` : `<td class="num dim">—</td>`)).join("")}</tr>`).join("");
+    if (!d.searching && d.matched.length > OPIU_LIMIT) {
+      s += `<tr class="bd-foot"><td colspan="${span}"><button type="button" class="btn fin-opiu-all" data-opiu-all="${i}">${opiuAll.has(i) ? `Свернуть до ${OPIU_LIMIT}` : `Показать все ${nf0.format(d.matched.length)}`}</button></td></tr>`;
+    }
+    return s;
+  }
+
+  function opiuBdHtml(i, cols) {
+    const line = ST.lines[i];
+    const d = opiuBdData(i, cols);
+    const last = cols[cols.length - 1];
+    const search = d.rows.length > OPIU_LIMIT
+      ? `<span class="fin-opiu-search"><input type="search" class="plan-search-input fin-opiu-q" data-opiu-q="${i}" aria-label="Найти в расшифровке «${esc(line.label)}»" placeholder="Найти строку: покупатель, договор…" value="${esc(opiuQuery.get(i) || "")}" autocomplete="off"><span class="dim" data-opiu-found="${i}" aria-live="polite">${opiuFoundText(d)}</span></span>`
+      : "";
+    const meta = d.rows.length
+      ? `${plural(d.rows.length, ROW_WORDS)}${last ? ` · сначала крупные за ${esc(opiuTitleFull(last))}` : ""}`
+      : "за эти периоды строк с суммами нет";
+    return `<tr class="bd-head"><td colspan="${cols.length + 1}"><div class="fin-opiu-bd-bar"><span>${esc(line.breakdown.title)} · ${meta}</span>${search}</div></td></tr>${opiuBdRowsHtml(i, cols, d)}`;
+  }
+
+  function opiuTableHtml() {
+    const cols = opiuColumns();
+    let s = `<table class="fin-opiu"><thead><tr><th scope="col">Статья</th>${cols.map((c) => `<th scope="col" class="num">${esc(opiuTitle(c))}</th>`).join("")}</tr></thead>`;
+    ST.lines.forEach((line, i) => {
+      const bd = line.breakdown && line.breakdown.rows.length ? line.breakdown : null;
+      const code = line.code ? ` <span class="dim">${esc(line.code)}</span>` : "";
+      const name = bd
+        ? `<button type="button" class="fin-opiu-name fin-opiu-toggle" data-line="${i}" aria-expanded="${String(opiuOpen.has(i))}" aria-controls="opiu-bd-${i}"><span>${esc(line.label)}${code}</span></button>`
+        : `<span class="fin-opiu-name">${esc(line.label)}${code}</span>`;
+      s += `<tbody class="fin-opiu-line" data-line="${i}"><tr class="is-${esc(line.kind)}"><th scope="row">${name}</th>${cols.map((c) => opiuCell(line, line.values[c.i])).join("")}</tr></tbody>`;
+      if (bd) s += `<tbody class="fin-opiu-bd" id="opiu-bd-${i}" data-line="${i}"${opiuOpen.has(i) ? "" : " hidden"}>${opiuBdHtml(i, cols)}</tbody>`;
+    });
+    return s + `</table>`;
+  }
+
+  /** Перерисовать строки одной расшифровки (поиск, «показать все»): строка с поиском остаётся, фокус не теряется. */
+  function rerenderOpiuRows(i) {
+    const body = document.getElementById(`opiu-bd-${i}`);
+    if (!body) return;
+    const cols = opiuColumns();
+    const d = opiuBdData(i, cols);
+    for (const tr of body.querySelectorAll("tr.bd-row, tr.bd-foot")) tr.remove();
+    body.insertAdjacentHTML("beforeend", opiuBdRowsHtml(i, cols, d));
+    const found = body.querySelector(`[data-opiu-found="${i}"]`);
+    if (found) found.textContent = opiuFoundText(d);
+  }
+
+  /** Последние периоды справа: на узком экране сразу показываем их, а не самые старые. */
+  function scrollOpiuToLatest() {
+    const wrap = document.getElementById("opiuTable");
+    if (wrap) wrap.scrollLeft = wrap.scrollWidth;
+  }
+
+  function opiuBlock() {
+    if (!ST && !F.statementNotice) return "";
+    const meta = ST ? [ST.company, ST.unit].filter(Boolean).map(esc).join(" · ") : "";
+    let s = `<section class="block" id="f-opiu">${head("ОПиУ", meta || "отчёт о прибылях и убытках")}`;
+    if (F.statementNotice) s += `<div class="note-warn">${esc(F.statementNotice)}</div>`;
+    if (!ST) return s + `</section>`;
+    s += opiuLead();
+    if (ST.warnings && ST.warnings.length) s += `<div class="note-warn">Сверка расшифровки: ${ST.warnings.map(esc).join("; ")}.</div>`;
+    const years = [...new Set(ST.periods.filter((p) => p.kind === "month").map((p) => p.year))].sort();
+    const btn = (v, label) => `<button type="button" data-opiu-period="${v}" aria-pressed="${String(opiuMode === String(v))}">${label}</button>`;
+    s += `<div class="chips" id="opiuPeriods" role="group" aria-label="Период ОПиУ">${btn("years", "По годам")}${years.map((y) => btn(y, y)).join("")}</div>`;
+    s += `<div class="fin-opiu-wrap" id="opiuTable">${opiuTableHtml()}</div>`;
+    if (F.statementFile) s += `<p class="fin-note fin-opiu-src">Книга ФО: ${esc(F.statementFile.name)} · загружена ${almaty(F.statementFile.uploadedAt)} · из чата «Финансовый отчет»</p>`;
     return s + `</section>`;
   }
 
@@ -687,7 +828,10 @@
   function render() {
     if (!el) return;
     if (!R) {
-      el.innerHTML = `<section class="block"><p class="lead">${esc(F.error || "Финансового отчёта пока нет.")}</p>${F.notice ? `<div class="note-warn">${esc(F.notice)}</div>` : ""}</section>`;
+      // без ежедневного отчёта ОПиУ из книги ФО всё равно показываем
+      blockNo = 0;
+      el.innerHTML = `<section class="block"><p class="lead">${esc(F.error || "Финансового отчёта пока нет.")}</p>${F.notice ? `<div class="note-warn">${esc(F.notice)}</div>` : ""}</section>${opiuBlock()}`;
+      scrollOpiuToLatest();
       return;
     }
     blockNo = 0;
@@ -697,8 +841,9 @@
     if (stale) s += `<div class="note-warn">Отчёт старый: данные на ${ddmm(R.dataDate)}. Свежего файла в чате нет.</div>`;
     s += warningsBlock() + overview();
     s += `<section class="block" id="f-debtors">${debtorsBlock()}</section>`;
-    s += payments() + stockBlock() + pnl() + cashBlock() + incomingBlock() + balanceBlock();
+    s += payments() + stockBlock() + pnl() + opiuBlock() + cashBlock() + incomingBlock() + balanceBlock();
     el.innerHTML = s;
+    scrollOpiuToLatest();
     if (stockQuery) applyStockSearch();
   }
 
@@ -714,6 +859,13 @@
   }
 
   el?.addEventListener("input", (e) => {
+    const opiuQ = e.target.closest?.("[data-opiu-q]");
+    if (opiuQ) {
+      const i = Number(opiuQ.dataset.opiuQ);
+      opiuQuery.set(i, opiuQ.value);
+      rerenderOpiuRows(i);
+      return;
+    }
     if (e.target.id !== "stockQ") return;
     stockQuery = e.target.value;
     applyStockSearch();
@@ -771,6 +923,33 @@
   }
 
   el?.addEventListener("click", (e) => {
+    const opiuToggle = e.target.closest(".fin-opiu-toggle");
+    if (opiuToggle) {
+      const i = Number(opiuToggle.dataset.line);
+      const open = !opiuOpen.has(i);
+      if (open) opiuOpen.add(i); else opiuOpen.delete(i);
+      opiuToggle.setAttribute("aria-expanded", String(open));
+      const body = document.getElementById(`opiu-bd-${i}`);
+      if (body) body.hidden = !open;
+      return;
+    }
+    const opiuAllBtn = e.target.closest("[data-opiu-all]");
+    if (opiuAllBtn) {
+      const i = Number(opiuAllBtn.dataset.opiuAll);
+      if (opiuAll.has(i)) opiuAll.delete(i); else opiuAll.add(i);
+      rerenderOpiuRows(i);
+      document.querySelector(`#opiu-bd-${i} [data-opiu-all]`)?.focus();
+      return;
+    }
+    const opiuPeriod = e.target.closest("[data-opiu-period]");
+    if (opiuPeriod) {
+      opiuMode = opiuPeriod.dataset.opiuPeriod;
+      for (const b of opiuPeriod.parentElement.children) b.setAttribute("aria-pressed", String(b === opiuPeriod));
+      const table = document.getElementById("opiuTable");
+      if (table) table.innerHTML = opiuTableHtml();
+      scrollOpiuToLatest();
+      return;
+    }
     const copy = e.target.closest("[data-fin-copy]");
     if (copy) {
       copy.parentElement.querySelector(".fin-copy-field")?.remove();

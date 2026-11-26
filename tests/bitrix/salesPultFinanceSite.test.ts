@@ -6,6 +6,8 @@ import { renderFinanceHtml, renderPultHtml, type FinancePagePayload, type Regist
 import { buildManagerVariant, renderManagerVariant } from "../../src/bitrix/salesPult/variants/manager.js";
 import { fixture } from "../fixtures/sales-pult/contracts.js";
 import { DEFAULT_DEBTORS, financeWorkbook } from "../fixtures/sales-pult/financeWorkbook.js";
+import { parseIncomeStatement } from "../../src/bitrix/salesPult/finance/incomeStatement.js";
+import { incomeStatementWorkbook } from "../fixtures/sales-pult/incomeStatementWorkbook.js";
 
 // Все данные выдуманные.
 
@@ -21,6 +23,11 @@ function view(options: Parameters<typeof financeWorkbook>[0] = {}, history = 1):
 }
 
 const payload = (finance: FinanceView): FinancePagePayload => ({ asOfDate: "2026-11-17", generatedAt: "2026-11-17 12:15 (UTC+5)", finance });
+
+/** Отчёт дня и ОПиУ из выдуманной книги ФО. */
+function withStatement(v: FinanceView = view(), options: Parameters<typeof incomeStatementWorkbook>[0] = {}): FinanceView {
+  return { ...v, statement: parseIncomeStatement(incomeStatementWorkbook(options)), statementFile: { id: "9", name: "ФО Альфа 2025-2026 9 мес.xlsx", uploadedAt: "2026-11-26T07:51:00Z" } };
+}
 
 describe("страница «Финансы»", () => {
   let browser: Browser;
@@ -354,6 +361,184 @@ describe("страница «Финансы»", () => {
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   });
+
+  /* ---------- ОПиУ из книги ФО ---------- */
+  const headCells = (page: Page) => page.locator("#f-opiu thead th").evaluateAll((es) => es.map((e) => e.textContent!.replace(/\s+/g, " ").trim()));
+  const rowLabels = (page: Page, sel: string) => page.locator(sel).evaluateAll((es) => es.filter((e) => (e as HTMLElement).offsetParent !== null).map((e) => e.querySelector("th")!.textContent!.replace(/\s+/g, " ").trim()));
+  const revenueRows = '#f-opiu tbody.fin-opiu-bd[data-line="0"] tr.bd-row';
+
+  it("ОПиУ: статьи по годам; «Выручка» раскрывает строки «Расш. ОПиУ» по клику, самые крупные сверху", async () => {
+    const { page, errors } = await open(renderFinanceHtml(payload(withStatement())), 1440);
+    try {
+      expect(await page.locator("#f-opiu").count()).toBe(1);
+      expect(await text(page, "#f-opiu .block-head")).toMatch(/ОПиУ/);
+      expect(await text(page, "#f-opiu .block-head .meta")).toContain("ТОО «Альфа Тест» · тенге без НДС");
+      expect(await text(page, "#f-opiu .fin-opiu-src")).toMatch(/ФО Альфа 2025-2026 9 мес\.xlsx · загружена 26\.11 12:51/);
+      // переход из «Деньги и долги»
+      expect(await page.locator('#f-overview .fin-jumps a[href="#f-opiu"]').count()).toBe(1);
+      expect((await text(page, "#f-opiu .lead")).replace(/\s/g, " ")).toMatch(/^9 мес\. 2026: выручка 38,4 млн ₸, прибыль .+ млн ₸ \(\d+% выручки\)\./);
+      expect(await headCells(page)).toEqual(["Статья", "2025", "9 мес. 2026"]);
+      const labels = await rowLabels(page, "#f-opiu tbody.fin-opiu-line tr");
+      expect(labels.slice(0, 4)).toEqual(["Выручка 010", "Себестоимость реализованных товаров и услуг 011", "Валовая прибыль (строка 010 – строка 011) 012", "Наценка"]);
+      expect(labels).toHaveLength(17);
+      const rev = page.locator('#f-opiu tbody.fin-opiu-line[data-line="0"] tr');
+      expect(await rev.locator("td").allTextContents()).toEqual(["18,5\u00a0млн", "38,4\u00a0млн"]);
+      expect(await rev.locator("td").last().getAttribute("title")).toBe("38\u00a0400\u00a0000\u00a0₸");
+      expect(await page.locator('#f-opiu tbody.fin-opiu-line tr.is-ratio td').first().innerText()).toMatch(/^\d+%$/);
+      expect(await page.locator("#f-opiu tbody.fin-opiu-line tr.is-subtotal").count()).toBe(5);
+      // статьи с расшифровкой — кнопки; итоги и доли не раскрываются
+      expect(await page.locator("#f-opiu .fin-opiu-toggle").count()).toBe(8);
+      const toggle = page.locator('#f-opiu .fin-opiu-toggle[data-line="0"]');
+      expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(await page.locator(revenueRows).first().isVisible()).toBe(false);
+      await toggle.click();
+      expect(await toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(await page.locator(`#${await toggle.getAttribute("aria-controls")}`).isVisible()).toBe(true);
+      const shown = await rowLabels(page, revenueRows);
+      expect(shown).toHaveLength(15);
+      expect(shown.slice(0, 3)).toEqual(["ТОО «Школа Пример» Договор № 1/2026 от 10.01.2026 г", "ИП Образцов договор № 3 от 05.03.2026", "ТОО «Покупатель 20» договор № 120 от 01.02.2026"]);
+      expect(await text(page, '#f-opiu tbody.fin-opiu-bd[data-line="0"] .bd-head')).toMatch(/Расшифровка Доходов \(строка 010 ОПиУ\) · 24 строки · сначала крупные за 9 мес\. 2026/);
+      const all = page.locator('#f-opiu [data-opiu-all="0"]');
+      expect(await all.innerText()).toBe("Показать все 24");
+      await all.click();
+      expect(await rowLabels(page, revenueRows)).toHaveLength(24);
+      expect(await page.locator('#f-opiu [data-opiu-all="0"]').innerText()).toBe("Свернуть до 15");
+      // текст из файла экранируется
+      expect(await page.locator("#f-opiu tbody b").count()).toBe(0);
+      expect(await rowLabels(page, revenueRows)).toContain("<b>ТОО «Скобки & Ко»</b> договор № 9 от 01.09.2026");
+      // повторный клик сворачивает
+      await toggle.click();
+      expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(await page.locator(revenueRows).first().isVisible()).toBe(false);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 20000);
+
+  it("ОПиУ с клавиатуры: Tab до статьи, Enter и пробел раскрывают и сворачивают, фокус остаётся на месте", async () => {
+    const { page, errors } = await open(renderFinanceHtml(payload(withStatement())), 1440);
+    try {
+      await page.locator('#f-opiu .fin-opiu-toggle[data-line="0"]').focus();
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => document.activeElement?.textContent?.replace(/\s+/g, " ").trim())).toBe("Себестоимость реализованных товаров и услуг 011");
+      await page.keyboard.press("Enter");
+      const cost = page.locator('#f-opiu .fin-opiu-toggle[data-line="1"]');
+      expect(await cost.getAttribute("aria-expanded")).toBe("true");
+      expect(await rowLabels(page, '#f-opiu tbody.fin-opiu-bd[data-line="1"] tr.bd-row')).toEqual(["Ноутбуки учебные", "Мониторы", "Доставка до заказчика"]);
+      expect(await page.evaluate(() => document.activeElement?.getAttribute("data-line"))).toBe("1");
+      await page.keyboard.press("Space");
+      expect(await cost.getAttribute("aria-expanded")).toBe("false");
+      // кнопки периода — тоже с клавиатуры
+      await page.locator('#opiuPeriods button[data-opiu-period="2026"]').focus();
+      await page.keyboard.press("Enter");
+      expect(await page.locator('#opiuPeriods button[data-opiu-period="2026"]').getAttribute("aria-pressed")).toBe("true");
+      expect(await page.evaluate(() => document.activeElement?.getAttribute("data-opiu-period"))).toBe("2026");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 20000);
+
+  it("ОПиУ: год по месяцам — раскрытая статья остаётся раскрытой, суммы расшифровки по месяцам", async () => {
+    const { page, errors } = await open(renderFinanceHtml(payload(withStatement())), 1440);
+    try {
+      expect(await page.locator("#opiuPeriods button").allTextContents()).toEqual(["По годам", "2025", "2026"]);
+      await page.locator('#f-opiu .fin-opiu-toggle[data-line="0"]').click();
+      await page.locator('#opiuPeriods button[data-opiu-period="2026"]').click();
+      expect(await headCells(page)).toEqual(["Статья", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "9 мес. 2026"]);
+      expect(await page.locator('#f-opiu .fin-opiu-toggle[data-line="0"]').getAttribute("aria-expanded")).toBe("true");
+      const school = page.locator(revenueRows).first();
+      expect(await school.locator("th").innerText()).toMatch(/Школа Пример/);
+      expect(await school.locator("td").allTextContents()).toEqual(["9,0\u00a0млн", "—", "4,0\u00a0млн", "—", "—", "—", "—", "—", "—", "13,0\u00a0млн"]);
+      // отрицательная корректировка — со знаком минус
+      const corr = page.locator(revenueRows).filter({ hasText: "ИП Образцов" });
+      expect(await corr.locator("td").nth(3).innerText()).toBe("−300\u00a0тыс");
+      await page.locator('#opiuPeriods button[data-opiu-period="years"]').click();
+      expect(await headCells(page)).toEqual(["Статья", "2025", "9 мес. 2026"]);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 20000);
+
+  it("ОПиУ: поиск по строкам расшифровки показывает все совпадения", async () => {
+    const { page, errors } = await open(renderFinanceHtml(payload(withStatement())), 1440);
+    try {
+      await page.locator('#f-opiu .fin-opiu-toggle[data-line="0"]').click();
+      const q = page.locator('#f-opiu input[data-opiu-q="0"]');
+      expect(await q.getAttribute("aria-label")).toBe("Найти в расшифровке «Выручка»");
+      // поиск по словам, как на «Складе»: показывает все совпадения, без ограничения в 15 строк
+      await q.fill("покупатель");
+      const found = await rowLabels(page, revenueRows);
+      expect(found).toHaveLength(20);
+      expect(found.every((x) => /Покупатель/.test(x))).toBe(true);
+      expect(await text(page, '#f-opiu [data-opiu-found="0"]')).toBe("найдено: 20 строк");
+      expect(await page.locator('#f-opiu [data-opiu-all="0"]').count()).toBe(0);
+      // поле ввода не перерисовывается — фокус и набранный текст на месте
+      expect(await page.evaluate(() => document.activeElement?.getAttribute("data-opiu-q"))).toBe("0");
+      await q.fill("гимназия тест");
+      expect(await rowLabels(page, revenueRows)).toEqual(["КГУ «Гимназия Тест №5» договор № 7 от 01.02.2025"]);
+      expect(await text(page, '#f-opiu [data-opiu-found="0"]')).toBe("найдено: 1 строка");
+      await q.fill("нет такого");
+      expect(await rowLabels(page, revenueRows)).toHaveLength(0);
+      expect(await text(page, '#f-opiu [data-opiu-found="0"]')).toBe("ничего не найдено");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 20000);
+
+  for (const width of [1920, 1440, 375]) {
+    it(`ОПиУ на ${width}: раскрытая расшифровка со всеми строками не расширяет страницу, таблица прокручивается в своей рамке`, async () => {
+      const { page, errors } = await open(renderFinanceHtml(payload(withStatement())), width);
+      try {
+        // последний период виден сразу, без прокрутки таблицы вправо (на телефоне колонки не помещаются)
+        const lastHeadVisible = () => page.evaluate(() => {
+          const wrap = document.querySelector("#f-opiu .fin-opiu-wrap")!.getBoundingClientRect();
+          const last = document.querySelector("#f-opiu thead th:last-child")!.getBoundingClientRect();
+          return last.left >= wrap.left - 1 && last.right <= wrap.right + 1;
+        });
+        expect(await lastHeadVisible()).toBe(true);
+        await page.locator('#f-opiu .fin-opiu-toggle[data-line="0"]').click();
+        await page.locator('#f-opiu [data-opiu-all="0"]').click();
+        await page.locator('#opiuPeriods button[data-opiu-period="2026"]').click();
+        expect(await lastHeadVisible()).toBe(true);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const box = await page.locator("#f-opiu .fin-opiu-wrap").boundingBox();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+        if (width === 375) {
+          // на телефоне колонка статей закреплена: после прокрутки таблицы подписи на месте
+          await page.locator("#f-opiu .fin-opiu-wrap").evaluate((e) => { e.scrollLeft = 400; });
+          const th = await page.locator('#f-opiu tbody.fin-opiu-line[data-line="0"] th').boundingBox();
+          expect(th!.x).toBeGreaterThanOrEqual(box!.x - 1);
+          expect(th!.x).toBeLessThan(box!.x + 20);
+          // кнопка статьи не мельче 24 px по высоте — удобно нажимать пальцем
+          expect((await page.locator('#f-opiu .fin-opiu-toggle[data-line="1"]').boundingBox())!.height).toBeGreaterThanOrEqual(24);
+        }
+        expect(errors).toEqual([]);
+      } finally { await page.close(); }
+    }, 20000);
+  }
+
+  it("ОПиУ: пояснение и расхождения сверки — в разделе; без книги ФО раздела нет; без отчёта дня ОПиУ всё равно виден", async () => {
+    let { page } = await open(renderFinanceHtml(payload(view())), 1440);
+    try {
+      expect(await page.locator("#f-opiu").count()).toBe(0);
+      expect(await page.locator('.fin-jumps a[href="#f-opiu"]').count()).toBe(0);
+    } finally { await page.close(); }
+    const v = withStatement(view(), { revenueMismatch: 1_000 });
+    v.statementNotice = "Последняя книга ФО «ФО новая.xlsx» (26.11 12:51) не разобрана: на листе «ОПиУ» нет шапки.";
+    ({ page } = await open(renderFinanceHtml(payload(v)), 1440));
+    try {
+      expect(await text(page, "#f-opiu .note-warn")).toBe(v.statementNotice);
+      expect(await page.locator("#f-opiu .note-warn").nth(1).innerText()).toMatch(/^Сверка расшифровки: «Выручка»: сумма строк расшифровки не сходится с ОПиУ за март 2026/);
+    } finally { await page.close(); }
+    const noDaily: FinanceView = { ...withStatement({ snapshots: [] }), error: "В чате «Финансовый отчет» нет ежедневного отчёта — только книга ФО." };
+    let errors: string[];
+    ({ page, errors } = await open(renderFinanceHtml(payload(noDaily)), 375));
+    try {
+      expect(await text(page, "#tab-fin")).toMatch(/нет ежедневного отчёта/);
+      expect(await page.locator("#f-opiu").count()).toBe(1);
+      await page.locator('#f-opiu .fin-opiu-toggle[data-line="0"]').click();
+      expect(await page.locator(revenueRows).first().isVisible()).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 20000);
 
   it("в виде менеджера ссылки «Финансы» нет ни на главной, ни на «Выручке»", async () => {
     const f = fixture();
