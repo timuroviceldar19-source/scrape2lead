@@ -285,8 +285,8 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
   const registerFileIdx = args.indexOf("--register-file");
   const registerFilePath = registerFileIdx !== -1 && args[registerFileIdx + 1] ? args[registerFileIdx + 1] : undefined;
-  const financeFileIdx = args.indexOf("--finance-file");
-  const financeFilePath = financeFileIdx !== -1 && args[financeFileIdx + 1] ? args[financeFileIdx + 1] : undefined;
+  // --finance-file можно повторить: ежедневный отчёт и книга ФО (ОПиУ) — тип файла решают листы.
+  const financeFiles = args.flatMap((a, i) => (a === "--finance-file" && args[i + 1] ? [args[i + 1]] : []));
   const refreshHistory = args.includes("--refresh-history");
   const historyCacheIdx = args.indexOf("--history-cache");
   const historyCachePath = historyCacheIdx !== -1 && args[historyCacheIdx + 1] ? args[historyCacheIdx + 1] : undefined;
@@ -751,7 +751,7 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
     const financeView = await loadFinanceView({
       reader,
       folderId: config.finance?.diskFolderId,
-      localFile: financeFilePath
+      localFiles: financeFiles
     }).catch((err: unknown) => {
       console.warn(`[Финансы] Не загрузились (${(err as Error)?.name || "Error"})`);
       return { snapshots: [], error: "Финансовый отчёт не загрузился при сборке пульта, попробуем на следующем обновлении." };
@@ -912,7 +912,7 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
         return null;
       });
       const morningFinance: FinanceView | undefined = await loadFinanceView({
-        reader, folderId: config.finance?.diskFolderId, localFile: financeFilePath
+        reader, folderId: config.finance?.diskFolderId, localFiles: financeFiles
       }).catch((err: unknown) => {
         console.warn(`[Финансы] Не загрузились (${(err as Error)?.name || "Error"})`);
         return undefined;
