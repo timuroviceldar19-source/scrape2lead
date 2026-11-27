@@ -30,8 +30,9 @@ export class OpiuParseError extends Error {
 
 const DAY_MS = 86_400_000;
 const YEAR_HEADER_RE = /^(?:.*\s)?(20\d{2})$/;
-const RASH_FORMULA_RE = /['"]?Расш\.?\s*ОПиУ['"]?!\$?[A-Z]+\$?(\d+)/i;
+const RASH_FORMULA_RE = /['"]?Расш\.?\s*ОПиУ(?:_[^'"!]+)?['"]?!\$?[A-Z]+\$?(\d+)/i;
 const SECTION_CODE_RE = /строка\s*(\d{3})\s*опиу/i;
+const OPIU_SHEET_RE = /^опиу(?:_(.+))?$/i;
 
 function isoMonthFromValue(v: unknown): string | null {
   if (v instanceof Date && !Number.isNaN(v.getTime())) {
@@ -169,11 +170,25 @@ function findHeaderRow(ws: ExcelJS.Worksheet, predicate: (key: string) => boolea
   return null;
 }
 
+function extractInlineOrganization(text: string): string | undefined {
+  const m = text.match(/наименование\s+организации\s*[:：\-–—]\s*(.+)$/i);
+  if (!m) return undefined;
+  let value = m[1].trim();
+  // Убираем хвост вида «. Период: январь 2023 – ...» (сохраняя точки внутри имени вроде «Тест.kz»).
+  // В JS `\b` не работает с кириллицей, поэтому проверяем разделитель явно.
+  value = value.replace(/[.;,]?\s*период(?=\s*[:：]|\s|$).*$/i, "").trim();
+  value = value.replace(/[.,;:\s]+$/, "").trim();
+  return value || undefined;
+}
+
 function findOrganization(ws: ExcelJS.Worksheet, headerRow: number): string | undefined {
   for (let r = 1; r < headerRow; r++) {
     const row = ws.getRow(r);
     for (let c = 1; c <= Math.min(ws.columnCount, 20); c++) {
-      if (labelKey(cellText(row.getCell(c).value)).includes("наименование организации")) {
+      const raw = cellText(row.getCell(c).value);
+      if (labelKey(raw).includes("наименование организации")) {
+        const inline = extractInlineOrganization(raw);
+        if (inline) return inline;
         for (let k = c + 1; k <= Math.min(ws.columnCount, c + 12); k++) {
           const val = cellText(row.getCell(k).value);
           if (val && !labelKey(val).includes("наименование организации")) return val;
@@ -381,13 +396,40 @@ function fillDerivedMonthlyRatios(rows: OpiuRow[], activeMonths: string[]): void
   }
 }
 
-export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
-  const visibleSheets = workbook.worksheets.filter((ws) => ws.state !== "hidden" && ws.state !== "veryHidden");
-  const opiuSheet = visibleSheets.find((ws) => labelKey(ws.name) === "опиу");
-  if (!opiuSheet) throw new OpiuParseError("в книге нет видимого листа «ОПиУ»");
+function findPairedRashSheet(
+  visibleSheets: ExcelJS.Worksheet[],
+  opiuSheetName: string
+): ExcelJS.Worksheet | undefined {
+  const m = opiuSheetName.trim().match(OPIU_SHEET_RE);
+  const suffix = m?.[1]?.trim() ?? "";
+  if (suffix) {
+    const suffixKey = labelKey(suffix);
+    return visibleSheets.find((ws) => {
+      const rm = ws.name.trim().match(/^расш\.?\s*опиу_(.+)$/i);
+      return Boolean(rm && labelKey(rm[1]) === suffixKey);
+    });
+  }
+  return visibleSheets.find((ws) => {
+    const trimmed = ws.name.trim();
+    if (/^расш\.?\s*опиу_/i.test(trimmed)) return false;
+    const k = labelKey(trimmed);
+    return k.startsWith("расш") && k.includes("опиу");
+  });
+}
 
+function sheetIdFromName(sheetName: string): string {
+  const m = sheetName.trim().match(OPIU_SHEET_RE);
+  const suffix = m?.[1]?.trim();
+  if (!suffix) return "main";
+  return suffix.toLowerCase().replace(/[^a-zа-яё0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "company";
+}
+
+function parseSingleOpiuSheet(
+  opiuSheet: ExcelJS.Worksheet,
+  rashSheet: ExcelJS.Worksheet | undefined
+): OpiuReport {
   const headerPos = findHeaderRow(opiuSheet, (k) => k.includes("наименование показател"), 35);
-  if (!headerPos) throw new OpiuParseError("на листе «ОПиУ» не найдена шапка «Наименование показателей»");
+  if (!headerPos) throw new OpiuParseError(`на листе «${opiuSheet.name}» не найдена шапка «Наименование показателей»`);
 
   const headerRow = opiuSheet.getRow(headerPos.row);
   const labelCol = headerPos.col;
@@ -401,12 +443,14 @@ export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
   }
 
   const { years: yearCols, months: monthCols } = extractPeriodColumns(headerRow, labelCol + 1, opiuSheet.columnCount);
-  if (!yearCols.length) throw new OpiuParseError("на листе «ОПиУ» не найдены годовые колонки");
+  if (!yearCols.length) throw new OpiuParseError(`на листе «${opiuSheet.name}» не найдены годовые колонки`);
 
-  const organization = findOrganization(opiuSheet, headerPos.row);
+  const suffixFallback = opiuSheet.name.trim().match(OPIU_SHEET_RE)?.[1]?.trim();
+  const organization = findOrganization(opiuSheet, headerPos.row) ?? suffixFallback;
   const rows: OpiuRow[] = [];
   const formulaTargetByRowIndex = new Map<number, number>();
   const activeMonthsSet = new Set<string>();
+  const notes: string[] = [];
 
   for (let r = headerPos.row + 1; r <= opiuSheet.rowCount; r++) {
     const row = opiuSheet.getRow(r);
@@ -426,6 +470,12 @@ export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
     let label = cellText(row.getCell(labelCol).value);
     let code = codeCol > 0 ? cellText(row.getCell(codeCol).value) : "";
 
+    // Примечания внизу листа («Примечание: строки ... не заполнены») не являются строками ОПиУ.
+    if (label && labelKey(label).startsWith("примечание")) {
+      notes.push(label);
+      continue;
+    }
+
     // Строки вроде ROS/ROA иногда подписаны в колонке слева от «Код строки» (C13).
     if (!label && codeCol > 1) {
       const side = cellText(row.getCell(codeCol - 1).value);
@@ -441,7 +491,7 @@ export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
     const numFmt = row.getCell(yearCols[0].col).numFmt;
     const isPct = isPercentRow(label, numFmt);
 
-    // Помесячные значения + поиск ссылки формулой на «Расш. ОПиУ».
+    // Помесячные значения + поиск ссылки формулой на парный лист «Расш. ОПиУ*».
     const months: Record<string, number> = {};
     const monthSumByYear = new Map<string, number>();
     let linkedRashRow: number | null = null;
@@ -493,7 +543,7 @@ export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
     if (linkedRashRow !== null) formulaTargetByRowIndex.set(rowIdx, linkedRashRow);
   }
 
-  if (!rows.length) throw new OpiuParseError("на листе «ОПиУ» не найдено ни одной строки показателей");
+  if (!rows.length) throw new OpiuParseError(`на листе «${opiuSheet.name}» не найдено ни одной строки показателей`);
 
   const activeMonths = [...activeMonthsSet].sort();
   fillDerivedMonthlyRatios(rows, activeMonths);
@@ -503,12 +553,6 @@ export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
     label: yc.label,
     months: activeMonths.filter((m) => m.startsWith(`${yc.year}-`))
   }));
-
-  // Разбираем лист «Расш. ОПиУ» и привязываем разделы к строкам ОПиУ.
-  const rashSheet = visibleSheets.find((ws) => {
-    const k = labelKey(ws.name);
-    return k.startsWith("расш") && k.includes("опиу");
-  });
 
   const breakdowns: Record<string, OpiuBreakdownSection> = {};
   const warnings: string[] = [];
@@ -544,7 +588,7 @@ export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
       }
     };
 
-    // 1. Привязка по формульной ссылке ('Расш. ОПиУ'!C4234)
+    // 1. Привязка по формульной ссылке ('Расш. ОПиУ*'!C4234)
     for (const [rowIdx, targetRow] of formulaTargetByRowIndex.entries()) {
       const sec = byStartRow.get(targetRow);
       if (sec && !usedSections.has(sec.startRow)) {
@@ -563,8 +607,11 @@ export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
   }
 
   return {
+    id: sheetIdFromName(opiuSheet.name),
+    sheetName: opiuSheet.name.trim(),
     ...(organization ? { organization } : {}),
     ...(unitLabel ? { unitLabel } : {}),
+    ...(notes.length ? { note: notes.join(" ") } : {}),
     periodLabel: yearsOut[yearsOut.length - 1].label,
     years: yearsOut,
     months: activeMonths,
@@ -574,7 +621,40 @@ export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
   };
 }
 
-export async function parseOpiuExcel(buffer: Buffer): Promise<OpiuReport> {
+/**
+ * Разбирает все видимые листы «ОПиУ» и «ОПиУ_<суффикс>» в книге вместе с парными «Расш. ОПиУ*».
+ * Основной лист «ОПиУ» (без суффикса) всегда ставится первым, остальные — в порядке следования в книге.
+ */
+export function parseOpiuWorkbookAll(workbook: ExcelJS.Workbook): OpiuReport[] {
+  const visibleSheets = workbook.worksheets.filter((ws) => ws.state !== "hidden" && ws.state !== "veryHidden");
+  const matched = visibleSheets.filter((ws) => OPIU_SHEET_RE.test(ws.name.trim()));
+  if (!matched.length) throw new OpiuParseError("в книге нет видимого листа «ОПиУ»");
+
+  // Основной лист «ОПиУ» без суффикса — первым; остальные в исходном порядке книги.
+  const mainSheets = matched.filter((ws) => labelKey(ws.name) === "опиу");
+  const otherSheets = matched.filter((ws) => labelKey(ws.name) !== "опиу");
+  const ordered = [...mainSheets, ...otherSheets];
+
+  const seenIds = new Set<string>();
+  return ordered.map((sheet) => {
+    const rash = findPairedRashSheet(visibleSheets, sheet.name);
+    const report = parseSingleOpiuSheet(sheet, rash);
+    let id = report.id || "company";
+    if (seenIds.has(id)) {
+      let n = 2;
+      while (seenIds.has(`${id}-${n}`)) n++;
+      id = `${id}-${n}`;
+    }
+    seenIds.add(id);
+    return { ...report, id };
+  });
+}
+
+export function parseOpiuWorkbook(workbook: ExcelJS.Workbook): OpiuReport {
+  return parseOpiuWorkbookAll(workbook)[0];
+}
+
+export async function parseOpiuExcelAll(buffer: Buffer): Promise<OpiuReport[]> {
   const ExcelJS = await import("exceljs");
   const workbook = new ExcelJS.default.Workbook();
   try {
@@ -582,5 +662,10 @@ export async function parseOpiuExcel(buffer: Buffer): Promise<OpiuReport> {
   } catch {
     throw new OpiuParseError("файл ОПиУ не читается как .xlsx");
   }
-  return parseOpiuWorkbook(workbook);
+  return parseOpiuWorkbookAll(workbook);
+}
+
+export async function parseOpiuExcel(buffer: Buffer): Promise<OpiuReport> {
+  const reports = await parseOpiuExcelAll(buffer);
+  return reports[0];
 }

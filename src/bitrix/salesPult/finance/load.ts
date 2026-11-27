@@ -10,7 +10,7 @@ import path from "node:path";
 import type { ReadOnlyBitrixClient } from "../../reporting/readOnlyClient.js";
 import { decryptPayload, encryptPayload } from "../register/crypto.js";
 import { classifyFinanceWorkbook, type FinanceWorkbookKind } from "./classifyWorkbook.js";
-import { OpiuParseError, parseOpiuExcel } from "./parseOpiu.js";
+import { OpiuParseError, parseOpiuExcelAll } from "./parseOpiu.js";
 import { deriveOppositeRealization, parseRealizationExcel, RealizationParseError } from "./parseRealization.js";
 import { FinanceParseError, financeSnapshot, parseFinanceExcel } from "./parseReport.js";
 import type { OpiuReport, OpiuView } from "./opiuTypes.js";
@@ -25,7 +25,8 @@ export const DEFAULT_FINANCE_CACHE_PATH = "data/register/finance.json";
 // 4 — книга ФО (ОПиУ) в том же чате (26.11.2026).
 // 5 — 2-уровневый ОПиУ на отдельной вкладке «Фин. отчёты» и Отчёт о реализации (Клиент-ТМЦ / ТМЦ-Клиент) в «Финансах».
 // 6 — две итоговые строки перед списком дебиторов («Вся сумма» + «1210», 27.11.2026).
-export const FINANCE_PARSE_VERSION = 6;
+// 7 — несколько компаний в одной книге ОПиУ («ОПиУ» + «ОПиУ_*» с парными расшифровками, 27.11.2026).
+export const FINANCE_PARSE_VERSION = 7;
 
 const DEFAULT_MAX_DOWNLOADS = 20;
 const MAX_SNAPSHOTS = 400;
@@ -56,7 +57,7 @@ interface FinanceCache {
   v: number;
   files: Record<string, CachedFile>;
   latest?: { fileId: string; report: FinanceReport };
-  latestOpiu?: { fileId: string; report: OpiuReport };
+  latestOpiu?: { fileId: string; reports: OpiuReport[] };
   latestRealizationClientTmc?: { fileId: string; report: RealizationReport };
   latestRealizationTmcClient?: { fileId: string; report: RealizationReport };
 }
@@ -173,8 +174,9 @@ function viewFromCache(cache: FinanceCache): FinanceView {
       ? { report: cache.latestRealizationTmcClient.report, file: fileInfo(cache, cache.latestRealizationTmcClient.fileId) }
       : undefined
   );
-  const opiu: OpiuView | undefined = cache.latestOpiu
-    ? { report: cache.latestOpiu.report, file: fileInfo(cache, cache.latestOpiu.fileId) }
+  const opiuReportsList = cache.latestOpiu?.reports ?? [];
+  const opiu: OpiuView | undefined = cache.latestOpiu && opiuReportsList.length
+    ? { report: opiuReportsList[0], reports: opiuReportsList, file: fileInfo(cache, cache.latestOpiu.fileId) }
     : undefined;
 
   return {
@@ -188,10 +190,12 @@ function viewFromCache(cache: FinanceCache): FinanceView {
 async function loadLocalOpiu(filePath: string): Promise<OpiuView> {
   const name = path.basename(filePath);
   try {
-    const report = await parseOpiuExcel(fs.readFileSync(filePath));
+    const reports = await parseOpiuExcelAll(fs.readFileSync(filePath));
     const uploadedAt = fs.statSync(filePath).mtime.toISOString();
-    console.log(`[Фин. отчёты] Локальный ОПиУ: период ${report.periodLabel}, строк ${report.rows.length}, расшифровок ${Object.keys(report.breakdowns).length}, предупреждений ${report.warnings.length}`);
-    return { report, file: { id: "local-opiu", name, uploadedAt } };
+    const totalWarnings = reports.reduce((s, r) => s + r.warnings.length, 0);
+    const totalBreakdowns = reports.reduce((s, r) => s + Object.keys(r.breakdowns).length, 0);
+    console.log(`[Фин. отчёты] Локальный ОПиУ: компаний ${reports.length}, период ${reports[0].periodLabel}, расшифровок ${totalBreakdowns}, предупреждений ${totalWarnings}`);
+    return { report: reports[0], reports, file: { id: "local-opiu", name, uploadedAt } };
   } catch (err) {
     return { error: `Файл «${name}» не разобран: ${reasonOf(err)}` };
   }
@@ -310,7 +314,7 @@ export async function loadFinanceView(options: LoadFinanceOptions): Promise<Fina
   // Без ключа кэша нет: разбираем только свежие файлы, пока не найдём ежедневный отчёт.
   const budget = key ? options.maxDownloads ?? DEFAULT_MAX_DOWNLOADS : 3;
   const dailyReports = new Map<string, FinanceReport>();
-  const opiuReports = new Map<string, OpiuReport>();
+  const opiuReports = new Map<string, OpiuReport[]>();
   const realClientTmcReports = new Map<string, RealizationReport>();
   const realTmcClientReports = new Map<string, RealizationReport>();
   let downloads = 0;
@@ -332,9 +336,9 @@ export async function loadFinanceView(options: LoadFinanceOptions): Promise<Fina
       entry.kind = kind;
 
       if (kind === "opiu") {
-        const report = await parseOpiuExcel(buffer);
+        const reports = await parseOpiuExcelAll(buffer);
         entry.ok = true;
-        opiuReports.set(id, report);
+        opiuReports.set(id, reports);
       } else if (kind === "realization-client-tmc") {
         const report = parseRealizationExcel(buffer);
         entry.ok = true;
@@ -399,10 +403,10 @@ export async function loadFinanceView(options: LoadFinanceOptions): Promise<Fina
     const id = String(newestOpiuOk.ID);
     if (cache.latestOpiu?.fileId !== id) {
       if (!opiuReports.has(id)) await parseFile(newestOpiuOk);
-      const report = opiuReports.get(id);
-      if (report) cache.latestOpiu = { fileId: id, report };
+      const reports = opiuReports.get(id);
+      if (reports?.length) cache.latestOpiu = { fileId: id, reports };
     } else if (opiuReports.has(id)) {
-      cache.latestOpiu = { fileId: id, report: opiuReports.get(id)! };
+      cache.latestOpiu = { fileId: id, reports: opiuReports.get(id)! };
     }
   }
 
@@ -479,7 +483,11 @@ export async function loadFinanceView(options: LoadFinanceOptions): Promise<Fina
       (failed ? `, не разобрано: ${failed}` : "") +
       (pending ? `, ждут разбора: ${pending}` : "") +
       (view.report ? `, отчёт на ${view.report.dataDate}, предупреждений сверки ${view.report.warnings.length}` : ", отчёта нет") +
-      (view.opiu?.report ? `, ОПиУ: ${view.opiu.report.periodLabel}` : "") +
+      (view.opiu?.reports?.length
+        ? `, ОПиУ: ${view.opiu.reports.length} комп., ${view.opiu.reports[0].periodLabel}`
+        : view.opiu?.report
+          ? `, ОПиУ: ${view.opiu.report.periodLabel}`
+          : "") +
       (view.realization ? `, ОР: ${[view.realization.clientTmc && !view.realization.clientTmc.derived ? "Клиент-ТМЦ" : null, view.realization.tmcClient && !view.realization.tmcClient.derived ? "ТМЦ-Клиент" : null].filter(Boolean).join("+") || "авто"}` : "") +
       `, дней в истории: ${view.snapshots.length}` +
       (key ? "" : " (без ключа кэша истории нет)")

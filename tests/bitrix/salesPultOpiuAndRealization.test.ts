@@ -5,7 +5,7 @@ import { chromium } from "playwright";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { classifyFinanceWorkbook } from "../../src/bitrix/salesPult/finance/classifyWorkbook.js";
 import { loadFinanceView } from "../../src/bitrix/salesPult/finance/load.js";
-import { parseOpiuExcel } from "../../src/bitrix/salesPult/finance/parseOpiu.js";
+import { parseOpiuExcel, parseOpiuExcelAll } from "../../src/bitrix/salesPult/finance/parseOpiu.js";
 import { deriveOppositeRealization, parseRealizationExcel } from "../../src/bitrix/salesPult/finance/parseRealization.js";
 import { handleGateRequest } from "../../src/bitrix/salesPult/gate/handler.js";
 import { parseGateConfig } from "../../src/bitrix/salesPult/gate/config.js";
@@ -21,6 +21,7 @@ import crypto from "node:crypto";
 
 let dailyBuf: Buffer;
 let opiuBuf: Buffer;
+let opiuMultiBuf: Buffer;
 let opiuValuesOnlyBuf: Buffer;
 let opiuMismatchBuf: Buffer;
 let realClientTmcBuf: Buffer;
@@ -29,6 +30,7 @@ let realTmcClientBuf: Buffer;
 beforeAll(async () => {
   dailyBuf = await financeWorkbookBuffer();
   opiuBuf = await opiuWorkbookBuffer();
+  opiuMultiBuf = await opiuWorkbookBuffer({ multiCompany: true });
   opiuValuesOnlyBuf = await opiuWorkbookBuffer({ valuesOnly: true });
   opiuMismatchBuf = await opiuWorkbookBuffer({ mismatchSelling: true });
   realClientTmcBuf = realizationWorkbookBuffer("client-tmc");
@@ -109,6 +111,22 @@ describe("разбор ОПиУ и двухуровневых расшифров
     expect(report.warnings).toHaveLength(1);
     expect(report.warnings[0]).toMatch(/013/);
     expect(report.warnings[0]).not.toMatch(/Партнёр|Сотрудник|500/);
+  });
+
+  it("разбирает несколько компаний («ОПиУ» + «ОПиУ_*») с встроенным названием организации, примечанием и 2-уровневой расшифровкой", async () => {
+    expect(classifyFinanceWorkbook(opiuMultiBuf)).toBe("opiu");
+    const reports = await parseOpiuExcelAll(opiuMultiBuf);
+    expect(reports).toHaveLength(2);
+    expect(reports[0].id).toBe("main");
+    expect(reports[0].organization).toBe("ТОО «Тест-ОПиУ»");
+    expect(reports[1].id).toBe("beta");
+    expect(reports[1].organization).toBe("ТОО Тест-Бета.kz");
+    expect(reports[1].warnings).toEqual([]);
+    expect(reports[1].note).toContain("строка 011 не заполнена");
+    expect(reports[1].rows.some((r) => r.label.startsWith("Примечание"))).toBe(false);
+    expect(reports[1].breakdowns["010"].items.map((x) => x.label)).toEqual(["ТОО Покупатель Бета-Сервис"]);
+    expect(reports[1].breakdowns["014"].hasGroups).toBe(true);
+    expect(reports[1].breakdowns["014"].items[0].children?.[0].label).toBe("Облачный сервис Тест");
   });
 });
 
@@ -362,6 +380,57 @@ describe("браузерная проверка ОПиУ (fin-reports.html) и �
         "Фев",
         "9 мес. 2026"
       ]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  }, 30_000);
+
+  it("ОПиУ нескольких компаний: переключатель компаний, подпись каждого ОПиУ и сводка по всем", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pult-fr-multi-browser-"));
+    const reports = await parseOpiuExcelAll(opiuMultiBuf);
+    const html = renderFinReportsHtml({
+      asOfDate: "2026-11-27",
+      generatedAt: "2026-11-27 17:00",
+      opiu: { report: reports[0], reports, file: { id: "1", name: "ФО Мульти.xlsx", uploadedAt: "2026-11-27T17:00:00+05:00" } }
+    });
+    const filePath = path.join(dir, "fin-reports-multi.html");
+    fs.writeFileSync(filePath, html, "utf8");
+
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.goto(`file://${filePath.replace(/\\/g, "/")}`);
+
+      // Виден переключатель компаний; по умолчанию открыта первая компания с подписью
+      expect(await page.locator("#fr-companies").isVisible()).toBe(true);
+      expect(await page.locator("#fr-company-banner .fr-company-title").textContent()).toBe("ТОО «Тест-ОПиУ»");
+      expect(await page.locator("#fr-opiu h2").textContent()).toContain("ТОО «Тест-ОПиУ»");
+
+      // Переключение на вторую компанию обновляет заголовок, таблицу и 2-уровневую расшифровку
+      await page.locator('button[data-fr-company="beta"]').click();
+      expect(await page.locator("#fr-company-banner .fr-company-title").textContent()).toBe("ТОО Тест-Бета.kz");
+      expect(await page.locator("#fr-opiu h2").textContent()).toContain("ТОО Тест-Бета.kz");
+      expect(await page.locator("#fr-opiu .fr-note").textContent()).toContain("строка 011 не заполнена");
+      await page.locator('button[data-sec-toggle="014"]').click();
+      await page.locator('button[data-group-toggle="014::0"]').click();
+      expect((await page.locator("tr.fr-lvl2").allTextContents()).join(" | ")).toContain("Облачный сервис Тест");
+
+      // Сводка по всем компаниям и переход по клику на строку
+      await page.locator('button[data-fr-company="__all__"]').click();
+      expect(await page.locator("#fr-overview").isVisible()).toBe(true);
+      const ovText = await page.locator("#fr-overview tbody").textContent();
+      expect(ovText).toContain("ТОО «Тест-ОПиУ»");
+      expect(ovText).toContain("ТОО Тест-Бета.kz");
+      expect(ovText).toContain("Итого по 2 компаниям");
+      await page.locator('#fr-overview button[data-fr-open-company="main"]').click();
+      expect(await page.locator("#fr-company-banner .fr-company-title").textContent()).toBe("ТОО «Тест-ОПиУ»");
+
+      // Мобильный 375px без горизонтального переполнения страницы
+      await page.setViewportSize({ width: 375, height: 812 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       expect(errors).toEqual([]);
     } finally {
