@@ -22,11 +22,37 @@ function isHiddenSheet(wb: XLSX.WorkBook, index: number): boolean {
   return hidden === 1 || hidden === 2;
 }
 
+function isOpiuSheetKey(key: string): boolean {
+  return key === "опиу" || key.startsWith("опиу_") || key.startsWith("опиу ");
+}
+
 /**
  * Определяет вид финансового файла по листам и шапке.
  * Не пишет содержимое файла в ошибки и не падает на нестандартной разметке.
  */
 export function classifyFinanceWorkbook(buffer: Buffer | Uint8Array): FinanceWorkbookKind {
+  // Быстрая проверка только по именам листов (не читает содержимое десятков скрытых листов в больших книгах ОПиУ).
+  let metaWb: XLSX.WorkBook;
+  try {
+    metaWb = XLSX.read(buffer, { type: "buffer", bookSheets: true });
+  } catch {
+    return "unknown";
+  }
+
+  const visibleMeta = metaWb.SheetNames
+    .map((name, i) => ({ name, key: labelKey(name), hidden: isHiddenSheet(metaWb, i) }))
+    .filter((s) => !s.hidden);
+
+  // 1. Ежедневный отчёт финансиста — лист «Ежед.»
+  if (visibleMeta.some((s) => s.key === "ежед" || s.key.startsWith("ежед "))) {
+    return "daily";
+  }
+
+  // 2. Финансовая отчётность (ОПиУ / ОПиУ_<компания> + Расш. ОПиУ*)
+  if (visibleMeta.some((s) => isOpiuSheetKey(s.key))) {
+    return "opiu";
+  }
+
   let wb: XLSX.WorkBook;
   try {
     wb = XLSX.read(buffer, { type: "buffer", cellStyles: false, cellFormula: false, sheetRows: 15 });
@@ -37,16 +63,6 @@ export function classifyFinanceWorkbook(buffer: Buffer | Uint8Array): FinanceWor
   const visibleNames = wb.SheetNames
     .map((name, i) => ({ name, key: labelKey(name), hidden: isHiddenSheet(wb, i) }))
     .filter((s) => !s.hidden);
-
-  // 1. Ежедневный отчёт финансиста — лист «Ежед.»
-  if (visibleNames.some((s) => s.key === "ежед" || s.key.startsWith("ежед "))) {
-    return "daily";
-  }
-
-  // 2. Финансовая отчётность (ОПиУ + Расш. ОПиУ)
-  if (visibleNames.some((s) => s.key === "опиу")) {
-    return "opiu";
-  }
 
   // 3. Отчёт о реализации 1С (ТМЦ-Клиент или Клиент-ТМЦ)
   for (const sheet of visibleNames) {

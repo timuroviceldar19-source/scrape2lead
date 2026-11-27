@@ -12,6 +12,8 @@ export interface OpiuFixtureOptions {
   mismatchSelling?: boolean;
   /** Убрать формулы ссылок — проверить запасную привязку по названию раздела. */
   valuesOnly?: boolean;
+  /** Добавить вторую компанию («ОПиУ_BETA» + «Расш. ОПиУ_BETA») в формате «Наименование организации: ... . Период: ...». */
+  multiCompany?: boolean;
 }
 
 /** Создаёт выдуманную книгу ОПиУ (2025 + 9 мес. 2026) с 1- и 2-уровневыми расшифровками. */
@@ -169,6 +171,64 @@ export async function opiuWorkbookBuffer(options: OpiuFixtureOptions = {}): Prom
   addOpiuRow(12, "014", "Административные расходы", { rashRow: 22, m25: { 1: 4_000_000, 2: 6_000_000 }, m26: { 1: 5_000_000, 2: 5_000_000 } });
   addOpiuRow(13, "020", "Итого операционная прибыль (убыток)", { bold: true, m25: { 1: 8_000_000, 2: 12_000_000 }, m26: { 1: 4_000_000, 2: 11_000_000 } });
   addOpiuRow(14, "300", "Прибыль за год", { bold: true, m25: { 1: 6_400_000, 2: 9_600_000 }, m26: { 1: 3_200_000, 2: 8_800_000 } });
+
+  if (options.multiCompany) {
+    // Дополнительная компания в книге: идёт раньше основного листа в порядке вкладок,
+    // но парсер должен ставить основной «ОПиУ» первым.
+    const opiuBeta = wb.addWorksheet("ОПиУ_BETA");
+    const rashBeta = wb.addWorksheet("Расш. ОПиУ_BETA");
+
+    rashBeta.getCell("B1").value = "тенге без НДС";
+    rashBeta.getCell(3, 2).value = "Наименование статьи";
+    rashBeta.getCell(3, 3).value = d("2025-01-01");
+    rashBeta.getCell(3, 4).value = "2025";
+    rashBeta.getCell(3, 5).value = d("2026-01-01");
+    rashBeta.getCell(3, 6).value = "2026";
+    rashBeta.getCell(3, 7).value = "Всего";
+
+    const setBetaRash = (r: number, label: string, v25: number, v26: number, bold = false) => {
+      rashBeta.getCell(r, 2).value = label;
+      if (bold) rashBeta.getCell(r, 2).font = { bold: true };
+      rashBeta.getCell(r, 3).value = v25;
+      rashBeta.getCell(r, 4).value = v25;
+      rashBeta.getCell(r, 5).value = v26;
+      rashBeta.getCell(r, 6).value = v26;
+      rashBeta.getCell(r, 7).value = v25 + v26;
+    };
+    setBetaRash(4, "Расшифровка Доходов (строка 010 ОПиУ)", 20_000_000, 30_000_000, true);
+    setBetaRash(5, "ТОО Покупатель Бета-Сервис", 20_000_000, 30_000_000);
+    setBetaRash(7, "Расшифровка Административных расходов (строка 014 ОПиУ)", 5_000_000, 7_000_000, true);
+    setBetaRash(8, "Подписки и ПО", 5_000_000, 7_000_000, true);
+    setBetaRash(9, "Облачный сервис Тест", 5_000_000, 7_000_000);
+
+    opiuBeta.getCell("B1").value = "Отчет о прибылях и убытках";
+    opiuBeta.getCell("B2").value = "Наименование организации: ТОО Тест-Бета.kz. Период: январь 2025 – сентябрь 2026";
+    opiuBeta.getCell(6, 2).value = "Наименование показателей";
+    opiuBeta.getCell(6, 3).value = "Код строки";
+    opiuBeta.getCell(6, 4).value = d("2025-01-01");
+    opiuBeta.getCell(6, 5).value = "2025";
+    opiuBeta.getCell(6, 6).value = d("2026-01-01");
+    opiuBeta.getCell(6, 7).value = "2026";
+    opiuBeta.getCell(6, 8).value = "Всего";
+
+    const addBetaOpiu = (r: number, code: string, label: string, v25: number, v26: number, opts: { bold?: boolean; rashRow?: number } = {}) => {
+      opiuBeta.getCell(r, 2).value = label;
+      if (opts.bold) opiuBeta.getCell(r, 2).font = { bold: true };
+      opiuBeta.getCell(r, 3).value = code;
+      opiuBeta.getCell(r, 4).value = opts.rashRow ? f(`'Расш. ОПиУ_BETA'!C${opts.rashRow}`, v25) : v25;
+      opiuBeta.getCell(r, 5).value = v25;
+      opiuBeta.getCell(r, 6).value = opts.rashRow ? f(`'Расш. ОПиУ_BETA'!E${opts.rashRow}`, v26) : v26;
+      opiuBeta.getCell(r, 7).value = v26;
+      opiuBeta.getCell(r, 8).value = v25 + v26;
+    };
+    addBetaOpiu(7, "010", "Выручка", 20_000_000, 30_000_000, { rashRow: 4 });
+    addBetaOpiu(8, "011", "Себестоимость реализованных товаров и услуг", 0, 0);
+    addBetaOpiu(9, "012", "Валовая прибыль", 20_000_000, 30_000_000, { bold: true });
+    addBetaOpiu(10, "014", "Административные расходы", 5_000_000, 7_000_000, { rashRow: 7 });
+    addBetaOpiu(11, "020", "Итого операционная прибыль (убыток)", 15_000_000, 23_000_000, { bold: true });
+    addBetaOpiu(12, "200", "Прибыль (убыток) после налогообложения", 12_000_000, 18_400_000, { bold: true });
+    opiuBeta.getCell(14, 2).value = "Примечание: строка 011 не заполнена, так как компания оказывает услуги.";
+  }
 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

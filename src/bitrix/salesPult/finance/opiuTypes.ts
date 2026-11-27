@@ -61,11 +61,17 @@ export interface OpiuRow {
 }
 
 export interface OpiuReport {
+  /** Стабильный ключ компании в книге ("main" для листа «ОПиУ» или суффикс в нижнем регистре). */
+  id?: string;
+  /** Имя листа ОПиУ в книге. */
+  sheetName?: string;
   /** Наименование организации из шапки листа ОПиУ (если заполнено). */
   organization?: string;
   /** Единица измерения из шапки («тенге без НДС»). */
   unitLabel?: string;
-  /** Период последнего столбца, например «9 мес. 2026». */
+  /** Примечание из нижней части листа ОПиУ (если есть). */
+  note?: string;
+  /** Период последнего столбца, например «9 мес. 2026» или «2026». */
   periodLabel: string;
   /** Годовые столбцы по возрастанию. */
   years: OpiuYearColumn[];
@@ -80,7 +86,10 @@ export interface OpiuReport {
 }
 
 export interface OpiuView {
+  /** Основной (первый) ОПиУ — сохранён для обратной совместимости. */
   report?: OpiuReport;
+  /** Все ОПиУ из книги (основной лист «ОПиУ» первым, далее «ОПиУ_*» в порядке книги). */
+  reports?: OpiuReport[];
   file?: FinanceFileInfo;
   error?: string;
   notice?: string;

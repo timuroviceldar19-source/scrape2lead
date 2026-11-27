@@ -157,9 +157,14 @@ export function renderFinanceHtml(payload: FinancePagePayload): string {
 }
 
 export function renderFinReportsHtml(payload: FinReportsPagePayload): string {
+  // Не дублируем первый отчёт в JSON, если уже передан массив reports (экономия ~1 МБ в HTML).
+  const opiu = payload.opiu?.reports?.length
+    ? (({ report: _dup, ...rest }) => rest)(payload.opiu)
+    : payload.opiu;
+  const safePayload: FinReportsPagePayload = { ...payload, opiu };
   const replacements: Record<string, string> = {
     "/*__CSS__*/": `${pultCss}\n${finCss}\n${finReportsCss}`,
-    "__PAYLOAD__": safeJson(payload),
+    "__PAYLOAD__": safeJson(safePayload),
     "/*__CLIENT_JS__*/": finReportsClientJs
   };
 

@@ -1,10 +1,10 @@
-// Страница «Фин. отчёты»: ОПиУ по годам и месяцам с 1- и 2-уровневой расшифровкой статей.
+// Страница «Фин. отчёты»: ОПиУ по компаниям (по годам и месяцам) с 1- и 2-уровневой расшифровкой статей.
 (function () {
   "use strict";
 
   const P = typeof PAYLOAD !== "undefined" ? PAYLOAD : {};
   const O = P.opiu || {};
-  const R = O.report;
+  const REPORTS = Array.isArray(O.reports) && O.reports.length ? O.reports : (O.report ? [O.report] : []);
   const el = document.getElementById("tab-fin-reports");
 
   const MONTHS_SHORT = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
@@ -42,8 +42,19 @@
   };
   const norm = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").trim();
 
+  const companyId = (rep, idx) => rep.id || `c${idx}`;
+  const companyName = (rep, idx) => rep.organization || rep.sheetName || `Компания ${idx + 1}`;
+  const allYearsList = () => {
+    const set = new Set();
+    for (const rep of REPORTS) for (const y of rep.years || []) set.add(y.year);
+    return [...set].sort();
+  };
+
   // Состояние интерфейса
+  let selectedCompany = REPORTS.length ? companyId(REPORTS[0], 0) : null; // companyId | "__all__"
   let viewMode = "years"; // "years" | "YYYY" (помесячно за выбранный год)
+  const yearsUnion = allYearsList();
+  let summaryYear = yearsUnion.length ? yearsUnion[yearsUnion.length - 1] : "";
   const openSections = new Set(); // ключи раскрытых строк ОПиУ (например "013", "014")
   const openGroups = new Set();   // `${sectionKey}::${groupIndex}` — раскрытые жирные группы 2-го уровня
   const sectionQuery = new Map(); // поиск внутри конкретной расшифровки
@@ -51,25 +62,48 @@
 
   const DEFAULT_LIMIT = 30;
 
+  function activeEntry() {
+    if (!REPORTS.length || selectedCompany === "__all__") return null;
+    const idx = REPORTS.findIndex((r, i) => companyId(r, i) === selectedCompany);
+    const safeIdx = idx >= 0 ? idx : 0;
+    return { report: REPORTS[safeIdx], idx: safeIdx, name: companyName(REPORTS[safeIdx], safeIdx) };
+  }
+
+  function findRow(report, code) {
+    return report.rows.find((r) => r.code === code);
+  }
+
+  function yearSpan(rep) {
+    if (!rep.years.length) return rep.periodLabel || "";
+    return rep.years.length > 1
+      ? `${rep.years[0].year}–${rep.years[rep.years.length - 1].year} (${rep.periodLabel})`
+      : rep.periodLabel;
+  }
+
   function setLabels() {
     const dateLabel = document.getElementById("dateLabel");
     const srcLabel = document.getElementById("srcLabel");
     const liveText = document.getElementById("liveText");
     if (liveText && P.generatedAt) liveText.textContent = P.generatedAt;
-    if (!R) return;
-    if (dateLabel) {
-      const span = R.years.length > 1 ? `${R.years[0].year}–${R.years[R.years.length - 1].year} (${R.periodLabel})` : R.periodLabel;
-      dateLabel.textContent = `ОПиУ · ${span}${R.unitLabel ? ` · ${R.unitLabel}` : ""}`;
-    }
     if (srcLabel && O.file) srcLabel.textContent = `${O.file.name} · загружен ${almaty(O.file.uploadedAt)}`;
     const foot = document.getElementById("footSource");
     if (foot && O.file) {
       foot.textContent = `Источник: «${O.file.name}» из чата «Финансовый отчет» Битрикс24, загружен ${almaty(O.file.uploadedAt)}`;
     }
+    if (!dateLabel || !REPORTS.length) return;
+    if (selectedCompany === "__all__") {
+      dateLabel.textContent = `ОПиУ · Сводка (${REPORTS.length} комп.) · ${summaryYear}`;
+      return;
+    }
+    const entry = activeEntry();
+    if (!entry) return;
+    const R = entry.report;
+    const prefix = REPORTS.length > 1 ? `ОПиУ · ${entry.name}` : "ОПиУ";
+    dateLabel.textContent = `${prefix} · ${yearSpan(R)}${R.unitLabel ? ` · ${R.unitLabel}` : ""}`;
   }
 
   /** Возвращает описание видимых числовых колонок для текущего режима. */
-  function activeColumns() {
+  function activeColumns(R) {
     if (viewMode === "years") {
       return R.years.map((y, idx) => ({
         key: `y:${idx}`,
@@ -80,7 +114,8 @@
       }));
     }
     const yrIdx = R.years.findIndex((y) => y.year === viewMode);
-    const yr = yrIdx >= 0 ? R.years[yrIdx] : R.years[R.years.length - 1];
+    const safeIdx = yrIdx >= 0 ? yrIdx : R.years.length - 1;
+    const yr = R.years[safeIdx];
     const cols = yr.months.map((ym) => {
       const mIdx = Number(ym.slice(5, 7)) - 1;
       return {
@@ -92,20 +127,75 @@
       };
     });
     cols.push({
-      key: `yt:${yrIdx}`,
+      key: `yt:${safeIdx}`,
       label: yr.label,
       isTotal: true,
-      readRow: (row) => row.years[yrIdx],
-      readItem: (item) => item.years[yrIdx] || 0
+      readRow: (row) => row.years[safeIdx],
+      readItem: (item) => item.years[safeIdx] || 0
     });
     return cols;
   }
 
-  function findRow(code) {
-    return R.rows.find((r) => r.code === code);
+  function extractKpisForYear(R, yrIdx) {
+    const val = (row, idx) => (row && idx >= 0 && row.years[idx] != null ? row.years[idx] : 0);
+    const revRow = findRow(R, "010");
+    const grossRow = findRow(R, "012");
+    const opRow = findRow(R, "020");
+    const netRow = findRow(R, "300") || findRow(R, "200") || findRow(R, "500");
+    const marginRow = R.rows.find((r) => norm(r.label) === "маржа");
+    const markupRow = R.rows.find((r) => norm(r.label) === "наценка");
+    const opMarginRow = R.rows.find((r) => norm(r.label).startsWith("рентабельность операционной"));
+    const rosRow = R.rows.find((r) => norm(r.label) === "ros");
+
+    const rev = val(revRow, yrIdx);
+    const gross = val(grossRow, yrIdx);
+    const op = val(opRow, yrIdx);
+    const net = val(netRow, yrIdx);
+
+    const marginVal = marginRow && marginRow.years[yrIdx] != null ? marginRow.years[yrIdx] : (rev ? gross / rev : null);
+    const markupVal = markupRow && markupRow.years[yrIdx] != null ? markupRow.years[yrIdx] : null;
+    const opMarginVal = opMarginRow && opMarginRow.years[yrIdx] != null && opMarginRow.years[yrIdx] !== 0
+      ? opMarginRow.years[yrIdx]
+      : (rev ? op / rev : null);
+    const rosVal = rosRow && rosRow.years[yrIdx] != null ? rosRow.years[yrIdx] : (rev ? net / rev : null);
+
+    return { revRow, grossRow, opRow, netRow, rev, gross, op, net, marginVal, markupVal, opMarginVal, rosVal };
   }
 
-  function renderSummary() {
+  function renderCompanySwitcher() {
+    if (REPORTS.length <= 1) return "";
+    return `<section class="fr-companies" id="fr-companies" aria-label="Компании">
+      <div class="fr-companies-head">
+        <span class="label">Компании (${REPORTS.length})</span>
+        <span class="fr-companies-hint">каждый ОПиУ подписан названием компании</span>
+      </div>
+      <div class="chips fr-company-chips" role="group" aria-label="Выбор компании ОПиУ">
+        ${REPORTS.map((rep, idx) => {
+          const cid = companyId(rep, idx);
+          const active = selectedCompany === cid;
+          return `<button type="button" data-fr-company="${esc(cid)}" aria-pressed="${active ? "true" : "false"}">${esc(companyName(rep, idx))}</button>`;
+        }).join("")}
+        <button type="button" class="fr-chip-all" data-fr-company="__all__" aria-pressed="${selectedCompany === "__all__" ? "true" : "false"}">Сводка по всем (${REPORTS.length})</button>
+      </div>
+    </section>`;
+  }
+
+  function renderCompanyBanner(entry) {
+    const R = entry.report;
+    return `<div class="fr-company-banner" id="fr-company-banner">
+      <div class="fr-company-banner-main">
+        <span class="fr-company-kicker">Отчёт о прибылях и убытках (ОПиУ)</span>
+        <h1 class="fr-company-title">${esc(entry.name)}</h1>
+      </div>
+      <div class="fr-company-banner-meta">
+        <span>${esc(yearSpan(R))}</span>
+        ${R.unitLabel ? `<span>${esc(R.unitLabel)}</span>` : ""}
+      </div>
+    </div>`;
+  }
+
+  function renderSummary(entry) {
+    const R = entry.report;
     const yrIdx = viewMode === "years"
       ? R.years.length - 1
       : Math.max(0, R.years.findIndex((y) => y.year === viewMode));
@@ -113,20 +203,8 @@
     const prevIdx = yrIdx > 0 ? yrIdx - 1 : -1;
     const prevYr = prevIdx >= 0 ? R.years[prevIdx] : null;
 
-    const revRow = findRow("010");
-    const grossRow = findRow("012");
-    const opRow = findRow("020");
-    const netRow = findRow("300") || findRow("200") || findRow("500");
-    const marginRow = R.rows.find((r) => norm(r.label) === "маржа");
-    const markupRow = R.rows.find((r) => norm(r.label) === "наценка");
-    const opMarginRow = R.rows.find((r) => norm(r.label).startsWith("рентабельность операционной"));
-    const rosRow = R.rows.find((r) => norm(r.label) === "ros");
-
+    const k = extractKpisForYear(R, yrIdx);
     const val = (row, idx) => (row && idx >= 0 && row.years[idx] != null ? row.years[idx] : 0);
-    const rev = val(revRow, yrIdx);
-    const gross = val(grossRow, yrIdx);
-    const op = val(opRow, yrIdx);
-    const net = val(netRow, yrIdx);
 
     const prevNote = (row) => {
       if (!prevYr || !row) return "";
@@ -134,22 +212,118 @@
       return `${esc(prevYr.label)}: <b>${money(pv)}</b>`;
     };
 
-    const marginVal = marginRow && marginRow.years[yrIdx] != null ? marginRow.years[yrIdx] : (rev ? gross / rev : null);
-    const markupVal = markupRow && markupRow.years[yrIdx] != null ? markupRow.years[yrIdx] : null;
-    const opMarginVal = opMarginRow && opMarginRow.years[yrIdx] != null ? opMarginRow.years[yrIdx] : (rev ? op / rev : null);
-    const rosVal = rosRow && rosRow.years[yrIdx] != null ? rosRow.years[yrIdx] : (rev ? net / rev : null);
-
     const tileHtml = (label, value, sub, bad) =>
       `<div class="fr-tile${bad ? " is-bad" : ""}"><span class="label">${label}</span><div class="v">${big(value)}</div><div class="sub">${sub}</div></div>`;
 
     return `<section class="block" id="fr-summary">
-      <div class="block-head"><h2><span class="idx">01</span>Ключевые показатели · ${esc(yr.label)}</h2><span class="meta">${esc(R.organization || "ОПиУ")}${R.unitLabel ? ` · ${esc(R.unitLabel)}` : ""}</span></div>
+      <div class="block-head"><h2><span class="idx">01</span>Ключевые показатели · ${esc(entry.name)} · ${esc(yr.label)}</h2><span class="meta">${esc(entry.name)}${R.unitLabel ? ` · ${esc(R.unitLabel)}` : ""}</span></div>
       <div class="fr-tiles">
-        ${tileHtml("Выручка", rev, prevNote(revRow) || "строка 010", false)}
-        ${tileHtml("Валовая прибыль", gross, `${marginVal != null ? `маржа <b>${pct(marginVal)}</b>` : ""}${markupVal != null ? ` · наценка <b>${pct(markupVal)}</b>` : ""}${prevYr ? `<br>${prevNote(grossRow)}` : ""}`, gross < 0)}
-        ${tileHtml("Операционная прибыль", op, `${opMarginVal != null ? `рентабельность <b class="${opMarginVal < 0 ? "bad" : ""}">${pct(opMarginVal)}</b>` : ""}${prevYr ? `<br>${prevNote(opRow)}` : ""}`, op < 0)}
-        ${tileHtml("Чистая прибыль", net, `${rosVal != null ? `ROS <b class="${rosVal < 0 ? "bad" : ""}">${pct(rosVal)}</b>` : ""}${prevYr ? `<br>${prevNote(netRow)}` : ""}`, net < 0)}
+        ${tileHtml("Выручка", k.rev, prevNote(k.revRow) || "строка 010", false)}
+        ${tileHtml("Валовая прибыль", k.gross, `${k.marginVal != null ? `маржа <b>${pct(k.marginVal)}</b>` : ""}${k.markupVal != null ? ` · наценка <b>${pct(k.markupVal)}</b>` : ""}${prevYr ? `<br>${prevNote(k.grossRow)}` : ""}`, k.gross < 0)}
+        ${tileHtml("Операционная прибыль", k.op, `${k.opMarginVal != null ? `рентабельность <b class="${k.opMarginVal < 0 ? "bad" : ""}">${pct(k.opMarginVal)}</b>` : ""}${prevYr ? `<br>${prevNote(k.opRow)}` : ""}`, k.op < 0)}
+        ${tileHtml("Чистая прибыль", k.net, `${k.rosVal != null ? `ROS <b class="${k.rosVal < 0 ? "bad" : ""}">${pct(k.rosVal)}</b>` : ""}${prevYr ? `<br>${prevNote(k.netRow)}` : ""}`, k.net < 0)}
       </div>
+    </section>`;
+  }
+
+  function renderOverview() {
+    const yearsDesc = [...yearsUnion].reverse();
+    const rowsData = REPORTS.map((rep, idx) => {
+      const yrIdx = rep.years.findIndex((y) => y.year === summaryYear);
+      const yrObj = yrIdx >= 0 ? rep.years[yrIdx] : null;
+      const k = yrIdx >= 0 ? extractKpisForYear(rep, yrIdx) : { rev: 0, gross: 0, op: 0, net: 0, marginVal: null, rosVal: null };
+      return {
+        cid: companyId(rep, idx),
+        name: companyName(rep, idx),
+        period: yrObj ? yrObj.label : "—",
+        rev: k.rev,
+        gross: k.gross,
+        op: k.op,
+        net: k.net,
+        margin: k.marginVal,
+        ros: k.rosVal
+      };
+    });
+
+    const sumRev = rowsData.reduce((s, x) => s + x.rev, 0);
+    const sumGross = rowsData.reduce((s, x) => s + x.gross, 0);
+    const sumOp = rowsData.reduce((s, x) => s + x.op, 0);
+    const sumNet = rowsData.reduce((s, x) => s + x.net, 0);
+    const sumMargin = sumRev ? sumGross / sumRev : null;
+    const sumOpMargin = sumRev ? sumOp / sumRev : null;
+    const sumRos = sumRev ? sumNet / sumRev : null;
+
+    const tileHtml = (label, value, sub, bad) =>
+      `<div class="fr-tile${bad ? " is-bad" : ""}"><span class="label">${label}</span><div class="v">${big(value)}</div><div class="sub">${sub}</div></div>`;
+
+    const yearChips = `<div class="chips" role="group" aria-label="Год сводки">
+      ${yearsDesc.map((y) => `<button type="button" data-fr-summary-year="${esc(y)}" aria-pressed="${summaryYear === y ? "true" : "false"}">${esc(y)}</button>`).join("")}
+    </div>`;
+
+    const bodyRows = rowsData.map((r) => `<tr class="fr-row is-expandable fr-ov-row" data-fr-open-company="${esc(r.cid)}">
+      <td><button type="button" class="fr-toggle fr-ov-btn" data-fr-open-company="${esc(r.cid)}"><span>${esc(r.name)}</span></button></td>
+      <td class="num zero">${esc(r.period)}</td>
+      ${formatCell(r.rev, false, false)}
+      ${formatCell(r.gross, false, false)}
+      ${formatCell(r.margin, true, false)}
+      ${formatCell(r.op, false, false)}
+      ${formatCell(r.net, false, true)}
+      ${formatCell(r.ros, true, false)}
+    </tr>`).join("");
+
+    const totalRow = `<tr class="fr-row is-bold">
+      <td>Итого по ${REPORTS.length} компаниям</td>
+      <td class="num zero">${esc(summaryYear)}</td>
+      ${formatCell(sumRev, false, false)}
+      ${formatCell(sumGross, false, false)}
+      ${formatCell(sumMargin, true, false)}
+      ${formatCell(sumOp, false, false)}
+      ${formatCell(sumNet, false, true)}
+      ${formatCell(sumRos, true, false)}
+    </tr>`;
+
+    return `<div class="fr-company-banner" id="fr-company-banner">
+      <div class="fr-company-banner-main">
+        <span class="fr-company-kicker">Сводка по компаниям (ОПиУ)</span>
+        <h1 class="fr-company-title">Все компании (${REPORTS.length}) · ${esc(summaryYear)}</h1>
+      </div>
+      <div class="fr-company-banner-meta">
+        <span>нажмите на компанию для её подробного ОПиУ</span>
+      </div>
+    </div>
+    <section class="block" id="fr-summary">
+      <div class="block-head"><h2><span class="idx">01</span>Сумма показателей · ${esc(summaryYear)}</h2><span class="meta">${REPORTS.length} комп. · тенге без НДС</span></div>
+      <div class="fr-tiles">
+        ${tileHtml("Выручка", sumRev, `${REPORTS.length} компаний`, false)}
+        ${tileHtml("Валовая прибыль", sumGross, sumMargin != null ? `маржа <b>${pct(sumMargin)}</b>` : "—", sumGross < 0)}
+        ${tileHtml("Операционная прибыль", sumOp, sumOpMargin != null ? `рентабельность <b class="${sumOpMargin < 0 ? "bad" : ""}">${pct(sumOpMargin)}</b>` : "—", sumOp < 0)}
+        ${tileHtml("Чистая прибыль", sumNet, sumRos != null ? `ROS <b class="${sumRos < 0 ? "bad" : ""}">${pct(sumRos)}</b>` : "—", sumNet < 0)}
+      </div>
+    </section>
+    <section class="block" id="fr-overview">
+      <div class="block-head">
+        <h2><span class="idx">02</span>Сравнение ОПиУ по компаниям · ${esc(summaryYear)}</h2>
+        <span class="meta">нажмите на строку компании, чтобы открыть её ОПиУ</span>
+      </div>
+      <div class="fr-toolbar">${yearChips}</div>
+      <div class="fr-table-wrap">
+        <table class="fr-table">
+          <thead>
+            <tr>
+              <th>Компания</th>
+              <th>Период</th>
+              <th>Выручка</th>
+              <th>Валовая приб.</th>
+              <th>Маржа</th>
+              <th>Операц. приб.</th>
+              <th class="total-col">Чистая приб.</th>
+              <th>ROS</th>
+            </tr>
+          </thead>
+          <tbody>${bodyRows}${totalRow}</tbody>
+        </table>
+      </div>
+      <p class="fr-note">Сводка суммирует показатели ОПиУ компаний без исключения внутригрупповых оборотов.</p>
     </section>`;
   }
 
@@ -175,7 +349,7 @@
     return cols.some((c) => Math.abs(c.readItem(item)) >= 0.5);
   }
 
-  function renderBreakdownRows(row, cols) {
+  function renderBreakdownRows(R, row, cols) {
     const sec = R.breakdowns[row.breakdownKey];
     if (!sec) return "";
     const colSpan = cols.length + 1;
@@ -269,8 +443,9 @@
     return html;
   }
 
-  function renderTable() {
-    const cols = activeColumns();
+  function renderTable(entry) {
+    const R = entry.report;
+    const cols = activeColumns(R);
     const yearsDesc = [...R.years].reverse();
     const hasOpen = openSections.size > 0;
 
@@ -304,12 +479,12 @@
 
       const cells = cols.map((c) => formatCell(c.readRow(row), row.isPercent, c.isTotal)).join("");
       tbody += `<tr class="${cls.join(" ")}"${hasBreakdown ? ` data-sec-row="${esc(row.breakdownKey)}"` : ""}><td>${firstCell}</td>${cells}</tr>`;
-      if (isOpen) tbody += renderBreakdownRows(row, cols);
+      if (isOpen) tbody += renderBreakdownRows(R, row, cols);
     }
 
     return `<section class="block" id="fr-opiu">
       <div class="block-head">
-        <h2><span class="idx">02</span>Отчёт о прибылях и убытках (ОПиУ)</h2>
+        <h2><span class="idx">02</span>Отчёт о прибылях и убытках (ОПиУ) · ${esc(entry.name)}</h2>
         <span class="meta">нажмите на строку со стрелкой ▸ для расшифровки</span>
       </div>
       <div class="fr-toolbar">
@@ -329,34 +504,64 @@
           <tbody>${tbody}</tbody>
         </table>
       </div>
+      ${R.note ? `<p class="fr-note">${esc(R.note)}</p>` : ""}
     </section>`;
+  }
+
+  function selectCompany(cid) {
+    if (selectedCompany === cid) return;
+    selectedCompany = cid;
+    openSections.clear();
+    openGroups.clear();
+    sectionQuery.clear();
+    sectionShowAll.clear();
+    if (cid !== "__all__") {
+      const entry = activeEntry();
+      if (entry && viewMode !== "years") {
+        const hasYr = entry.report.years.some((y) => y.year === viewMode && y.months.length > 0);
+        if (!hasYr) viewMode = "years";
+      }
+    }
+    setLabels();
+    render();
   }
 
   function render() {
     if (!el) return;
-    if (!R) {
+    if (!REPORTS.length) {
       el.innerHTML = `<section class="block"><p class="lead">${esc(O.error || "Финансовый отчёт (ОПиУ) пока не загружен. Положите файл с листом «ОПиУ» в чат «Финансовый отчет» Битрикс24.")}</p>${O.notice ? `<div class="note-warn">${esc(O.notice)}</div>` : ""}</section>`;
       return;
     }
     let html = "";
     if (O.notice) html += `<div class="note-warn">${esc(O.notice)}</div>`;
-    if (R.warnings && R.warnings.length) {
-      html += `<section class="block" id="f-warnings"><div class="note-warn">Сверка расшифровки ОПиУ: ${R.warnings.map(esc).join("; ")}.</div></section>`;
+    html += renderCompanySwitcher();
+
+    if (selectedCompany === "__all__") {
+      html += renderOverview();
+      el.innerHTML = html;
+      return;
     }
-    html += renderSummary() + renderTable();
+
+    const entry = activeEntry();
+    const R = entry.report;
+    if (R.warnings && R.warnings.length) {
+      html += `<section class="block" id="f-warnings"><div class="note-warn">Сверка расшифровки ОПиУ (${esc(entry.name)}): ${R.warnings.map(esc).join("; ")}.</div></section>`;
+    }
+    html += renderCompanyBanner(entry) + renderSummary(entry) + renderTable(entry);
     el.innerHTML = html;
   }
 
   function rerenderTablePreservingFocus(selector, selectionStart) {
+    const entry = activeEntry();
     const host = document.getElementById("fr-opiu");
-    if (!host) {
+    if (!host || !entry) {
       render();
       return;
     }
     const wrap = host.querySelector(".fr-table-wrap");
     const scrollLeft = wrap ? wrap.scrollLeft : 0;
     const temp = document.createElement("div");
-    temp.innerHTML = renderTable();
+    temp.innerHTML = renderTable(entry);
     host.replaceWith(temp.firstElementChild);
     const nextWrap = document.querySelector("#fr-opiu .fr-table-wrap");
     if (nextWrap) nextWrap.scrollLeft = scrollLeft;
@@ -372,6 +577,28 @@
   }
 
   el?.addEventListener("click", (e) => {
+    const compBtn = e.target.closest("[data-fr-company]");
+    if (compBtn) {
+      const cid = compBtn.dataset.frCompany;
+      selectCompany(cid);
+      document.querySelector(`[data-fr-company="${CSS.escape(cid)}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    const openComp = e.target.closest("[data-fr-open-company]");
+    if (openComp) {
+      const cid = openComp.dataset.frOpenCompany;
+      selectCompany(cid);
+      document.querySelector(`[data-fr-company="${CSS.escape(cid)}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    const sumYrBtn = e.target.closest("[data-fr-summary-year]");
+    if (sumYrBtn) {
+      summaryYear = sumYrBtn.dataset.frSummaryYear;
+      setLabels();
+      render();
+      document.querySelector(`[data-fr-summary-year="${CSS.escape(summaryYear)}"]`)?.focus({ preventScroll: true });
+      return;
+    }
     const modeBtn = e.target.closest("[data-fr-mode]");
     if (modeBtn) {
       viewMode = modeBtn.dataset.frMode;
