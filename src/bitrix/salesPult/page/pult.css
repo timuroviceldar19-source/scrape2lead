@@ -565,9 +565,11 @@ a.r:focus-visible, .cust-d > summary:focus-visible { outline: 2px solid var(--in
   #r-history .deals { padding: 8px 0 14px !important; }
 }
 @media (max-width: 480px) {
-  .sections { gap: 0; }
-  /* семь разделов (с «Финансами») должны влезать в 375 px без прокрутки */
-  .sections a { padding: 10px 3px; font-size: 11px; }
+  /* восемь разделов на телефоне (375 px) переносятся на две аккуратные строки без прокрутки */
+  .sections { gap: 0 4px; flex-wrap: wrap; overflow-x: visible; }
+  .sections a { padding: 8px 5px; font-size: 12px; }
+  .sections .ind { display: none; }
+  .sections a[aria-current="page"] { box-shadow: inset 0 -2px 0 var(--ink); }
   .months .col .lab { font-size: 10px; }
   .months .col .lab .desktop { display: none; }
   .months .col .lab .mobile { display: inline; }

@@ -44,12 +44,16 @@ import {
 
 import type { RegisterView } from "./register/types.js";
 import type { FinanceView } from "./finance/types.js";
+import type { OpiuView } from "./finance/opiuTypes.js";
 
 const pultHtml = fs.readFileSync(new URL("./page/pult.html", import.meta.url), "utf8");
 const regHtml = fs.readFileSync(new URL("./page/reg.html", import.meta.url), "utf8");
 const finHtml = fs.readFileSync(new URL("./page/fin.html", import.meta.url), "utf8");
 const finCss = fs.readFileSync(new URL("./page/fin.css", import.meta.url), "utf8");
 const finClientJs = fs.readFileSync(new URL("./page/fin.client.js", import.meta.url), "utf8");
+const finReportsHtml = fs.readFileSync(new URL("./page/fin-reports.html", import.meta.url), "utf8");
+const finReportsCss = fs.readFileSync(new URL("./page/fin-reports.css", import.meta.url), "utf8");
+const finReportsClientJs = fs.readFileSync(new URL("./page/fin-reports.client.js", import.meta.url), "utf8");
 const pultCss = fs.readFileSync(new URL("./page/pult.css", import.meta.url), "utf8");
 const pultClientJs = fs.readFileSync(new URL("./page/pult.client.js", import.meta.url), "utf8");
 const registerClientJs = fs.readFileSync(new URL("./page/register.client.js", import.meta.url), "utf8");
@@ -82,6 +86,13 @@ export interface FinancePagePayload {
   finance: FinanceView;
   /** Спрос открытых лотов и планов по строкам склада: строка «спрос: …» у позиций без расхода. */
   stockDemand?: import("./stock/availability.js").StockDemandRow[];
+}
+
+/** Страница «Фин. отчёты» (ОПиУ): только полный вариант пульта, скрыта от РОП, РТО, менеджеров и ТВ. */
+export interface FinReportsPagePayload {
+  asOfDate: string;
+  generatedAt: string;
+  opiu: OpiuView;
 }
 
 export function buildSignals(payload: SalesPultPayload): SignalItem[] {
@@ -132,14 +143,27 @@ export function renderRegisterHtml(payload: RegisterPagePayload): string {
 }
 
 export function renderFinanceHtml(payload: FinancePagePayload): string {
+  // ОПиУ живёт на отдельной странице fin-reports.html — в fin.html его не встраиваем.
+  const { opiu: _opiu, ...financeWithoutOpiu } = payload.finance;
+  const safePayload: FinancePagePayload = { ...payload, finance: financeWithoutOpiu };
   const replacements: Record<string, string> = {
     "/*__CSS__*/": `${pultCss}\n${finCss}`,
-    "__PAYLOAD__": safeJson(payload),
-    "__INSIGHTS__": safeJson(buildFinanceInsights(payload.finance, payload.asOfDate)),
+    "__PAYLOAD__": safeJson(safePayload),
+    "__INSIGHTS__": safeJson(buildFinanceInsights(safePayload.finance, safePayload.asOfDate)),
     "/*__CLIENT_JS__*/": finClientJs
   };
 
   return finHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
+}
+
+export function renderFinReportsHtml(payload: FinReportsPagePayload): string {
+  const replacements: Record<string, string> = {
+    "/*__CSS__*/": `${pultCss}\n${finCss}\n${finReportsCss}`,
+    "__PAYLOAD__": safeJson(payload),
+    "/*__CLIENT_JS__*/": finReportsClientJs
+  };
+
+  return finReportsHtml.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
 }
 
 export {

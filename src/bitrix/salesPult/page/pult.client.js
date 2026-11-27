@@ -974,7 +974,7 @@
 
   /* ================= tabs ================= */
   // «Финансы» собираются только в полный вариант; «Выручка» закрыта для РТО; «Конкуренты» — для менеджера.
-  if (HIDE_FINANCE) document.querySelectorAll('.sections a[href="./fin.html"]').forEach((a) => a.remove());
+  if (HIDE_FINANCE) document.querySelectorAll('.sections a[href="./fin.html"], .sections a[href="./fin-reports.html"]').forEach((a) => a.remove());
   if (HIDE_REGISTER) document.querySelectorAll('.sections a[href="./reg.html"]').forEach((a) => a.remove());
   if (VIEWER) document.querySelectorAll('.sections a[data-t="competitors"]').forEach((a) => a.remove());
   if (VIEWER && !PAYLOAD.radar) document.querySelectorAll('.sections a[data-t="radar"]').forEach((a) => a.remove());

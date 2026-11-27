@@ -7,7 +7,7 @@
   // «Финансы» есть только в полном варианте пульта; менеджеру дополнительно скрываются «Конкуренты».
   const IS_MANAGER = Boolean(P.viewer && P.viewer.kind === "manager");
   if (P.viewer) {
-    document.querySelectorAll('a[href="./fin.html"]').forEach((a) => a.remove());
+    document.querySelectorAll('a[href="./fin.html"], a[href="./fin-reports.html"]').forEach((a) => a.remove());
   }
   if (IS_MANAGER) {
     document.querySelectorAll('a[href="./#competitors-ip"]').forEach((a) => a.remove());

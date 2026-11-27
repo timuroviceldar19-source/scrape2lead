@@ -38,9 +38,11 @@ import {
   renderPultHtml,
   renderRegisterHtml,
   renderFinanceHtml,
+  renderFinReportsHtml,
   type SalesPultPayload,
   type RegisterPagePayload,
   type FinancePagePayload,
+  type FinReportsPagePayload,
   type PultGroupView,
   type DayDynamic
 } from "../src/bitrix/salesPult/site.js";
@@ -285,8 +287,17 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
   const registerFileIdx = args.indexOf("--register-file");
   const registerFilePath = registerFileIdx !== -1 && args[registerFileIdx + 1] ? args[registerFileIdx + 1] : undefined;
-  // --finance-file можно повторить: ежедневный отчёт и книга ФО (ОПиУ) — тип файла решают листы.
+  // --finance-file можно повторить (Ежед., ОПиУ, ОР); также поддерживаются явные --opiu-file и --realization-file.
   const financeFiles = args.flatMap((a, i) => (a === "--finance-file" && args[i + 1] ? [args[i + 1]] : []));
+  const opiuFileIdx = args.indexOf("--opiu-file");
+  const opiuFilePath = opiuFileIdx !== -1 && args[opiuFileIdx + 1] ? args[opiuFileIdx + 1] : undefined;
+  const realizationFilePaths: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--realization-file" && args[i + 1]) {
+      realizationFilePaths.push(args[i + 1]);
+      i++;
+    }
+  }
   const refreshHistory = args.includes("--refresh-history");
   const historyCacheIdx = args.indexOf("--history-cache");
   const historyCachePath = historyCacheIdx !== -1 && args[historyCacheIdx + 1] ? args[historyCacheIdx + 1] : undefined;
@@ -747,14 +758,16 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
       holidays: config.holidays
     });
 
-    // Финансы: отчёт финансиста из чата, отдельная страница fin.html. Сбой здесь не должен ронять пульт.
+    // Финансы и фин. отчёты: отчёты финансиста из чата (Ежед., ОПиУ, ОР). Сбой здесь не должен ронять пульт.
     const financeView = await loadFinanceView({
       reader,
       folderId: config.finance?.diskFolderId,
-      localFiles: financeFiles
+      localFiles: financeFiles.length ? financeFiles : undefined,
+      localOpiuFile: opiuFilePath,
+      localRealizationFiles: realizationFilePaths.length ? realizationFilePaths : undefined
     }).catch((err: unknown) => {
       console.warn(`[Финансы] Не загрузились (${(err as Error)?.name || "Error"})`);
-      return { snapshots: [], error: "Финансовый отчёт не загрузился при сборке пульта, попробуем на следующем обновлении." };
+      return { snapshots: [], error: "Финансовый отчёт не загрузился при сборке пульта, попробуем на следующем обновлении." } as FinanceView;
     });
 
     // Market
@@ -886,11 +899,21 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
     fs.writeFileSync(path.join(outDir, "payload-reg.json"), JSON.stringify(regPayload, null, 2), "utf8");
 
     // 3. Финансы: только в полный вариант (pult-variants.mts), менеджеру и на ТВ не идёт
-    const finPayload: FinancePagePayload = { asOfDate: todayAlmaty, generatedAt: generatedTimeStr, finance: financeView, stockDemand };
+    const { opiu: opiuView, ...financeForFinPage } = financeView;
+    const finPayload: FinancePagePayload = { asOfDate: todayAlmaty, generatedAt: generatedTimeStr, finance: financeForFinPage, stockDemand };
     fs.writeFileSync(path.join(outDir, "fin.html"), renderFinanceHtml(finPayload), "utf8");
     fs.writeFileSync(path.join(outDir, "payload-fin.json"), JSON.stringify(finPayload, null, 2), "utf8");
 
-    console.log(`[Sales Pult] Готово: index.html, reg.html, fin.html и payload.json`);
+    // 4. Фин. отчёты (ОПиУ): только в полный вариант (pult-variants.mts), скрыта от РОП, РТО, менеджеров и ТВ
+    const finReportsPayload: FinReportsPagePayload = {
+      asOfDate: todayAlmaty,
+      generatedAt: generatedTimeStr,
+      opiu: opiuView ?? {}
+    };
+    fs.writeFileSync(path.join(outDir, "fin-reports.html"), renderFinReportsHtml(finReportsPayload), "utf8");
+    fs.writeFileSync(path.join(outDir, "payload-fin-reports.json"), JSON.stringify(finReportsPayload, null, 2), "utf8");
+
+    console.log(`[Sales Pult] Готово: index.html, reg.html, fin.html, fin-reports.html и payload.json`);
     if (hasTaskErrors) {
       process.exitCode = 1;
     }
@@ -912,7 +935,9 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
         return null;
       });
       const morningFinance: FinanceView | undefined = await loadFinanceView({
-        reader, folderId: config.finance?.diskFolderId, localFiles: financeFiles
+        reader,
+        folderId: config.finance?.diskFolderId,
+        localFiles: financeFiles.length ? financeFiles : undefined
       }).catch((err: unknown) => {
         console.warn(`[Финансы] Не загрузились (${(err as Error)?.name || "Error"})`);
         return undefined;

@@ -180,53 +180,6 @@ export interface FinanceReport {
   warnings: string[];
 }
 
-/** Период ОПиУ: месяц или итог года — как в шапке листа. */
-export interface FinanceStatementPeriod {
-  /** «2026-03» у месяца, «2026» у итога года. */
-  key: string;
-  kind: "month" | "year";
-  year: number;
-  /** Подпись итога года из файла («2025», «9 мес. 2026»). */
-  label?: string;
-}
-
-/** item — статья из файла, subtotal — промежуточный итог (прибыль), ratio — доля (наценка, маржа). */
-export type FinanceStatementLineKind = "item" | "subtotal" | "ratio";
-
-export interface FinanceStatementBreakdownRow {
-  label: string;
-  /** Суммы по месяцам («2026-03» → тенге, округлены), только ненулевые; итог года страница складывает сама. */
-  months: Record<string, number>;
-}
-
-/** Строки статьи с листа «Расш. ОПиУ». */
-export interface FinanceStatementBreakdown {
-  /** Заголовок статьи на листе расшифровки. */
-  title: string;
-  rows: FinanceStatementBreakdownRow[];
-}
-
-export interface FinanceStatementLine {
-  label: string;
-  /** «Код строки» формы (010, 011…), если есть. */
-  code?: string;
-  kind: FinanceStatementLineKind;
-  /** По `periods`; null — в файле пусто. У долей — доля как в файле (0,15 = 15%). */
-  values: Array<number | null>;
-  breakdown?: FinanceStatementBreakdown;
-}
-
-/** ОПиУ из книги ФО (листы «ОПиУ» и «Расш. ОПиУ»). */
-export interface FinanceIncomeStatement {
-  company?: string;
-  /** Подпись единиц с листа расшифровки («тенге без НДС»). */
-  unit?: string;
-  periods: FinanceStatementPeriod[];
-  lines: FinanceStatementLine[];
-  /** Расхождения сверки строк расшифровки с ОПиУ: показываются на странице. */
-  warnings: string[];
-}
-
 /** Короткая запись дня для графиков: из каждого файла за свою дату. */
 export interface FinanceSnapshot {
   dataDate: string;
@@ -248,18 +201,20 @@ export interface FinanceFileInfo {
   uploadedAt: string;
 }
 
+import type { OpiuView } from "./opiuTypes.js";
+import type { RealizationView } from "./realizationTypes.js";
+
 export interface FinanceView {
   report?: FinanceReport;
   file?: FinanceFileInfo;
   /** По датам данных, по возрастанию. */
   snapshots: FinanceSnapshot[];
+  /** Отчёт о реализации (Клиент-ТМЦ и ТМЦ-Клиент), если файлы есть в чате или переданы локально. */
+  realization?: RealizationView;
+  /** ОПиУ с расшифровками для отдельной страницы «Фин. отчёты». */
+  opiu?: OpiuView;
   /** Нет ни одного разобранного отчёта. */
   error?: string;
   /** Отчёт есть, но с последним файлом что-то не так — показывается над страницей. */
   notice?: string;
-  /** ОПиУ из книги ФО, присланной в тот же чат (самая свежая разобранная). */
-  statement?: FinanceIncomeStatement;
-  statementFile?: FinanceFileInfo;
-  /** С последней книгой ФО что-то не так — показывается в разделе ОПиУ. */
-  statementNotice?: string;
 }

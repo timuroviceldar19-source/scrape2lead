@@ -140,8 +140,8 @@
         <a class="btn" href="#f-debtors">${byPay ? "Просрочка" : "Дебиторы &gt;60д"}</a>
         ${R.payments.length || R.tax ? '<a class="btn" href="#f-payments">Платежи</a>' : ""}
         ${R.stock?.length ? `<a class="btn" href="${I.stock.count ? "#stockFocus" : "#f-stock"}">Склад без расхода</a>` : ""}
+        ${F.realization && (F.realization.clientTmc || F.realization.tmcClient) ? '<a class="btn" href="#f-realization">Реализация</a>' : ""}
         ${R.pnl.current ? '<a class="btn" href="#f-pnl">Прибыль</a>' : ""}
-        ${ST ? '<a class="btn" href="#f-opiu">ОПиУ</a>' : ""}
       </nav>`;
     if ((F.snapshots || []).length < 2) {
       s += `<p class="fin-note">Графики под цифрами появятся, когда в чате накопится несколько дней отчётов.</p>`;
@@ -174,146 +174,6 @@
       const parts = R.companies.map((n, i) => (R.tax.values[i] ? `${esc(n)} ${money(R.tax.values[i])}` : "")).filter(Boolean).join(" · ");
       s += `<p class="fin-note">${esc(R.tax.label)} к оплате (оценка на ${ddmm(R.tax.date)}): <b>${money(R.tax.total)}</b>${parts ? ` — ${parts}` : ""}.</p>`;
     }
-    return s + `</section>`;
-  }
-
-  /* ---------- ОПиУ из книги ФО: статьи по периодам, расшифровка по клику ---------- */
-  // Книга ФО приходит в тот же чат (листы «ОПиУ» и «Расш. ОПиУ»). Статья со стрелкой — кнопка:
-  // раскрывает свои строки расшифровки под собой, самые крупные за последний период сверху.
-  // Период — «по годам» (как видно в файле) или месяцы одного года.
-  const ST = F.statement;
-  const MON_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
-  const OPIU_LIMIT = 15;
-  const ROW_WORDS = ["строка", "строки", "строк"];
-  let opiuMode = "years";
-  const opiuOpen = new Set();
-  const opiuAll = new Set();
-  const opiuQuery = new Map();
-
-  function opiuColumns() {
-    const all = ST.periods.map((p, i) => ({ ...p, i }));
-    if (opiuMode === "years") {
-      const years = all.filter((p) => p.kind === "year");
-      return years.length ? years : all.filter((p) => p.kind === "month").slice(-12);
-    }
-    return all.filter((p) => String(p.year) === opiuMode);
-  }
-  const monthOf = (p) => Number(p.key.slice(5, 7)) - 1;
-  const opiuTitle = (p) => (p.kind === "year" ? p.label || String(p.year) : opiuMode === "years" ? `${MON_SHORT[monthOf(p)]} ${p.year}` : MON_SHORT[monthOf(p)]);
-  const opiuTitleFull = (p) => (p.kind === "year" ? p.label || String(p.year) : `${MONTHS[monthOf(p)]} ${p.year}`);
-
-  /** Строка расшифровки за колонку: месяц как есть, год — сумма его месяцев. */
-  function bdValue(row, col) {
-    if (col.kind === "month") return row.months[col.key] || 0;
-    let sum = 0;
-    for (const key in row.months) if (key.slice(0, 4) === col.key) sum += row.months[key];
-    return sum;
-  }
-
-  function opiuCell(line, v) {
-    if (v == null || (line.kind !== "ratio" && !has(v))) return `<td class="num dim">—</td>`;
-    if (line.kind === "ratio") return `<td class="num">${Math.round(v * 100)}%</td>`;
-    return `<td class="num${line.kind === "subtotal" && v < 0 ? " bad" : ""}" title="${esc(full(v))}">${esc(amt(v))}</td>`;
-  }
-
-  function opiuLead() {
-    const years = ST.periods.map((p, i) => ({ ...p, i })).filter((p) => p.kind === "year");
-    const last = years[years.length - 1];
-    const rev = ST.lines.find((l) => l.code === "010") || ST.lines.find((l) => l.kind === "item");
-    const profit = ["300", "200", "100"].map((c) => ST.lines.find((l) => l.code === c)).find(Boolean)
-      || [...ST.lines].reverse().find((l) => l.kind === "subtotal");
-    const r = last && rev ? rev.values[last.i] : null;
-    if (r == null) return "";
-    const p = profit ? profit.values[last.i] : null;
-    const share = p != null && r ? ` (${Math.round((p / r) * 100)}% выручки)` : "";
-    return `<p class="lead">${esc(opiuTitleFull(last))}: выручка <b>${money(r)}</b>${p != null ? `, прибыль <b class="${p < 0 ? "bad" : ""}">${money(p)}</b>${share}` : ""}. Статьи со стрелкой раскрываются строками с листа «Расш. ОПиУ».</p>`;
-  }
-
-  function opiuBdData(i, cols) {
-    const words = searchKey(opiuQuery.get(i) || "").split(" ").filter(Boolean);
-    const rows = ST.lines[i].breakdown.rows
-      .map((r) => ({ r, vals: cols.map((c) => bdValue(r, c)) }))
-      .filter((x) => x.vals.some(has));
-    const lastOf = (x) => x.vals[x.vals.length - 1];
-    const absSum = (x) => x.vals.reduce((a, v) => a + Math.abs(v), 0);
-    rows.sort((a, b) => lastOf(b) - lastOf(a) || absSum(b) - absSum(a) || collator.compare(a.r.label, b.r.label));
-    const matched = words.length ? rows.filter((x) => { const k = searchKey(x.r.label); return words.every((w) => k.includes(w)); }) : rows;
-    return { rows, matched, searching: words.length > 0 };
-  }
-
-  function opiuFoundText(d) {
-    return d.searching ? (d.matched.length ? `найдено: ${plural(d.matched.length, ROW_WORDS)}` : "ничего не найдено") : "";
-  }
-
-  function opiuBdRowsHtml(i, cols, d) {
-    const span = cols.length + 1;
-    const shown = d.searching || opiuAll.has(i) ? d.matched : d.matched.slice(0, OPIU_LIMIT);
-    let s = shown.map((x) => `<tr class="bd-row"><th scope="row"><span class="fin-opiu-name fin-opiu-bd-l" title="${esc(x.r.label)}">${esc(x.r.label)}</span></th>${x.vals.map((v) => (has(v) ? `<td class="num" title="${esc(full(v))}">${esc(amt(v))}</td>` : `<td class="num dim">—</td>`)).join("")}</tr>`).join("");
-    if (!d.searching && d.matched.length > OPIU_LIMIT) {
-      s += `<tr class="bd-foot"><td colspan="${span}"><button type="button" class="btn fin-opiu-all" data-opiu-all="${i}">${opiuAll.has(i) ? `Свернуть до ${OPIU_LIMIT}` : `Показать все ${nf0.format(d.matched.length)}`}</button></td></tr>`;
-    }
-    return s;
-  }
-
-  function opiuBdHtml(i, cols) {
-    const line = ST.lines[i];
-    const d = opiuBdData(i, cols);
-    const last = cols[cols.length - 1];
-    const search = d.rows.length > OPIU_LIMIT
-      ? `<span class="fin-opiu-search"><input type="search" class="plan-search-input fin-opiu-q" data-opiu-q="${i}" aria-label="Найти в расшифровке «${esc(line.label)}»" placeholder="Найти строку: покупатель, договор…" value="${esc(opiuQuery.get(i) || "")}" autocomplete="off"><span class="dim" data-opiu-found="${i}" aria-live="polite">${opiuFoundText(d)}</span></span>`
-      : "";
-    const meta = d.rows.length
-      ? `${plural(d.rows.length, ROW_WORDS)}${last ? ` · сначала крупные за ${esc(opiuTitleFull(last))}` : ""}`
-      : "за эти периоды строк с суммами нет";
-    return `<tr class="bd-head"><td colspan="${cols.length + 1}"><div class="fin-opiu-bd-bar"><span>${esc(line.breakdown.title)} · ${meta}</span>${search}</div></td></tr>${opiuBdRowsHtml(i, cols, d)}`;
-  }
-
-  function opiuTableHtml() {
-    const cols = opiuColumns();
-    let s = `<table class="fin-opiu"><thead><tr><th scope="col">Статья</th>${cols.map((c) => `<th scope="col" class="num">${esc(opiuTitle(c))}</th>`).join("")}</tr></thead>`;
-    ST.lines.forEach((line, i) => {
-      const bd = line.breakdown && line.breakdown.rows.length ? line.breakdown : null;
-      const code = line.code ? ` <span class="dim">${esc(line.code)}</span>` : "";
-      const name = bd
-        ? `<button type="button" class="fin-opiu-name fin-opiu-toggle" data-line="${i}" aria-expanded="${String(opiuOpen.has(i))}" aria-controls="opiu-bd-${i}"><span>${esc(line.label)}${code}</span></button>`
-        : `<span class="fin-opiu-name">${esc(line.label)}${code}</span>`;
-      s += `<tbody class="fin-opiu-line" data-line="${i}"><tr class="is-${esc(line.kind)}"><th scope="row">${name}</th>${cols.map((c) => opiuCell(line, line.values[c.i])).join("")}</tr></tbody>`;
-      if (bd) s += `<tbody class="fin-opiu-bd" id="opiu-bd-${i}" data-line="${i}"${opiuOpen.has(i) ? "" : " hidden"}>${opiuBdHtml(i, cols)}</tbody>`;
-    });
-    return s + `</table>`;
-  }
-
-  /** Перерисовать строки одной расшифровки (поиск, «показать все»): строка с поиском остаётся, фокус не теряется. */
-  function rerenderOpiuRows(i) {
-    const body = document.getElementById(`opiu-bd-${i}`);
-    if (!body) return;
-    const cols = opiuColumns();
-    const d = opiuBdData(i, cols);
-    for (const tr of body.querySelectorAll("tr.bd-row, tr.bd-foot")) tr.remove();
-    body.insertAdjacentHTML("beforeend", opiuBdRowsHtml(i, cols, d));
-    const found = body.querySelector(`[data-opiu-found="${i}"]`);
-    if (found) found.textContent = opiuFoundText(d);
-  }
-
-  /** Последние периоды справа: на узком экране сразу показываем их, а не самые старые. */
-  function scrollOpiuToLatest() {
-    const wrap = document.getElementById("opiuTable");
-    if (wrap) wrap.scrollLeft = wrap.scrollWidth;
-  }
-
-  function opiuBlock() {
-    if (!ST && !F.statementNotice) return "";
-    const meta = ST ? [ST.company, ST.unit].filter(Boolean).map(esc).join(" · ") : "";
-    let s = `<section class="block" id="f-opiu">${head("ОПиУ", meta || "отчёт о прибылях и убытках")}`;
-    if (F.statementNotice) s += `<div class="note-warn">${esc(F.statementNotice)}</div>`;
-    if (!ST) return s + `</section>`;
-    s += opiuLead();
-    if (ST.warnings && ST.warnings.length) s += `<div class="note-warn">Сверка расшифровки: ${ST.warnings.map(esc).join("; ")}.</div>`;
-    const years = [...new Set(ST.periods.filter((p) => p.kind === "month").map((p) => p.year))].sort();
-    const btn = (v, label) => `<button type="button" data-opiu-period="${v}" aria-pressed="${String(opiuMode === String(v))}">${label}</button>`;
-    s += `<div class="chips" id="opiuPeriods" role="group" aria-label="Период ОПиУ">${btn("years", "По годам")}${years.map((y) => btn(y, y)).join("")}</div>`;
-    s += `<div class="fin-opiu-wrap" id="opiuTable">${opiuTableHtml()}</div>`;
-    if (F.statementFile) s += `<p class="fin-note fin-opiu-src">Книга ФО: ${esc(F.statementFile.name)} · загружена ${almaty(F.statementFile.uploadedAt)} · из чата «Финансовый отчет»</p>`;
     return s + `</section>`;
   }
 
@@ -820,6 +680,201 @@
     return s + `</section>`;
   }
 
+  /* ---------- отчёт о реализации (Клиент-ТМЦ и ТМЦ-Клиент) ---------- */
+  const REAL = F.realization || null;
+  let realMode = REAL && REAL.clientTmc ? "client-tmc" : "tmc-client";
+  let realQuery = "";
+  let realSort = { key: "sumNet", dir: -1 };
+  const realOpen = new Set();
+  let realShowAll = false;
+  const REAL_LIMIT = 30;
+  const realNorm = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").trim();
+  const realMargin = (m) => (m && m.profit != null && Math.abs(m.sumNoTax) >= 0.5 ? m.profit / m.sumNoTax : null);
+  const realPct = (v) => (v == null ? "—" : `${sign(v)}${nf1.format(Math.abs(v) * 100)}%`);
+  const realMetricVal = (node, key) => {
+    const m = node.metrics;
+    if (key === "name") return node.name;
+    if (key === "margin") return realMargin(m);
+    if (key === "profit") return m.profit ?? null;
+    if (key === "cost") return m.cost ?? null;
+    return m[key] ?? 0;
+  };
+  function realCompare(a, b) {
+    if (realSort.key === "name") return realSort.dir * debtCollator.compare(a.name, b.name);
+    const va = realMetricVal(a, realSort.key);
+    const vb = realMetricVal(b, realSort.key);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (va !== vb) return realSort.dir * (va - vb);
+    return b.metrics.sumNet - a.metrics.sumNet;
+  }
+  function activeRealReport() {
+    if (!REAL) return null;
+    return realMode === "tmc-client" ? (REAL.tmcClient || REAL.clientTmc) : (REAL.clientTmc || REAL.tmcClient);
+  }
+  function filterRealTree(nodes, words) {
+    if (!words.length) return nodes.map((n, i) => ({ node: n, id: String(i), autoOpen: false, children: n.children?.map((c1, j) => ({ node: c1, id: `${i}:${j}`, autoOpen: false, children: c1.children?.map((c2, k) => ({ node: c2, id: `${i}:${j}:${k}` })) })) }));
+    const match = (s) => { const h = realNorm(s); return words.every((w) => h.includes(w)); };
+    const out = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const n0 = nodes[i];
+      const m0 = match(n0.name);
+      const kids1 = [];
+      for (let j = 0; j < (n0.children || []).length; j++) {
+        const n1 = n0.children[j];
+        const m1 = m0 || match(n1.name);
+        const kids2 = [];
+        for (let k = 0; k < (n1.children || []).length; k++) {
+          const n2 = n1.children[k];
+          if (m1 || match(n2.name)) kids2.push({ node: n2, id: `${i}:${j}:${k}` });
+        }
+        if (m1 || kids2.length) kids1.push({ node: n1, id: `${i}:${j}`, autoOpen: kids2.length > 0, children: kids2 });
+      }
+      if (m0 || kids1.length) out.push({ node: n0, id: String(i), autoOpen: kids1.length > 0, children: kids1 });
+    }
+    return out;
+  }
+  function realRowCells(m, hasProfit, levelLabel) {
+    const numCell = (v, isQty = false, cls = "") => {
+      if (v == null || Math.abs(v) < (isQty ? 0.005 : 0.5)) return `<td class="num zero">—</td>`;
+      const c = [cls, v < 0 ? "bad" : ""].filter(Boolean).join(" ");
+      const txt = isQty ? nf0.format(Math.round(v)) : amt(v);
+      const tip = isQty ? `${nf0.format(v)}` : full(v);
+      return `<td class="num ${c}" title="${esc(tip)}">${esc(txt)}</td>`;
+    };
+    const mg = realMargin(m);
+    const mgCls = mg != null && mg < 0 ? "bad" : "";
+    return `${numCell(m.qtyNet, true)}${numCell(m.sumNet)}${numCell(m.sumNoTax)}${hasProfit ? `${numCell(m.cost)}${numCell(m.profit)}<td class="num ${mgCls}">${esc(realPct(mg))}</td>` : ""}`;
+  }
+  function realBodyHtml() {
+    const rep = activeRealReport();
+    if (!rep) return "";
+    const words = realNorm(realQuery).split(/\s+/).filter(Boolean);
+    const tree = filterRealTree(rep.nodes, words);
+    tree.sort((a, b) => realCompare(a.node, b.node));
+    const showAll = realShowAll || words.length > 0 || tree.length <= REAL_LIMIT + 10;
+    const shown = showAll ? tree : tree.slice(0, REAL_LIMIT);
+    const hiddenCount = tree.length - shown.length;
+
+    const sortHead = (key, label, right = true) => {
+      const active = realSort.key === key;
+      const aria = active ? (realSort.dir > 0 ? "ascending" : "descending") : "none";
+      const ar = active ? (realSort.dir > 0 ? "↑" : "↓") : "↕";
+      return `<th class="${right ? "n" : ""}" aria-sort="${aria}"><button type="button" class="fin-sort" data-real-sort="${key}">${label} <span class="ar" aria-hidden="true">${ar}</span></button></th>`;
+    };
+
+    let rowsHtml = "";
+    for (const e0 of shown) {
+      const n0 = e0.node;
+      const kids1 = e0.children || [];
+      const hasK1 = kids1.length > 0;
+      const k0 = `l0:${rep.kind}:${e0.id}`;
+      const open0 = hasK1 && (e0.autoOpen || realOpen.has(k0));
+      const label0 = hasK1
+        ? `<button type="button" class="fin-tree-btn" data-real-toggle="${esc(k0)}" aria-expanded="${open0 ? "true" : "false"}"><span class="fin-tree-chev" aria-hidden="true">▸</span><span>${esc(n0.name)}<span class="fin-tree-pill">${kids1.length}</span></span></button>`
+        : `<span>${esc(n0.name)}</span>`;
+      rowsHtml += `<tr class="fin-real-l0${hasK1 ? " is-branch" : ""}"${hasK1 ? ` data-real-row="${esc(k0)}"` : ""}><td>${label0}</td>${realRowCells(n0.metrics, rep.hasProfit, rep.levels[0])}</tr>`;
+
+      if (open0) {
+        const sorted1 = [...kids1].sort((a, b) => realCompare(a.node, b.node));
+        for (const e1 of sorted1) {
+          const n1 = e1.node;
+          const kids2 = e1.children || [];
+          const hasK2 = kids2.length > 0;
+          const k1 = `l1:${rep.kind}:${e1.id}`;
+          const open1 = hasK2 && (e1.autoOpen || realOpen.has(k1));
+          const label1 = hasK2
+            ? `<button type="button" class="fin-tree-btn" data-real-toggle="${esc(k1)}" aria-expanded="${open1 ? "true" : "false"}"><span class="fin-tree-chev" aria-hidden="true">▸</span><span>${esc(n1.name)}<span class="fin-tree-pill">${kids2.length}</span></span></button>`
+            : `<span>${esc(n1.name)}</span>`;
+          rowsHtml += `<tr class="fin-real-l1${hasK2 ? " is-branch" : ""}"${hasK2 ? ` data-real-row="${esc(k1)}"` : ""}><td>${label1}</td>${realRowCells(n1.metrics, rep.hasProfit, rep.levels[1])}</tr>`;
+
+          if (open1) {
+            const sorted2 = [...kids2].sort((a, b) => realCompare(a.node, b.node));
+            for (const e2 of sorted2) {
+              rowsHtml += `<tr class="fin-real-l2"><td>${esc(e2.node.name)}</td>${realRowCells(e2.node.metrics, rep.hasProfit, rep.levels[2])}</tr>`;
+            }
+          }
+        }
+      }
+    }
+
+    if (!rowsHtml) {
+      rowsHtml = `<tr><td colspan="${rep.hasProfit ? 7 : 4}" class="fin-debt-empty">Ничего не найдено по запросу.</td></tr>`;
+    } else {
+      rowsHtml += `<tr class="fin-real-total"><td>Итого</td>${realRowCells(rep.totals, rep.hasProfit, "Итого")}</tr>`;
+    }
+
+    const fileInfo = REAL.files && REAL.files[rep.kind];
+    const sourceHint = rep.derived
+      ? `Разрез построен автоматически из второго файла отчёта о реализации.`
+      : fileInfo
+        ? `Файл: «${fileInfo.name}»${fileInfo.uploadedAt ? ` · загружен ${almaty(fileInfo.uploadedAt)}` : ""}.`
+        : "";
+
+    return `<div class="fin-scroll"><table class="fin-real-table">
+      <thead><tr>
+        ${sortHead("name", `${esc(rep.levels[0])} → ${esc(rep.levels[1])} → ${esc(rep.levels[2])}`, false)}
+        ${sortHead("qtyNet", "Кол-во")}
+        ${sortHead("sumNet", "Сумма с НДС")}
+        ${sortHead("sumNoTax", "Без НДС")}
+        ${rep.hasProfit ? `${sortHead("cost", "Себест.")}${sortHead("profit", "Прибыль")}${sortHead("margin", "Маржа")}` : ""}
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table></div>
+    ${hiddenCount > 0 ? `<button type="button" class="btn fin-showall" id="realShowAll">Показать все ${tree.length} (ещё ${hiddenCount})</button>` : (realShowAll && tree.length > REAL_LIMIT + 10 ? `<button type="button" class="btn fin-showall" id="realShowAll">Свернуть до топ-${REAL_LIMIT}</button>` : "")}
+    ${sourceHint ? `<p class="fin-note">${esc(sourceHint)}</p>` : ""}`;
+  }
+  function realizationBlock() {
+    if (!REAL || (!REAL.clientTmc && !REAL.tmcClient)) return "";
+    const rep = activeRealReport();
+    if (!rep) return "";
+    const t = rep.totals;
+    const mg = realMargin(t);
+    const meta = [rep.periodLabel, rep.organization].filter(Boolean).join(" · ") || "выгрузка 1С";
+    const retNote = Math.abs(t.sumReturn) >= 0.5 ? `возвраты ${money(t.sumReturn)}` : `кол-во ${nf0.format(Math.round(t.qtyNet))} шт`;
+    const bigNum = (n) => {
+      const f = amt(n);
+      const u = (f.match(/(млн|млрд|тыс)$/) || [""])[0];
+      return `${u ? f.slice(0, -u.length - 1) : f}<small> ${u}${NB}₸</small>`;
+    };
+
+    return `<section class="block" id="f-realization">${head("Отчёт о реализации", esc(meta))}
+      ${REAL.notice ? `<div class="note-warn">${esc(REAL.notice)}</div>` : ""}
+      ${rep.warnings && rep.warnings.length ? `<div class="note-warn">Сверка отчёта о реализации: ${rep.warnings.map(esc).join("; ")}.</div>` : ""}
+      <div class="fin-real-kpis${rep.hasProfit ? "" : " no-profit"}">
+        <div class="fin-tile"><span class="label">Реализация (с НДС)</span><div class="v">${bigNum(t.sumNet)}</div><div class="sub">${retNote}</div></div>
+        <div class="fin-tile"><span class="label">Выручка без НДС</span><div class="v">${bigNum(t.sumNoTax)}</div><div class="sub">НДС ${money(t.vat)} · ${nf0.format(Math.round(t.qtyNet))} шт</div></div>
+        ${rep.hasProfit ? `
+          <div class="fin-tile"><span class="label">Себестоимость (без НДС)</span><div class="v">${bigNum(t.cost || 0)}</div><div class="sub">реализация ${nf0.format(Math.round(t.qtySale))}${t.qtyReturn ? `, возврат ${nf0.format(Math.round(t.qtyReturn))}` : ""} шт</div></div>
+          <div class="fin-tile${(t.profit || 0) < 0 ? " is-bad" : ""}"><span class="label">Прибыль (Profit)</span><div class="v">${bigNum(t.profit || 0)}</div><div class="sub">маржа ${esc(realPct(mg))}</div></div>
+        ` : ""}
+      </div>
+      <div class="fin-real-bar">
+        <div class="chips" id="realModeChips" role="group" aria-label="Разрез отчёта о реализации">
+          ${REAL.clientTmc ? `<button type="button" data-real-mode="client-tmc" aria-pressed="${realMode === "client-tmc" ? "true" : "false"}">Клиент → ТМЦ</button>` : ""}
+          ${REAL.tmcClient ? `<button type="button" data-real-mode="tmc-client" aria-pressed="${realMode === "tmc-client" ? "true" : "false"}">ТМЦ → Клиент</button>` : ""}
+        </div>
+        <div class="fin-real-controls">
+          <input type="search" id="realQ" class="fin-real-search" value="${esc(realQuery)}" placeholder="Поиск по клиенту, группе или товару…" aria-label="Поиск по отчёту о реализации">
+          <button type="button" class="btn" id="realToggleAll">${realOpen.size ? "Свернуть всё" : "Раскрыть уровни"}</button>
+        </div>
+      </div>
+      <div id="realBody">${realBodyHtml()}</div>
+    </section>`;
+  }
+  function rerenderRealization() {
+    const sec = document.getElementById("f-realization");
+    const body = document.getElementById("realBody");
+    if (body) {
+      body.innerHTML = realBodyHtml();
+      const btn = document.getElementById("realToggleAll");
+      if (btn) btn.textContent = realOpen.size ? "Свернуть всё" : "Раскрыть уровни";
+    } else if (sec) {
+      sec.outerHTML = realizationBlock();
+    }
+  }
+
   function warningsBlock() {
     if (!R.warnings || !R.warnings.length) return "";
     return `<section class="block" id="f-warnings"><div class="note-warn">Сверка итогов в файле: ${R.warnings.map(esc).join("; ")}.</div></section>`;
@@ -828,10 +883,7 @@
   function render() {
     if (!el) return;
     if (!R) {
-      // без ежедневного отчёта ОПиУ из книги ФО всё равно показываем
-      blockNo = 0;
-      el.innerHTML = `<section class="block"><p class="lead">${esc(F.error || "Финансового отчёта пока нет.")}</p>${F.notice ? `<div class="note-warn">${esc(F.notice)}</div>` : ""}</section>${opiuBlock()}`;
-      scrollOpiuToLatest();
+      el.innerHTML = `<section class="block"><p class="lead">${esc(F.error || "Финансового отчёта пока нет.")}</p>${F.notice ? `<div class="note-warn">${esc(F.notice)}</div>` : ""}</section>${realizationBlock()}`;
       return;
     }
     blockNo = 0;
@@ -841,9 +893,8 @@
     if (stale) s += `<div class="note-warn">Отчёт старый: данные на ${ddmm(R.dataDate)}. Свежего файла в чате нет.</div>`;
     s += warningsBlock() + overview();
     s += `<section class="block" id="f-debtors">${debtorsBlock()}</section>`;
-    s += payments() + stockBlock() + pnl() + opiuBlock() + cashBlock() + incomingBlock() + balanceBlock();
+    s += payments() + stockBlock() + pnl() + realizationBlock() + cashBlock() + incomingBlock() + balanceBlock();
     el.innerHTML = s;
-    scrollOpiuToLatest();
     if (stockQuery) applyStockSearch();
   }
 
@@ -859,16 +910,15 @@
   }
 
   el?.addEventListener("input", (e) => {
-    const opiuQ = e.target.closest?.("[data-opiu-q]");
-    if (opiuQ) {
-      const i = Number(opiuQ.dataset.opiuQ);
-      opiuQuery.set(i, opiuQ.value);
-      rerenderOpiuRows(i);
+    if (e.target.id === "stockQ") {
+      stockQuery = e.target.value;
+      applyStockSearch();
       return;
     }
-    if (e.target.id !== "stockQ") return;
-    stockQuery = e.target.value;
-    applyStockSearch();
+    if (e.target.id === "realQ") {
+      realQuery = e.target.value;
+      rerenderRealization();
+    }
   });
 
   function copyText(key) {
@@ -923,33 +973,6 @@
   }
 
   el?.addEventListener("click", (e) => {
-    const opiuToggle = e.target.closest(".fin-opiu-toggle");
-    if (opiuToggle) {
-      const i = Number(opiuToggle.dataset.line);
-      const open = !opiuOpen.has(i);
-      if (open) opiuOpen.add(i); else opiuOpen.delete(i);
-      opiuToggle.setAttribute("aria-expanded", String(open));
-      const body = document.getElementById(`opiu-bd-${i}`);
-      if (body) body.hidden = !open;
-      return;
-    }
-    const opiuAllBtn = e.target.closest("[data-opiu-all]");
-    if (opiuAllBtn) {
-      const i = Number(opiuAllBtn.dataset.opiuAll);
-      if (opiuAll.has(i)) opiuAll.delete(i); else opiuAll.add(i);
-      rerenderOpiuRows(i);
-      document.querySelector(`#opiu-bd-${i} [data-opiu-all]`)?.focus();
-      return;
-    }
-    const opiuPeriod = e.target.closest("[data-opiu-period]");
-    if (opiuPeriod) {
-      opiuMode = opiuPeriod.dataset.opiuPeriod;
-      for (const b of opiuPeriod.parentElement.children) b.setAttribute("aria-pressed", String(b === opiuPeriod));
-      const table = document.getElementById("opiuTable");
-      if (table) table.innerHTML = opiuTableHtml();
-      scrollOpiuToLatest();
-      return;
-    }
     const copy = e.target.closest("[data-fin-copy]");
     if (copy) {
       copy.parentElement.querySelector(".fin-copy-field")?.remove();
@@ -1036,6 +1059,53 @@
       debtAge = age;
       rerenderDebtors();
       document.querySelector(`#debtAgeChips button[data-age="${age}"]`)?.focus();
+      return;
+    }
+    const realModeBtn = e.target.closest("#realModeChips button");
+    if (realModeBtn) {
+      realMode = realModeBtn.dataset.realMode;
+      realShowAll = false;
+      for (const b of document.querySelectorAll("#realModeChips button")) b.setAttribute("aria-pressed", String(b === realModeBtn));
+      rerenderRealization();
+      return;
+    }
+    if (e.target.closest("#realToggleAll")) {
+      const rep = activeRealReport();
+      if (realOpen.size) {
+        realOpen.clear();
+      } else if (rep) {
+        for (let i = 0; i < rep.nodes.length; i++) {
+          realOpen.add(`l0:${rep.kind}:${i}`);
+          for (let j = 0; j < (rep.nodes[i].children || []).length; j++) {
+            realOpen.add(`l1:${rep.kind}:${i}:${j}`);
+          }
+        }
+      }
+      rerenderRealization();
+      document.getElementById("realToggleAll")?.focus();
+      return;
+    }
+    if (e.target.closest("#realShowAll")) {
+      realShowAll = !realShowAll;
+      rerenderRealization();
+      document.getElementById("realShowAll")?.focus();
+      return;
+    }
+    const realSortBtn = e.target.closest("[data-real-sort]");
+    if (realSortBtn) {
+      const key = realSortBtn.dataset.realSort;
+      realSort = realSort.key === key ? { key, dir: -realSort.dir } : { key, dir: key === "name" ? 1 : -1 };
+      rerenderRealization();
+      document.querySelector(`[data-real-sort="${key}"]`)?.focus();
+      return;
+    }
+    const realToggle = e.target.closest("[data-real-toggle], [data-real-row]");
+    if (realToggle) {
+      const k = realToggle.dataset.realToggle || realToggle.dataset.realRow;
+      if (realOpen.has(k)) realOpen.delete(k);
+      else realOpen.add(k);
+      rerenderRealization();
+      document.querySelector(`button[data-real-toggle="${CSS.escape(k)}"]`)?.focus({ preventScroll: true });
       return;
     }
     const stockSortEl = e.target.closest("[data-stock-sort]");
