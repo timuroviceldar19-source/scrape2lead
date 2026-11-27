@@ -140,6 +140,7 @@
         <a class="btn" href="#f-debtors">${byPay ? "Просрочка" : "Дебиторы &gt;60д"}</a>
         ${R.payments.length || R.tax ? '<a class="btn" href="#f-payments">Платежи</a>' : ""}
         ${R.stock?.length ? `<a class="btn" href="${I.stock.count ? "#stockFocus" : "#f-stock"}">Склад без расхода</a>` : ""}
+        ${F.realization && (F.realization.clientTmc || F.realization.tmcClient) ? '<a class="btn" href="#f-realization">Реализация</a>' : ""}
         ${R.pnl.current ? '<a class="btn" href="#f-pnl">Прибыль</a>' : ""}
       </nav>`;
     if ((F.snapshots || []).length < 2) {
@@ -679,6 +680,201 @@
     return s + `</section>`;
   }
 
+  /* ---------- отчёт о реализации (Клиент-ТМЦ и ТМЦ-Клиент) ---------- */
+  const REAL = F.realization || null;
+  let realMode = REAL && REAL.clientTmc ? "client-tmc" : "tmc-client";
+  let realQuery = "";
+  let realSort = { key: "sumNet", dir: -1 };
+  const realOpen = new Set();
+  let realShowAll = false;
+  const REAL_LIMIT = 30;
+  const realNorm = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").trim();
+  const realMargin = (m) => (m && m.profit != null && Math.abs(m.sumNoTax) >= 0.5 ? m.profit / m.sumNoTax : null);
+  const realPct = (v) => (v == null ? "—" : `${sign(v)}${nf1.format(Math.abs(v) * 100)}%`);
+  const realMetricVal = (node, key) => {
+    const m = node.metrics;
+    if (key === "name") return node.name;
+    if (key === "margin") return realMargin(m);
+    if (key === "profit") return m.profit ?? null;
+    if (key === "cost") return m.cost ?? null;
+    return m[key] ?? 0;
+  };
+  function realCompare(a, b) {
+    if (realSort.key === "name") return realSort.dir * debtCollator.compare(a.name, b.name);
+    const va = realMetricVal(a, realSort.key);
+    const vb = realMetricVal(b, realSort.key);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (va !== vb) return realSort.dir * (va - vb);
+    return b.metrics.sumNet - a.metrics.sumNet;
+  }
+  function activeRealReport() {
+    if (!REAL) return null;
+    return realMode === "tmc-client" ? (REAL.tmcClient || REAL.clientTmc) : (REAL.clientTmc || REAL.tmcClient);
+  }
+  function filterRealTree(nodes, words) {
+    if (!words.length) return nodes.map((n, i) => ({ node: n, id: String(i), autoOpen: false, children: n.children?.map((c1, j) => ({ node: c1, id: `${i}:${j}`, autoOpen: false, children: c1.children?.map((c2, k) => ({ node: c2, id: `${i}:${j}:${k}` })) })) }));
+    const match = (s) => { const h = realNorm(s); return words.every((w) => h.includes(w)); };
+    const out = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const n0 = nodes[i];
+      const m0 = match(n0.name);
+      const kids1 = [];
+      for (let j = 0; j < (n0.children || []).length; j++) {
+        const n1 = n0.children[j];
+        const m1 = m0 || match(n1.name);
+        const kids2 = [];
+        for (let k = 0; k < (n1.children || []).length; k++) {
+          const n2 = n1.children[k];
+          if (m1 || match(n2.name)) kids2.push({ node: n2, id: `${i}:${j}:${k}` });
+        }
+        if (m1 || kids2.length) kids1.push({ node: n1, id: `${i}:${j}`, autoOpen: kids2.length > 0, children: kids2 });
+      }
+      if (m0 || kids1.length) out.push({ node: n0, id: String(i), autoOpen: kids1.length > 0, children: kids1 });
+    }
+    return out;
+  }
+  function realRowCells(m, hasProfit, levelLabel) {
+    const numCell = (v, isQty = false, cls = "") => {
+      if (v == null || Math.abs(v) < (isQty ? 0.005 : 0.5)) return `<td class="num zero">—</td>`;
+      const c = [cls, v < 0 ? "bad" : ""].filter(Boolean).join(" ");
+      const txt = isQty ? nf0.format(Math.round(v)) : amt(v);
+      const tip = isQty ? `${nf0.format(v)}` : full(v);
+      return `<td class="num ${c}" title="${esc(tip)}">${esc(txt)}</td>`;
+    };
+    const mg = realMargin(m);
+    const mgCls = mg != null && mg < 0 ? "bad" : "";
+    return `${numCell(m.qtyNet, true)}${numCell(m.sumNet)}${numCell(m.sumNoTax)}${hasProfit ? `${numCell(m.cost)}${numCell(m.profit)}<td class="num ${mgCls}">${esc(realPct(mg))}</td>` : ""}`;
+  }
+  function realBodyHtml() {
+    const rep = activeRealReport();
+    if (!rep) return "";
+    const words = realNorm(realQuery).split(/\s+/).filter(Boolean);
+    const tree = filterRealTree(rep.nodes, words);
+    tree.sort((a, b) => realCompare(a.node, b.node));
+    const showAll = realShowAll || words.length > 0 || tree.length <= REAL_LIMIT + 10;
+    const shown = showAll ? tree : tree.slice(0, REAL_LIMIT);
+    const hiddenCount = tree.length - shown.length;
+
+    const sortHead = (key, label, right = true) => {
+      const active = realSort.key === key;
+      const aria = active ? (realSort.dir > 0 ? "ascending" : "descending") : "none";
+      const ar = active ? (realSort.dir > 0 ? "↑" : "↓") : "↕";
+      return `<th class="${right ? "n" : ""}" aria-sort="${aria}"><button type="button" class="fin-sort" data-real-sort="${key}">${label} <span class="ar" aria-hidden="true">${ar}</span></button></th>`;
+    };
+
+    let rowsHtml = "";
+    for (const e0 of shown) {
+      const n0 = e0.node;
+      const kids1 = e0.children || [];
+      const hasK1 = kids1.length > 0;
+      const k0 = `l0:${rep.kind}:${e0.id}`;
+      const open0 = hasK1 && (e0.autoOpen || realOpen.has(k0));
+      const label0 = hasK1
+        ? `<button type="button" class="fin-tree-btn" data-real-toggle="${esc(k0)}" aria-expanded="${open0 ? "true" : "false"}"><span class="fin-tree-chev" aria-hidden="true">▸</span><span>${esc(n0.name)}<span class="fin-tree-pill">${kids1.length}</span></span></button>`
+        : `<span>${esc(n0.name)}</span>`;
+      rowsHtml += `<tr class="fin-real-l0${hasK1 ? " is-branch" : ""}"${hasK1 ? ` data-real-row="${esc(k0)}"` : ""}><td>${label0}</td>${realRowCells(n0.metrics, rep.hasProfit, rep.levels[0])}</tr>`;
+
+      if (open0) {
+        const sorted1 = [...kids1].sort((a, b) => realCompare(a.node, b.node));
+        for (const e1 of sorted1) {
+          const n1 = e1.node;
+          const kids2 = e1.children || [];
+          const hasK2 = kids2.length > 0;
+          const k1 = `l1:${rep.kind}:${e1.id}`;
+          const open1 = hasK2 && (e1.autoOpen || realOpen.has(k1));
+          const label1 = hasK2
+            ? `<button type="button" class="fin-tree-btn" data-real-toggle="${esc(k1)}" aria-expanded="${open1 ? "true" : "false"}"><span class="fin-tree-chev" aria-hidden="true">▸</span><span>${esc(n1.name)}<span class="fin-tree-pill">${kids2.length}</span></span></button>`
+            : `<span>${esc(n1.name)}</span>`;
+          rowsHtml += `<tr class="fin-real-l1${hasK2 ? " is-branch" : ""}"${hasK2 ? ` data-real-row="${esc(k1)}"` : ""}><td>${label1}</td>${realRowCells(n1.metrics, rep.hasProfit, rep.levels[1])}</tr>`;
+
+          if (open1) {
+            const sorted2 = [...kids2].sort((a, b) => realCompare(a.node, b.node));
+            for (const e2 of sorted2) {
+              rowsHtml += `<tr class="fin-real-l2"><td>${esc(e2.node.name)}</td>${realRowCells(e2.node.metrics, rep.hasProfit, rep.levels[2])}</tr>`;
+            }
+          }
+        }
+      }
+    }
+
+    if (!rowsHtml) {
+      rowsHtml = `<tr><td colspan="${rep.hasProfit ? 7 : 4}" class="fin-debt-empty">Ничего не найдено по запросу.</td></tr>`;
+    } else {
+      rowsHtml += `<tr class="fin-real-total"><td>Итого</td>${realRowCells(rep.totals, rep.hasProfit, "Итого")}</tr>`;
+    }
+
+    const fileInfo = REAL.files && REAL.files[rep.kind];
+    const sourceHint = rep.derived
+      ? `Разрез построен автоматически из второго файла отчёта о реализации.`
+      : fileInfo
+        ? `Файл: «${fileInfo.name}»${fileInfo.uploadedAt ? ` · загружен ${almaty(fileInfo.uploadedAt)}` : ""}.`
+        : "";
+
+    return `<div class="fin-scroll"><table class="fin-real-table">
+      <thead><tr>
+        ${sortHead("name", `${esc(rep.levels[0])} → ${esc(rep.levels[1])} → ${esc(rep.levels[2])}`, false)}
+        ${sortHead("qtyNet", "Кол-во")}
+        ${sortHead("sumNet", "Сумма с НДС")}
+        ${sortHead("sumNoTax", "Без НДС")}
+        ${rep.hasProfit ? `${sortHead("cost", "Себест.")}${sortHead("profit", "Прибыль")}${sortHead("margin", "Маржа")}` : ""}
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table></div>
+    ${hiddenCount > 0 ? `<button type="button" class="btn fin-showall" id="realShowAll">Показать все ${tree.length} (ещё ${hiddenCount})</button>` : (realShowAll && tree.length > REAL_LIMIT + 10 ? `<button type="button" class="btn fin-showall" id="realShowAll">Свернуть до топ-${REAL_LIMIT}</button>` : "")}
+    ${sourceHint ? `<p class="fin-note">${esc(sourceHint)}</p>` : ""}`;
+  }
+  function realizationBlock() {
+    if (!REAL || (!REAL.clientTmc && !REAL.tmcClient)) return "";
+    const rep = activeRealReport();
+    if (!rep) return "";
+    const t = rep.totals;
+    const mg = realMargin(t);
+    const meta = [rep.periodLabel, rep.organization].filter(Boolean).join(" · ") || "выгрузка 1С";
+    const retNote = Math.abs(t.sumReturn) >= 0.5 ? `возвраты ${money(t.sumReturn)}` : `кол-во ${nf0.format(Math.round(t.qtyNet))} шт`;
+    const bigNum = (n) => {
+      const f = amt(n);
+      const u = (f.match(/(млн|млрд|тыс)$/) || [""])[0];
+      return `${u ? f.slice(0, -u.length - 1) : f}<small> ${u}${NB}₸</small>`;
+    };
+
+    return `<section class="block" id="f-realization">${head("Отчёт о реализации", esc(meta))}
+      ${REAL.notice ? `<div class="note-warn">${esc(REAL.notice)}</div>` : ""}
+      ${rep.warnings && rep.warnings.length ? `<div class="note-warn">Сверка отчёта о реализации: ${rep.warnings.map(esc).join("; ")}.</div>` : ""}
+      <div class="fin-real-kpis${rep.hasProfit ? "" : " no-profit"}">
+        <div class="fin-tile"><span class="label">Реализация (с НДС)</span><div class="v">${bigNum(t.sumNet)}</div><div class="sub">${retNote}</div></div>
+        <div class="fin-tile"><span class="label">Выручка без НДС</span><div class="v">${bigNum(t.sumNoTax)}</div><div class="sub">НДС ${money(t.vat)} · ${nf0.format(Math.round(t.qtyNet))} шт</div></div>
+        ${rep.hasProfit ? `
+          <div class="fin-tile"><span class="label">Себестоимость (без НДС)</span><div class="v">${bigNum(t.cost || 0)}</div><div class="sub">реализация ${nf0.format(Math.round(t.qtySale))}${t.qtyReturn ? `, возврат ${nf0.format(Math.round(t.qtyReturn))}` : ""} шт</div></div>
+          <div class="fin-tile${(t.profit || 0) < 0 ? " is-bad" : ""}"><span class="label">Прибыль (Profit)</span><div class="v">${bigNum(t.profit || 0)}</div><div class="sub">маржа ${esc(realPct(mg))}</div></div>
+        ` : ""}
+      </div>
+      <div class="fin-real-bar">
+        <div class="chips" id="realModeChips" role="group" aria-label="Разрез отчёта о реализации">
+          ${REAL.clientTmc ? `<button type="button" data-real-mode="client-tmc" aria-pressed="${realMode === "client-tmc" ? "true" : "false"}">Клиент → ТМЦ</button>` : ""}
+          ${REAL.tmcClient ? `<button type="button" data-real-mode="tmc-client" aria-pressed="${realMode === "tmc-client" ? "true" : "false"}">ТМЦ → Клиент</button>` : ""}
+        </div>
+        <div class="fin-real-controls">
+          <input type="search" id="realQ" class="fin-real-search" value="${esc(realQuery)}" placeholder="Поиск по клиенту, группе или товару…" aria-label="Поиск по отчёту о реализации">
+          <button type="button" class="btn" id="realToggleAll">${realOpen.size ? "Свернуть всё" : "Раскрыть уровни"}</button>
+        </div>
+      </div>
+      <div id="realBody">${realBodyHtml()}</div>
+    </section>`;
+  }
+  function rerenderRealization() {
+    const sec = document.getElementById("f-realization");
+    const body = document.getElementById("realBody");
+    if (body) {
+      body.innerHTML = realBodyHtml();
+      const btn = document.getElementById("realToggleAll");
+      if (btn) btn.textContent = realOpen.size ? "Свернуть всё" : "Раскрыть уровни";
+    } else if (sec) {
+      sec.outerHTML = realizationBlock();
+    }
+  }
+
   function warningsBlock() {
     if (!R.warnings || !R.warnings.length) return "";
     return `<section class="block" id="f-warnings"><div class="note-warn">Сверка итогов в файле: ${R.warnings.map(esc).join("; ")}.</div></section>`;
@@ -687,7 +883,7 @@
   function render() {
     if (!el) return;
     if (!R) {
-      el.innerHTML = `<section class="block"><p class="lead">${esc(F.error || "Финансового отчёта пока нет.")}</p>${F.notice ? `<div class="note-warn">${esc(F.notice)}</div>` : ""}</section>`;
+      el.innerHTML = `<section class="block"><p class="lead">${esc(F.error || "Финансового отчёта пока нет.")}</p>${F.notice ? `<div class="note-warn">${esc(F.notice)}</div>` : ""}</section>${realizationBlock()}`;
       return;
     }
     blockNo = 0;
@@ -697,7 +893,7 @@
     if (stale) s += `<div class="note-warn">Отчёт старый: данные на ${ddmm(R.dataDate)}. Свежего файла в чате нет.</div>`;
     s += warningsBlock() + overview();
     s += `<section class="block" id="f-debtors">${debtorsBlock()}</section>`;
-    s += payments() + stockBlock() + pnl() + cashBlock() + incomingBlock() + balanceBlock();
+    s += payments() + stockBlock() + pnl() + realizationBlock() + cashBlock() + incomingBlock() + balanceBlock();
     el.innerHTML = s;
     if (stockQuery) applyStockSearch();
   }
@@ -714,9 +910,15 @@
   }
 
   el?.addEventListener("input", (e) => {
-    if (e.target.id !== "stockQ") return;
-    stockQuery = e.target.value;
-    applyStockSearch();
+    if (e.target.id === "stockQ") {
+      stockQuery = e.target.value;
+      applyStockSearch();
+      return;
+    }
+    if (e.target.id === "realQ") {
+      realQuery = e.target.value;
+      rerenderRealization();
+    }
   });
 
   function copyText(key) {
@@ -857,6 +1059,53 @@
       debtAge = age;
       rerenderDebtors();
       document.querySelector(`#debtAgeChips button[data-age="${age}"]`)?.focus();
+      return;
+    }
+    const realModeBtn = e.target.closest("#realModeChips button");
+    if (realModeBtn) {
+      realMode = realModeBtn.dataset.realMode;
+      realShowAll = false;
+      for (const b of document.querySelectorAll("#realModeChips button")) b.setAttribute("aria-pressed", String(b === realModeBtn));
+      rerenderRealization();
+      return;
+    }
+    if (e.target.closest("#realToggleAll")) {
+      const rep = activeRealReport();
+      if (realOpen.size) {
+        realOpen.clear();
+      } else if (rep) {
+        for (let i = 0; i < rep.nodes.length; i++) {
+          realOpen.add(`l0:${rep.kind}:${i}`);
+          for (let j = 0; j < (rep.nodes[i].children || []).length; j++) {
+            realOpen.add(`l1:${rep.kind}:${i}:${j}`);
+          }
+        }
+      }
+      rerenderRealization();
+      document.getElementById("realToggleAll")?.focus();
+      return;
+    }
+    if (e.target.closest("#realShowAll")) {
+      realShowAll = !realShowAll;
+      rerenderRealization();
+      document.getElementById("realShowAll")?.focus();
+      return;
+    }
+    const realSortBtn = e.target.closest("[data-real-sort]");
+    if (realSortBtn) {
+      const key = realSortBtn.dataset.realSort;
+      realSort = realSort.key === key ? { key, dir: -realSort.dir } : { key, dir: key === "name" ? 1 : -1 };
+      rerenderRealization();
+      document.querySelector(`[data-real-sort="${key}"]`)?.focus();
+      return;
+    }
+    const realToggle = e.target.closest("[data-real-toggle], [data-real-row]");
+    if (realToggle) {
+      const k = realToggle.dataset.realToggle || realToggle.dataset.realRow;
+      if (realOpen.has(k)) realOpen.delete(k);
+      else realOpen.add(k);
+      rerenderRealization();
+      document.querySelector(`button[data-real-toggle="${CSS.escape(k)}"]`)?.focus({ preventScroll: true });
       return;
     }
     const stockSortEl = e.target.closest("[data-stock-sort]");

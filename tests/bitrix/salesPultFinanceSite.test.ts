@@ -41,7 +41,7 @@ describe("страница «Финансы»", () => {
       const { page, errors } = await open(renderFinanceHtml(payload(view({}, 5))), width);
       try {
         expect(await page.locator(".sections a").evaluateAll((es) => es.map((e) => e.textContent!.trim())))
-          .toEqual(["Сегодня", "Радар", "Выручка", "Финансы", "Планы", "Рынок", "Конкуренты"]);
+          .toEqual(["Сегодня", "Радар", "Выручка", "Финансы", "Фин. отчёты", "Планы", "Рынок", "Конкуренты"]);
         expect(await text(page, '.sections a[aria-current="page"]')).toBe("Финансы");
         for (const id of ["f-overview", "f-pnl", "f-payments", "f-debtors", "f-cash", "f-incoming", "f-balance"]) {
           expect(await page.locator(`#${id}`).count(), id).toBe(1);

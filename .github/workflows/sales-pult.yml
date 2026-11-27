@@ -290,6 +290,7 @@ jobs:
           check_access "https://f3-pult.pages.dev"
           check_access "https://f3-pult.pages.dev/reg"
           check_access "https://f3-pult.pages.dev/fin"
+          check_access "https://f3-pult.pages.dev/fin-reports"
 
           # 2. Подготовка и деплой. Страницы лежат в вариантах _r/<роль>/, их отдаёт по роли
           # промежуточный код functions/_middleware.ts; выкладка из корня репозитория, чтобы
@@ -303,6 +304,7 @@ jobs:
           check_access "https://f3-pult.pages.dev"
           check_access "https://f3-pult.pages.dev/reg"
           check_access "https://f3-pult.pages.dev/fin"
+          check_access "https://f3-pult.pages.dev/fin-reports"
 
           # 4. Проверка Access ПОСЛЕ деплоя: URL деплоя из вывода wrangler
           DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -Eo 'https://[a-zA-Z0-9.-]+\.pages\.dev' | grep -v '^https://f3-pult\.pages\.dev$' | head -n 1 || true)
@@ -310,4 +312,5 @@ jobs:
             check_access "$DEPLOY_URL"
             check_access "$DEPLOY_URL/reg"
             check_access "$DEPLOY_URL/fin"
+            check_access "$DEPLOY_URL/fin-reports"
           fi

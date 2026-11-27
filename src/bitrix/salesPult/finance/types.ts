@@ -201,11 +201,18 @@ export interface FinanceFileInfo {
   uploadedAt: string;
 }
 
+import type { OpiuView } from "./opiuTypes.js";
+import type { RealizationView } from "./realizationTypes.js";
+
 export interface FinanceView {
   report?: FinanceReport;
   file?: FinanceFileInfo;
   /** По датам данных, по возрастанию. */
   snapshots: FinanceSnapshot[];
+  /** Отчёт о реализации (Клиент-ТМЦ и ТМЦ-Клиент), если файлы есть в чате или переданы локально. */
+  realization?: RealizationView;
+  /** ОПиУ с расшифровками для отдельной страницы «Фин. отчёты». */
+  opiu?: OpiuView;
   /** Нет ни одного разобранного отчёта. */
   error?: string;
   /** Отчёт есть, но с последним файлом что-то не так — показывается над страницей. */

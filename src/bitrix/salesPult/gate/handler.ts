@@ -17,7 +17,7 @@ export interface GateDeps {
   now?: () => number;
 }
 
-type Page = "index" | "reg" | "fin";
+type Page = "index" | "reg" | "fin" | "fin-reports";
 
 const PAGES: Record<string, Page> = {
   "/": "index",
@@ -27,7 +27,10 @@ const PAGES: Record<string, Page> = {
   "/reg.html": "reg",
   "/fin": "fin",
   "/fin/": "fin",
-  "/fin.html": "fin"
+  "/fin.html": "fin",
+  "/fin-reports": "fin-reports",
+  "/fin-reports/": "fin-reports",
+  "/fin-reports.html": "fin-reports"
 };
 
 const SECURITY_HEADERS: Record<string, string> = {

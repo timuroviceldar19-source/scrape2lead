@@ -54,8 +54,11 @@ export function deployPultVariants(
   fs.rmSync(outDir, { recursive: true, force: true });
   write("all", "index.html", fs.readFileSync(path.join(srcDir, "index.html"), "utf8"));
   write("all", "reg.html", fs.readFileSync(path.join(srcDir, "reg.html"), "utf8"));
-  // «Финансы» — только полный вариант: виду менеджера и ТВ их не собираем, проверка входа ответит «недоступна».
+  // «Финансы» и «Фин. отчёты» — только полный вариант: РОП, РТО, менеджеру и ТВ их не собираем.
   if (fs.existsSync(path.join(srcDir, "fin.html"))) write("all", "fin.html", fs.readFileSync(path.join(srcDir, "fin.html"), "utf8"));
+  if (fs.existsSync(path.join(srcDir, "fin-reports.html"))) {
+    write("all", "fin-reports.html", fs.readFileSync(path.join(srcDir, "fin-reports.html"), "utf8"));
+  }
   const marketSrcDir = path.join(srcDir, "market");
   copyMarketFiles(marketSrcDir, path.join(outDir, "_r", "all", "market"));
   const built = ["all"];

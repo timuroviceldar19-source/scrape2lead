@@ -85,8 +85,8 @@ npm run cloudflare:check  # wrangler deploy --dry-run
   Вид менеджера (`src/bitrix/salesPult/variants/manager.ts`) режет данные при сборке: свои строки, итоги отдела как в полном
   пульте, «Планы» из его сделок (`exports/sales-pult/plan-deals.json`), «Радар» только с его лотами (`radar/filter.ts`), «Выручка» из его строк реестра без
   бонуса РОП и сверки с порталом. Вида `tv` пока нет. Ответы с `cache-control: private, no-store`.
-- «Финансы» (`fin.html`, адреса `/fin`, `/fin.html`) есть только в варианте `all`: виду РОП, РТО, менеджера и ТВ страница не
-  собирается, проверка входа отвечает «недоступна», ссылка в меню убирается.
+- «Финансы» (`fin.html`, адреса `/fin`, `/fin.html`) и «Фин. отчёты» (`fin-reports.html`, адреса `/fin-reports`, `/fin-reports.html`) есть только в варианте `all`: виду РОП, РТО, менеджера и ТВ эти страницы не
+  собираются, проверка входа отвечает «недоступна», ссылки в меню убираются.
 - Проверить локально: `PULT_ROLES= npx tsx scripts/pult-gate-config.mts exports/pult-gate/config.json`,
   `npx tsx scripts/pult-variants.mts`, затем `npx wrangler pages dev exports/sales-pult-deploy --port 8788`.
 
@@ -159,7 +159,7 @@ npm run cloudflare:check  # wrangler deploy --dry-run
   Пропал блок «Ежед.» — показывается прошлый отчёт с пояснением. История по дням — из старых файлов
   чата, кэш `data/register/finance.json` зашифрован `REGISTER_HISTORY_KEY`. Названия компаний, банков и контрагентов
   в код, тесты и лог не кладём (только выдуманный `tests/fixtures/sales-pult/financeWorkbook.ts`). Поменяли разбор —
-  повысьте `FINANCE_PARSE_VERSION`. Локально: `--finance-file <путь>`. См. `docs/testing/pult-finance.tdd.md`.
+  Поменяли разбор — повысьте `FINANCE_PARSE_VERSION`. Локально: `--finance-file <путь>`, `--opiu-file <путь>`, `--realization-file <путь>` (можно дважды: Клиент-ТМЦ и ТМЦ-Клиент). В тот же чат финансиста можно класть книгу ОПиУ (листы «ОПиУ» и «Расш. ОПиУ») и 1С-выгрузки «Отчет о реализации» — классификатор (`classifyWorkbook.ts`) различает их через `@e965/xlsx`, не роняет ежедневный отчёт и раскладывает ОПиУ на отдельную страницу «Фин. отчёты» (`fin-reports.html`, с 1- и 2-уровневыми расшифровками и переключением годы/месяцы), а «Отчёт о реализации» — блоком на «Финансы» (если загружен один из двух разрезов, второй строится автоматически). См. `docs/testing/pult-finance.tdd.md` и `docs/testing/pult-opiu-and-realization.tdd.md`.
 - **Рынок для пульта** (`src/kz/market/`) берётся из открытого API `zakup.gov.kz/api/core/api/public/` без токена ([src/kz/zakupPublicApi.ts](src/kz/zakupPublicApi.ts)); ows с `GOSZAKUP_TOKEN` — запасной, только если zakup не ответил. Это адреса фронтенда сайта, без документации и лимитов: пауза 100 мс, 4 запроса одновременно, повтор при сбоях. БИН организаций кэшируется в `data/market/orgs.json`. В логе видно, какой источник сработал: `[Рынок] Утреннее обновление (zakup|ows)`. См. `docs/testing/market-zakup-public-api.tdd.md`.
 - **Шаблоны ТС для «Конкурентов»** — куски текста ТС заказчиков, поэтому **не в репозитории** (он публичный). Локально лежат в `data/spec-templates.json`, в GitHub приходят из секрета `SPEC_TEMPLATES` (шаг `Spec templates from secret` в `sales-pult.yml`). Формат — `{"shingleSize": 6, "templates": [{"id", "name", "note", "text", "corePhrases": [{"label", "phrase"}]}]}`. Нет секрета — блок «Шаблоны ТС» пустой. Тексты ТС и их фразы не кладите ни в `config/`, ни в тесты, ни в журналы: в тестах только выдуманный `tests/fixtures/kz/spec-templates.demo.json`.
 - **База конкурентов в GitHub** (`data/competitors/competitors.db`, кэш `gz-competitors-v1-`).
