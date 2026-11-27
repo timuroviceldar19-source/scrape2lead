@@ -22,8 +22,9 @@ export const DEFAULT_FINANCE_CACHE_PATH = "data/register/finance.json";
 /** Повышать, когда меняется разбор: файлы из кэша тогда разбираются заново. */
 // 2 — скрытые пустые колонки между банками и листы материальных ведомостей.
 // 3 — новые колонки дебиторов (дата оплаты, иск) и сдвинутые «Прочие платежи» / «Топ» (20.11.2026).
-// 4 — определение типа файла в чате: Ежед., ОПиУ (+ расшифровки) и Отчёт о реализации (Клиент-ТМЦ / ТМЦ-Клиент).
-export const FINANCE_PARSE_VERSION = 4;
+// 4 — книга ФО (ОПиУ) в том же чате (26.11.2026).
+// 5 — 2-уровневый ОПиУ на отдельной вкладке «Фин. отчёты» и Отчёт о реализации (Клиент-ТМЦ / ТМЦ-Клиент) в «Финансах».
+export const FINANCE_PARSE_VERSION = 5;
 
 const DEFAULT_MAX_DOWNLOADS = 20;
 const MAX_SNAPSHOTS = 400;
@@ -64,6 +65,8 @@ export interface LoadFinanceOptions {
   folderId?: number | string;
   /** Локальный ежедневный отчёт вместо папки чата (`--finance-file`). */
   localFile?: string;
+  /** Несколько локальных файлов (`--finance-file` можно повторить: Ежед., ОПиУ, ОР — тип решает содержимое). */
+  localFiles?: string[];
   /** Локальный файл ОПиУ (`--opiu-file`). */
   localOpiuFile?: string;
   /** Локальные файлы отчёта о реализации (`--realization-file`, можно несколько). */
@@ -218,16 +221,33 @@ function loadLocalRealizations(filePaths: string[]): RealizationView | undefined
 const isDailyEntry = (e: CachedFile | undefined) => !e?.kind || e.kind === "daily";
 
 export async function loadFinanceView(options: LoadFinanceOptions): Promise<FinanceView> {
-  const localOpiu = options.localOpiuFile ? await loadLocalOpiu(options.localOpiuFile) : undefined;
-  const localRealization = options.localRealizationFiles?.length
-    ? loadLocalRealizations(options.localRealizationFiles)
-    : undefined;
-
-  if (options.localFile) {
-    const name = path.basename(options.localFile);
+  // Поддержка повторяемого --finance-file (localFiles): автоматически раскладываем по видам.
+  let dailyPath = options.localFile;
+  let opiuPath = options.localOpiuFile;
+  const realPaths = [...(options.localRealizationFiles ?? [])];
+  for (const fp of options.localFiles ?? []) {
     try {
-      const report = await parseFinanceExcel(fs.readFileSync(options.localFile));
-      const uploadedAt = fs.statSync(options.localFile).mtime.toISOString();
+      const kind = classifyFinanceWorkbook(fs.readFileSync(fp));
+      if (kind === "opiu") {
+        if (!opiuPath) opiuPath = fp;
+      } else if (kind === "realization-client-tmc" || kind === "realization-tmc-client") {
+        realPaths.push(fp);
+      } else {
+        if (!dailyPath) dailyPath = fp;
+      }
+    } catch {
+      if (!dailyPath) dailyPath = fp;
+    }
+  }
+
+  const localOpiu = opiuPath ? await loadLocalOpiu(opiuPath) : undefined;
+  const localRealization = realPaths.length ? loadLocalRealizations(realPaths) : undefined;
+
+  if (dailyPath) {
+    const name = path.basename(dailyPath);
+    try {
+      const report = await parseFinanceExcel(fs.readFileSync(dailyPath));
+      const uploadedAt = fs.statSync(dailyPath).mtime.toISOString();
       console.log(`[Финансы] Локальный файл: отчёт на ${report.dataDate}, предупреждений сверки ${report.warnings.length}`);
       return {
         report,

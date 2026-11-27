@@ -287,8 +287,8 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
   const daysCount = daysIdx !== -1 && args[daysIdx + 1] ? parseInt(args[daysIdx + 1], 10) : 10;
   const registerFileIdx = args.indexOf("--register-file");
   const registerFilePath = registerFileIdx !== -1 && args[registerFileIdx + 1] ? args[registerFileIdx + 1] : undefined;
-  const financeFileIdx = args.indexOf("--finance-file");
-  const financeFilePath = financeFileIdx !== -1 && args[financeFileIdx + 1] ? args[financeFileIdx + 1] : undefined;
+  // --finance-file можно повторить (Ежед., ОПиУ, ОР); также поддерживаются явные --opiu-file и --realization-file.
+  const financeFiles = args.flatMap((a, i) => (a === "--finance-file" && args[i + 1] ? [args[i + 1]] : []));
   const opiuFileIdx = args.indexOf("--opiu-file");
   const opiuFilePath = opiuFileIdx !== -1 && args[opiuFileIdx + 1] ? args[opiuFileIdx + 1] : undefined;
   const realizationFilePaths: string[] = [];
@@ -762,7 +762,7 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
     const financeView = await loadFinanceView({
       reader,
       folderId: config.finance?.diskFolderId,
-      localFile: financeFilePath,
+      localFiles: financeFiles.length ? financeFiles : undefined,
       localOpiuFile: opiuFilePath,
       localRealizationFiles: realizationFilePaths.length ? realizationFilePaths : undefined
     }).catch((err: unknown) => {
@@ -935,7 +935,9 @@ export async function runSalesPult(args: string[], options?: SalesPultRunOptions
         return null;
       });
       const morningFinance: FinanceView | undefined = await loadFinanceView({
-        reader, folderId: config.finance?.diskFolderId, localFile: financeFilePath
+        reader,
+        folderId: config.finance?.diskFolderId,
+        localFiles: financeFiles.length ? financeFiles : undefined
       }).catch((err: unknown) => {
         console.warn(`[Финансы] Не загрузились (${(err as Error)?.name || "Error"})`);
         return undefined;

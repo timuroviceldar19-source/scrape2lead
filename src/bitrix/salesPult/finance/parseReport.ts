@@ -840,7 +840,8 @@ export function parseFinanceWorkbook(workbook: ExcelJS.Workbook): FinanceReport 
   };
 }
 
-export async function parseFinanceExcel(buffer: Buffer): Promise<FinanceReport> {
+/** Книга из файла чата: одна загрузка, дальше по листам решается, ежедневный это отчёт или книга ФО. */
+export async function readFinanceWorkbook(buffer: Buffer): Promise<ExcelJS.Workbook> {
   const ExcelJS = await import("exceljs");
   const workbook = new ExcelJS.default.Workbook();
   try {
@@ -848,7 +849,11 @@ export async function parseFinanceExcel(buffer: Buffer): Promise<FinanceReport> 
   } catch {
     throw new FinanceParseError("файл не читается как .xlsx");
   }
-  return parseFinanceWorkbook(workbook);
+  return workbook;
+}
+
+export async function parseFinanceExcel(buffer: Buffer): Promise<FinanceReport> {
+  return parseFinanceWorkbook(await readFinanceWorkbook(buffer));
 }
 
 /** Короткая запись дня для истории. */
