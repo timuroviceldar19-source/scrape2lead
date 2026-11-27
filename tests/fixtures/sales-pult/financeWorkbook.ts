@@ -51,6 +51,8 @@ export interface FinanceWorkbookOptions {
   debtorGap?: boolean;
   /** «Прочие платежи» с подписью и вместе с «Топ» сдвинуты на колонку правее календаря. */
   labeledLists?: boolean;
+  /** Скрытая строка «Вся сумма» над «1210» (как в файле 27.11.2026 со скрытыми мелкими должниками). */
+  extraDebtorSubtotalRow?: boolean;
 }
 
 const plusDays = (iso: string, days: number) => new Date(Date.parse(`${iso}T00:00:00.000Z`) + days * 86_400_000).toISOString().slice(0, 10);
@@ -278,11 +280,24 @@ export function financeWorkbook(options: FinanceWorkbookOptions = {}): ExcelJS.W
     const debtors = options.debtors ?? DEFAULT_DEBTORS;
     const alpha = debtors.filter((x) => x.company === 0).reduce((s, x) => s + x.amount, 0);
     const beta = debtors.filter((x) => x.company === 1).reduce((s, x) => s + x.amount, 0);
-    set("A32", "1210");
-    set("B32", f(options.alphaDebtorsTotal ?? alpha));
-    set("C32", f(beta));
-    set("E32", f(alpha + beta));
-    r = 33;
+    if (options.extraDebtorSubtotalRow) {
+      set("A32", "Вся сумма");
+      set("B32", f(options.alphaDebtorsTotal ?? alpha));
+      set("C32", f(beta));
+      set("E32", f(alpha + beta));
+      ws.getRow(32).hidden = true;
+      set("A33", 1210);
+      set("B33", f(Math.max(0, alpha - 1_000_000)));
+      set("C33", f(beta));
+      set("E33", f(Math.max(0, alpha - 1_000_000) + beta));
+      r = 34;
+    } else {
+      set("A32", "1210");
+      set("B32", f(options.alphaDebtorsTotal ?? alpha));
+      set("C32", f(beta));
+      set("E32", f(alpha + beta));
+      r = 33;
+    }
     let prevCompany = debtors[0]?.company;
     for (const x of debtors) {
       if (options.debtorGap && x.company !== prevCompany) r++;
@@ -362,7 +377,8 @@ function addDebtorColumns(ws: ExcelJS.Worksheet, options: FinanceWorkbookOptions
   const col = (label: string) => String.fromCharCode("E".charCodeAt(0) + all.indexOf(label));
   all.forEach((label) => (ws.getCell(`${col(label)}31`).value = label));
   const byName = new Map((options.debtors ?? DEFAULT_DEBTORS).map((x) => [x.name, x]));
-  for (let r = 33; r <= ws.rowCount; r++) {
+  const startDebtorRow = options.extraDebtorSubtotalRow ? 34 : 33;
+  for (let r = startDebtorRow; r <= ws.rowCount; r++) {
     const name = ws.getCell(`A${r}`).value;
     const sale = ws.getCell(`D${r}`).value;
     if (typeof name !== "string" || !(sale instanceof Date)) continue;

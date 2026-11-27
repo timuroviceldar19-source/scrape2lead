@@ -24,7 +24,8 @@ export const DEFAULT_FINANCE_CACHE_PATH = "data/register/finance.json";
 // 3 — новые колонки дебиторов (дата оплаты, иск) и сдвинутые «Прочие платежи» / «Топ» (20.11.2026).
 // 4 — книга ФО (ОПиУ) в том же чате (26.11.2026).
 // 5 — 2-уровневый ОПиУ на отдельной вкладке «Фин. отчёты» и Отчёт о реализации (Клиент-ТМЦ / ТМЦ-Клиент) в «Финансах».
-export const FINANCE_PARSE_VERSION = 5;
+// 6 — две итоговые строки перед списком дебиторов («Вся сумма» + «1210», 27.11.2026).
+export const FINANCE_PARSE_VERSION = 6;
 
 const DEFAULT_MAX_DOWNLOADS = 20;
 const MAX_SNAPSHOTS = 400;

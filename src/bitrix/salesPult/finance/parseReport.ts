@@ -367,9 +367,29 @@ function textLike(g: Grid, r: number, c: number): string | undefined {
 }
 
 function readDebtorRows(g: Grid, layout: DebtorLayout, headerRow: number, title: string, warnings: string[]): { list: FinanceDebtors; endRow: number } {
-  const totalsRow = headerRow + 1;
-  const rows: FinanceDebtor[] = [];
   const { extra } = layout;
+  // С 27.11.2026 между шапкой «Дебиторы» и списком могут идти две итоговые строки:
+  // скрытая «Вся сумма» (все строки, включая мелких скрытых должников) и видимая «1210»
+  // (сумма только видимых). Обе строки — без даты реализации, зато с итогом по компаниям.
+  const isSummaryRow = (row: number) => {
+    if (g.date(row, layout.dateCol)) return false;
+    if (!layout.companyCols.some((col) => g.num(row, col) !== null)) return false;
+    const rawName = g.get(row, layout.nameCol);
+    if (rawName === null || typeof rawName === "number") return true;
+    const k = labelKey(String(rawName));
+    return k === "вся сумма" || k === "итого" || k === "всего" || /^\d{4}$/.test(k);
+  };
+  const summaryRows: number[] = [];
+  let r = headerRow + 1;
+  while (r <= Math.min(g.maxRow, headerRow + 4) && isSummaryRow(r)) {
+    summaryRows.push(r);
+    r++;
+  }
+  if (!summaryRows.length) {
+    summaryRows.push(headerRow + 1);
+    r = headerRow + 2;
+  }
+
   // С 20.11.2026 дебиторы компаний разделены пустой строкой. Пустую строку перешагиваем, только
   // если за ней снова должник: есть дата реализации и сумма по компании. Так список не
   // захватывает «Кредиторы» и строки ниже (у них даты нет).
@@ -377,7 +397,7 @@ function readDebtorRows(g: Grid, layout: DebtorLayout, headerRow: number, title:
     const name = g.text(row, layout.nameCol);
     return !!name && !labelKey(name).startsWith("кредит") && !!g.date(row, layout.dateCol) && layout.companyCols.some((col) => !!g.num(row, col));
   };
-  let r = headerRow + 2;
+  const parsedRows: FinanceDebtor[] = [];
   for (; r <= g.maxRow; r++) {
     let name = g.text(r, layout.nameCol);
     if (!name) {
@@ -396,7 +416,7 @@ function readDebtorRows(g: Grid, layout: DebtorLayout, headerRow: number, title:
     layout.companyCols.forEach((col, i) => {
       const amount = g.num(r, col);
       if (amount) {
-        rows.push({
+        parsedRows.push({
           name,
           company: layout.companies[i],
           amount,
@@ -409,14 +429,22 @@ function readDebtorRows(g: Grid, layout: DebtorLayout, headerRow: number, title:
       }
     });
   }
-  const totals = layout.companies.map((company) => sum(rows.filter((x) => x.company === company).map((x) => x.amount)));
+  const totals = layout.companies.map((company) => sum(parsedRows.filter((x) => x.company === company).map((x) => x.amount)));
+  // Если итоговых строк несколько («Вся сумма» и «1210»), сверяем с той, что сходится с полной суммой строк.
+  const matchedSummary = summaryRows.find((row) =>
+    layout.companyCols.every((col, i) => {
+      const fileTotal = g.num(row, col);
+      return fileTotal === null || !differs(fileTotal, totals[i]);
+    })
+  );
+  const totalsRow = matchedSummary ?? summaryRows[0];
   layout.companyCols.forEach((col, i) => {
     const fileTotal = g.num(totalsRow, col);
     if (fileTotal !== null && differs(fileTotal, totals[i])) {
       warnings.push(`${title}, ${layout.companies[i]}: итог в файле ${fmt(fileTotal)}, сумма строк ${fmt(totals[i])}`);
     }
   });
-  return { list: { companies: layout.companies, rows, totals, total: sum(totals) }, endRow: r };
+  return { list: { companies: layout.companies, rows: parsedRows, totals, total: sum(totals) }, endRow: r };
 }
 
 function parseDebtors(g: Grid, warnings: string[]): { debtors: FinanceDebtors; problem?: FinanceDebtors; layout: DebtorLayout } {

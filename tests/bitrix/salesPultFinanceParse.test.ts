@@ -238,6 +238,15 @@ describe("финансы: разбор ежедневного отчёта", () 
     }
   });
 
+  it("две итоговые строки перед списком дебиторов («Вся сумма» + «1210», формат 27.11.2026) разбираются без расхождений", () => {
+    const r = parseFinanceWorkbook(financeWorkbook({ extraDebtorSubtotalRow: true, debtorColumns: true }));
+    expect(r.debtors.rows).toHaveLength(3);
+    expect(r.debtors.totals).toEqual([8_000_000, 2_000_000]);
+    expect(r.debtors.total).toBe(10_000_000);
+    expect(r.problemDebts?.rows).toHaveLength(2);
+    expect(r.warnings).toEqual([]);
+  });
+
   it("читает файл .xlsx целиком (формулы — по сохранённым значениям) и даёт запись дня", async () => {
     const r = await parseFinanceExcel(await financeWorkbookBuffer());
     expect(r.dataDate).toBe("2026-11-16");
